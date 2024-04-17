@@ -1,0 +1,32 @@
+button{
+    padding:0.2em;
+    background-color: lightgray;
+    border:1px solid black;
+    border-radius: 0.4em;
+}
+button:hover{
+    background-color: rgb(172, 172, 172);
+}
+label{
+    height:min-content;
+    width:max-content;
+}
+select{
+    border:1px solid black;
+}
+select > option{
+    padding-inline: 0.3em;
+}
+input[type="number"],input[type="text"]{
+    border:1px solid rgb(176, 176, 176);
+}
+input[type="number"],input[type="text"]{
+    padding:0.2em;
+}
+/*on firefox the number input spinner buttons are always visible, on chrome they need this fix*/
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button {
+    opacity: 1;
+}
+label[p\:tooltip]{
+    cursor:help;
+}

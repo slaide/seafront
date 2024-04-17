@@ -1,0 +1,15 @@
+*{
+    padding:0;
+    margin:0;
+    border:0;
+    box-sizing: border-box;
+}
+button{
+    cursor:pointer;
+}
+input[type="submit"]{
+    cursor:pointer;
+}
+select,input[type="checkbox"]{
+    cursor:pointer;
+}
