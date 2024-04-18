@@ -1,0 +1,28 @@
+
+#main{
+    height:100vh;
+    overflow-y: hidden;
+    display:flex;
+    --left-fraction: 0.66;
+}
+#main > *.separator-vert{
+    margin-inline:0.5em;
+}
+#main > *:not(.separator-vert){
+    padding:0.3em;
+}
+#main-view{
+    flex:var(--left-fraction);
+}
+#main-control{
+    flex:calc( 1 - var(--left-fraction));
+    height:100%;
+    overflow: hidden;
+}
+#main-control>*{
+    min-height:min-content;
+    max-height:100%;
+    overflow-y: auto;
+    display:grid;
+    row-gap:0.5em;
+}

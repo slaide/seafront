@@ -1,0 +1,17 @@
+
+#live-view-display{
+    position:relative;
+    width:600px;
+    height:600px;
+    background: lightblue;
+    overflow:hidden;
+    border:1px solid grey;
+}
+#live-view-display *{
+    position: absolute;
+
+    left:var(--left);
+    bottom:var(--bottom);
+    width:calc( var(--scale-x) * var(--width) );
+    height:calc( var(--scale-y) * var(--height) );
+}

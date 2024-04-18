@@ -7,456 +7,23 @@
         <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@main/p.js"></script>
         <link rel="stylesheet" href="reset.css">
         <link rel="stylesheet" href="p/style.css">
-        <script>
-            p.config=make_observable({
-                base_path:"/home/pharmbio/Downloads/",
-                project_name:"",
-                plate_name:"",
-                cell_line:"",
-
-                grid:{
-                    num_x:2,
-                    delta_x_mm:0.9,
-                    num_y:2,
-                    delta_y_mm:0.9,
-                    num_z:1,
-                    delta_z_um:5,
-                    num_t:1,
-                    delta_t:{
-                        h:2,
-                        m:1,
-                        s:4,
-                    }
-                },
-
-                objective:"20xolympus",
-                wellplate_type:"fa96",
-
-                main_camera_trigger:"software",
-                main_camera_pixel_type:"mono12",
-
-                laser_af_enabled:false,
-
-                channels:[
-                    {
-                        name:"Fluo 405 nm Ex",
-                        handle:"fluo405",
-                        illum_perc:100,
-                        exposure_time_ms:5.0,
-                        analog_gain:0,
-                        z_offset_um:0,
-                    },
-                    {
-                        name:"Fluo 488 nm Ex",
-                        handle:"fluo488",
-                        illum_perc:100,
-                        exposure_time_ms:5.0,
-                        analog_gain:0,
-                        z_offset_um:0,
-                    },
-                    {
-                        name:"Fluo 561 nm Ex",
-                        handle:"fluo561",
-                        illum_perc:100,
-                        exposure_time_ms:5.0,
-                        analog_gain:0,
-                        z_offset_um:0,
-                    },
-                    {
-                        name:"Fluo 688 nm Ex",
-                        handle:"fluo688",
-                        illum_perc:100,
-                        exposure_time_ms:5.0,
-                        analog_gain:0,
-                        z_offset_um:0,
-                    },
-                    {
-                        name:"Fluo 730 nm Ex",
-                        handle:"fluo730",
-                        illum_perc:100,
-                        exposure_time_ms:5.0,
-                        analog_gain:0,
-                        z_offset_um:0,
-                    },
-                    {
-                        name:"BF LED Full",
-                        handle:"bfledfull",
-                        illum_perc:20,
-                        exposure_time_ms:5.0,
-                        analog_gain:0,
-                        z_offset_um:0,
-                    },
-                    {
-                        name:"BF LED Right Half",
-                        handle:"bfledright",
-                        illum_perc:20,
-                        exposure_time_ms:5.0,
-                        analog_gain:0,
-                        z_offset_um:0,
-                    },
-                    {
-                        name:"BF LED Left Half",
-                        handle:"bfledleft",
-                        illum_perc:20,
-                        exposure_time_ms:5.0,
-                        analog_gain:0,
-                        z_offset_um:0,
-                    },
-                ]
-            })
-
-            p.microscope_state=make_observable({
-                pos:{
-                    x_mm:12.123,
-                    y_mm:23.123,
-                    z_um:4312,
-                },
-            })
-
-            p.limits={
-                illumination_percent:{
-                    min:20,
-                    max:100,
-                    default:100,
-                },
-                exposure_time_ms:{
-                    min:0.1,
-                    max:936,
-                    default:5.0,
-                },
-                analog_gain:{
-                    min:0,
-                    max:24,
-                    default:0,
-                },
-                z_offset_um:{
-                    min:-50,
-                    max:50,
-                    default:0,
-                }
-            }
-
-            p.main_camera_triggers=[
-                {
-                    name:"Software",
-                    handle:"software"
-                },
-                {
-                    name:"Hardware",
-                    handle:"hardware"
-                }
-            ]
-            p.main_camera_pixel_types=[
-                {
-                    name:"8 bit",
-                    handle:"mono8"
-                },
-                {
-                    name:"12 bit",
-                    handle:"mono12"
-                }
-            ]
-            p.objectives=[
-                {
-                    name:"4x Olympus",
-                    handle:"4xolympus",
-                },
-                {
-                    name:"10x Olympus",
-                    handle:"10xolympus",
-                },
-                {
-                    name:"20x Olympus",
-                    handle:"20xolympus",
-                },
-            ]
-            p.objective_handle2name=function(handle){
-                for(let o of p.objectives){
-                    if(o.handle==handle){
-                        return o.name
-                    }
-                }
-                return null
-            }
-
-            p.wellplate_types=[
-                {
-                    name:"96 Well Plate",
-                    entries:[
-                        {
-                            name:"Perkin Elmer 96",
-                            handle:"pe96"
-                        },
-                        {
-                            name:"Falcon 96",
-                            handle:"fa96"
-                        }
-                    ]
-                },
-                {
-                    name:"384 Well Plate",
-                    entries:[
-                        {
-                            name:"Perkin Elmer 384",
-                            handle:"pe384"
-                        },
-                        {
-                            name:"Falcon 384",
-                            handle:"fa384"
-                        },
-                        {
-                            name:"Thermo Fischer 384",
-                            handle:"tf384"
-                        }
-                    ]
-                }
-            ]
-
-            p.init_tab_header=function(tab_header){
-                let tab_header_children=tab_header.querySelectorAll("*[target]")
-
-                let valid_tab_children=[]
-                tab_header_children.forEach((el)=>{
-                    let tab_target=document.getElementById(el.getAttribute("target"))
-                    if(!tab_target){
-                        console.error("tab header target '"+el.getAttribute("target")+"' not found",el);
-                        return
-                    }
-                    tab_target.classList.add("hidden");
-
-                    valid_tab_children.push(el);
-                    el.addEventListener("click",p.tab_head_click);
-                });
-                if(valid_tab_children.length==0){
-                    return
-                }
-                valid_tab_children[0].click()
-            }
-            p.tab_head_click=function(e){
-                let head=e.currentTarget;
-
-                let current_target=head.parentNode.current_target;
-                if(current_target){
-                    current_target.classList.add("hidden");
-                }
-
-                head.parentNode.querySelectorAll("*").forEach((el)=>{
-                    el.classList.remove("active");
-                });
-
-                head.classList.add("active");
-
-                let target = head.getAttribute("target");
-                let target_el = document.getElementById(target);
-                head.parentNode.current_target = target_el;
-                
-                target_el.classList.remove("hidden");
-            }
-        </script>
-        <style>
-            .hidden{
-                display:none;
-            }
-            .tab-header-container{
-                display:flex;
-                border-bottom: 1px solid black;
-                --tab-header-height:calc( 1.2em + 2 * 0.2em);
-                height:var(--tab-header-height);
-            }
-            .tab-header-container > *{
-                padding:0.2em;
-                padding-inline:0.5em;
-                margin-inline:0.2em;
-                border:1px solid black;
-                border-bottom:none;
-                cursor:pointer;
-                background-color: white;
-                border-radius: 0.3em 0.3em 0 0;
-            }
-            .tab-header-container > *:hover{
-                text-decoration: underline;
-                background-color: #f0f0f0;
-            }
-            .tab-header-container > *:not(.active){
-                background-color: lightgrey;
-            }
-            .tab-header-container > *.active{
-                height: calc(var(--tab-header-height) + 1px);
-            }
-            .tab-body-container{
-                border: 1px solid black;
-                border-top: none;
-                padding:0.3em;
-            }
-        </style>
+        <script src="src/init.js"></script>
+        <link rel="stylesheet" href="css/tabs.css">
         <!-- col-span-n, row-span-n -->
-        <style>
-            .col-span-1{
-                grid-column: span 1;
-            }
-            .col-span-2{
-                grid-column: span 2;
-            }
-            .col-span-3{
-                grid-column: span 3;
-            }
-            .col-span-4{
-                grid-column: span 4;
-            }
-            .col-span-5{
-                grid-column: span 5;
-            }
-            .col-span-6{
-                grid-column: span 6;
-            }
-
-            .row-span-1{
-                grid-row: span 1;
-            }
-            .row-span-2{
-                grid-row: span 2;
-            }
-            .row-span-3{
-                grid-row: span 3;
-            }
-            .row-span-4{
-                grid-row: span 4;
-            }
-            .row-span-5{
-                grid-row: span 5;
-            }
-            .row-span-6{
-                grid-row: span 6;
-            }
-        </style>
+        <link rel="stylesheet" href="css/basics.css">
     </head>
     <body>
         <div class="data hidden">
-            <style>
-                .tooltip:not(.processed){
-                    display:none;
-                }
-                .tooltip-container{
-                    width:max-content;
-                    max-width:30em;
-
-                    position:absolute;
-                    z-index:100;
-                    background:white;
-                    border:1px solid black;
-
-                    transform:translateY(-100%) translateX(-50%);
-                    padding:0.3em;
-                    background-color:lightyellow;
-                }
-            </style>
-            <script>
-                p.bare_init_tooltip=function(element){
-                    /// init tooltip to be definitely visible (which it should be, in the top left corner of the viewport)
-                    element.style.left="0px"
-                    element.style.top="0px"
-                }.bind(p)
-                p.init_tooltip=function(element){
-                    /// actually init element position to top center of the element that it is attached to
-                    let rect=element.element_anker.getBoundingClientRect()
-
-                    let left_offset=rect.left+rect.width/2
-                    let top_offset=rect.top
-                    
-                    element.style.left=left_offset+"px"
-                    element.style.top=top_offset+"px"
-
-                    // if tooltip is outside the viewport, shove it back in
-                    let tooltip_rect=element.getBoundingClientRect()
-
-                    let top_min=10
-                    let bottom_min=10
-                    let left_min=15
-                    let right_min=15
-
-                    // check left
-                    if(tooltip_rect.left<0){
-                        element.style.left=left_min+"px"
-                    }
-                    // check right
-                    let tooltip_right_offset=tooltip_rect.right-window.innerWidth
-                    if(tooltip_right_offset>0){
-                        element.style.left=(left_offset-tooltip_right_offset-right_min)+"px"
-                    }
-                    // check top
-                    let tooltip_top_offset=tooltip_rect.top-top_min
-                    if(tooltip_top_offset<0){
-                        console.log("top offset too small",tooltip_rect.top)
-                        element.style.top=top_offset-tooltip_top_offset+"px"
-                    }
-                    // check bottom
-                    let tooltip_bottom_offset=tooltip_rect.bottom-window.innerHeight
-                    if(tooltip_bottom_offset>0){
-                        element.style.top=(top_offset-tooltip_bottom_offset)+"px"
-                    }
-                }.bind(p)
-            </script>
+            <link rel="stylesheet" href="css/tooltip.css">
+            <script src="src/tooltip.js"></script>
             <template name="tooltip">
                 <div class="tooltip-container data" p:init="bare_init_tooltip" p:init-vis="init_tooltip"></div>
             </template>
         </div>
+        <link rel="stylesheet" href="css/main.css">
+        <link rel="stylesheet" href="css/section.css">
+        <link rel="stylesheet" href="css/separator.css">
         <style>
-            .separator-vert{
-                height:auto;
-                width:2px;
-                background:black;
-            }
-            .separator-horz{
-                width:auto;
-                height:2px;
-                background:black;
-            }
-            #main{
-                height:100vh;
-                overflow-y: hidden;
-                display:flex;
-                --left-fraction: 0.66;
-            }
-            #main > *.separator-vert{
-                margin-inline:0.5em;
-            }
-            #main > *:not(.separator-vert){
-                padding:0.3em;
-            }
-            #main-view{
-                flex:var(--left-fraction);
-            }
-            #main-control{
-                flex:calc( 1 - var(--left-fraction));
-                height:100%;
-                overflow: hidden;
-            }
-            #main-control>*{
-                min-height:min-content;
-                max-height:100%;
-                overflow-y: auto;
-                display:grid;
-                row-gap:0.5em;
-            }
-            .section{
-                border:1px solid black;
-                border-radius:0.4em;
-                height:min-content;
-                width:auto;
-                overflow-y:hidden;
-                overflow-x:visible;
-            }
-            .section-header{
-                padding: 0.1em;
-                --font-weight: bold;
-                font-family: monospace;
-                font-size: 1em;
-                text-align: center;
-                background-color: lightblue;
-            }
-            .section > *:not(.section-header){
-                margin:0.3em;
-            }
             .plot-img{
                 user-select: none;
             }
@@ -467,152 +34,13 @@
                     <div target="live-view">Live View</div>
                     <div target="grid-view">Channel View</div>
                     <div target="af-debug-panel">Laser Autofocus Debug</div>
+                    <div target="low-level-config-view">Low Level Config</div>
                 </div>
                 <div id="view-show" class="tab-body-container">
                     <div id="live-view">
                         <div>Fluo 405 nm Ex in B06</div>
-                        <style>
-                            #live-view-display{
-                                position:relative;
-                                width:600px;
-                                height:600px;
-                                background: lightblue;
-                                overflow:hidden;
-                                border:1px solid grey;
-                            }
-                            #live-view-display *{
-                                position: absolute;
-
-                                left:var(--left);
-                                bottom:var(--bottom);
-                                width:calc( var(--scale-x) * var(--width) );
-                                height:calc( var(--scale-y) * var(--height) );
-                            }
-                        </style>
-                        <script>
-                            p.plot_update=function(plot){
-                                let x_range = plot.x_max - plot.x_min;
-                                let y_range = plot.y_max - plot.y_min;
-
-                                let plot_x_size=plot.clientWidth;
-                                let plot_y_size=plot.clientHeight;
-
-                                let scale_x=(plot_x_size/x_range);
-                                let scale_y=(plot_y_size/y_range);
-
-                                for(let child of plot.children){
-                                    let c_width=child.x_max-child.x_min;
-                                    let c_height=child.y_max-child.y_min;
-
-                                    child.style.setProperty("--scale-x",scale_x);
-                                    child.style.setProperty("--scale-y",scale_y);
-
-                                    child.style.setProperty("--left",(child.x_min-plot.x_min)*scale_x+"px");
-                                    child.style.setProperty("--bottom",(child.y_min-plot.y_min)*scale_y+"px");
-                                }
-                            }
-                            let zoom_speed=0.01;
-                            let invert_scroll=true;
-                            p.plot_zoom=function(event){
-                                event.preventDefault();
-
-                                let plot = event.currentTarget;
-
-                                let zoom_delta=event.deltaY;
-                                if(Math.abs(zoom_delta)>5){
-                                    zoom_delta=Math.sign(zoom_delta)*5;
-                                }
-
-                                // scrolling up naturally zooms out
-                                let zoom=zoom_speed*zoom_delta;
-                                if(invert_scroll){
-                                    zoom*=-1;
-                                }
-                                
-                                let x_range = plot.x_max - plot.x_min;
-                                let y_range = plot.y_max - plot.y_min;
-
-                                plot.x_min += x_range*zoom;
-                                plot.x_max -= x_range*zoom;
-                                plot.y_min += y_range*zoom;
-                                plot.y_max -= y_range*zoom;
-
-                                this.plot_update(plot);
-                            }
-                            p.plot_drag_start=function(event){
-                                this.drag_in_progress=true;
-                                this.drag_x_start=event.clientX;
-                                this.drag_y_start=event.clientY;
-                            }
-                            p.plot_drag_move=function(event){
-                                if(this.drag_in_progress){
-                                    event.preventDefault();
-                                    let plot = event.currentTarget;
-
-                                    let x_range = plot.x_max - plot.x_min;
-                                    let y_range = plot.y_max - plot.y_min;
-
-                                    let plot_x_size=plot.clientWidth;
-                                    let plot_y_size=plot.clientHeight;
-
-                                    let scale_x=(plot_x_size/x_range);
-                                    let scale_y=(plot_y_size/y_range);
-
-                                    let x_delta = event.clientX-this.drag_x_start;
-                                    let y_delta = event.clientY-this.drag_y_start;
-
-                                    plot.x_min -= x_delta/scale_x;
-                                    plot.x_max -= x_delta/scale_x;
-                                    plot.y_min += y_delta/scale_y;
-                                    plot.y_max += y_delta/scale_y;
-
-                                    this.drag_x_start=event.clientX;
-                                    this.drag_y_start=event.clientY;
-
-                                    this.plot_update(plot);
-                                }
-                            }
-                            p.plot_drag_end=function(event){
-                                this.drag_in_progress=false;
-                            }
-                            p.plot_init=function(plot){
-                                for(let child of plot.children){
-                                    child.x_min=0;
-                                    child.x_max=child.clientWidth;
-                                    child.y_min=0;
-                                    child.y_max=child.clientHeight;
-
-                                    child.style.setProperty("--width",child.clientWidth+"px");
-                                    child.style.setProperty("--height",child.clientHeight+"px");
-                                    child.classList.add("plot-img")
-                                }
-
-                                this.plot_fit(plot)
-                            }
-                            p.plot_fit=function(plot){
-                                plot=plot.currentTarget || plot
-                                // adjust plot to fit the children
-
-                                let x_min=Infinity;
-                                let x_max=-Infinity;
-                                let y_min=Infinity;
-                                let y_max=-Infinity;
-
-                                for(let child of plot.children){
-                                    x_min=Math.min(x_min,child.x_min);
-                                    x_max=Math.max(x_max,child.x_max);
-                                    y_min=Math.min(y_min,child.y_min);
-                                    y_max=Math.max(y_max,child.y_max);
-                                }
-
-                                plot.x_min=x_min;
-                                plot.x_max=x_max;
-                                plot.y_min=y_min;
-                                plot.y_max=y_max;
-
-                                this.plot_update(plot);
-                            }
-                        </script>
+                        <link rel="stylesheet" href="css/live_view.css">
+                        <script src="src/plot.js"></script>
                         <div id="live-view-display" class="data"
                             p:init="p.plot_init(element)"
                             p:on-wheel="p.plot_zoom(event)"
@@ -675,17 +103,42 @@
                                     ],
                                 },
                             ])
+                            p.moveup=function(event){
+                                console.log("move up",event)
+                            }
                         </script>
                         <template class="data" p:for="c of p.valuelist">
                             <div>
                                 <div>{{c.title}}</div>
                                 <template class="data" p:for="v of c.values">
                                     <div>{{v.name}}</div>
+                                    <button p:on-click="p.moveup">move up</button>
                                 </template>
                             </div>
                         </template>
                     </div>
                     <div id="af-debug-panel">af debug panel</div>
+                    <div id="low-level-config-view">
+                        <style>
+                            #low-level-config-view > ul > li{
+                                display:flex;
+                            }
+                        </style>
+                        <ul>
+                            <li>
+                                <p>laser autofocus exposure time [ms]:</p>
+                                <p>2.0</p>
+                            </li>
+                            <li>
+                                <p>laser autofocus analog gain:</p>
+                                <p>0.0</p>
+                            </li>
+                            <li>
+                                <p>default main camera trigger type:</p>
+                                <p>Software Trigger</p>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
             </div>
             <style>
@@ -693,30 +146,8 @@
                     cursor:ew-resize;
                 }
             </style>
-            <script>
-                p.registerdrag=function(info){
-                    this.drag_element=info.target
-                    document.addEventListener("mousemove",p.dragmouse);
-                    // on mouse up or mouse leave, remove the event listener
-                    document.addEventListener("mouseup",p.unregisterdrag);
-                    document.addEventListener("mouseleave",p.unregisterdrag);
-                }
-                p.unregisterdrag=function(info){
-                    document.removeEventListener("mousemove",p.dragmouse);
-                    document.removeEventListener("mouseup",p.unregisterdrag);
-                    document.removeEventListener("mouseleave",p.unregisterdrag);
-                    this.dragx_start=null;
-                }
-            
-                p.dragmouse=function(event){
-                    let newx=event.clientX;
-                    if(this.dragx_start==null){
-                        this.dragx_start=newx;
-                    }
-                    this.drag_element.parentNode.style.setProperty("--left-fraction",newx/window.innerWidth);
-                }
-            </script>
-            <div id="main-sep" class="separator-vert data" p:on-mousedown="registerdrag"></div>
+            <script src="src/drag.js"></script>
+            <div id="main-sep" class="separator-vert data" p:on-mousedown="p.registerdrag(event)"></div>
             <div id="main-control">
                 <div>
                     <style>
@@ -838,27 +269,7 @@
                                         <label>s</label>
                                     </p>
 
-                                    <style>
-                                        #site-selection{
-                                            width:var(--grid-mask-size);
-                                            aspect-ratio: 1/1;
-
-                                            grid-column: 5;
-                                            grid-row:2 / span 4;
-
-                                            display:grid;
-                                            --num-cols: 1;
-                                            --num-rows: 1;
-                                            grid-template-columns: repeat(var(--num-cols),1fr);
-                                            grid-template-rows: repeat(var(--num-rows),1fr);
-                                        }
-                                        #site-selection *{
-                                            border:1px solid black;
-
-                                            height:var(--item-size);
-                                            width:var(--item-size);
-                                        }
-                                    </style>
+                                    <link rel="stylesheet" href="css/site_selection.css">
                                     <script>
                                         p.grid_mask=make_observable([])
                                         p.updateGridMask=function(info){
@@ -1003,47 +414,7 @@
                                             background-color: lightblue;
                                         }
                                     </style>
-                                    <script>
-                                        p.plate_wells=make_observable([])
-                                        p.initwellnavigator=function(info){
-                                            let element=info.element || info
-
-                                            let plate_type=p.config.wellplate_type.valueOf()
-                                            
-                                            let num_cols=null
-                                            let num_rows=null
-
-                                            // if plate type ends in 96, then 8x12
-                                            if(plate_type.endsWith("96")){
-                                                num_cols=12
-                                                num_rows=8
-                                            }else if(plate_type.endsWith("384")){
-                                                num_cols=24
-                                                num_rows=16
-                                            }
-
-                                            // add 1 for headers
-                                            num_cols+=1
-                                            num_rows+=1
-
-                                            element.style.setProperty("--num-cols",num_cols);
-                                            element.style.setProperty("--num-rows",num_rows);
-
-                                            let new_plate_wells=[]
-                                            
-                                            for(let i=0;i<num_rows;i++){
-                                                for(let j=0;j<num_cols;j++){
-                                                    let new_well = {row:i,col:j}
-                                                    
-                                                    new_plate_wells.push(new_well);
-                                                }
-                                            }
-
-                                            p.plate_wells.withPaused((w)=>{
-                                                w.splice(0,w.length,...new_plate_wells)
-                                            })
-                                        }
-                                    </script>
+                                    <script src="src/well_navigator.js"></script>
                                     <div id="well-navigator-container" class="data" p:on-objchange(p.config.wellplate_type)="p.initwellnavigator(info)">
                                         <template class="data" p:for="well of p.plate_wells">
                                             <div>

@@ -1,0 +1,20 @@
+
+.section{
+    border:1px solid black;
+    border-radius:0.4em;
+    height:min-content;
+    width:auto;
+    overflow-y:hidden;
+    overflow-x:visible;
+}
+.section-header{
+    padding: 0.1em;
+    --font-weight: bold;
+    font-family: monospace;
+    font-size: 1em;
+    text-align: center;
+    background-color: lightblue;
+}
+.section > *:not(.section-header){
+    margin:0.3em;
+}
