@@ -1,0 +1,26 @@
+
+#well-navigator-container{
+    display:grid;
+
+    --num-rows: 1;
+    --num-cols: 1;
+
+    grid-template-rows: repeat( var( --num-rows ), 1fr );
+    grid-template-columns: repeat( var( --num-cols ), 1fr );
+}
+#well-navigator-container > *{
+    border:1px solid black;
+    overflow:hidden;
+    aspect-ratio: 1/1;
+
+    text-align: center;
+}
+#well-navigator-container > *[row="0"][col="0"]{
+    font-size: 0.5em;
+}
+#well-navigator-container > *[row="0"],#well-navigator-container *[col="0"]{
+    border:1px solid transparent;
+}
+#well-navigator-container > *.selected{
+    background-color: lightblue;
+}

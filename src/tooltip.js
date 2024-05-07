@@ -7,12 +7,16 @@ const bare_init_tooltip=function(element){
     element.style.left="0px"
     element.style.top="0px"
 }
+/** @type {Map<HTMLElement,HTMLElement>} */
+let elementAnkers=new Map()
 /**
  * @param {HTMLElement} element
  */
 const init_tooltip=function(element){
     /// actually init element position to top center of the element that it is attached to
-    let rect=element.element_anker.getBoundingClientRect()
+    let element_anker=elementAnkers.get(element)
+    if(!element_anker){console.error(element,"has no tooltip anker");return}
+    let rect=element_anker.getBoundingClientRect()
 
     let left_offset=rect.left+rect.width/2
     let top_offset=rect.top

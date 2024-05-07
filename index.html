@@ -3,34 +3,50 @@
     <head>
         <meta charset="utf-8">
         <title>microscope</title>
+
+        <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
         <script src="../web-pjs/p2.js"></script>
-        <script>
-            let _p=new Manager()
-        </script>
+
+        <!-- fundamental components -->
+        <script src="src/init.js"></script>
+        <script src="src/docLinks.js"></script>
+
         <link rel="stylesheet" href="reset.css">
         <link rel="stylesheet" href="p/style.css">
-        <script src="src/init.js"></script>
-        <link rel="stylesheet" href="css/tabs.css">
-        <!-- col-span-n, row-span-n -->
         <link rel="stylesheet" href="css/basics.css">
-    </head>
-    <body>
-        <div class="data hidden">
-            <link rel="stylesheet" href="css/tooltip.css">
-            <script src="src/tooltip.js"></script>
-            <template name="tooltip">
-                <div class="tooltip-container data" p:init="bare_init_tooltip" p:init-vis="init_tooltip"></div>
-            </template>
-        </div>
+
         <link rel="stylesheet" href="css/main.css">
         <link rel="stylesheet" href="css/section.css">
-        <link rel="stylesheet" href="css/separator.css">
-        <style>
-            .plot-img{
-                user-select: none;
-            }
-        </style>
+
+        <link rel="stylesheet" href="css/live_view.css">
+
+        <!-- tab component -->
+        <script src="src/tab.js"></script>
+        <link rel="stylesheet" href="css/tabs.css">
+
+        <!-- tooltip component -->
+        <link rel="stylesheet" href="css/tooltip.css">
+        <script src="src/tooltip.js"></script>
+
+        <!-- [grid] site selection -->
+        <link rel="stylesheet" href="css/site_selection.css">
+        <script src="src/site_selection.js"></script>
+
+        <!--
+            <div class="data hidden">
+                <template name="tooltip">
+                    <div class="tooltip-container data" p:init="bare_init_tooltip" p:init-vis="init_tooltip"></div>
+                </template>
+            </div>
+        -->
+
+        <!-- plot component -->
+        <link rel="stylesheet" href="css/plot.css">
+        <script src="src/plot.js"></script>
+
+    </head>
+    <body>
         <div id="main">
             <div id="main-view">
                 <div id="view-select" class="tab-header-container data" p:init="init_tab_header(element)">
@@ -42,8 +58,6 @@
                 <div id="view-show" class="tab-body-container">
                     <div id="live-view">
                         <div>Fluo 405 nm Ex in B06</div>
-                        <link rel="stylesheet" href="css/live_view.css">
-                        <script src="src/plot.js"></script>
                         <div id="live-view-display" class="data"
                             p:init="plot_init(element)"
                             p:on-wheel="plot_zoom(event)"
@@ -128,13 +142,12 @@
                     </div>
                 </div>
             </div>
-            <style>
-                #main-sep:hover{
-                    cursor:ew-resize;
-                }
-            </style>
+
+            <!-- draggable separator component-->
+            <link rel="stylesheet" href="css/separator.css">
             <script src="src/drag_separator.js"></script>
             <div id="main-sep" class="separator-vert data" p:on-mousedown="registerdrag(event)"></div>
+
             <div id="main-control">
                 <div>
                     <style>
@@ -144,7 +157,6 @@
                         }
                     </style>
                     <div id="control-top" class="section">
-                        <script src="src/docLinks.js"></script>
                         <p class="section-header col-span-4">Set Camera Trigger and Pixel Format <a class="data" href="{{docLinks.mainCameraTriggerAndPixelFormat}}" target="_blank">Help</a></p>
 
                         <label class="data" p:tooltip="main imaging camera trigger type">Trigger</label>
@@ -257,54 +269,6 @@
                                         <label>s</label>
                                     </p>
 
-                                    <link rel="stylesheet" href="css/site_selection.css">
-                                    <script>
-                                        let grid_mask=_p.manage([])
-                                        const updateGridMask=function(){
-                                            let element=document.getElementById("site-selection-centerer")
-
-                                            let num_rows=microscope_config.grid.num_y.valueOf()
-                                            let num_cols=microscope_config.grid.num_x.valueOf()
-
-                                            grid_mask.length=0
-
-                                            for(let i=0;i<num_rows;i++){
-                                                let row=[]
-                                                for(let j=0;j<num_cols;j++){
-                                                    row.push({row:i,col:j,selected:true})
-                                                }
-                                                grid_mask.push(row)
-                                            }
-
-                                            let max_num_items=Math.max(num_rows,num_cols)
-                                            element.style.setProperty("--item-size",element.parentElement.clientWidth/max_num_items-2+"px")
-
-                                            element.style.setProperty("--num-cols",num_cols)
-                                            element.style.setProperty("--num-rows",num_rows)
-                                        }
-                                        function toggleGridItem(cell){
-                                            grid_mask[cell.row][cell.col].selected=!grid_mask[cell.row][cell.col].selected
-                                        }
-                                    </script>
-                                    <style>
-                                        #site-selection{
-                                            /* center the single element inside the grid horizontally and vertically */
-                                            display:grid;
-                                            justify-items:center;
-                                            align-items:center;
-                                        }
-                                        #site-selection-centerer{
-                                            width:auto;
-                                            height:auto;
-
-                                            display:grid;
-                                            grid-template-columns: repeat(var(--num-cols),var(--item-size));
-                                            grid-template-rows: repeat(var(--num-rows),var(--item-size));
-                                        }
-                                        .blue{
-                                            background:lightblue;
-                                        }
-                                    </style>
                                     <div id="site-selection" class="data" p:init="updateGridMask()">
                                         <div id="site-selection-centerer">
                                             <template p:for="row of grid_mask">
@@ -382,7 +346,7 @@
                                             p:bind="microscope_config.wellplate_type"
                                             p:on-input="initwellnavigator()"
                                         >
-                                            <template class="data" p:for="plate_type of wellplate_types">
+                                            <template class="data" p:for="plate_type of WellplateType.all">
                                                 <optgroup label="{{plate_type.name}}">
                                                     <template class="data" p:for="type of plate_type.entries">
                                                         <option value="{{type.handle}}">{{type.name}}</option>
@@ -391,42 +355,14 @@
                                             </template>
                                         </select>
                                         <label class="data" p:tooltip="the camera objective that is physically installed on the microscope">Objective</label>
-                                        <select class="data"
-                                            p:bind="microscope_config.objective"
-                                        >
-                                            <template class="data" p:for="objective of objectives">
+                                        <select class="data" p:bind="microscope_config.objective">
+                                            <template class="data" p:for="objective of Objective.all">
                                                 <option value="{{objective.handle}}">{{objective.name}}</option>
                                             </template>
                                         </select>
                                     </div>
 
-                                    <style>
-                                        #well-navigator-container{
-                                            display:grid;
-
-                                            --num-rows: 1;
-                                            --num-cols: 1;
-
-                                            grid-template-rows: repeat( var( --num-rows ), 1fr );
-                                            grid-template-columns: repeat( var( --num-cols ), 1fr );
-                                        }
-                                        #well-navigator-container > *{
-                                            border:1px solid black;
-                                            overflow:hidden;
-                                            aspect-ratio: 1/1;
-
-                                            text-align: center;
-                                        }
-                                        #well-navigator-container > *[row="0"][col="0"]{
-                                            font-size: 0.5em;
-                                        }
-                                        #well-navigator-container > *[row="0"],#well-navigator-container *[col="0"]{
-                                            border:1px solid transparent;
-                                        }
-                                        #well-navigator-container > *.selected{
-                                            background-color: lightblue;
-                                        }
-                                    </style>
+                                    <link href="css/well_navigator.css" rel="stylesheet">
                                     <script src="src/well_navigator.js"></script>
                                     <div id="well-navigator-container" class="data" p:init="initwellnavigator()">
                                         <template class="data" p:for="well of plate_wells">
@@ -518,7 +454,7 @@
                                     <label>view contrast</label>
                                     <input type="number" min="0" max="4" value="1" step="0.2">
 
-                                    <div class="col-span-4" style="display:grid;grid-template-columns: repeat(6,auto);">
+                                    <div id="live-view-control" class="col-span-4">
                                         <button>Start Live</button>
                                         <button>Stop Live</button>
 
@@ -605,7 +541,7 @@
                                             <option value="{{channel.handle}}">{{channel.name}}</option>
                                         </template>
                                     </select>
-                                    <button>RUN</button>
+                                    <button>Run</button>
                                 </div>
                             </div>
                         </div>

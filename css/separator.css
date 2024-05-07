@@ -9,3 +9,6 @@
     height:2px;
     background:black;
 }
+#main-sep:hover{
+    cursor:ew-resize;
+}

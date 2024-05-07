@@ -15,3 +15,8 @@
     width:calc( var(--scale-x) * var(--width) );
     height:calc( var(--scale-y) * var(--height) );
 }
+
+#live-view-control{
+    display:grid;
+    grid-template-columns: repeat(6,auto);
+}

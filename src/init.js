@@ -1,3 +1,26 @@
+/** from p2.js */
+let _p=new Manager()
+
+class ImagingChannel{
+    /**
+     * 
+     * @param {string} name 
+     * @param {string} handle 
+     * @param {number} illum_perc 
+     * @param {number} exposure_time_ms 
+     * @param {number} analog_gain 
+     * @param {number} z_offset_um 
+     */
+    constructor(name,handle,illum_perc,exposure_time_ms,analog_gain,z_offset_um){
+        this.name=name
+        this.handle=handle
+        this.illum_perc=illum_perc
+        this.exposure_time_ms=exposure_time_ms
+        this.analog_gain=analog_gain
+        this.z_offset_um=z_offset_um
+    }
+}
+
 let microscope_config=_p.manage({
     base_path:"/home/pharmbio/Downloads/",
     project_name:"",
@@ -7,10 +30,13 @@ let microscope_config=_p.manage({
     grid:{
         num_x:2,
         delta_x_mm:0.9,
+
         num_y:2,
         delta_y_mm:0.9,
+
         num_z:1,
         delta_z_um:5,
+
         num_t:1,
         delta_t:{
             h:2,
@@ -28,70 +54,46 @@ let microscope_config=_p.manage({
     laser_af_enabled:false,
 
     channels:[
-        {
-            name:"Fluo 405 nm Ex",
-            handle:"fluo405",
-            illum_perc:100,
-            exposure_time_ms:5.0,
-            analog_gain:0,
-            z_offset_um:0,
-        },
-        {
-            name:"Fluo 488 nm Ex",
-            handle:"fluo488",
-            illum_perc:100,
-            exposure_time_ms:5.0,
-            analog_gain:0,
-            z_offset_um:0,
-        },
-        {
-            name:"Fluo 561 nm Ex",
-            handle:"fluo561",
-            illum_perc:100,
-            exposure_time_ms:5.0,
-            analog_gain:0,
-            z_offset_um:0,
-        },
-        {
-            name:"Fluo 688 nm Ex",
-            handle:"fluo688",
-            illum_perc:100,
-            exposure_time_ms:5.0,
-            analog_gain:0,
-            z_offset_um:0,
-        },
-        {
-            name:"Fluo 730 nm Ex",
-            handle:"fluo730",
-            illum_perc:100,
-            exposure_time_ms:5.0,
-            analog_gain:0,
-            z_offset_um:0,
-        },
-        {
-            name:"BF LED Full",
-            handle:"bfledfull",
-            illum_perc:20,
-            exposure_time_ms:5.0,
-            analog_gain:0,
-            z_offset_um:0,
-        },
-        {
-            name:"BF LED Right Half",
-            handle:"bfledright",
-            illum_perc:20,
-            exposure_time_ms:5.0,
-            analog_gain:0,
-            z_offset_um:0,
-        },
-        {
-            name:"BF LED Left Half",
-            handle:"bfledleft",
-            illum_perc:20,
-            exposure_time_ms:5.0,
-            analog_gain:0,
-            z_offset_um:0,
-        },
+        new ImagingChannel(
+            "Fluo 405 nm Ex",
+            "fluo405",
+            100,5.0,0,0
+        ),
+        new ImagingChannel(
+            "Fluo 488 nm Ex",
+            "fluo488",
+            100,5.0,0,0
+        ),
+        new ImagingChannel(
+            "Fluo 561 nm Ex",
+            "fluo561",
+            100,5.0,0,0
+        ),
+        new ImagingChannel(
+            "Fluo 688 nm Ex",
+            "fluo688",
+            100,5.0,0,0
+        ),
+        new ImagingChannel(
+            "Fluo 730 nm Ex",
+            "fluo730",
+            100,5.0,0,0
+        ),
+        new ImagingChannel(
+            "BF LED Full",
+            "bfledfull",
+            20,5.0,0,0
+        ),
+        new ImagingChannel(
+            "BF LED Right Half",
+            "bfledright",
+            20,5.0,0,0
+        ),
+        new ImagingChannel(
+            "BF LED Left Half",
+            "bfledleft",
+            20,5.0,0,0
+        ),
     ]
 })
 
@@ -146,124 +148,105 @@ const main_camera_pixel_types=[
         handle:"mono12"
     }
 ]
-const objectives=[
-    {
-        name:"4x Olympus",
-        handle:"4xolympus",
-    },
-    {
-        name:"10x Olympus",
-        handle:"10xolympus",
-    },
-    {
-        name:"20x Olympus",
-        handle:"20xolympus",
-    },
-]
-/**
- * return name of an objective when given its handle
- * @param {string} handle 
- * @returns 
- */
-const objective_handle2name=function(handle){
-    for(let o of objectives){
-        if(o.handle==handle){
-            return o.name
-        }
+
+class Objective{
+    /**
+     * 
+     * @param {string} name 
+     * @param {string} handle 
+     */
+    constructor(name,handle){
+        this.name=name
+        this.handle=handle
     }
-    return null
+
+    get magnification(){
+        return parseInt(this.name.split("x")[0])
+    }
+
+    static get all(){return [
+        new Objective("4x Olympus","4xolympus"),
+        new Objective("10x Olympus","10xolympus"),
+        new Objective("20x Olympus","20xolympus"),
+    ]}
+
+    /**
+     * return name of an objective when given its handle
+     * @param {string} handle 
+     * @returns {null|Objective} 
+     */
+    static fromHandle(handle){
+        for(let o of Objective.all){
+            if(o.handle==handle){
+                return o
+            }
+        }
+        return null
+    }
 }
 
-const wellplate_types=[
-    {
-        name:"96 Well Plate",
-        entries:[
-            {
-                name:"Perkin Elmer 96",
-                handle:"pe96"
-            },
-            {
-                name:"Falcon 96",
-                handle:"fa96"
-            }
-        ]
-    },
-    {
-        name:"384 Well Plate",
-        entries:[
-            {
-                name:"Perkin Elmer 384",
-                handle:"pe384"
-            },
-            {
-                name:"Falcon 384",
-                handle:"fa384"
-            },
-            {
-                name:"Thermo Fischer 384",
-                handle:"tf384"
-            }
-        ]
+
+class WellplateType{
+    /**
+     * 
+     * @param {string} handle 
+     * @param {string} name 
+     */
+    constructor(handle,name){
+        this.handle=handle
+        this.name=name
     }
-]
-/**
- * 
- * @param {HTMLElement} tab_header 
- * @returns 
- */
-const init_tab_header=function(tab_header){
-    let tab_header_children=tab_header.querySelectorAll("*[target]")
-    
-    /** @type HTMLElement[] */
-    let valid_tab_children=[]
-    tab_header_children.forEach((el)=>{
-        if(!(el instanceof HTMLElement)){return}
-        
-        let element_target_id=el.getAttribute("target")
-        if(!element_target_id){console.error("element target is null");return}
-        let tab_target=document.getElementById(element_target_id)
-        if(!tab_target){
-            console.error("tab header target '"+el.getAttribute("target")+"' not found",el);
-            return
+
+    get num_cols(){
+        if(this.handle.endsWith("96")){
+            return 12
+        }else if(this.handle.endsWith("384")){
+            return 24
+        }else{
+            throw new Error("unknown plate type "+this.handle+" for well navigator")
         }
-        tab_target.classList.add("hidden");
-
-        valid_tab_children.push(el);
-        el.addEventListener("click",tab_head_click);
-    });
-    if(valid_tab_children.length==0){
-        return
     }
-    valid_tab_children[0].click()
-}
-let _tabHeadMap_currentTarget=new Map()
-/**
- * 
- * @param {MouseEvent} e 
- */
-const tab_head_click=function(e){
-    let head=e.currentTarget;
-    if(!head){return}
-    if(!(head instanceof HTMLElement)){return}
-    if(!head.parentNode){return}
-
-    let current_target=_tabHeadMap_currentTarget.get(head.parentNode)
-    if(current_target){
-        current_target.classList.add("hidden");
+    get num_rows(){
+        if(this.handle.endsWith("96")){
+            return 8
+        }else if(this.handle.endsWith("384")){
+            return 16
+        }else{
+            throw new Error("unknown plate type "+this.handle+" for well navigator")
+        }
     }
 
-    head.parentNode.querySelectorAll("*").forEach((el)=>{
-        el.classList.remove("active")
-    });
+    static get all(){return [
+        {
+            name:"96 Well Plate",
+            entries:[
+                new WellplateType("pe96","Perkin Elmer 96"),
+                new WellplateType("fa96","Falcon 96"),
+            ]
+        },
+        {
+            name:"384 Well Plate",
+            entries:[
+                new WellplateType("pe384","Perkin Elmer 384"),
+                new WellplateType("fa384","Falcon 384"),
+                new WellplateType("tf384","Thermo Fischer 384"),
+            ]
+        }
+    ]}
 
-    head.classList.add("active")
-
-    let target = head.getAttribute("target")
-    if(!target){console.error("target is null");return}
-    let target_el = document.getElementById(target)
-    if(!target_el){console.error("target element not found");return}
-
-    _tabHeadMap_currentTarget.set(head.parentNode,target_el);
-    
-    target_el.classList.remove("hidden");
+    /**
+     * 
+     * @param {string} handle 
+     * @returns {null|WellplateType}
+     */
+    static fromHandle(handle){
+        for(let entry of this.all){
+            for(let type of entry.entries){
+                if(type.handle==handle){
+                    return type
+                }
+            }
+        }
+        return null
+    }
 }

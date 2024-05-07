@@ -27,6 +27,7 @@ class WellIndex{
 }
 /** @type{WellIndex[]} */
 const plate_wells=_p.manage([])
+
 /**
  * called when the selected well plate is changed or initially set
  */
@@ -34,21 +35,11 @@ function initwellnavigator(){
     let element=document.getElementById("well-navigator-container")
     if(!element){console.error("element not found");return}
 
-    let plate_type=microscope_config.wellplate_type.valueOf()
+    let plate_type=WellplateType.fromHandle(microscope_config.wellplate_type)
+    if(!plate_type){console.error("wellplate type not found");return}
     
-    let num_cols=0
-    let num_rows=0
-
-    // if plate type ends in 96, then 8x12
-    if(plate_type.endsWith("96")){
-        num_cols=12
-        num_rows=8
-    }else if(plate_type.endsWith("384")){
-        num_cols=24
-        num_rows=16
-    }else{
-        throw new Error("unknown plate type "+plate_type+" for well navigator")
-    }
+    let num_cols=plate_type.num_cols
+    let num_rows=plate_type.num_rows
 
     // add 1 for headers
     num_cols+=1

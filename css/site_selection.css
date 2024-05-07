@@ -6,15 +6,26 @@
     grid-column: 5;
     grid-row:2 / span 4;
 
+    /* center the single element inside the grid horizontally and vertically */
     display:grid;
-    --num-cols: 1;
-    --num-rows: 1;
-    grid-template-columns: repeat(var(--num-cols),1fr);
-    grid-template-rows: repeat(var(--num-rows),1fr);
+    justify-items:center;
+    align-items:center;
 }
 #site-selection *{
     border:1px solid black;
 
     height:var(--item-size);
     width:var(--item-size);
+}
+
+#site-selection-centerer{
+    width:auto;
+    height:auto;
+
+    display:grid;
+    grid-template-columns: repeat(var(--num-cols),var(--item-size));
+    grid-template-rows: repeat(var(--num-rows),var(--item-size));
+}
+.blue{
+    background:lightblue;
 }
