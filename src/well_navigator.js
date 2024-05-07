@@ -46,6 +46,8 @@ function initwellnavigator(){
     }else if(plate_type.endsWith("384")){
         num_cols=24
         num_rows=16
+    }else{
+        throw new Error("unknown plate type "+plate_type+" for well navigator")
     }
 
     // add 1 for headers
@@ -65,5 +67,6 @@ function initwellnavigator(){
         }
     }
 
-    plate_wells.splice(0,plate_wells.length,...new_plate_wells)
+    plate_wells.length=0
+    plate_wells.splice(0,0,...new_plate_wells)
 }
