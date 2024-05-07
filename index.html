@@ -144,7 +144,8 @@
                         }
                     </style>
                     <div id="control-top" class="section">
-                        <p class="section-header col-span-4">Set Camera Trigger and Pixel Format</p>
+                        <script src="src/docLinks.js"></script>
+                        <p class="section-header col-span-4">Set Camera Trigger and Pixel Format <a class="data" href="{{docLinks.mainCameraTriggerAndPixelFormat}}" target="_blank">Help</a></p>
 
                         <label class="data" p:tooltip="main imaging camera trigger type">Trigger</label>
                         <select class="data" p:bind="microscope_config.main_camera_trigger">
@@ -196,7 +197,7 @@
                                     }
                                 </style>
                                 <div id="path-config" class="section">
-                                    <p class="section-header col-span-3">Image Storage Path (Output)</p>
+                                    <p class="section-header col-span-3">Image Storage Path (Output) <a class="data" href="{{docLinks.storageOutputPath}}" target="_blank">Help</a></p>
 
                                     <label>Base Path</label>
                                     <input type="text" class="data" placeholder="base path" p:bind="microscope_config.base_path">
@@ -227,7 +228,7 @@
                                     }
                                 </style>
                                 <div id="grid-config" class="section">
-                                    <p class="section-header col-span-5">Imaging Site Configuration (within Well)</p>
+                                    <p class="section-header col-span-5">Imaging Site Configuration (within Well) <a class="data" href="{{docLinks.siteConfig}}" target="_blank">Help</a></p>
 
                                     <label>num x</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_x" p:on-input="updateGridMask()">
@@ -322,7 +323,7 @@
                                     }
                                 </style>
                                 <div id="acquisition-start-container" class="section">
-                                    <p class="section-header col-span-2">Main Acquisition Control</p>
+                                    <p class="section-header col-span-2">Main Acquisition Control <a class="data" href="{{docLinks.mainAcquisitionControl}}" target="_blank">Help</a></p>
 
                                     <style>
                                         #acquisition-channel-selection{
@@ -367,7 +368,7 @@
                                 </div>
 
                                 <div id="well-navigator" class="section">
-                                    <p class="section-header col-span-1">Plate Well Selection</p>
+                                    <p class="section-header col-span-1">Plate Well Selection <a class="data" href="{{docLinks.plateWellSelection}}" target="_blank">Help</a></p>
 
                                     <style>
                                         #well-navigator-header{
@@ -446,7 +447,7 @@
                                     }
                                 </style>
                                 <div id="snap-selection-container" class="section">
-                                    <p class="section-header col-span-4">Snap Selection Control</p>
+                                    <p class="section-header col-span-4">Snap Selection Control <a class="data" href="{{docLinks.snapSelectionControl}}" target="_blank">Help</a></p>
 
                                     <button>snap selection</button>
                                     <button>change selection</button>
@@ -464,7 +465,7 @@
                                     }
                                 </style>
                                 <div id="all-channel-container" class="section">
-                                    <p class="section-header col-span-6">Imaging Channel Configuration</p>
+                                    <p class="section-header col-span-6">Imaging Channel Configuration <a class="data" href="{{docLinks.imagingChannelConfig}}" target="_blank">Help</a></p>
 
                                     <template class="data" p:for="channel of microscope_config.channels">
                                         <div class="one-channel-container">
@@ -501,7 +502,7 @@
                                     }
                                 </style>
                                 <div id="histogram-container" class="section">
-                                    <p class="section-header col-span-4">Histogram</p>
+                                    <p class="section-header col-span-4">Histogram <a class="data" href="{{docLinks.histogramPanel}}" target="_blank">Help</a></p>
 
                                     <div class="col-span-4">
                                         <style>
@@ -540,7 +541,7 @@
                                     }
                                 </style>
                                 <div id="objective-position" class="section">
-                                    <p class="section-header col-span-5">Objective Position</p>
+                                    <p class="section-header col-span-5">Objective Position <a class="data" href="{{docLinks.objectivePositionControl}}" target="_blank">Help</a></p>
 
                                     <label>x (mm)</label>
                                     <p class="data">{{microscope_state.pos.x_mm}}</p>
@@ -572,7 +573,7 @@
                                     }
                                 </style>
                                 <div id="laser-autofocus-config" class="section">
-                                    <p class="section-header col-span-3">Laser Reflection Autofocus</p>
+                                    <p class="section-header col-span-3">Laser Reflection Autofocus <a class="data" href="{{docLinks.laserReflectionAutofocusControl}}" target="_blank">Help</a></p>
 
                                     <button>Initialize</button>
                                     <button>Go to reference</button>
@@ -592,7 +593,7 @@
                                     }
                                 </style>
                                 <div id="software-autofocus-controls" class="section">
-                                    <p class="section-header col-span-6">Software Autofocus</p>
+                                    <p class="section-header col-span-6">Software Autofocus <a class="data" href="{{docLinks.softwareAutofocusControl}}" target="_blank">Help</a></p>
 
                                     <label>delta z (um)</label>
                                     <input type="number" min="0.1" max="100" value="0.9" step="0.1">
