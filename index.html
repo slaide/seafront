@@ -4,7 +4,10 @@
         <meta charset="utf-8">
         <title>microscope</title>
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@main/p.js"></script>
+        <script src="../web-pjs/p2.js"></script>
+        <script>
+            let _p=new Manager()
+        </script>
         <link rel="stylesheet" href="reset.css">
         <link rel="stylesheet" href="p/style.css">
         <script src="src/init.js"></script>
@@ -30,7 +33,7 @@
         </style>
         <div id="main">
             <div id="main-view">
-                <div id="view-select" class="tab-header-container data" p:init="p.init_tab_header(element)">
+                <div id="view-select" class="tab-header-container data" p:init="init_tab_header(element)">
                     <div target="live-view">Live View</div>
                     <div target="grid-view">Channel View</div>
                     <div target="af-debug-panel">Laser Autofocus Debug</div>
@@ -42,82 +45,66 @@
                         <link rel="stylesheet" href="css/live_view.css">
                         <script src="src/plot.js"></script>
                         <div id="live-view-display" class="data"
-                            p:init="p.plot_init(element)"
-                            p:on-wheel="p.plot_zoom(event)"
-                            p:on-mousedown="p.plot_drag_start(event)"
-                            p:on-mousemove="p.plot_drag_move(event)"
-                            p:on-mouseup,mouseleave="p.plot_drag_end(event)"
-                            p:on-dblclick="p.plot_fit(event)"
+                            p:init="plot_init(element)"
+                            p:on-wheel="plot_zoom(event)"
+                            p:on-mousedown="plot_drag_start(event)"
+                            p:on-mousemove="plot_drag_move(event)"
+                            p:on-mouseup,mouseleave="plot_drag_end(event)"
+                            p:on-dblclick="plot_fit(event)"
                         >
                             <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg">
                         </div>
                     </div>
                     <div id="grid-view">
-                        grid view grid
-
                         <script>
-                            p.hello=function(){
-                                console.log("hello")
-                            }
-                            p.hello2=function(){
-                                console.log("hello2")
-                            }
-                            p.hello3=function(){
-                                console.log("hello3")
+                            function setGridViewCols(event){
+                                let num_cols=parseInt(event.target.value)
+                                document.getElementById("grid-view-container").style.setProperty("--num-cols",num_cols)
                             }
                         </script>
-                        <div style="display:hidden;" class="data" p:init="p.hello()">
-                            <div class="data" p:init="p.hello2()">
-                                <div class="data" p:init="p.hello3()"></div>
-                            </div>
-                        </div>
+                        <style>
+                            #grid-view-container{
+                                display:grid;
+                                --num-cols:3;
+                                grid-template-columns: repeat(var(--num-cols),1fr);
+                                grid-template-rows: repeat(4,1fr);
+                                gap:0.5em;
+                                /*scroll in y when content height exceeds own height */
+                                overflow-y:scroll;
+                                height:80vh;
+                            }
+                            #grid-view-container > div{
+                                border:1px solid black;
+                                display:flex;
+                                justify-content:center;
+                                align-items:center;
+                                /*also make these square*/
+                                aspect-ratio:1/1;
+                            }
+                        </style>
                         <script>
-                            p.someval=make_observable([0])
-                            p.v=make_observable(0)
                         </script>
-                        <button class="data" p:on-click="p.someval[0]++">{{p.v}}
-                            <template class="data" p:for="v of p.someval">
-                                <p>{{v}}</p>
+                        <div id="grid-view-container">
+                            <template class="data" p:for="channel of microscope_config.channels">
+                                <div>{{channel.name}}</div>
                             </template>
-                        </button>
-                        <script>
-                            p.valuelist=make_observable([
-                                {
-                                    title:"group 1",
-                                    values:[
-                                        {
-                                            name:"value 1",
-                                        },{
-                                            name:"value 2",
-                                        }
-                                    ],
-                                },
-                                {
-                                    title:"group 2",
-                                    values:[
-                                        {
-                                            name:"value 21",
-                                        },{
-                                            name:"value 22",
-                                        }
-                                    ],
-                                },
-                            ])
-                            p.moveup=function(event){
-                                console.log("move up",event)
-                            }
-                        </script>
-                        <template class="data" p:for="c of p.valuelist">
-                            <div>
-                                <div>{{c.title}}</div>
-                                <template class="data" p:for="v of c.values">
-                                    <div>{{v.name}}</div>
-                                    <button p:on-click="p.moveup">move up</button>
-                                </template>
-                            </div>
-                        </template>
+                        </div>
+                        <label>num columns:</label>
+                        <input type="number" min="2" max="4" value="4" class="data" p:init="setGridViewCols({target:element})" p:on-input="setGridViewCols(event)">
                     </div>
-                    <div id="af-debug-panel">af debug panel</div>
+                    <div id="af-debug-panel" class="data">
+                        <label>exposure time [ms]</label>
+                        <input type="number" min="0" max="936" value="100" step="1">
+                        <label>analog gain</label>
+                        <input type="number" min="0" max="24" value="0" step="1">
+                        <button>snap</button>
+
+                        <label>num images</label>
+                        <input type="number" min="3" max="43" step="2" value="11">
+                        <label>total delta z [um]</label>
+                        <input type="number" min="10" max="1000" step="10" value="400">
+                        <button>run</button>
+                    </div>
                     <div id="low-level-config-view">
                         <style>
                             #low-level-config-view > ul > li{
@@ -146,8 +133,8 @@
                     cursor:ew-resize;
                 }
             </style>
-            <script src="src/drag.js"></script>
-            <div id="main-sep" class="separator-vert data" p:on-mousedown="p.registerdrag(event)"></div>
+            <script src="src/drag_separator.js"></script>
+            <div id="main-sep" class="separator-vert data" p:on-mousedown="registerdrag(event)"></div>
             <div id="main-control">
                 <div>
                     <style>
@@ -160,15 +147,15 @@
                         <p class="section-header col-span-4">Set Camera Trigger and Pixel Format</p>
 
                         <label class="data" p:tooltip="main imaging camera trigger type">Trigger</label>
-                        <select class="data" p:bind="p.config.main_camera_trigger">
-                            <template class="data" p:for="trigger of p.main_camera_triggers">
+                        <select class="data" p:bind="microscope_config.main_camera_trigger">
+                            <template class="data" p:for="trigger of main_camera_triggers">
                                 <option value="{{trigger.handle}}">{{trigger.name}}</option>
                             </template>
                         </select>
 
                         <label>Camera Pixel Type</label>
-                        <select class="data" p:bind="p.config.main_camera_pixel_type">
-                            <template class="data" p:for="format of p.main_camera_pixel_types">
+                        <select class="data" p:bind="microscope_config.main_camera_pixel_type">
+                            <template class="data" p:for="format of main_camera_pixel_types">
                                 <option value="{{format.handle}}">{{format.name}}</option>
                             </template>
                         </select>
@@ -186,7 +173,7 @@
                         <button>Load Configuration</button>
                     </div>
                     <div>
-                        <div id="control-select" class="tab-header-container data" p:init="p.init_tab_header(element)">
+                        <div id="control-select" class="tab-header-container data" p:init="init_tab_header(element)">
                             <div target="acquisition-control">Aquisition Control</div>
                             <div target="lighting-control">Lighting and Focus</div>
                         </div>
@@ -212,11 +199,11 @@
                                     <p class="section-header col-span-3">Image Storage Path (Output)</p>
 
                                     <label>Base Path</label>
-                                    <input type="text" class="data" placeholder="base path" p:bind="p.config.base_path">
+                                    <input type="text" class="data" placeholder="base path" p:bind="microscope_config.base_path">
                                     <button>Browse</button>
 
                                     <label>Project Name</label>
-                                    <input class="col-span-2 data" type="text" placeholder="project name" p:bind="p.config.project_name">
+                                    <input class="col-span-2 data" type="text" placeholder="project name" p:bind="microscope_config.project_name">
 
                                     <!--label>Image Format</label>
                                     <select>
@@ -225,10 +212,10 @@
                                     </select-->
 
                                     <label class="data" p:tooltip="whatever">Plate Name</label>
-                                    <input class="col-span-2 data" type="text" placeholder="plate name" p:bind="p.config.plate_name">
+                                    <input class="col-span-2 data" type="text" placeholder="plate name" p:bind="microscope_config.plate_name">
 
                                     <label>Cell Line</label>
-                                    <input class="col-span-2 data" type="text" placeholder="cell line" p:bind="p.config.cell_line">
+                                    <input class="col-span-2 data" type="text" placeholder="cell line" p:bind="microscope_config.cell_line">
                                 </div>
 
                                 <style>
@@ -243,64 +230,88 @@
                                     <p class="section-header col-span-5">Imaging Site Configuration (within Well)</p>
 
                                     <label>num x</label>
-                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="p.config.grid.num_x">
+                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_x" p:on-input="updateGridMask()">
                                     <label>delta x</label>
-                                    <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="p.config.grid.delta_x_mm">
+                                    <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_x_mm">
 
                                     <label>num y</label>
-                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="p.config.grid.num_y">
+                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_y" p:on-input="updateGridMask()">
                                     <label>delta y</label>
-                                    <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="p.config.grid.delta_y_mm">
+                                    <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_y_mm">
 
                                     <label>num z</label>
-                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="p.config.grid.num_z">
+                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_z">
                                     <label>delta z</label>
-                                    <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="p.config.grid.delta_z_um">
+                                    <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_z_um">
 
                                     <label>num t</label>
-                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="p.config.grid.num_t">
+                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_t">
                                     <label>delta t</label>
                                     <p class="inline-container">
-                                        <input type="number" min="0" max="23" value="3" step="1" class="data" p:bind="p.config.grid.delta_t.h">
+                                        <input type="number" min="0" max="23" value="3" step="1" class="data" p:bind="microscope_config.grid.delta_t.h">
                                         <label>h</label>
-                                        <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="p.config.grid.delta_t.m">
+                                        <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="microscope_config.grid.delta_t.m">
                                         <label>m</label>
-                                        <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="p.config.grid.delta_t.s">
+                                        <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="microscope_config.grid.delta_t.s">
                                         <label>s</label>
                                     </p>
 
                                     <link rel="stylesheet" href="css/site_selection.css">
                                     <script>
-                                        p.grid_mask=make_observable([])
-                                        p.updateGridMask=function(info){
-                                            let element=info.element || info
+                                        let grid_mask=_p.manage([])
+                                        const updateGridMask=function(){
+                                            let element=document.getElementById("site-selection-centerer")
 
-                                            let num_rows=p.config.grid.num_y.valueOf();
-                                            let num_cols=p.config.grid.num_x.valueOf();
+                                            let num_rows=microscope_config.grid.num_y.valueOf()
+                                            let num_cols=microscope_config.grid.num_x.valueOf()
 
-                                            p.grid_mask.length=0
+                                            grid_mask.length=0
 
                                             for(let i=0;i<num_rows;i++){
                                                 let row=[]
                                                 for(let j=0;j<num_cols;j++){
-                                                    row.push({row:i,col:j})
+                                                    row.push({row:i,col:j,selected:true})
                                                 }
-                                                p.grid_mask.push(row)
+                                                grid_mask.push(row)
                                             }
 
                                             let max_num_items=Math.max(num_rows,num_cols)
-                                            element.style.setProperty("--item-size",element.clientWidth/max_num_items-2+"px");
+                                            element.style.setProperty("--item-size",element.parentElement.clientWidth/max_num_items-2+"px")
 
-                                            element.style.setProperty("--num-cols",num_cols);
-                                            element.style.setProperty("--num-rows",num_rows);
+                                            element.style.setProperty("--num-cols",num_cols)
+                                            element.style.setProperty("--num-rows",num_rows)
+                                        }
+                                        function toggleGridItem(cell){
+                                            grid_mask[cell.row][cell.col].selected=!grid_mask[cell.row][cell.col].selected
                                         }
                                     </script>
-                                    <div id="site-selection" class="data" p:on-objchange(p.config.grid)="p.updateGridMask(info)">
-                                        <template class="data" p:for="row of p.grid_mask">
-                                            <template class="data" p:for="cell of row">
-                                                <div grid-column="{{cell.col+1}}" grid-row="{{cell.row+1}}"></div>
+                                    <style>
+                                        #site-selection{
+                                            /* center the single element inside the grid horizontally and vertically */
+                                            display:grid;
+                                            justify-items:center;
+                                            align-items:center;
+                                        }
+                                        #site-selection-centerer{
+                                            width:auto;
+                                            height:auto;
+
+                                            display:grid;
+                                            grid-template-columns: repeat(var(--num-cols),var(--item-size));
+                                            grid-template-rows: repeat(var(--num-rows),var(--item-size));
+                                        }
+                                        .blue{
+                                            background:lightblue;
+                                        }
+                                    </style>
+                                    <div id="site-selection" class="data" p:init="updateGridMask()">
+                                        <div id="site-selection-centerer">
+                                            <template p:for="row of grid_mask">
+                                                <template p:for="cell of row">
+                                                    <div grid-column="{{cell.col+1}}" grid-row="{{cell.row+1}}" class="{{cell.selected?'blue':''}}" p:on-click="toggleGridItem(cell)"></div>
+                                                </template>
                                             </template>
-                                        </template>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -320,7 +331,7 @@
                                     </style>
                                     <div>
                                         <select id="acquisition-channel-selection" multiple>
-                                            <template class="data" p:for="channel of p.config.channels">
+                                            <template class="data" p:for="channel of microscope_config.channels">
                                                 <option value="{{channel.handle}}">{{channel.name}}</option>
                                             </template>
                                         </select>
@@ -335,7 +346,7 @@
                                     </style>
                                     <div class="inline-container">
                                         <label for="acquisition-laser-autofocus-enabled">Use Laser Reflection Autofocus</label>
-                                        <input id="acquisition-laser-autofocus-enabled" type="checkbox" class="data" p:bind="p.config.laser_af_enabled">
+                                        <input id="acquisition-laser-autofocus-enabled" type="checkbox" class="data" p:bind="microscope_config.laser_af_enabled">
                                     </div>
                                     <style>
                                         #acquisition-progress-bar{
@@ -367,9 +378,10 @@
                                     <div id="well-navigator-header">
                                         <label class="data" p:tooltip="the type of plate currently on the plate">Plate Type</label>
                                         <select class="data"
-                                            p:bind="p.config.wellplate_type"
+                                            p:bind="microscope_config.wellplate_type"
+                                            p:on-input="initwellnavigator()"
                                         >
-                                            <template class="data" p:for="plate_type of p.wellplate_types">
+                                            <template class="data" p:for="plate_type of wellplate_types">
                                                 <optgroup label="{{plate_type.name}}">
                                                     <template class="data" p:for="type of plate_type.entries">
                                                         <option value="{{type.handle}}">{{type.name}}</option>
@@ -379,9 +391,9 @@
                                         </select>
                                         <label class="data" p:tooltip="the camera objective that is physically installed on the microscope">Objective</label>
                                         <select class="data"
-                                            p:bind="p.config.objective"
+                                            p:bind="microscope_config.objective"
                                         >
-                                            <template class="data" p:for="objective of p.objectives">
+                                            <template class="data" p:for="objective of objectives">
                                                 <option value="{{objective.handle}}">{{objective.name}}</option>
                                             </template>
                                         </select>
@@ -415,21 +427,9 @@
                                         }
                                     </style>
                                     <script src="src/well_navigator.js"></script>
-                                    <div id="well-navigator-container" class="data" p:on-objchange(p.config.wellplate_type)="p.initwellnavigator(info)">
-                                        <template class="data" p:for="well of p.plate_wells">
-                                            <div>
-                                                {{
-                                                    if(well.row!=0 && well.col==0){
-                                                        // row header, as string
-                                                        String.fromCharCode(65+well.row-1)
-                                                    }else if(well.row==0 && well.col!=0){
-                                                        // column header, just a number
-                                                        well.col.valueOf()
-                                                    }else{
-                                                        ""
-                                                    }
-                                                }}
-                                            </div>
+                                    <div id="well-navigator-container" class="data" p:init="initwellnavigator()">
+                                        <template class="data" p:for="well of plate_wells">
+                                            <div>{{well.label}}</div>
                                         </template>
                                     </div>
                                 </div>
@@ -466,30 +466,30 @@
                                 <div id="all-channel-container" class="section">
                                     <p class="section-header col-span-6">Imaging Channel Configuration</p>
 
-                                    <template class="data" p:for="channel of p.config.channels">
+                                    <template class="data" p:for="channel of microscope_config.channels">
                                         <div class="one-channel-container">
                                             <p class="col-span-2">{{channel.name}}</p>
                                             <button class="col-span-2">Snap</button>
                                             <label class="data" p:tooltip="hello there">Illumination (%)</label>
                                             <input type="number"
-                                                min="{{p.limits.illumination_percent.min}}"
-                                                max="{{p.limits.illumination_percent.max}}"
-                                                value="{{p.limits.illumination_percent.default}}" step="0.1" class="data" p:bind="channel.illum_perc">
+                                                min="{{limits.illumination_percent.min}}"
+                                                max="{{limits.illumination_percent.max}}"
+                                                value="{{limits.illumination_percent.default}}" step="0.1" class="data" p:bind="channel.illum_perc">
                                             <label>Exposure time (ms)</label>
                                             <input type="number"
-                                                min="{{p.limits.exposure_time_ms.min}}"
-                                                max="{{p.limits.exposure_time_ms.max}}"
-                                                value="{{p.limits.exposure_time_ms.default}}" step="0.1" class="data" p:bind="channel.exposure_time_ms">
+                                                min="{{limits.exposure_time_ms.min}}"
+                                                max="{{limits.exposure_time_ms.max}}"
+                                                value="{{limits.exposure_time_ms.default}}" step="0.1" class="data" p:bind="channel.exposure_time_ms">
                                             <label>Analog Gain</label>
                                             <input type="number"
-                                                min="{{p.limits.analog_gain.min}}"
-                                                max="{{p.limits.analog_gain.max}}"
-                                                value="{{p.limits.analog_gain.default}}" step="0.1" class="data" p:bind="channel.analog_gain">
+                                                min="{{limits.analog_gain.min}}"
+                                                max="{{limits.analog_gain.max}}"
+                                                value="{{limits.analog_gain.default}}" step="0.1" class="data" p:bind="channel.analog_gain">
                                             <label>Z Offset (um)</label>
                                             <input type="number"
-                                                min="{{p.limits.z_offset_um.min}}"
-                                                max="{{p.limits.z_offset_um.max}}"
-                                                value="{{p.limits.z_offset_um.default}}" step="0.1" class="data" p:bind="channel.z_offset_um">
+                                                min="{{limits.z_offset_um.min}}"
+                                                max="{{limits.z_offset_um.max}}"
+                                                value="{{limits.z_offset_um.default}}" step="0.1" class="data" p:bind="channel.z_offset_um">
                                         </div>
                                     </template>
                                 </div>
@@ -510,82 +510,7 @@
                                             }
                                         </style>
                                         <div id="histogram-panel"></div>
-                                        <script>
-                                            function rand(min_v,max_v){
-                                                if(min_v==null){
-                                                    min_v=0
-                                                }
-                                                if(max_v==null){
-                                                    max_v=1
-                                                }
-                                                return Math.random() * (max_v - min_v) + min_v;
-                                            }
-                                            function nrand(n,min_v,max_v){
-                                                let out=[]
-                                                for(let i=0;i<n;i++){
-                                                    out.push(rand(min_v,max_v))
-                                                }
-                                                return out
-                                            }
-                                            const data = [{
-                                                x: [0, 50, 100, 150, 200, 255],
-                                                y: nrand(6,0,100),
-                                                type: 'line',
-                                                name: "Fluo 405 nm Ex"
-                                            },{
-                                                x: [0, 50, 100, 150, 200, 255],
-                                                y: nrand(6,0,100),
-                                                type: 'line',
-                                                name: "Fluo 730 nm Ex"
-                                            },{
-                                                x: [0, 50, 100, 150, 200, 255],
-                                                y: nrand(6,10,200),
-                                                type: 'line',
-                                                name: "Fluo 688 nm Ex"
-                                            }];
-
-                                            const layout={
-                                                title: 'Create a Static Chart',
-                                                showlegend: true,
-                                                legend: {
-                                                    orientation: 'h',
-                                                    y:-0.4,
-                                                },
-                                                margin: { t: 0,l:20,b:20,r:0},
-                                                updatemenus: [{
-                                                    type: 'buttons',
-                                                    direction: 'left',
-                                                    x: 0.1,
-                                                    xanchor: 'center',
-                                                    y: -0.15,
-                                                    yanchor: 'top',
-                                                    buttons: [
-                                                        {
-                                                            method: 'relayout',
-                                                            args: ['yaxis.type', 'linear'],
-                                                            label: 'Y\' = Y'
-                                                        }, {
-                                                            method: 'relayout',
-                                                            args: ['yaxis.type', 'log'],
-                                                            label: 'Y\' = log(Y)'
-                                                        }
-                                                    ]
-                                                }]
-                                            }
-                                            const config={
-                                                responsive: true,
-                                                // staticPlot: true,
-                                                // displayModeBar: false,
-                                            };
-                                            let observer = new MutationObserver(function(mutations) {
-                                                window.dispatchEvent(new Event('resize'));
-                                            });
-
-                                            let child = document.getElementById('histogram-panel');
-                                            observer.observe(child, {attributes: true})
-
-                                            Plotly.newPlot('histogram-panel', data, layout, config);
-                                        </script>
+                                        <script src="src/histogram.js"></script>
                                     </div>
                                     <label>view brightness</label>
                                     <input type="number" min="0" max="4" value="1" step="0.2">
@@ -598,7 +523,7 @@
 
                                         <label>channel</label>
                                         <select>
-                                            <template id="whatever" class="data" p:for="channel of p.config.channels">
+                                            <template id="whatever" class="data" p:for="channel of microscope_config.channels">
                                                 <option value="{{channel.handle}}">{{channel.name}}</option>
                                             </template>
                                         </select>
@@ -618,19 +543,19 @@
                                     <p class="section-header col-span-5">Objective Position</p>
 
                                     <label>x (mm)</label>
-                                    <p class="data" p:bind="p.microscope_state.pos.x_mm"></p>
+                                    <p class="data">{{microscope_state.pos.x_mm}}</p>
                                     <input type="number" min="0.01" max="100" step="0.01" value="1">
                                     <button>Forward</button>
                                     <button>Backward</button>
 
                                     <label>y (mm)</label>
-                                    <p class="data" p:bind="p.microscope_state.pos.y_mm"></p>
+                                    <p class="data">{{microscope_state.pos.y_mm}}</p>
                                     <input type="number" min="0.01" max="100" step="0.01" value="1">
                                     <button>Forward</button>
                                     <button>Backward</button>
 
                                     <label>z (um)</label>
-                                    <p class="data" p:bind="p.microscope_state.pos.z_um"></p>
+                                    <p class="data">{{microscope_state.pos.z_um}}</p>
                                     <input type="number" min="0.01" max="100" step="0.01" value="1">
                                     <button>Forward</button>
                                     <button>Backward</button>
@@ -675,7 +600,7 @@
                                     <label>num images</label>
                                     <input type="number" min="3" max="100" value="11" step="2">
                                     <select>
-                                        <template class="data" p:for="channel of p.config.channels">
+                                        <template class="data" p:for="channel of microscope_config.channels">
                                             <option value="{{channel.handle}}">{{channel.name}}</option>
                                         </template>
                                     </select>

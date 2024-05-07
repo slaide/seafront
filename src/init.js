@@ -1,5 +1,4 @@
-
-p.config=make_observable({
+let microscope_config=_p.manage({
     base_path:"/home/pharmbio/Downloads/",
     project_name:"",
     plate_name:"",
@@ -96,7 +95,7 @@ p.config=make_observable({
     ]
 })
 
-p.microscope_state=make_observable({
+let microscope_state=_p.manage({
     pos:{
         x_mm:12.123,
         y_mm:23.123,
@@ -104,7 +103,7 @@ p.microscope_state=make_observable({
     },
 })
 
-p.limits={
+const limits={
     illumination_percent:{
         min:20,
         max:100,
@@ -127,7 +126,7 @@ p.limits={
     }
 }
 
-p.main_camera_triggers=[
+const main_camera_triggers=[
     {
         name:"Software",
         handle:"software"
@@ -137,7 +136,7 @@ p.main_camera_triggers=[
         handle:"hardware"
     }
 ]
-p.main_camera_pixel_types=[
+const main_camera_pixel_types=[
     {
         name:"8 bit",
         handle:"mono8"
@@ -147,7 +146,7 @@ p.main_camera_pixel_types=[
         handle:"mono12"
     }
 ]
-p.objectives=[
+const objectives=[
     {
         name:"4x Olympus",
         handle:"4xolympus",
@@ -166,8 +165,8 @@ p.objectives=[
  * @param {string} handle 
  * @returns 
  */
-p.objective_handle2name=function(handle){
-    for(let o of p.objectives){
+const objective_handle2name=function(handle){
+    for(let o of objectives){
         if(o.handle==handle){
             return o.name
         }
@@ -175,7 +174,7 @@ p.objective_handle2name=function(handle){
     return null
 }
 
-p.wellplate_types=[
+const wellplate_types=[
     {
         name:"96 Well Plate",
         entries:[
@@ -212,12 +211,14 @@ p.wellplate_types=[
  * @param {HTMLElement} tab_header 
  * @returns 
  */
-p.init_tab_header=function(tab_header){
+const init_tab_header=function(tab_header){
     let tab_header_children=tab_header.querySelectorAll("*[target]")
     
     /** @type HTMLElement[] */
     let valid_tab_children=[]
     tab_header_children.forEach((el)=>{
+        if(!(el instanceof HTMLElement)){return}
+        
         let element_target_id=el.getAttribute("target")
         if(!element_target_id){console.error("element target is null");return}
         let tab_target=document.getElementById(element_target_id)
@@ -228,38 +229,41 @@ p.init_tab_header=function(tab_header){
         tab_target.classList.add("hidden");
 
         valid_tab_children.push(el);
-        el.addEventListener("click",p.tab_head_click);
+        el.addEventListener("click",tab_head_click);
     });
     if(valid_tab_children.length==0){
         return
     }
     valid_tab_children[0].click()
 }
+let _tabHeadMap_currentTarget=new Map()
 /**
  * 
  * @param {MouseEvent} e 
  */
-p.tab_head_click=function(e){
+const tab_head_click=function(e){
     let head=e.currentTarget;
     if(!head){return}
     if(!(head instanceof HTMLElement)){return}
     if(!head.parentNode){return}
 
-    let current_target=head.parentNode.current_target;
+    let current_target=_tabHeadMap_currentTarget.get(head.parentNode)
     if(current_target){
         current_target.classList.add("hidden");
     }
 
     head.parentNode.querySelectorAll("*").forEach((el)=>{
-        el.classList.remove("active");
+        el.classList.remove("active")
     });
 
-    head.classList.add("active");
+    head.classList.add("active")
 
-    let target = head.getAttribute("target");
+    let target = head.getAttribute("target")
     if(!target){console.error("target is null");return}
-    let target_el = document.getElementById(target);
-    head.parentNode.current_target = target_el;
+    let target_el = document.getElementById(target)
+    if(!target_el){console.error("target element not found");return}
+
+    _tabHeadMap_currentTarget.set(head.parentNode,target_el);
     
     target_el.classList.remove("hidden");
 }

@@ -2,7 +2,7 @@
  * 
  * @param {HTMLElement} element 
  */
-p.bare_init_tooltip=function(element){
+const bare_init_tooltip=function(element){
     /// init tooltip to be definitely visible (which it should be, in the top left corner of the viewport)
     element.style.left="0px"
     element.style.top="0px"
@@ -10,7 +10,7 @@ p.bare_init_tooltip=function(element){
 /**
  * @param {HTMLElement} element
  */
-p.init_tooltip=function(element){
+const init_tooltip=function(element){
     /// actually init element position to top center of the element that it is attached to
     let rect=element.element_anker.getBoundingClientRect()
 
