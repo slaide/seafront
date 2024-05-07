@@ -19,28 +19,56 @@ class PlotData{
     getDeltaY(){
         return this.y_max-this.y_min
     }
-}
-/** @type {Map<HTMLElement,PlotData>} */
-let elementPlotData=new Map()
-/**
- * retrieve plot data (mainly axis limits) for a given plot element
- * @param {HTMLElement} element 
- * @returns {PlotData}
- */
-function getElementPlotData(element){
-    if(!elementPlotData.has(element)){
-        elementPlotData.set(element,new PlotData(0,0,0,0))
+
+    /** @type {Map<HTMLElement,PlotData>} */
+    static _elementPlotData=new Map()
+    /**
+     * retrieve plot data (mainly axis limits) for a given plot element
+     * @param {HTMLElement} element 
+     * @returns {PlotData}
+     */
+    static getFor(element){
+        if(!this._elementPlotData.has(element)){
+            let initial_x_min=parseFloat(element.getAttribute("plot-x-min")||"nan")
+            let initial_x_max=parseFloat(element.getAttribute("plot-x-max")||"nan")
+            let initial_y_min=parseFloat(element.getAttribute("plot-y-min")||"nan")
+            let initial_y_max=parseFloat(element.getAttribute("plot-y-max")||"nan")
+
+            // if initial_x_min is nan, set to 0
+            if(isNaN(initial_x_min)){
+                initial_x_min=0
+            }
+            // if initial_x_max is nan, set to initial_x_min+child.clientWidth
+            if(isNaN(initial_x_max)){
+                initial_x_max=initial_x_min+element.clientWidth
+            }
+            // if initial_y_min is nan, set to 0
+            if(isNaN(initial_y_min)){
+                initial_y_min=0
+            }
+            // if initial_y_max is nan, set to initial_y_min+child.clientHeight
+            if(isNaN(initial_y_max)){
+                initial_y_max=initial_y_min+element.clientHeight
+            }
+
+            console.log(element,initial_x_min,initial_x_max,initial_y_min,initial_y_max)
+            this._elementPlotData.set(element,new PlotData(initial_x_min,initial_x_max,initial_y_min,initial_y_max))
+        }
+
+        let ret=this._elementPlotData.get(element)
+        if(!ret){throw new Error("unreachable")}
+
+        return ret
     }
-    let ret=elementPlotData.get(element)
-    if(!ret){throw new Error("unreachable")}
-    return ret
 }
+
 /**
  * update plot display given current state
  * @param {HTMLElement} plot 
  */
 const plot_update=function(plot){
-    let plot_data=getElementPlotData(plot)
+    let plot_data=PlotData.getFor(plot)
+
     let x_range = plot_data.x_max - plot_data.x_min;
     let y_range = plot_data.y_max - plot_data.y_min;
 
@@ -52,13 +80,14 @@ const plot_update=function(plot){
 
     for(let child of plot.children){
         if(!(child instanceof HTMLElement)){continue}
-        let child_plot_data=getElementPlotData(child)
+        let child_plot_data=PlotData.getFor(child)
         let c_width=child_plot_data.getDeltaX()
         let c_height=child_plot_data.getDeltaY()
 
         child.style.setProperty("--scale-x",scale_x+"")
         child.style.setProperty("--scale-y",scale_y+"")
 
+        console.log(child_plot_data.x_min)
         child.style.setProperty("--left",(child_plot_data.x_min-plot_data.x_min)*scale_x+"px")
         child.style.setProperty("--bottom",(child_plot_data.y_min-plot_data.y_min)*scale_y+"px")
     }
@@ -87,7 +116,7 @@ function plot_zoom(event){
         zoom*=-1;
     }
     
-    let plot_data=getElementPlotData(plot)
+    let plot_data=PlotData.getFor(plot)
     let x_range = plot_data.getDeltaX()
     let y_range = plot_data.getDeltaY()
 
@@ -120,7 +149,7 @@ function plot_drag_move(event){
     if(plotDragData && plotDragData.in_progress){
         event.preventDefault()
 
-        let plot_data=getElementPlotData(plot)
+        let plot_data=PlotData.getFor(plot)
         let x_range = plot_data.getDeltaX()
         let y_range = plot_data.getDeltaY()
 
@@ -166,11 +195,8 @@ function plot_drag_end(event){
 function plot_init(plot){
     for(let child of plot.children){
         if(!(child instanceof HTMLElement)){continue}
-        let child_plot_data=getElementPlotData(child)
-        child_plot_data.x_min=0
-        child_plot_data.x_max=child.clientWidth
-        child_plot_data.y_min=0
-        child_plot_data.y_max=child.clientHeight
+        // ensure there is plot data for each child
+        PlotData.getFor(child)
 
         child.style.setProperty("--width",child.clientWidth+"px");
         child.style.setProperty("--height",child.clientHeight+"px");
@@ -195,14 +221,16 @@ function plot_fit(plot){
 
     for(let child of plot_element.children){
         if(!(child instanceof HTMLElement)){continue}
-        let child_plot_data=getElementPlotData(child)
+
+        let child_plot_data=PlotData.getFor(child)
+
         x_min=Math.min(x_min,child_plot_data.x_min)
         x_max=Math.max(x_max,child_plot_data.x_max)
         y_min=Math.min(y_min,child_plot_data.y_min)
         y_max=Math.max(y_max,child_plot_data.y_max)
     }
 
-    let plot_data=getElementPlotData(plot_element)
+    let plot_data=PlotData.getFor(plot_element)
     plot_data.x_min=x_min
     plot_data.x_max=x_max
     plot_data.y_min=y_min
