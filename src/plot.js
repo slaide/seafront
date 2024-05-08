@@ -5,12 +5,14 @@ class PlotData{
      * @param {number} x_max 
      * @param {number} y_min 
      * @param {number} y_max 
+     * @param {HTMLElement[]} elements elements to share this plot data with
      */
-    constructor(x_min,x_max,y_min,y_max){
+    constructor(x_min,x_max,y_min,y_max,elements=[]){
         this.x_min=x_min
         this.x_max=x_max
         this.y_min=y_min
         this.y_max=y_max
+        this.elements=elements
     }
 
     getDeltaX(){
@@ -18,6 +20,37 @@ class PlotData{
     }
     getDeltaY(){
         return this.y_max-this.y_min
+    }
+
+    /**
+     * 
+     * @param {HTMLElement} element 
+     * @returns {number}
+     */
+    static getClientWidth(element){
+        let width=element.clientWidth
+        if(width==0){
+            let width_attribute=element.getAttribute("width")
+            if(width_attribute){
+                width=parseFloat(width_attribute)
+            }
+        }
+        return width
+    }
+    /**
+     * 
+     * @param {HTMLElement} element
+     * @returns {number}
+     */
+    static getClientHeight(element){
+        let height=element.clientHeight
+        if(height==0){
+            let height_attribute=element.getAttribute("height")
+            if(height_attribute){
+                height=parseFloat(height_attribute)
+            }
+        }
+        return height
     }
 
     /** @type {Map<HTMLElement,PlotData>} */
@@ -40,7 +73,8 @@ class PlotData{
             }
             // if initial_x_max is nan, set to initial_x_min+child.clientWidth
             if(isNaN(initial_x_max)){
-                initial_x_max=initial_x_min+element.clientWidth
+                let element_width=this.getClientWidth(element)
+                initial_x_max=initial_x_min+element_width
             }
             // if initial_y_min is nan, set to 0
             if(isNaN(initial_y_min)){
@@ -48,17 +82,40 @@ class PlotData{
             }
             // if initial_y_max is nan, set to initial_y_min+child.clientHeight
             if(isNaN(initial_y_max)){
-                initial_y_max=initial_y_min+element.clientHeight
+                let element_height=this.getClientHeight(element)
+                initial_y_max=initial_y_min+element_height
             }
 
-            console.log(element,initial_x_min,initial_x_max,initial_y_min,initial_y_max)
-            this._elementPlotData.set(element,new PlotData(initial_x_min,initial_x_max,initial_y_min,initial_y_max))
+            this._elementPlotData.set(element,new PlotData(initial_x_min,initial_x_max,initial_y_min,initial_y_max,[element]))
         }
 
         let ret=this._elementPlotData.get(element)
         if(!ret){throw new Error("unreachable")}
 
         return ret
+    }
+
+    update(){
+        for(let element of this.elements){
+            plot_update(element)
+        }
+    }
+    /**
+     * link this PlotData element instance to a given HTMLElement
+     * 
+     * handles duplicates (by ignoring them, i.e. will not add the same element twice)
+     * @param {HTMLElement} element 
+     */
+    link(element){
+        // override existing plot data
+        PlotData._elementPlotData.set(element,this)
+        for(let existing_element of this.elements){
+            if(existing_element===element){
+                return
+            }
+        }
+        // add new element to list of elements associated with this plot data
+        this.elements.push(element)
     }
 }
 
@@ -72,8 +129,8 @@ const plot_update=function(plot){
     let x_range = plot_data.x_max - plot_data.x_min;
     let y_range = plot_data.y_max - plot_data.y_min;
 
-    let plot_x_size=plot.clientWidth;
-    let plot_y_size=plot.clientHeight;
+    let plot_x_size=PlotData.getClientWidth(plot)
+    let plot_y_size=PlotData.getClientHeight(plot)
 
     let scale_x=(plot_x_size/x_range);
     let scale_y=(plot_y_size/y_range);
@@ -87,7 +144,6 @@ const plot_update=function(plot){
         child.style.setProperty("--scale-x",scale_x+"")
         child.style.setProperty("--scale-y",scale_y+"")
 
-        console.log(child_plot_data.x_min)
         child.style.setProperty("--left",(child_plot_data.x_min-plot_data.x_min)*scale_x+"px")
         child.style.setProperty("--bottom",(child_plot_data.y_min-plot_data.y_min)*scale_y+"px")
     }
@@ -125,7 +181,7 @@ function plot_zoom(event){
     plot_data.y_min += y_range*zoom
     plot_data.y_max -= y_range*zoom
 
-    plot_update(plot)
+    plot_data.update()
 }
 /** @type {Map<HTMLElement,{in_progress:boolean,x_start:number,y_start:number}>} */
 const plotDragInfo=new Map()
@@ -153,8 +209,8 @@ function plot_drag_move(event){
         let x_range = plot_data.getDeltaX()
         let y_range = plot_data.getDeltaY()
 
-        let plot_x_size=plot.clientWidth
-        let plot_y_size=plot.clientHeight
+        let plot_x_size=PlotData.getClientWidth(plot)
+        let plot_y_size=PlotData.getClientHeight(plot)
 
         let scale_x=(plot_x_size/x_range)
         let scale_y=(plot_y_size/y_range)
@@ -170,7 +226,7 @@ function plot_drag_move(event){
         plotDragData.x_start=event.clientX
         plotDragData.y_start=event.clientY
 
-        plot_update(plot)
+        plot_data.update()
     }
 }
 
@@ -198,8 +254,11 @@ function plot_init(plot){
         // ensure there is plot data for each child
         PlotData.getFor(child)
 
-        child.style.setProperty("--width",child.clientWidth+"px");
-        child.style.setProperty("--height",child.clientHeight+"px");
+        let child_width=PlotData.getClientWidth(child)
+        let child_height=PlotData.getClientHeight(child)
+
+        child.style.setProperty("--width",child_width+"px");
+        child.style.setProperty("--height",child_height+"px");
         child.classList.add("plot-img")
     }
 
@@ -236,5 +295,5 @@ function plot_fit(plot){
     plot_data.y_min=y_min
     plot_data.y_max=y_max
 
-    plot_update(plot_element)
+    plot_data.update()
 }

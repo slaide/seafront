@@ -1,4 +1,19 @@
 
+/* contains multiple .plot-img */
+.plot-display{
+    position:relative;
+
+    background: lightblue;
+    overflow:hidden;
+    border:1px solid grey;
+}
 .plot-img{
     user-select: none;
+
+    position: absolute;
+
+    left:var(--left);
+    bottom:var(--bottom);
+    width:calc( var(--scale-x) * var(--width) );
+    height:calc( var(--scale-y) * var(--height) );
 }

@@ -1,21 +1,6 @@
-
 #live-view-display{
-    position:relative;
-    width:600px;
-    height:600px;
-    background: lightblue;
-    overflow:hidden;
-    border:1px solid grey;
+    aspect-ratio:4/3;
 }
-#live-view-display *{
-    position: absolute;
-
-    left:var(--left);
-    bottom:var(--bottom);
-    width:calc( var(--scale-x) * var(--width) );
-    height:calc( var(--scale-y) * var(--height) );
-}
-
 #live-view-control{
     display:grid;
     grid-template-columns: repeat(6,auto);

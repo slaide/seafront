@@ -58,17 +58,38 @@
                 <div id="view-show" class="tab-body-container">
                     <div id="live-view">
                         <div>Fluo 405 nm Ex in B06</div>
-                        <div id="live-view-display" class="data"
+                        <div id="live-view-display" class="data plot-display"
                             p:init="plot_init(element)"
+                            p:init-vis="plot_fit(element)"
                             p:on-wheel="plot_zoom(event)"
                             p:on-mousedown="plot_drag_start(event)"
                             p:on-mousemove="plot_drag_move(event)"
                             p:on-mouseup,mouseleave="plot_drag_end(event)"
                             p:on-dblclick="plot_fit(event)"
                         >
-                            <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg">
+                            <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg" width=600 height=600 />
+                            <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg" width=600 height=600 plot-x-min="200" plot-y-min="200" />
+                        </div>
+
+                        <div id="live-view-x-axis-container">
+                            <div class="data">{{PlotData.getFor(document.getElementById("live-view-display")).x_min.toFixed(3)}}</div>
+                            <div class="data">{{PlotData.getFor(document.getElementById("live-view-display")).x_max.toFixed(3)}}</div>
                         </div>
                     </div>
+
+                    <style>
+                        #live-view-x-axis-container{
+                            display:grid;
+                            grid-template-columns: repeat(2,1fr);
+                        }
+                        /* push first child to the left, second child to the right */
+                        #live-view-x-axis-container > *:first-child{
+                            justify-self:start;
+                        }
+                        #live-view-x-axis-container > *:last-child{
+                            justify-self:end;
+                        }
+                    </style>
                     <div id="grid-view">
                         <script>
                             function setGridViewCols(event){
@@ -89,18 +110,42 @@
                             }
                             #grid-view-container > div{
                                 border:1px solid black;
-                                display:flex;
-                                justify-content:center;
-                                align-items:center;
-                                /*also make these square*/
                                 aspect-ratio:1/1;
+                            }
+
+                            #grid-view-container > *{
+                                width:100%;
+                                height:100%;
+                                display:grid;
+                                grid-template-rows: min-content 1fr;
                             }
                         </style>
                         <script>
+                            function linkPlots(element){
+                                let plots=element.querySelectorAll(".plot-display")
+                                let plot_data=PlotData.getFor(plots[0])
+                                for(let plot_element of plots){
+                                    plot_data.link(plot_element)
+                                }
+                            }
                         </script>
-                        <div id="grid-view-container">
+                        <div id="grid-view-container" class="data" p:init-vis="linkPlots(element)">
                             <template class="data" p:for="channel of microscope_config.channels">
-                                <div>{{channel.name}}</div>
+                                <div id="live-view-{{channel.handle}}">
+                                    <div>{{channel.name}}</div>
+                                    <div class="data plot-display"
+                                        p:init="plot_init(element)"
+                                        p:init-vis="plot_fit(element)"
+                                        p:on-wheel="plot_zoom(event)"
+                                        p:on-mousedown="plot_drag_start(event)"
+                                        p:on-mousemove="plot_drag_move(event)"
+                                        p:on-mouseup,mouseleave="plot_drag_end(event)"
+                                        p:on-dblclick="plot_fit(event)"
+                                    >
+                                        <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg" width=600 height=600 >
+                                        <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg" width=600 height=600 plot-x-min="200" plot-y-min="200">
+                                    </div>
+                                </div>
                             </template>
                         </div>
                         <label>num columns:</label>
@@ -371,8 +416,24 @@
                                     </div>
                                 </div>
 
-                                <div>
-                                    TODO objective position overview
+                                <div class="section" id="objective-position-on-plate-container">
+                                    <p class="section-header col-span-1"><b>TODO</b> objective position overview</p>
+                                    <script>
+                                        function initObjectivePositionObserver(element){
+                                            // set height and width to maintain 12/8 aspect ratio (more wide than high)
+                                            element.style.setProperty("aspect-ratio","12/8")
+                                            // set width to max possible
+                                            //element.style.setProperty("width","calc( 100% - 2px)")
+                                            element.style.setProperty("border","1px solid black")
+                                        }
+                                    </script>
+                                    <style>
+                                        #objective-position-on-plate-container{
+                                            display:grid;
+                                            grid-template-columns: repeat(1,1fr);
+                                        }
+                                    </style>
+                                    <div id="objective-position-on-plate" class="data" p:init="initObjectivePositionObserver(element)"></div>
                                 </div>
                             </div>
                             <div id="lighting-control">
