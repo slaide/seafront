@@ -6,14 +6,15 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="../web-pjs/p2.js"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@main/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/init.js"></script>
         <script src="src/docLinks.js"></script>
 
-        <link rel="stylesheet" href="reset.css">
+        <link rel="stylesheet" href="p/reset.css">
         <link rel="stylesheet" href="p/style.css">
+
         <link rel="stylesheet" href="css/basics.css">
 
         <link rel="stylesheet" href="css/main.css">
@@ -72,8 +73,8 @@
                         </div>
 
                         <div id="live-view-x-axis-container">
-                            <div class="data">{{PlotData.getFor(document.getElementById("live-view-display")).x_min.toFixed(3)}}</div>
-                            <div class="data">{{PlotData.getFor(document.getElementById("live-view-display")).x_max.toFixed(3)}}</div>
+                            <div class="data">{{PlotData.getFor(document.getElementById("live-view-display")).x_min.toFixed(2)}}</div>
+                            <div class="data">{{PlotData.getFor(document.getElementById("live-view-display")).x_max.toFixed(2)}}</div>
                         </div>
                     </div>
 
@@ -149,7 +150,7 @@
                             </template>
                         </div>
                         <label>num columns:</label>
-                        <input type="number" min="2" max="4" value="4" class="data" p:init="setGridViewCols({target:element})" p:on-input="setGridViewCols(event)">
+                        <input type="number" min="2" max="4" value="2" class="data" p:init="setGridViewCols({target:element})" p:on-input="setGridViewCols(event)">
                     </div>
                     <div id="af-debug-panel" class="data">
                         <label>exposure time [ms]</label>
@@ -357,6 +358,33 @@
                                     <div class="inline-container">
                                         <label for="acquisition-laser-autofocus-enabled">Use Laser Reflection Autofocus</label>
                                         <input id="acquisition-laser-autofocus-enabled" type="checkbox" class="data" p:bind="microscope_config.laser_af_enabled">
+
+                                        <script>
+                                            function start_acquisition(){
+                                                let xhr=new XMLHttpRequest()
+                                                xhr.open("POST","/api/start_acquisition")
+
+                                                // form_data config_file should be json object: microscope_config
+                                                let data={"config_file":microscope_config}
+                                                
+                                                // on form error:
+                                                xhr.onerror=function(){
+                                                    console.error("error starting acquisition")
+                                                }
+                                                // on form success:
+                                                xhr.onload=function(){
+                                                    if(xhr.status==200){
+                                                        console.log("acquisition started")
+                                                    }else{
+                                                        console.error("error starting acquisition")
+                                                    }
+                                                }
+
+                                                xhr.setRequestHeader("Content-Type", "application/json")
+                                                xhr.send(JSON.stringify(data))
+                                            }
+                                        </script>
+                                        <button class="data" p:on-click="start_acquisition()">start acquisition</button>
                                     </div>
                                     <style>
                                         #acquisition-progress-bar{
