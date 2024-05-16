@@ -53,48 +53,25 @@ let microscope_config=_p.manage({
 
     laser_af_enabled:false,
 
-    channels:[
-        new ImagingChannel(
-            "Fluo 405 nm Ex",
-            "fluo405",
-            100,5.0,0,0
-        ),
-        new ImagingChannel(
-            "Fluo 488 nm Ex",
-            "fluo488",
-            100,5.0,0,0
-        ),
-        new ImagingChannel(
-            "Fluo 561 nm Ex",
-            "fluo561",
-            100,5.0,0,0
-        ),
-        new ImagingChannel(
-            "Fluo 688 nm Ex",
-            "fluo688",
-            100,5.0,0,0
-        ),
-        new ImagingChannel(
-            "Fluo 730 nm Ex",
-            "fluo730",
-            100,5.0,0,0
-        ),
-        new ImagingChannel(
-            "BF LED Full",
-            "bfledfull",
-            20,5.0,0,0
-        ),
-        new ImagingChannel(
-            "BF LED Right Half",
-            "bfledright",
-            20,5.0,0,0
-        ),
-        new ImagingChannel(
-            "BF LED Left Half",
-            "bfledleft",
-            20,5.0,0,0
-        ),
-    ]
+    channels:new XHR(false)
+        .onload(function(xhr){
+            let channels=JSON.parse(xhr.responseText).main_camera_imaging_channels.map(channel=>{
+                return new ImagingChannel(
+                        channel.name,
+                        channel.handle,
+                        channel.illum_perc,
+                        channel.exposure_time_ms,
+                        channel.analog_gain,
+                        channel.z_offset_um
+                    )
+                }
+            )
+            return channels
+        })
+        .onerror(()=>{
+            console.error("error getting channels")
+        })
+        .send("/api/get_features/hardware_capabilities"),
 })
 
 let microscope_state=_p.manage({
@@ -128,47 +105,57 @@ const limits={
     }
 }
 
-const main_camera_triggers=[
-    {
-        name:"Software",
-        handle:"software"
-    },
-    {
-        name:"Hardware",
-        handle:"hardware"
-    }
-]
-const main_camera_pixel_types=[
-    {
-        name:"8 bit",
-        handle:"mono8"
-    },
-    {
-        name:"12 bit",
-        handle:"mono12"
-    }
-]
+const main_camera_triggers=new XHR(false)
+    .onload(function(xhr){
+        let triggers=JSON.parse(xhr.responseText).main_camera_triggers.map(trigger=>{
+            return {
+                name:trigger.name,
+                handle:trigger.handle,
+            }
+        })
+        return triggers
+    })
+    .send("/api/get_features/hardware_capabilities")
+
+const main_camera_pixel_types=new XHR(false)
+    .onload(function(xhr){
+        let triggers=JSON.parse(xhr.responseText).main_camera_pixel_formats.map(format=>{
+            return {
+                name:format.name,
+                handle:format.handle,
+            }
+        })
+        return triggers
+    })
+    .send("/api/get_features/hardware_capabilities")
 
 class Objective{
     /**
      * 
      * @param {string} name 
      * @param {string} handle 
+     * @param {number} magnification
      */
-    constructor(name,handle){
+    constructor(name,handle,magnification){
         this.name=name
         this.handle=handle
+        this.magnification=magnification
     }
 
-    get magnification(){
-        return parseInt(this.name.split("x")[0])
+    static get all(){
+        return new XHR(false)
+            .onload(function(xhr){
+                let triggers=JSON.parse(xhr.responseText).main_camera_objectives.map(objective=>{
+                    return new Objective(
+                        objective.name,
+                        objective.handle,
+                        objective.magnification,
+                    )
+                })
+                return triggers
+            })
+            .send("/api/get_features/hardware_capabilities")
     }
-
-    static get all(){return [
-        new Objective("4x Olympus","4xolympus"),
-        new Objective("10x Olympus","10xolympus"),
-        new Objective("20x Olympus","20xolympus"),
-    ]}
 
     /**
      * return name of an objective when given its handle
@@ -216,23 +203,50 @@ class WellplateType{
         }
     }
 
-    static get all(){return [
-        {
-            name:"96 Well Plate",
-            entries:[
-                new WellplateType("pe96","Perkin Elmer 96"),
-                new WellplateType("fa96","Falcon 96"),
-            ]
-        },
-        {
-            name:"384 Well Plate",
-            entries:[
-                new WellplateType("pe384","Perkin Elmer 384"),
-                new WellplateType("fa384","Falcon 384"),
-                new WellplateType("tf384","Thermo Fischer 384"),
-            ]
+    static get all(){
+        let plate_types=new XHR(false)
+            .onload(function(xhr){
+                return JSON.parse(xhr.responseText).wellplate_types
+            })
+            .send("/api/get_features/hardware_capabilities")
+
+        /** @type {{name:string,num_wells:number,entries:WellplateType[]}[]} */
+        let ret=[]
+        for(let plate_type of plate_types){
+            let num_wells=plate_type.num_cols*plate_type.num_rows
+            /** @type {WellplateType[]?} */
+            let entries=null
+            for(let e of ret){
+                if(e.num_wells==num_wells){
+                    entries=e.entries
+                    break
+                }
+            }
+            if(entries==null){
+                entries=[]
+                ret.push({name:num_wells+" Well Plates",num_wells:num_wells,entries:entries})
+            }
+            entries.push(new WellplateType(plate_type.handle,plate_type.name))
         }
-    ]}
+        return ret;
+        [
+            {
+                name:"96 Well Plate",
+                entries:[
+                    new WellplateType("pe96","Perkin Elmer 96"),
+                    new WellplateType("fa96","Falcon 96"),
+                ]
+            },
+            {
+                name:"384 Well Plate",
+                entries:[
+                    new WellplateType("pe384","Perkin Elmer 384"),
+                    new WellplateType("fa384","Falcon 384"),
+                    new WellplateType("tf384","Thermo Fischer 384"),
+                ]
+            }
+        ]
+    }
 
     /**
      * 

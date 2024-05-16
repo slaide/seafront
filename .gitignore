@@ -161,6 +161,7 @@ cython_debug/
 
 # metadata files
 .DS_store
+.DS_Store
 
 # python install files
 /python_env/python*

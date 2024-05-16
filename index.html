@@ -6,11 +6,14 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@main/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@7875379/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/init.js"></script>
         <script src="src/docLinks.js"></script>
+
+        <script src="src/modal.js"></script>
+        <link rel="stylesheet" href="css/modal.css">
 
         <link rel="stylesheet" href="p/reset.css">
         <link rel="stylesheet" href="p/style.css">
@@ -68,8 +71,8 @@
                             p:on-mouseup,mouseleave="plot_drag_end(event)"
                             p:on-dblclick="plot_fit(event)"
                         >
-                            <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg" width=600 height=600 />
-                            <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg" width=600 height=600 plot-x-min="200" plot-y-min="200" />
+                            <img id="testme" src="/img/cells.webp" width=600 height=600 />
+                            <img src="/img/cells2.webp" width=600 height=600 plot-x-min="200" plot-y-min="200" />
                         </div>
 
                         <div id="live-view-x-axis-container">
@@ -143,8 +146,8 @@
                                         p:on-mouseup,mouseleave="plot_drag_end(event)"
                                         p:on-dblclick="plot_fit(event)"
                                     >
-                                        <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg" width=600 height=600 >
-                                        <img src="https://media.sciencephoto.com/image/c0088373/800wm/C0088373-Fibroblast_cells,_fluorescent_micrograph.jpg" width=600 height=600 plot-x-min="200" plot-y-min="200">
+                                        <img src="/img/cells.webp" width=600 height=600/>
+                                        <img src="/img/cells2.webp" width=600 height=600 plot-x-min="200" plot-y-min="200"/>
                                     </div>
                                 </div>
                             </template>
@@ -167,24 +170,38 @@
                     </div>
                     <div id="low-level-config-view">
                         <style>
-                            #low-level-config-view > ul > li{
-                                display:flex;
+                            #low-level-config-view > div{
+                                display:grid;
+                                gap: 0 1em;
+                                grid-template-columns: auto 1fr;
                             }
                         </style>
-                        <ul>
-                            <li>
-                                <p>laser autofocus exposure time [ms]:</p>
-                                <p>2.0</p>
-                            </li>
-                            <li>
-                                <p>laser autofocus analog gain:</p>
-                                <p>0.0</p>
-                            </li>
-                            <li>
-                                <p>default main camera trigger type:</p>
-                                <p>Software Trigger</p>
-                            </li>
-                        </ul>
+                        <div>
+                            <script>
+                                function getInputType(item){
+                                    if(item.value_kind=="number"){
+                                        return "number"
+                                    }else{
+                                        throw new Error("unknown type "+item.value_kind)
+                                    }
+                                }
+                                let machine_defaults=new XHR(false)
+                                    .onload(function(xhr){
+                                        let data=JSON.parse(xhr.responseText)
+                                        return data
+                                    })
+                                    .send("/api/get_features/machine_defaults")
+                            </script>
+                            <template class="data" p:for="item of machine_defaults">
+                                <label>{{item.name}}</label>
+                                <input p:if="item.value_kind!='option'" type="{{getInputType(item)}}" value="{{item.value}}"></input>
+                                <select p:if="item.value_kind=='option'" value="{{item.value}}">
+                                    <template p:for="option of item.options">
+                                        <option value="{{option.handle}}">{{option.name}}</option>
+                                    </template>
+                                </select>
+                            </template>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -306,7 +323,13 @@
                                     <label>num t</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_t">
                                     <label>delta t</label>
-                                    <p class="inline-container">
+                                    <style>
+                                        #acqusition-config-delta-t-container{
+                                            display:flex;
+                                            flex-direction:row;
+                                        }
+                                    </style>
+                                    <p id="acqusition-config-delta-t-container">
                                         <input type="number" min="0" max="23" value="3" step="1" class="data" p:bind="microscope_config.grid.delta_t.h">
                                         <label>h</label>
                                         <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="microscope_config.grid.delta_t.m">
@@ -349,39 +372,72 @@
                                     </div>
                                     <style>
                                         .inline-container{
-                                            display:flex;
-                                            flex-direction:row;
+                                            display:grid;
+                                            grid-template-columns: repeat(2,auto);
+                                            grid-gap: 1em 0;
                                             align-items:center;
                                             height:min-content;
+                                        }
+                                        .inline-container > button{
+                                            grid-column: span 2;
                                         }
                                     </style>
                                     <div class="inline-container">
                                         <label for="acquisition-laser-autofocus-enabled">Use Laser Reflection Autofocus</label>
                                         <input id="acquisition-laser-autofocus-enabled" type="checkbox" class="data" p:bind="microscope_config.laser_af_enabled">
 
+                                        <style>
+                                            #acquisition-progress-bar2{
+                                                height:1.5em;
+                                                width:100%;
+                                                --percent-done:50%;
+                                                background:linear-gradient(to right, #adf8c1 var(--percent-done), white var(--percent-done));
+                                            }
+                                        </style>
+                                        <script>
+                                            let progress_element=null
+                                            function removecontainerelement(element){
+                                                progress_element=element
+                                                element.parentElement?.removeChild(element)
+                                            }
+                                        </script>
+                                        <div class="data" p:init="removecontainerelement(element)" id="acquisitionprogresscontainer">
+                                            <div>acquisition progress:</div>
+                                            <div id="acquisition-progress-bar2"></div>
+                                        </div>
                                         <script>
                                             function start_acquisition(){
-                                                let xhr=new XMLHttpRequest()
-                                                xhr.open("POST","/api/start_acquisition")
+                                                new XHR(false)
+                                                    .onload((xhr)=>{
+                                                        let acquisition_id=JSON.parse(xhr.responseText).acquisition_id
+                                                        
+                                                        let last_request=null
+                                                        spawnModal("Acquisition Progress",progress_element,{oninit:()=>setInterval(function(){
+                                                            last_request=new XHR()
+                                                                .onload((xhr)=>{
+                                                                    if(last_request!=null && last_request.xhr!=xhr)
+                                                                        return;
 
-                                                // form_data config_file should be json object: microscope_config
-                                                let data={"config_file":microscope_config}
-                                                
-                                                // on form error:
-                                                xhr.onerror=function(){
-                                                    console.error("error starting acquisition")
-                                                }
-                                                // on form success:
-                                                xhr.onload=function(){
-                                                    if(xhr.status==200){
-                                                        console.log("acquisition started")
-                                                    }else{
+                                                                    let progress=JSON.parse(xhr.responseText)
+                                                                    progress_element.children[1].innerText=progress.message
+                                                                    progress_element.children[1].style.setProperty(
+                                                                        "--percent-done",
+                                                                        progress.acquisition_progress.current_num_images
+                                                                        /progress.acquisition_meta_information.total_num_images
+                                                                        *100
+                                                                        +"%"
+                                                                    )
+                                                                })
+                                                                .onerror(()=>{
+                                                                    console.error("error getting acquisition progress")
+                                                                })
+                                                                .send("/api/acquisition/status",{"acquisition_id":acquisition_id},method="POST")
+                                                        },1e3/30)})
+                                                    })
+                                                    .onerror(()=>{
                                                         console.error("error starting acquisition")
-                                                    }
-                                                }
-
-                                                xhr.setRequestHeader("Content-Type", "application/json")
-                                                xhr.send(JSON.stringify(data))
+                                                    })
+                                                    .send("/api/acquisition/start",{"config_file":microscope_config},method="POST")
                                             }
                                         </script>
                                         <button class="data" p:on-click="start_acquisition()">start acquisition</button>
