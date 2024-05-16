@@ -317,6 +317,12 @@ def get_machine_defaults():
 
     ret=[
         {
+            "name":"microscope name",
+            "value_kind":"text",
+            "value":"HCS SQUID main #3"
+        },
+
+        {
             "name":"laser autofocus exposure time [ms]",
             "value_kind":"number",
             "value":5.0

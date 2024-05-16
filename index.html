@@ -181,6 +181,8 @@
                                 function getInputType(item){
                                     if(item.value_kind=="number"){
                                         return "number"
+                                    }else if(item.value_kind=="text"){
+                                        return "text"
                                     }else{
                                         throw new Error("unknown type "+item.value_kind)
                                     }

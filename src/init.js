@@ -1,6 +1,18 @@
 /** from p2.js */
 let _p=new Manager()
 
+new XHR(false)
+    .onload(function(xhr){
+        let data=JSON.parse(xhr.responseText)
+        for(let entry of data){
+            if(entry.name=="microscope name"){
+                console.log("connected to microscope: ",entry.value)
+                document.title=entry.value
+            }
+        }
+    })
+    .send("/api/get_features/machine_defaults")
+
 class ImagingChannel{
     /**
      * 
