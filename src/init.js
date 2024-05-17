@@ -34,7 +34,6 @@ class ImagingChannel{
 }
 
 let microscope_config=_p.manage({
-    base_path:"/home/pharmbio/Downloads/",
     project_name:"",
     plate_name:"",
     cell_line:"",
@@ -56,14 +55,8 @@ let microscope_config=_p.manage({
             s:4,
         }
     },
-
-    objective:"20xolympus",
+    
     wellplate_type:"fa96",
-
-    main_camera_trigger:"software",
-    main_camera_pixel_type:"mono12",
-
-    laser_af_enabled:false,
 
     channels:new XHR(false)
         .onload(function(xhr){
@@ -116,74 +109,6 @@ const limits={
         default:0,
     }
 }
-
-const main_camera_triggers=new XHR(false)
-    .onload(function(xhr){
-        let triggers=JSON.parse(xhr.responseText).main_camera_triggers.map(trigger=>{
-            return {
-                name:trigger.name,
-                handle:trigger.handle,
-            }
-        })
-        return triggers
-    })
-    .send("/api/get_features/hardware_capabilities")
-
-const main_camera_pixel_types=new XHR(false)
-    .onload(function(xhr){
-        let triggers=JSON.parse(xhr.responseText).main_camera_pixel_formats.map(format=>{
-            return {
-                name:format.name,
-                handle:format.handle,
-            }
-        })
-        return triggers
-    })
-    .send("/api/get_features/hardware_capabilities")
-
-class Objective{
-    /**
-     * 
-     * @param {string} name 
-     * @param {string} handle 
-     * @param {number} magnification
-     */
-    constructor(name,handle,magnification){
-        this.name=name
-        this.handle=handle
-        this.magnification=magnification
-    }
-
-    static get all(){
-        return new XHR(false)
-            .onload(function(xhr){
-                let triggers=JSON.parse(xhr.responseText).main_camera_objectives.map(objective=>{
-                    return new Objective(
-                        objective.name,
-                        objective.handle,
-                        objective.magnification,
-                    )
-                })
-                return triggers
-            })
-            .send("/api/get_features/hardware_capabilities")
-    }
-
-    /**
-     * return name of an objective when given its handle
-     * @param {string} handle 
-     * @returns {null|Objective} 
-     */
-    static fromHandle(handle){
-        for(let o of Objective.all){
-            if(o.handle==handle){
-                return o
-            }
-        }
-        return null
-    }
-}
-
 
 class WellplateType{
     /**
@@ -240,24 +165,7 @@ class WellplateType{
             }
             entries.push(new WellplateType(plate_type.handle,plate_type.name))
         }
-        return ret;
-        [
-            {
-                name:"96 Well Plate",
-                entries:[
-                    new WellplateType("pe96","Perkin Elmer 96"),
-                    new WellplateType("fa96","Falcon 96"),
-                ]
-            },
-            {
-                name:"384 Well Plate",
-                entries:[
-                    new WellplateType("pe384","Perkin Elmer 384"),
-                    new WellplateType("fa384","Falcon 384"),
-                    new WellplateType("tf384","Thermo Fischer 384"),
-                ]
-            }
-        ]
+        return ret
     }
 
     /**

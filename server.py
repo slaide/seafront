@@ -1,5 +1,6 @@
 import json
 from flask import Flask, send_from_directory, request
+from gxipy import gxapi
 
 from seaconfig import *
 
@@ -174,43 +175,6 @@ def get_hardware_capabilities():
     """
 
     ret={
-        "main_camera_objectives":[
-            {
-                "name":"4x Olympus",
-                "handle":"4xolympus",
-                "magnification":4,
-            },
-            {
-                "name":"10x Olympus",
-                "handle":"10xolympus",
-                "magnification":10,
-            },
-            {
-                "name":"20x Olympus",
-                "handle":"20xolympus",
-                "magnification":20,
-            },
-        ],
-        "main_camera_triggers":[
-            {
-                "name":"Software",
-                "handle":"software"
-            },
-            {
-                "name":"Hardware",
-                "handle":"hardware"
-            },
-        ],
-        "main_camera_pixel_formats":[
-            {
-                "name":"8 Bit",
-                "handle":"mono8"
-            },
-            {
-                "name":"12 Bit",
-                "handle":"mono12"
-            },
-        ],
         "wellplate_types":[
             {
                 "name":"Perkin Elmer 96",
@@ -236,6 +200,12 @@ def get_hardware_capabilities():
                 "num_rows":16,
                 "num_cols":24,
             },
+            {
+                "name":"Thermo Fischer 384",
+                "handle":"tf384",
+                "num_rows":16,
+                "num_cols":24,
+            }
         ],
         "main_camera_imaging_channels":[c.to_dict() for c in [
             AcquisitionChannelConfig(
@@ -318,45 +288,113 @@ def get_machine_defaults():
     ret=[
         {
             "name":"microscope name",
+            "handle":"microscope_name",
             "value_kind":"text",
-            "value":"HCS SQUID main #3"
+            "value":"HCS SQUID main #3",
+        },
+
+        {
+            "name":"base output storage directory",
+            "handle":"base_image_output_dir",
+            "value_kind":"text",
+            "value":"/mnt/squid/",
         },
 
         {
             "name":"laser autofocus exposure time [ms]",
+            "handle":"laser_autofocus_exposure_time_ms",
             "value_kind":"number",
-            "value":5.0
+            "value":5.0,
         },
         {
             "name":"laser autofocus camera analog gain",
+            "handle":"laser_autofocus_analog_gain",
             "value_kind":"number",
-            "value":0
+            "value":0,
         },
         {
             "name":"laser autofocus camera pixel format",
+            "handle":"laser_autofocus_pixel_format",
             "value_kind":"option",
             "value":"mono8",
             "options":[
                 {
                     "name":"8 Bit",
-                    "handle":"mono8"
+                    "handle":"mono8",
                 },
                 {
                     "name":"10 Bit",
-                    "handle":"mono10"
-                }
-            ]
+                    "handle":"mono10",
+                },
+            ],
         },
 
         {
+            "name":"main camera objective",
+            "handle":"main_camera_objective",
+            "value_kind":"option",
+            "value":"20xolympus",
+            "options":[
+                {
+                    "name":"4x Olympus",
+                    "handle":"4xolympus",
+                    "magnification":4,
+                },
+                {
+                    "name":"10x Olympus",
+                    "handle":"10xolympus",
+                    "magnification":10,
+                },
+                {
+                    "name":"20x Olympus",
+                    "handle":"20xolympus",
+                    "magnification":20,
+                },
+            ],
+        },
+        {
+            "name":"main camera trigger",
+            "handle":"main_camera_trigger",
+            "value_kind":"option",
+            "value":"software",
+            "options":[
+                {
+                    "name":"Software",
+                    "handle":"software",
+                },
+                {
+                    "name":"Hardware",
+                    "handle":"hardware",
+                },
+            ],
+        },
+        {
+            "name":"main camera pixel format",
+            "handle":"main_camera_pixel_format",
+            "value_kind":"option",
+            "value":"mono12",
+            "options":[
+                {
+                    "name":"8 Bit",
+                    "handle":"mono8",
+                },
+                {
+                    "name":"12 Bit",
+                    "handle":"mono12",
+                },
+            ],
+        },
+        {
             "name":"main camera image width [px]",
+            "handle":"main_camera_image_width_px",
             "value_kind":"number",
-            "value":2500
+            "value":2500,
         },
         {
             "name":"main camera image height [px]",
+            "handle":"main_camera_image_height_px",
             "value_kind":"number",
-            "value":2500
+            "value":2500,
         },
     ]
 

@@ -6,7 +6,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@7875379/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@1132fee/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/init.js"></script>
@@ -194,10 +194,26 @@
                                     })
                                     .send("/api/get_features/machine_defaults")
                             </script>
+
+                            <script>
+                                let machine_value_filter=_p.manage({value:""})
+                                function match_name(name){
+                                    if(machine_value_filter.value.length==0)
+                                        return true;
+
+                                    const lowercasename=name.toLowerCase()
+                                    const lowercasemachine_value_filter=machine_value_filter.value.toLowerCase()
+                                    const ret=lowercasename.includes(lowercasemachine_value_filter)
+                                    return ret
+                                }
+                            </script>
+                            <label>Only display entries where name contains:</label>
+                            <input type="text" class="data" p:bind="machine_value_filter.value"/>
+
                             <template class="data" p:for="item of machine_defaults">
-                                <label>{{item.name}}</label>
-                                <input p:if="item.value_kind!='option'" type="{{getInputType(item)}}" value="{{item.value}}"></input>
-                                <select p:if="item.value_kind=='option'" value="{{item.value}}">
+                                <label class="data" p:if="match_name(item.name)">{{item.name}}</label>
+                                <input p:if="match_name(item.name) && item.value_kind!='option'" type="{{getInputType(item)}}" value="{{item.value}}"/>
+                                <select p:if="match_name(item.name) && item.value_kind=='option'" value="{{item.value}}">
                                     <template p:for="option of item.options">
                                         <option value="{{option.handle}}">{{option.name}}</option>
                                     </template>
@@ -221,23 +237,86 @@
                             grid-template-columns: repeat(4,1fr);
                         }
                     </style>
-                    <div id="control-top" class="section">
-                        <p class="section-header col-span-4">Set Camera Trigger and Pixel Format <a class="data" href="{{docLinks.mainCameraTriggerAndPixelFormat}}" target="_blank">Help</a></p>
 
-                        <label class="data" p:tooltip="main imaging camera trigger type">Trigger</label>
-                        <select class="data" p:bind="microscope_config.main_camera_trigger">
-                            <template class="data" p:for="trigger of main_camera_triggers">
-                                <option value="{{trigger.handle}}">{{trigger.name}}</option>
-                            </template>
-                        </select>
+                    <style>
+                        #start-acquisition-container{
+                            display:grid;
+                        }
+                    </style>
+                    <div id="start-acquisition-container" class="section">
+                        <p class="section-header">Start Acquisition <a class="data" href="{{docLinks.mainCameraTriggerAndPixelFormat}}" target="_blank">Help</a></p>
 
-                        <label>Camera Pixel Type</label>
-                        <select class="data" p:bind="microscope_config.main_camera_pixel_type">
-                            <template class="data" p:for="format of main_camera_pixel_types">
-                                <option value="{{format.handle}}">{{format.name}}</option>
-                            </template>
-                        </select>
+                        <style>
+                            #acquisition-progress-bar2{
+                                height:1.5em;
+                                width:100%;
+
+                                border:1px solid black;
+                                border-radius:0.3em;
+                                padding:0.3em;
+
+                                --percent-done:50%;
+                                background:linear-gradient(to right, #adf8c1 var(--percent-done), white var(--percent-done));
+                            }
+                        </style>
+                        <script>
+                            let progress_element=null
+                            function removecontainerelement(element){
+                                progress_element=element
+                                element.parentElement?.removeChild(element)
+                            }
+                        </script>
+                        <div class="data" p:init="removecontainerelement(element)" id="acquisitionprogresscontainer">
+                            <div>acquisition progress:</div>
+                            <div id="acquisition-progress-bar2"></div>
+                        </div>
+                        <script>
+                            function start_acquisition(){
+                                new XHR(false)
+                                    .onload((xhr)=>{
+                                        let acquisition_id=JSON.parse(xhr.responseText).acquisition_id
+                                        
+                                        let last_request=null
+                                        spawnModal("Acquisition Progress",progress_element,{
+                                            oninit:function(){
+                                                const updateIntervalHandle=setInterval(function(){
+                                                    last_request=new XHR()
+                                                        .onload((xhr)=>{
+                                                            if(last_request!=null && last_request.xhr!=xhr)
+                                                                return;
+
+                                                            let progress=JSON.parse(xhr.responseText)
+                                                            progress_element.children[1].innerText=progress.message
+                                                            progress_element.children[1].style.setProperty(
+                                                                "--percent-done",
+                                                                progress.acquisition_progress.current_num_images
+                                                                /progress.acquisition_meta_information.total_num_images
+                                                                *100
+                                                                +"%"
+                                                            )
+                                                            
+                                                            // stop polling when acquisition is done
+                                                            if(progress.acquisition_progress.current_num_images==progress.acquisition_meta_information.total_num_images){
+                                                                clearInterval(updateIntervalHandle)
+                                                            }
+                                                        })
+                                                        .onerror(()=>{
+                                                            console.error("error getting acquisition progress")
+                                                        })
+                                                        .send("/api/acquisition/status",{"acquisition_id":acquisition_id},method="POST")
+                                                },1e3/30)
+                                            }
+                                        })
+                                    })
+                                    .onerror(()=>{
+                                        console.error("error starting acquisition")
+                                    })
+                                    .send("/api/acquisition/start",{"config_file":microscope_config},method="POST")
+                            }
+                        </script>
+                        <button id="start-acquisition-button" class="data" p:on-click="start_acquisition()">start acquisition</button>
                     </div>
+
                     <style>
                         #config-file-io{
                             display:grid;
@@ -270,15 +349,11 @@
                                 <style>
                                     #path-config{
                                         display:grid;
-                                        grid-template-columns: repeat(3,1fr);
+                                        grid-template-columns: auto 1fr;
                                     }
                                 </style>
                                 <div id="path-config" class="section">
                                     <p class="section-header col-span-3">Image Storage Path (Output) <a class="data" href="{{docLinks.storageOutputPath}}" target="_blank">Help</a></p>
-
-                                    <label>Base Path</label>
-                                    <input type="text" class="data" placeholder="base path" p:bind="microscope_config.base_path">
-                                    <button>Browse</button>
 
                                     <label>Project Name</label>
                                     <input class="col-span-2 data" type="text" placeholder="project name" p:bind="microscope_config.project_name">
@@ -351,124 +426,13 @@
                                     </div>
                                 </div>
 
-                                <style>
-                                    #acquisition-start-container{
-                                        display:grid;
-                                        grid-template-columns: repeat(2,auto);
-                                    }
-                                </style>
-                                <div id="acquisition-start-container" class="section">
-                                    <p class="section-header col-span-2">Main Acquisition Control <a class="data" href="{{docLinks.mainAcquisitionControl}}" target="_blank">Help</a></p>
-
-                                    <style>
-                                        #acquisition-channel-selection{
-                                            overflow-y:scroll;
-                                        }
-                                    </style>
-                                    <div>
-                                        <select id="acquisition-channel-selection" multiple>
-                                            <template class="data" p:for="channel of microscope_config.channels">
-                                                <option value="{{channel.handle}}">{{channel.name}}</option>
-                                            </template>
-                                        </select>
-                                    </div>
-                                    <style>
-                                        .inline-container{
-                                            display:grid;
-                                            grid-template-columns: repeat(2,auto);
-                                            grid-gap: 1em 0;
-                                            align-items:center;
-                                            height:min-content;
-                                        }
-                                        .inline-container > button{
-                                            grid-column: span 2;
-                                        }
-                                    </style>
-                                    <div class="inline-container">
-                                        <label for="acquisition-laser-autofocus-enabled">Use Laser Reflection Autofocus</label>
-                                        <input id="acquisition-laser-autofocus-enabled" type="checkbox" class="data" p:bind="microscope_config.laser_af_enabled">
-
-                                        <style>
-                                            #acquisition-progress-bar2{
-                                                height:1.5em;
-                                                width:100%;
-                                                --percent-done:50%;
-                                                background:linear-gradient(to right, #adf8c1 var(--percent-done), white var(--percent-done));
-                                            }
-                                        </style>
-                                        <script>
-                                            let progress_element=null
-                                            function removecontainerelement(element){
-                                                progress_element=element
-                                                element.parentElement?.removeChild(element)
-                                            }
-                                        </script>
-                                        <div class="data" p:init="removecontainerelement(element)" id="acquisitionprogresscontainer">
-                                            <div>acquisition progress:</div>
-                                            <div id="acquisition-progress-bar2"></div>
-                                        </div>
-                                        <script>
-                                            function start_acquisition(){
-                                                new XHR(false)
-                                                    .onload((xhr)=>{
-                                                        let acquisition_id=JSON.parse(xhr.responseText).acquisition_id
-                                                        
-                                                        let last_request=null
-                                                        spawnModal("Acquisition Progress",progress_element,{oninit:()=>setInterval(function(){
-                                                            last_request=new XHR()
-                                                                .onload((xhr)=>{
-                                                                    if(last_request!=null && last_request.xhr!=xhr)
-                                                                        return;
-
-                                                                    let progress=JSON.parse(xhr.responseText)
-                                                                    progress_element.children[1].innerText=progress.message
-                                                                    progress_element.children[1].style.setProperty(
-                                                                        "--percent-done",
-                                                                        progress.acquisition_progress.current_num_images
-                                                                        /progress.acquisition_meta_information.total_num_images
-                                                                        *100
-                                                                        +"%"
-                                                                    )
-                                                                })
-                                                                .onerror(()=>{
-                                                                    console.error("error getting acquisition progress")
-                                                                })
-                                                                .send("/api/acquisition/status",{"acquisition_id":acquisition_id},method="POST")
-                                                        },1e3/30)})
-                                                    })
-                                                    .onerror(()=>{
-                                                        console.error("error starting acquisition")
-                                                    })
-                                                    .send("/api/acquisition/start",{"config_file":microscope_config},method="POST")
-                                            }
-                                        </script>
-                                        <button class="data" p:on-click="start_acquisition()">start acquisition</button>
-                                    </div>
-                                    <style>
-                                        #acquisition-progress-bar{
-                                            border:1px solid black;
-                                            border-radius:0.3em;
-                                            padding:0.3em;
-                                            --percent-done:50%;
-                                            --bar-color: #adf8c1;
-                                            background: linear-gradient(
-                                                to right, 
-                                                var(--bar-color) 0%, 
-                                                var(--bar-color) var(--percent-done), 
-                                                white var(--percent-done)
-                                            );
-                                        }
-                                    </style>
-                                    <div id="acquisition-progress-bar" class="col-span-2">50% completed, done today at 15:24</div>
-                                </div>
-
                                 <div id="well-navigator" class="section">
                                     <p class="section-header col-span-1">Plate Well Selection <a class="data" href="{{docLinks.plateWellSelection}}" target="_blank">Help</a></p>
 
                                     <style>
                                         #well-navigator-header{
                                             display:grid;
-                                            grid-template-columns: repeat(4,max-content);
+                                            grid-template-columns: repeat(2,max-content);
                                         }
                                     </style>
                                     <div id="well-navigator-header">
@@ -483,12 +447,6 @@
                                                         <option value="{{type.handle}}">{{type.name}}</option>
                                                     </template>
                                                 </optgroup>
-                                            </template>
-                                        </select>
-                                        <label class="data" p:tooltip="the camera objective that is physically installed on the microscope">Objective</label>
-                                        <select class="data" p:bind="microscope_config.objective">
-                                            <template class="data" p:for="objective of Objective.all">
-                                                <option value="{{objective.handle}}">{{objective.name}}</option>
                                             </template>
                                         </select>
                                     </div>
