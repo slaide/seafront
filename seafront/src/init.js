@@ -83,9 +83,32 @@ let microscope_state=_p.manage({
     pos:{
         x_mm:12.123,
         y_mm:23.123,
-        z_um:4312,
+        z_um:4312.0,
     },
 })
+let updateInProgress=false
+function updateMicroscopePosition(){
+    if(updateInProgress)return;
+
+    updateInProgress=true
+    new XHR(true)
+        .onload(function(xhr){
+            let data=JSON.parse(xhr.responseText)
+
+            microscope_state.pos.x_mm=data.position.x_pos_mm
+            microscope_state.pos.y_mm=data.position.y_pos_mm
+            microscope_state.pos.z_um=data.position.z_pos_mm*1e3
+        
+            updateInProgress=false
+        })
+        .onerror(function(){
+            console.error("error updating microscope position")
+        
+            updateInProgress=false
+        })
+        .send("/api/get_info/stage_position")
+}
+setInterval(updateMicroscopePosition,1e3/15)
 
 const limits={
     illumination_percent:{

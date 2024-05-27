@@ -6,7 +6,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@1132fee/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@main/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/init.js"></script>
@@ -187,6 +187,15 @@
                                         throw new Error("unknown type "+item.value_kind)
                                     }
                                 }
+                                function itemIsRawInput(item){
+                                    return item.value_kind=="number" || item.value_kind=="text"
+                                }
+                                function itemIsOptionInput(item){
+                                    return item.value_kind=="option"
+                                }
+                                function itemIsAction(item){
+                                    return item.value_kind=="action"
+                                }
                                 let machine_defaults=new XHR(false)
                                     .onload(function(xhr){
                                         let data=JSON.parse(xhr.responseText)
@@ -206,18 +215,31 @@
                                     const ret=lowercasename.includes(lowercasemachine_value_filter)
                                     return ret
                                 }
+                                let filtered_machine_defaults=_p.manage([])
+                                function filter_results(){
+                                    filtered_machine_defaults.splice(0,filtered_machine_defaults.length,...machine_defaults.filter((item)=>match_name(item.name)))
+                                }
                             </script>
                             <label>Only display entries where name contains:</label>
-                            <input type="text" class="data" p:bind="machine_value_filter.value"/>
+                            <input type="text" class="data" p:bind="machine_value_filter.value" p:on-input="filter_results()" p:init-vis="filter_results()"/>
 
-                            <template class="data" p:for="item of machine_defaults">
-                                <label class="data" p:if="match_name(item.name)">{{item.name}}</label>
-                                <input p:if="match_name(item.name) && item.value_kind!='option'" type="{{getInputType(item)}}" value="{{item.value}}"/>
-                                <select p:if="match_name(item.name) && item.value_kind=='option'" value="{{item.value}}">
+                            <template class="data" p:for="item of filtered_machine_defaults">
+                                <label class="data">{{item.name}}</label>
+
+                                <input p:if="!item.frozen && itemIsRawInput(item)" type="{{getInputType(item)}}" value="{{item.value}}"/>
+                                <input p:if="item.frozen && itemIsRawInput(item)" type="{{getInputType(item)}}" value="{{item.value}}" disabled/>
+
+                                <select p:if="!item.frozen && itemIsOptionInput(item)" value="{{item.value}}">
                                     <template p:for="option of item.options">
                                         <option value="{{option.handle}}">{{option.name}}</option>
                                     </template>
                                 </select>
+                                <select p:if="item.frozen && itemIsOptionInput(item)" value="{{item.value}}" disabled>
+                                    <template p:for="option of item.options">
+                                        <option value="{{option.handle}}">{{option.name}}</option>
+                                    </template>
+                                </select>
+                                <button p:if="itemIsAction(item)"></button>
                             </template>
                         </div>
                     </div>
@@ -304,7 +326,7 @@
                                                             console.error("error getting acquisition progress")
                                                         })
                                                         .send("/api/acquisition/status",{"acquisition_id":acquisition_id},method="POST")
-                                                },1e3/30)
+                                                },1e3/15)
                                             }
                                         })
                                     })
@@ -585,19 +607,19 @@
                                     <p class="section-header col-span-5">Objective Position <a class="data" href="{{docLinks.objectivePositionControl}}" target="_blank">Help</a></p>
 
                                     <label>x (mm)</label>
-                                    <p class="data">{{microscope_state.pos.x_mm}}</p>
+                                    <p class="data">{{microscope_state.pos.x_mm.toFixed(2)}}</p>
                                     <input type="number" min="0.01" max="100" step="0.01" value="1">
                                     <button>Forward</button>
                                     <button>Backward</button>
 
                                     <label>y (mm)</label>
-                                    <p class="data">{{microscope_state.pos.y_mm}}</p>
+                                    <p class="data">{{microscope_state.pos.y_mm.toFixed(2)}}</p>
                                     <input type="number" min="0.01" max="100" step="0.01" value="1">
                                     <button>Forward</button>
                                     <button>Backward</button>
 
                                     <label>z (um)</label>
-                                    <p class="data">{{microscope_state.pos.z_um}}</p>
+                                    <p class="data">{{microscope_state.pos.z_um.toFixed(2)}}</p>
                                     <input type="number" min="0.01" max="100" step="0.01" value="1">
                                     <button>Forward</button>
                                     <button>Backward</button>

@@ -1,4 +1,7 @@
 {
     /* disable pylance checking of local python installation files */
-    "python.analysis.exclude": ["**/python_env/**"]
+    "python.analysis.exclude": [
+        "**/python_env/**"
+    ],
+    "python.REPL.enableREPLSmartSend": false
 }
