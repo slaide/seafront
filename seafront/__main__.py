@@ -206,43 +206,41 @@ class Core:
         for mc in self.microcontrollers:
             mc.open()
 
-            # reset the MCU`
-            #self.microcontroller.reset()
-            # reinitialize motor drivers and DAC (in particular for V2.1 driver board where PG is not functional)
-            #self.microcontroller.initialize_drivers()
-            #self.microcontroller.configure_actuators()
+            # if flask server is restarted, we can skip this initialization (the microscope retains its state across reconnects)
+            if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
 
-            mc.send_cmd(Command.reset())
-            mc.send_cmd(Command.initialize())
+                # reset the MCU
+                mc.send_cmd(Command.reset())
 
-            mc.send_cmd(Command.configure_actuators())
+                # reinitialize motor drivers and DAC
+                mc.send_cmd(Command.initialize())
+                mc.send_cmd(Command.configure_actuators())
 
-            # when starting up the microscope, the initial position is considered (0,0,0)
-            # even homing considers the limits, so before homing, we need to disable the limits
-            mc.send_cmd(Command.set_limit_mm("z",-10.0,"lower"))
-            mc.send_cmd(Command.set_limit_mm("z",10.0,"upper"))
+                # when starting up the microscope, the initial position is considered (0,0,0)
+                # even homing considers the limits, so before homing, we need to disable the limits
+                mc.send_cmd(Command.set_limit_mm("z",-10.0,"lower"))
+                mc.send_cmd(Command.set_limit_mm("z",10.0,"upper"))
 
-            # move objective out of the way
-            mc.send_cmd(Command.home("z"))
-            # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
-            mc.send_cmd(Command.set_limit_mm("z",0.0,"lower"))
-            mc.send_cmd(Command.set_limit_mm("z",6.7,"upper"))
-            # home x to set x reference
-            mc.send_cmd(Command.home("x"))
-            # clear clamp in x
-            mc.send_cmd(Command.move_by_mm("x",30))
-            # then move in position to properly apply clamp
-            mc.send_cmd(Command.home("y"))
-            # home x again to engage clamp
-            mc.send_cmd(Command.home("x"))
+                # move objective out of the way
+                mc.send_cmd(Command.home("z"))
+                # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
+                mc.send_cmd(Command.set_limit_mm("z",0.0,"lower"))
+                mc.send_cmd(Command.set_limit_mm("z",6.7,"upper"))
+                # home x to set x reference
+                mc.send_cmd(Command.home("x"))
+                # clear clamp in x
+                mc.send_cmd(Command.move_by_mm("x",30))
+                # then move in position to properly apply clamp
+                mc.send_cmd(Command.home("y"))
+                # home x again to engage clamp
+                mc.send_cmd(Command.home("x"))
 
-            # move to an arbitrary position to disengage the clamp
-            mc.send_cmd(Command.move_by_mm("x",30))
-            mc.send_cmd(Command.move_by_mm("y",30))
+                # move to an arbitrary position to disengage the clamp
+                mc.send_cmd(Command.move_by_mm("x",30))
+                mc.send_cmd(Command.move_by_mm("y",30))
 
-            # and move objective up, slightly
-            mc.send_cmd(Command.move_by_mm("z",1))
-            print(f"packet after moving in xy: {mc.get_packet().z_pos_mm}")
+                # and move objective up, slightly
+                mc.send_cmd(Command.move_by_mm("z",1))
 
         print(f"found {len(self.cams)} cameras")
         for i,cam in enumerate(self.cams):
