@@ -41,7 +41,6 @@ class Camera:
 
     def __init__(self,device_info:list):
         self.device_info=device_info
-        print(device_info)
 
         self.vendor_name=device_info["vendor_name"]
         self.model_name=device_info["model_name"]
@@ -60,6 +59,7 @@ class Camera:
         
         cam=self
 
+        # prints some camera hardware information
         if False:
             print(f" - pixel formats:")
             pixel_formats=cam.handle.PixelFormat.get_range()
