@@ -9,6 +9,11 @@ class WellIndex{
         this.row=row
         this.col=col
     }
+    get name(){
+        let row_name=String.fromCharCode(64+this.row)
+        let col_name=this.col
+        return row_name+col_name
+    }
     get label(){
         // if row is zero, then it is a column header
         if(this.row==0 && this.col>0){
@@ -60,4 +65,22 @@ function initwellnavigator(){
 
     plate_wells.length=0
     plate_wells.splice(0,0,...new_plate_wells)
+}
+
+/**
+ * 
+ * @param {WellIndex} item 
+ */
+function clickWell(item){
+    if(item.col==0 || item.row==0)return;
+
+    let xhr=null
+    xhr=new XHR(true)
+        .onload(function(xhr){
+            console.log("moved to well",item)
+        })
+        .onerror(function(){
+            console.error("failed to move to well",item)
+        })
+        .send("/api/action/move_to_well",{well_name:item.name},"POST")
 }

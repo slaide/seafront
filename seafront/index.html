@@ -477,7 +477,7 @@
                                     <script src="src/well_navigator.js"></script>
                                     <div id="well-navigator-container" class="data" p:init="initwellnavigator()">
                                         <template class="data" p:for="well of plate_wells">
-                                            <div>{{well.label}}</div>
+                                            <div p:on-dblclick="clickWell(well)">{{well.label}}</div>
                                         </template>
                                     </div>
                                 </div>

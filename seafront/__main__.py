@@ -1,5 +1,4 @@
-import json
-import time
+import json, time, os
 from flask import Flask, send_from_directory, request
 
 from seaconfig import *
@@ -184,6 +183,21 @@ def get_machine_defaults():
 
     return json.dumps(_get_machine_defaults())
 
+plate=Wellplate(
+    Manufacturer="perkin elmer",
+    Model_name="384 well plate",
+    Model_id_manufacturer="pe-384",
+    Model_id="",
+    Offset_A1_x_mm=12.1,
+    Offset_A1_y_mm=9.0,
+    Offset_bottom_mm=14.35-10.4,
+    Well_distance_x_mm=4.5,
+    Well_distance_y_mm=4.5,
+    Well_size_x_mm=3.65,
+    Well_size_y_mm=3.65,
+    Num_wells_x=24,
+    Num_wells_y=16,
+)
 
 class Core:
     def __init__(self):
@@ -285,6 +299,30 @@ class Core:
         app.add_url_rule(f"/api/acquisition/start", f"start_acquisition", self.start_acquisition,methods=["POST"])
         # for get_acquisition_status
         app.add_url_rule(f"/api/acquisition/status", f"get_acquisition_status", self.get_acquisition_status,methods=["GET","POST"])
+        # for move_to_well
+        app.add_url_rule(f"/api/action/move_to_well", f"move_to_well", self.move_to_well,methods=["POST"])
+
+    def move_to_well(self):
+        # get well_name from request
+        json_data=None
+        try:
+            json_data=request.get_json()
+        except Exception as e:
+            pass
+
+        if json_data is None:
+            return json.dumps({"status": "error", "message": "no json data"})
+        
+        well_name=json_data['well_name']
+
+        x_mm=plate.get_well_offset_x(well_name)
+        y_mm=plate.get_well_offset_y(well_name)
+        print(f"well {well_name} is at",x_mm,y_mm)
+
+        self.mc.send_cmd(Command.move_to_mm("x",x_mm))
+        self.mc.send_cmd(Command.move_to_mm("y",y_mm))
+
+        return json.dumps({"status":"success","message":"moved to well "+well_name})
 
     def get_stage_position(self):
         packet=self.mc.get_packet()
@@ -429,4 +467,3 @@ if __name__ == "__main__":
     app.run(debug=True, port=5002)
 
     core.close()
-

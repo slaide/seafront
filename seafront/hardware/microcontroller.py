@@ -40,6 +40,9 @@ def twos_complement_rev(payload,num_bytes):
 # depedent type that is difficult to get right otherwise)
 SerialDeviceInfo=tp.Any
 
+class HOME_OR_ZERO:
+    ZERO = 2
+
 class LIMIT_CODE:
     X_POSITIVE:int = 0
     X_NEGATIVE:int = 1
@@ -261,7 +264,7 @@ class Microcontroller:
             self[0]=id
 
         @staticmethod
-        def reset():
+        def reset()->"Microcontroller.Command":
             ret=Microcontroller.Command()
             ret[1]=CommandName.RESET.value
 
@@ -275,7 +278,7 @@ class Microcontroller:
             return ret
         
         @staticmethod
-        def set_leadscrew_pitch(axis:tp.Literal["x","y","z"]):
+        def set_leadscrew_pitch(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
             ret=Microcontroller.Command()
             ret[1]=CommandName.SET_LEAD_SCREW_PITCH.value
 
@@ -302,7 +305,7 @@ class Microcontroller:
             return ret
         
         @staticmethod
-        def configure_motor_driver(axis:tp.Literal["x","y","z"]):
+        def configure_motor_driver(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
             ret=Microcontroller.Command()
             ret[1]=CommandName.CONFIGURE_STEPPER_DRIVER.value
 
@@ -339,7 +342,7 @@ class Microcontroller:
             return ret
         
         @staticmethod
-        def set_max_velocity_acceleration(axis:tp.Literal["x","y","z"]):
+        def set_max_velocity_acceleration(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
             ret=Microcontroller.Command()
             ret[1]=CommandName.SET_MAX_VELOCITY_ACCELERATION.value
 
@@ -372,7 +375,7 @@ class Microcontroller:
             return ret
         
         @staticmethod
-        def set_limit_switch_polarity(axis:tp.Literal["x","y","z"]):
+        def set_limit_switch_polarity(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
             ret=Microcontroller.Command()
 
             ret[1]=CommandName.SET_LIM_SWITCH_POLARITY.value
@@ -390,7 +393,7 @@ class Microcontroller:
             return ret
         
         @staticmethod
-        def configure_actuators():
+        def configure_actuators()->tp.List["Microcontroller.Command"]:
             rets=[]
 
             # set lead screw pitch
@@ -416,7 +419,7 @@ class Microcontroller:
             return rets
         
         @staticmethod
-        def home(direction:tp.Literal["x","y","z"]):
+        def home(direction:tp.Literal["x","y","z"])->"Microcontroller.Command":
             ret = Microcontroller.Command()
             ret[1] = CommandName.HOME_OR_ZERO.value
             match direction:
@@ -481,7 +484,7 @@ class Microcontroller:
             return rets
         
         @staticmethod
-        def set_limit_mm(axis:tp.Literal["x","y","z"],coord:float,direction:tp.Literal["lower","upper"]):
+        def set_limit_mm(axis:tp.Literal["x","y","z"],coord:float,direction:tp.Literal["lower","upper"])->"Microcontroller.Command":
             ret=Microcontroller.Command()
             ret[1]=CommandName.SET_LIM.value
 
@@ -515,9 +518,64 @@ class Microcontroller:
             ret[6] = (payload>>8*0)&0xFF
             return ret
         
+        @staticmethod
+        def set_zero(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
+            """
+                set current position on axis to 0
+            """
+
+            ret=Microcontroller.Command()
+            ret[1]=CommandName.HOME_OR_ZERO.value
+
+            match axis:
+                case "x":
+                    ret[2]=FirmwareDefinitions.AXIS_X
+                case "y":
+                    ret[2]=FirmwareDefinitions.AXIS_Y
+                case "z":
+                    ret[2]=FirmwareDefinitions.AXIS_Z
+                case _:
+                    raise RuntimeError("invalid axis "+axis)
+                
+            ret[3] = HOME_OR_ZERO.ZERO
+
+            return ret
+
+        @staticmethod
+        def move_to_mm(axis:tp.Literal["x","y","z"],coord_mm:float)->"Microcontroller.Command":
+            ret=Microcontroller.Command()
+
+            axis_cmd=None
+            move_usteps=None
+
+            match axis:
+                case "x":
+                    axis_cmd=CommandName.MOVETO_X.value
+                    move_usteps=FirmwareDefinitions.mm_to_ustep_x(coord_mm)
+                case "y":
+                    axis_cmd=CommandName.MOVETO_Y.value
+                    move_usteps=FirmwareDefinitions.mm_to_ustep_y(coord_mm)
+                case "z":
+                    axis_cmd=CommandName.MOVETO_Z.value
+                    move_usteps=FirmwareDefinitions.mm_to_ustep_z(coord_mm)
+                case _:
+                    raise RuntimeError("invalid axis "+axis)
+                
+            move_usteps=twos_complement(move_usteps,4)
+
+            ret[1]=axis_cmd
+            ret[2]=(move_usteps>>(8*3))&0xFF
+            ret[3]=(move_usteps>>(8*2))&0xFF
+            ret[4]=(move_usteps>>(8*1))&0xFF
+            ret[5]=(move_usteps>>(8*0))&0xFF
+
+            ret.is_move_cmd=True
+
+            return ret
+
 
     @staticmethod
-    def wait_until_cmd_is_finished(
+    def _wait_until_cmd_is_finished(
         mc:"Microcontroller",
         cmd:"Microcontroller.Command",
         additional_delay:tp.Optional[float]=None
@@ -554,7 +612,7 @@ class Microcontroller:
             cmd_is_completed=packet.last_cmd_id==cmd[0] and packet.exec_status==0
             return cmd_is_completed
         
-        mc.read_packets(read_packet)
+        mc._read_packets(read_packet)
 
         if additional_delay is not None:
             time.sleep(additional_delay)
@@ -563,14 +621,19 @@ class Microcontroller:
         self.device_info=device_info
         self.handle=None
 
+        self.lock=threading.Lock()
+        self.send_is_holding_lock=False
+
         self.crc_calculator=crc.CrcCalculator(crc.Crc8.CCITT,table_based=True)
         self._last_command_id=-1 # because this is increment BEFORE it is returned, init to -1 -> first id assigned is 0
 
         self.terminate_reading_received_packet_thread=False
 
-    def read_packets(self,until:tp.Callable[[MicrocontrollerStatusPackage],bool]):
+    def _read_packets(self,until:tp.Callable[[MicrocontrollerStatusPackage],bool]):
         """
             read packets until 'until' returns True
+
+            this is the central waiting function. other functions with wait-like behaviour rely on this function.
 
             params:
                 until:
@@ -609,17 +672,22 @@ class Microcontroller:
             
             self.terminate_reading_received_packet_thread=until(packet)
 
-    def get_packet(self)->MicrocontrollerStatusPackage:
+    def get_packet(self)->tp.Optional[MicrocontrollerStatusPackage]:
         """
             read one package and return it
+
+            this function may return None if no package can be received (e.g. because a command is currently running that is blocking the packet queue)
         """
+
+        if self.send_is_holding_lock:
+            return None
 
         packet=None
         def read_one_packet(packet_in:MicrocontrollerStatusPackage)->bool:
             nonlocal packet
             packet=packet_in
             return True
-        self.read_packets(read_one_packet)
+        self._read_packets(read_one_packet)
         return packet
 
     def _get_next_cmd_id(self)->int:
@@ -638,13 +706,17 @@ class Microcontroller:
         else:
             cmds=[cmd_in]
 
-        for cmd in cmds:
-            cmd.set_id(self._get_next_cmd_id())
-            cmd[-1] = self.crc_calculator.calculate_checksum(cmd[:-1])
-            
-            self.handle.write(cmd.bytes)
-            if cmd.wait_for_completion:
-                Microcontroller.wait_until_cmd_is_finished(self,cmd)
+        self.send_is_holding_lock=True
+        with self.lock:
+            for cmd in cmds:
+                cmd.set_id(self._get_next_cmd_id())
+                cmd[-1] = self.crc_calculator.calculate_checksum(cmd[:-1])
+                
+                self.handle.write(cmd.bytes)
+                if cmd.wait_for_completion:
+                    Microcontroller._wait_until_cmd_is_finished(self,cmd)
+
+        self.send_is_holding_lock=False
 
     def open(self):
         self.handle=serial.Serial(self.device_info.device,2000000)
