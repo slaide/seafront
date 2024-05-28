@@ -86,6 +86,7 @@ let microscope_state=_p.manage({
         z_um:4312.0,
     },
 })
+let last_update_successful=true
 let updateInProgress=false
 function updateMicroscopePosition(){
     if(updateInProgress)return;
@@ -93,6 +94,11 @@ function updateMicroscopePosition(){
     updateInProgress=true
     new XHR(true)
         .onload(function(xhr){
+            if(!last_update_successful){
+                console.log("recovered microscope position update")
+                last_update_successful=true
+            }
+
             let data=JSON.parse(xhr.responseText)
 
             microscope_state.pos.x_mm=data.position.x_pos_mm
@@ -102,7 +108,10 @@ function updateMicroscopePosition(){
             updateInProgress=false
         })
         .onerror(function(){
-            console.error("error updating microscope position")
+            if(last_update_successful){
+                console.error("error updating microscope position")
+                last_update_successful=false
+            }
         
             updateInProgress=false
         })
