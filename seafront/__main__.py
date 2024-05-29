@@ -239,15 +239,18 @@ class Core:
 
                 # move objective out of the way
                 mc.send_cmd(Command.home("z"))
+                mc.send_cmd(Command.set_zero("z"))
                 # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
                 mc.send_cmd(Command.set_limit_mm("z",0.0,"lower"))
                 mc.send_cmd(Command.set_limit_mm("z",6.7,"upper"))
                 # home x to set x reference
                 mc.send_cmd(Command.home("x"))
+                mc.send_cmd(Command.set_zero("x"))
                 # clear clamp in x
                 mc.send_cmd(Command.move_by_mm("x",30))
                 # then move in position to properly apply clamp
                 mc.send_cmd(Command.home("y"))
+                mc.send_cmd(Command.set_zero("y"))
                 # home x again to engage clamp
                 mc.send_cmd(Command.home("x"))
 
@@ -257,6 +260,7 @@ class Core:
 
                 # and move objective up, slightly
                 mc.send_cmd(Command.move_by_mm("z",1))
+                print("done initializing microcontroller")
 
         print(f"found {len(self.cams)} cameras")
         for i,cam in enumerate(self.cams):
