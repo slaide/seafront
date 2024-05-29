@@ -315,6 +315,10 @@ class Core:
         app.add_url_rule(f"/api/img/get_latest_handle", f"send_latest_image_handle", self.send_latest_image_handle,methods=["GET","POST"])
         # send image by handle
         app.add_url_rule(f"/img/get_by_handle", f"send_image_by_handle", self.send_image_by_handle,methods=["GET"])
+        # loading position
+        self.is_in_loading_position=False
+        app.add_url_rule("/api/action/leave_loading_position", "action_leave_loading_position", self.action_leave_loading_position,methods=["POST"])
+        app.add_url_rule("/api/action/enter_loading_position", "action_enter_loading_position", self.action_enter_loading_position,methods=["POST"])
 
         self.latest_image_index=0
         self.images={}
@@ -347,7 +351,6 @@ class Core:
 
         return send_file(img_io, mimetype='image/png')
 
-
     def send_latest_image_handle(self):
         """
             send self.last_image as flask response
@@ -373,8 +376,10 @@ class Core:
 
         return json.dumps({"img_handle":img_handle})
 
-
     def move_to_well(self):
+        if self.is_in_loading_position:
+            return json.dumps({"status":"error","message":"cannot move to well while in loading position"})
+        
         # get well_name from request
         json_data=None
         try:
@@ -389,7 +394,6 @@ class Core:
 
         x_mm=plate.get_well_offset_x(well_name)
         y_mm=plate.get_well_offset_y(well_name)
-        print(f"well {well_name} is at",x_mm,y_mm)
 
         self.mc.send_cmd(Command.move_to_mm("x",x_mm))
         self.mc.send_cmd(Command.move_to_mm("y",y_mm))
@@ -409,6 +413,9 @@ class Core:
         return json.dumps({"status":"success","position":ret})
 
     def action_move_by(self,axis:str):
+        if self.is_in_loading_position:
+            return json.dumps({"status":"error","message":"cannot move while in loading position"})
+        
         json_data=None
         try:
             json_data=request.get_json()
@@ -423,6 +430,36 @@ class Core:
         self.mc.send_cmd(Command.move_by_mm(axis,distance_mm))
 
         return json.dumps({"status": "success","moved_by_mm":distance_mm,"axis":axis})
+
+    def action_enter_loading_position(self):
+        if self.is_in_loading_position:
+            return json.dumps({"status":"error","message":"already in loading position"})
+        
+        # home z
+        self.mc.send_cmd(Command.home("z"))
+
+        # clear clamp in y first
+        self.mc.send_cmd(Command.move_to_mm("y",30))
+        # then clear clamp in x
+        self.mc.send_cmd(Command.move_to_mm("x",30))
+
+        # then home y, x
+        self.mc.send_cmd(Command.home("y"))
+        self.mc.send_cmd(Command.home("x"))
+        
+        self.is_in_loading_position=True
+        return json.dumps({"status":"success","message":"entered loading position"})
+
+    def action_leave_loading_position(self):
+        if not self.is_in_loading_position:
+            return json.dumps({"status":"error","message":"not in loading position"})
+        
+        self.mc.send_cmd(Command.move_to_mm("x",30))
+        self.mc.send_cmd(Command.move_to_mm("y",30))
+        self.mc.send_cmd(Command.move_to_mm("z",1))
+        
+        self.is_in_loading_position=False
+        return json.dumps({"status":"success","message":"left loading position"})
 
     def start_acquisition(self):
         """
@@ -539,6 +576,10 @@ class Core:
 if __name__ == "__main__":
     core=Core()
     
-    app.run(debug=True, port=5002)
+    try:
+        # running in debug mode doesnt work because then I am unable to properly handle the close event
+        app.run(debug=False, port=5002)
+    except Exception:
+        pass
 
     core.close()

@@ -718,8 +718,30 @@
                                     <button class="data" p:on-click="backward_z()">Backward</button>
 
                                     <button>Zero Z</button>
-                                    <button class="col-span-2">enter loading position</button>
-                                    <button class="col-span-2">leave loading position</button>
+                                    <script>
+                                        function enterLoadingPosition(){
+                                            new XHR(true)
+                                                .onload(function(xhr){
+                                                    console.log("left loading position")
+                                                })
+                                                .onerror(function(){
+                                                    console.error("error entering loading position")
+                                                })
+                                                .send("/api/action/enter_loading_position",null,"POST")
+                                        }
+                                        function leaveLoadingPosition(){
+                                            new XHR(true)
+                                                .onload(function(xhr){
+                                                    console.log("left loading position")
+                                                })
+                                                .onerror(function(){
+                                                    console.error("error entering loading position")
+                                                })
+                                                .send("/api/action/leave_loading_position",null,"POST")
+                                        }
+                                    </script>
+                                    <button class="col-span-2 data" p:on-click="enterLoadingPosition()">enter loading position</button>
+                                    <button class="col-span-2 data" p:on-click="leaveLoadingPosition()">leave loading position</button>
                                 </div>
 
                                 <style>
