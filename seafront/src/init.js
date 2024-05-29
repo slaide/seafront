@@ -92,29 +92,36 @@ function updateMicroscopePosition(){
     if(updateInProgress)return;
 
     updateInProgress=true
+
+    function onerror(){
+        if(last_update_successful){
+            console.error("error updating microscope position")
+            last_update_successful=false
+        }
+    
+        updateInProgress=false
+    }
+    function onload(xhr){
+        let data=JSON.parse(xhr.responseText)
+        
+        if(!data.position){
+            return onerror()
+        }
+
+        if(!last_update_successful){
+            console.log("recovered microscope position update")
+            last_update_successful=true
+        }
+
+        microscope_state.pos.x_mm=data.position.x_pos_mm
+        microscope_state.pos.y_mm=data.position.y_pos_mm
+        microscope_state.pos.z_um=data.position.z_pos_mm*1e3
+    
+        updateInProgress=false
+    }
     new XHR(true)
-        .onload(function(xhr){
-            if(!last_update_successful){
-                console.log("recovered microscope position update")
-                last_update_successful=true
-            }
-
-            let data=JSON.parse(xhr.responseText)
-
-            microscope_state.pos.x_mm=data.position.x_pos_mm
-            microscope_state.pos.y_mm=data.position.y_pos_mm
-            microscope_state.pos.z_um=data.position.z_pos_mm*1e3
-        
-            updateInProgress=false
-        })
-        .onerror(function(){
-            if(last_update_successful){
-                console.error("error updating microscope position")
-                last_update_successful=false
-            }
-        
-            updateInProgress=false
-        })
+        .onload(onload)
+        .onerror(onerror)
         .send("/api/get_info/stage_position")
 }
 setInterval(updateMicroscopePosition,1e3/15)
