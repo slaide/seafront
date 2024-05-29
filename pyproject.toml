@@ -10,4 +10,5 @@ dependencies = [
     "git+https://github.com/slaide/seafront-config.git",
     "pyserial",
     "crc",
+    "pillow",
 ]

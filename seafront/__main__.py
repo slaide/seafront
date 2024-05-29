@@ -1,5 +1,7 @@
-import json, time, os
-from flask import Flask, send_from_directory, request
+import json, time, os, io
+from flask import Flask, send_from_directory, request, send_file
+import numpy as np
+from PIL import Image
 
 from seaconfig import *
 from .hardware.camera import Camera, gxiapi
@@ -309,6 +311,68 @@ class Core:
         app.add_url_rule(f"/api/acquisition/status", f"get_acquisition_status", self.get_acquisition_status,methods=["GET","POST"])
         # for move_to_well
         app.add_url_rule(f"/api/action/move_to_well", f"move_to_well", self.move_to_well,methods=["POST"])
+        # to send latest image
+        app.add_url_rule(f"/api/img/get_latest_handle", f"send_latest_image_handle", self.send_latest_image_handle,methods=["GET","POST"])
+        # send image by handle
+        app.add_url_rule(f"/img/get_by_handle", f"send_image_by_handle", self.send_image_by_handle,methods=["GET"])
+
+        self.latest_image_index=0
+        self.images={}
+
+    def send_image_by_handle(self):
+        """
+            send image by handle, as get request to allow using this a img src
+        """
+
+        img_handle=None
+        try:
+            img_handle=request.args.get("img_handle")
+        except Exception as e:
+            pass
+
+        if img_handle is None:
+            return json.dumps({"status":"error","message":"no img_handle provided"})
+        
+        if img_handle not in self.images:
+            return json.dumps({"status":"error","message":f"img_handle {img_handle} not found"})
+
+        img_container=self.images[img_handle]
+        img_raw=img_container['img']
+
+        img_pil=Image.fromarray(img_raw)
+
+        img_io=io.BytesIO()
+        img_pil.save(img_io,format="PNG")
+        img_io.seek(0)
+
+        return send_file(img_io, mimetype='image/png')
+
+
+    def send_latest_image_handle(self):
+        """
+            send self.last_image as flask response
+        """
+
+        # mock image data
+        self.latest_image_index+=1
+        img_handle=f"{self.latest_image_index}"
+        U12_MAX=2**12
+        new_img_data=np.random.randint(0,U12_MAX,(2500,2500),dtype=np.uint16)
+        # convert image from u16 to u8, by right shifting by 4, then casting to u8
+        # image display in the browser cannot handle more than 8 bits per channel
+        new_img_data=(new_img_data>>4).astype(np.uint8)
+        self.images[img_handle]={
+            "img":new_img_data,
+            "timestamp":time.time()
+        }
+
+        # remove oldest images to keep buffer length capped at 8
+        while len(self.images)>8:
+            oldest_key=min(self.images,key=lambda k:self.images[k]["timestamp"])
+            del self.images[oldest_key]
+
+        return json.dumps({"img_handle":img_handle})
+
 
     def move_to_well(self):
         # get well_name from request

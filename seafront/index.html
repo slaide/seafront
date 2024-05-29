@@ -74,6 +74,25 @@
                             <img id="testme" src="/img/cells.webp" width=600 height=600 />
                             <img src="/img/cells2.webp" width=600 height=600 plot-x-min="200" plot-y-min="200" />
                         </div>
+                        <script>
+                            // on dom loaded, start 1s interval to fetch new image for #testme
+                            document.addEventListener("DOMContentLoaded",function(){
+                                let testme=document.getElementById("testme")
+                                setInterval(function(){
+                                    new XHR(false)
+                                        .onload(function(xhr){
+                                            let data=JSON.parse(xhr.responseText)
+                                            let img_handle=data.img_handle
+                                            
+                                            testme.src="/img/get_by_handle?img_handle="+img_handle
+                                        })
+                                        .onerror(function(){
+                                            console.error("error fetching new image")
+                                        })
+                                        .send("/api/img/get_latest_handle",null,method="POST")
+                                },1e3)
+                            })
+                        </script>
 
                         <div id="live-view-x-axis-container">
                             <div class="data">{{PlotData.getFor(document.getElementById("live-view-display")).x_min.toFixed(2)}}</div>

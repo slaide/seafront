@@ -1,3 +1,0 @@
-flask
-git+https://github.com/slaide/daheng-imaging-gxipy.git
-git+https://github.com/slaide/seafront-config.git
