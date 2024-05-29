@@ -202,10 +202,10 @@ plate=Wellplate(
 class Core:
     def __init__(self):
         self.microcontrollers=Microcontroller.get_all()
-        self.mc=self.microcontrollers[0]
         self.cams=Camera.get_all()
 
         abort_startup=False
+
         if len(self.microcontrollers)==0:
             print("error - no microcontrollers found.")
             abort_startup=True
@@ -215,6 +215,8 @@ class Core:
 
         if abort_startup:
             raise RuntimeError("did not find microscope hardware")
+        
+        self.mc=self.microcontrollers[0]
 
         print(f"found {len(self.microcontrollers)} microcontrollers")
         for mc in self.microcontrollers:
