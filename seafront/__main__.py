@@ -5,7 +5,7 @@ from PIL import Image
 
 from seaconfig import *
 from .hardware.camera import Camera, gxiapi
-from .hardware.microcontroller import Microcontroller
+from .hardware.microcontroller import Microcontroller, ILLUMINATION_CODE
 Command=Microcontroller.Command
 
 app = Flask(__name__, static_folder='src')
@@ -201,6 +201,9 @@ plate=Wellplate(
     Num_wells_y=16,
 )
 
+# indicate if this is the first boot of the server
+is_first_start=os.environ.get("WERKZEUG_RUN_MAIN") != "true"
+
 class Core:
     def __init__(self):
         self.microcontrollers=Microcontroller.get_all()
@@ -225,8 +228,7 @@ class Core:
             mc.open()
 
             # if flask server is restarted, we can skip this initialization (the microscope retains its state across reconnects)
-            if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-
+            if is_first_start:
                 # reset the MCU
                 mc.send_cmd(Command.reset())
 
@@ -273,32 +275,38 @@ class Core:
 
             cam.open()
 
-            config=AcquisitionChannelConfig("whatever","dontcare",100,5.0,0,0)
-            cam.acquire_with_config(config)
+            if False:
+                config=AcquisitionChannelConfig("whatever","dontcare",100,5.0,0,0)
+                img=cam.acquire_with_config(config)
+                print(f" - acquired image with shape {img.shape} and dtype {img.dtype}")
 
-            class Container:
-                def __init__(self,total_num_images:int):
-                    self.num_images=0
-                    self.total_num_images=total_num_images
+                class Container:
+                    def __init__(self,total_num_images:int):
+                        self.num_images=0
+                        self.total_num_images=total_num_images
 
-                    self.total_t=0
-                    self.last_imaging_time=time.time()
-                def __call__(self,img:gxiapi.RawImage):
-                    self.num_images+=1
-                    current_time=time.time()
-                    delta_t=current_time-self.last_imaging_time
-                    if self.num_images>1 and self.total_num_images>1:
-                        self.total_t+=delta_t/(self.total_num_images-1)
-                    self.last_imaging_time=current_time
+                        self.total_t=0
+                        self.last_imaging_time=time.time()
+                    def __call__(self,img:gxiapi.RawImage):
 
-                    should_break=self.num_images>self.total_num_images
-                    if should_break and self.total_num_images>1:
-                        print(f"continuous: overhead at {config.exposure_time_ms}ms exposure time is {self.total_t*1e3-config.exposure_time_ms}ms")
-                    return should_break
-                
-            cam.acquire_with_config(config,mode="until_stop",callback=Container(1))
+                        img=img.get_numpy_array()
+                        print(f" - acquired image with shape {img.shape} and dtype {img.dtype}")
 
-            cam.close()
+                        self.num_images+=1
+                        current_time=time.time()
+                        delta_t=current_time-self.last_imaging_time
+                        if self.num_images>1 and self.total_num_images>1:
+                            self.total_t+=delta_t/(self.total_num_images-1)
+                        self.last_imaging_time=current_time
+
+                        should_break=self.num_images>self.total_num_images
+                        if should_break and self.total_num_images>1:
+                            print(f"continuous: overhead at {config.exposure_time_ms}ms exposure time is {self.total_t*1e3-config.exposure_time_ms}ms")
+                        return should_break
+                    
+                cam.acquire_with_config(config,mode="until_stop",callback=Container(1))
+
+                #cam.close()
 
         # register url rules requiring machine interaction
         app.add_url_rule(f"/api/get_info/stage_position", f"get_stage_position", self.get_stage_position,methods=["GET","POST"])
@@ -322,6 +330,32 @@ class Core:
 
         self.latest_image_index=0
         self.images={}
+
+    def snap_channel(self):
+        # TODO pick which cam
+        cam=self.cams[0]
+        cam.open()
+
+        # get json data
+        json_data=None
+        try:
+            json_data=request.get_json()
+        except Exception as e:
+            pass
+
+        if json_data is None:
+            return json.dumps({"status": "error", "message": "no json data"})
+        
+        if "channel" not in json_data:
+            return json.dumps({"status": "error", "message": "no channel in json data"})
+        
+        print(f"json_data: {json_data}")
+        channel=AcquisitionChannelConfig(**json_data["channel"])
+        print(f"channel config: {channel}")
+
+        cam.acquire_with_config(channel)
+
+        cam.close()
 
     def send_image_by_handle(self):
         """
@@ -570,6 +604,9 @@ class Core:
     def close(self):
         for mc in self.microcontrollers:
             mc.close()
+
+        for cam in self.cams:
+            cam.close()
 
 
 

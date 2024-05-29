@@ -53,49 +53,48 @@ class Camera:
             open device for interaction
         """
 
+        print(f"opening device with sn {self.sn}")
         self.handle=Camera.device_manager.open_device_by_sn(self.sn)
         if self.handle is None:
             raise RuntimeError(f"failed to open camera {self.device_info}")
-        
-        cam=self
 
         # prints some camera hardware information
         if False:
             print(f" - pixel formats:")
-            pixel_formats=cam.handle.PixelFormat.get_range()
+            pixel_formats=self.handle.PixelFormat.get_range()
             for pf in pixel_formats:
                 print(f"   - {pf}")
 
-            widths=cam.handle.Width.get_range()
+            widths=self.handle.Width.get_range()
             print( " - width:")
             print(f"   - min {widths['min']}")
             print(f"   - max {widths['max']}")
             print(f"   - inc {widths['inc']}")
 
-            heights=cam.handle.Height.get_range()
+            heights=self.handle.Height.get_range()
             print( " - height:")
             print(f"   - min {heights['min']}")
             print(f"   - max {heights['max']}")
             print(f"   - inc {heights['inc']}")
 
-            if cam.handle.ExposureTime.is_readable():
-                for e in cam.handle.ExposureTime.get_range().items():
+            if self.handle.ExposureTime.is_readable():
+                for e in self.handle.ExposureTime.get_range().items():
                     print(f" - exposure time {e}")
 
-            if cam.handle.Gain.is_readable():
-                for g in cam.handle.Gain.get_range().items():
+            if self.handle.Gain.is_readable():
+                for g in self.handle.Gain.get_range().items():
                     print(f" - gain {g}")
             
-            if cam.handle.BinningHorizontal.is_readable():
-                for bh in cam.handle.BinningHorizontal.get_range().items():
+            if self.handle.BinningHorizontal.is_readable():
+                for bh in self.handle.BinningHorizontal.get_range().items():
                     print(f" - binning horizontal {bh}")
 
-            if cam.handle.BinningVertical.is_readable():
-                for bv in cam.handle.BinningVertical.get_range().items():
+            if self.handle.BinningVertical.is_readable():
+                for bv in self.handle.BinningVertical.get_range().items():
                     print(f" - binning vertical {bv}")
 
-            if cam.handle.TriggerSource.is_readable():
-                for ts in cam.handle.TriggerSource.get_range().items():
+            if self.handle.TriggerSource.is_readable():
+                for ts in self.handle.TriggerSource.get_range().items():
                     print(f" - trigger source {ts}")
 
         # notable features:
@@ -128,17 +127,18 @@ class Camera:
         #   - ExposureDelay
         #   - ExposureTimeMode
 
-        self.acq_mode=None
-        self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
-
-        # set trigger source
-        self.handle.TriggerMode.set(gxiapi.GxSwitchEntry.ON)
-        self.handle.TriggerSource.set(gxiapi.GxTriggerSourceEntry.SOFTWARE)
+        # turn off device link throughput limit
+        self.handle.DeviceLinkThroughputLimitMode.set(gxiapi.GxSwitchEntry.OFF)
 
         # set acquisition mode
         self.handle.AcquisitionMode.set(gxiapi.GxAcquisitionModeEntry.CONTINUOUS)
 
+        self.is_streaming=False
+        self.acq_mode=None
+        self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
+
         # turning stream on takes 25ms for continuous mode, 20ms for single frame mode
+        self.is_streaming=True
         self.handle.stream_on()
 
     def _set_acquisition_mode(
@@ -155,7 +155,9 @@ class Camera:
             return
         
         # ensure stream is off, and unregister all registered callbacks
-        self.handle.stream_off()
+        was_streaming=self.is_streaming
+        if was_streaming:
+            self.handle.stream_off()
         self.handle.data_stream[0].unregister_capture_callback()
         
         match acq_mode:
@@ -188,7 +190,8 @@ class Camera:
         self.handle.AcquisitionMode.set(gxiapi.GxAcquisitionModeEntry.CONTINUOUS)
 
         # turning stream on takes 25ms for continuous mode, 20ms for single frame mode
-        self.handle.stream_on()
+        if was_streaming:
+            self.handle.stream_on()
 
         self.acq_mode=acq_mode
         
@@ -198,6 +201,7 @@ class Camera:
         """
 
         # turning stream off takes 300ms (for continuous and single frame mode)
+        self.is_streaming=False
         self.handle.stream_off()
 
         self.handle.close_device()

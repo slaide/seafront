@@ -245,6 +245,23 @@ class CommandName(int,Enum):
     INITIALIZE = 254
     RESET = 255
 
+class ILLUMINATION_CODE(int,Enum):
+    ILLUMINATION_SOURCE_LED_ARRAY_FULL:int = 0
+    ILLUMINATION_SOURCE_LED_ARRAY_LEFT_HALF:int = 1
+    ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_HALF:int = 2
+
+    ILLUMINATION_SOURCE_LED_ARRAY_LEFTB_RIGHTR:int = 3
+    ILLUMINATION_SOURCE_LED_ARRAY_LOW_NA:int = 4
+    ILLUMINATION_SOURCE_LED_ARRAY_LEFT_DOT:int = 5
+    ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_DOT:int = 6
+    ILLUMINATION_SOURCE_LED_EXTERNAL_FET:int = 20
+
+    ILLUMINATION_SOURCE_405NM:int = 11
+    ILLUMINATION_SOURCE_488NM:int = 12
+    ILLUMINATION_SOURCE_638NM:int = 13
+    ILLUMINATION_SOURCE_561NM:int = 14
+    ILLUMINATION_SOURCE_730NM:int = 15
+
 class Microcontroller:
     class Command:
         def __init__(self):
@@ -577,6 +594,49 @@ class Microcontroller:
 
             return ret
 
+        @staticmethod
+        def illumination_begin(illumination_source:ILLUMINATION_CODE,intensity_percent:float)->tp.List["Microcontroller.Command"]:
+            """
+                turn on illumination source, and set intensity
+
+                intensity_percent: should be in range [0;100] - will be internally clamped to [0;100] for safety either way
+            """
+
+            cmds=[]
+
+            INTENSITY_INT_MAX=0xFFFF
+            intensity_int=int(intensity_percent/100*INTENSITY_INT_MAX)
+            intensity_clamped=max(min(intensity_int,INTENSITY_INT_MAX),0)
+
+            cmd = Microcontroller.Command()
+            cmd[1] = CommandName.SET_ILLUMINATION.value
+            cmd[2] = illumination_source.value
+            cmd[3] = (intensity_clamped >>8*1) & 0xFF
+            cmd[4] = (intensity_clamped >>8*0) & 0xFF
+            cmds.append(cmd)
+
+            cmd = Microcontroller.Command()
+            cmd[1] = CommandName.TURN_ON_ILLUMINATION.value
+            cmds.append(cmd)
+
+            return cmds
+
+        @staticmethod
+        def illumination_end(illumination_source:tp.Optional[ILLUMINATION_CODE]=None)->tp.List["Microcontroller.Command"]:
+            cmds=[]
+            if illumination_source is not None:
+                cmd = Microcontroller.Command()
+                cmd[1] = CommandName.SET_ILLUMINATION.value
+                cmd[2] = illumination_source.value
+                cmd[3] = 0
+                cmd[4] = 0
+                cmds.append(cmd)
+            
+            cmd = Microcontroller.Command()
+            cmd[1] = CommandName.TURN_OFF_ILLUMINATION.value
+            cmds.append(cmd)
+
+            return cmds
 
     @staticmethod
     def _wait_until_cmd_is_finished(

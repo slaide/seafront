@@ -549,10 +549,26 @@
                                 <div id="all-channel-container" class="section">
                                     <p class="section-header col-span-6">Imaging Channel Configuration <a class="data" href="{{docLinks.imagingChannelConfig}}" target="_blank">Help</a></p>
 
+                                    <script>
+                                        function snapChannel(channel){
+                                            console.log("snapping channel",channel)
+                                            return;
+                                            new XHR()
+                                                .onload((xhr)=>{
+                                                    let response=JSON.parse(xhr.responseText)
+                                                    console.log(response)
+                                                })
+                                                .onerror(()=>{
+                                                    console.error("error snapping channel")
+                                                })
+                                                .send("/api/action/snap_channel",{"channel":channel},method="POST")
+                                        }
+                                    </script>
+
                                     <template class="data" p:for="channel of microscope_config.channels">
                                         <div class="one-channel-container">
                                             <p class="col-span-2">{{channel.name}}</p>
-                                            <button class="col-span-2">Snap</button>
+                                            <button class="col-span-2" p:on-click="snapChannel(channel)">Snap</button>
                                             <label class="data" p:tooltip="hello there">Illumination (%)</label>
                                             <input type="number"
                                                 min="{{limits.illumination_percent.min}}"
