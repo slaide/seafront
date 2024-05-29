@@ -542,7 +542,11 @@ class Microcontroller:
             return ret
 
         @staticmethod
-        def move_to_mm(axis:tp.Literal["x","y","z"],coord_mm:float)->"Microcontroller.Command":
+        def move_to_mm(axis:tp.Literal["x","y"],coord_mm:float)->"Microcontroller.Command":
+            """
+                move to z is currently TODO, and potentially dangerous. this command does not indicate completion, ever! (but it does move to the target position..)
+            """
+
             ret=Microcontroller.Command()
 
             axis_cmd=None
@@ -610,6 +614,15 @@ class Microcontroller:
                     return False
 
             cmd_is_completed=packet.last_cmd_id==cmd[0] and packet.exec_status==0
+            if cmd.is_move_cmd:
+                # TODO : moves in Z sometimes to not indicate completion, even when moving to target position is done
+                cmd_name=CommandName(cmd[1])
+                match cmd_name:
+                    case CommandName.MOVETO_Z:
+                        cmd_is_completed=packet.last_cmd_id==cmd[0]
+                    case CommandName.MOVE_Z:
+                        cmd_is_completed=packet.last_cmd_id==cmd[0]
+
             return cmd_is_completed
         
         mc._read_packets(read_packet)

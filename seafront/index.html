@@ -608,21 +608,95 @@
 
                                     <label>x (mm)</label>
                                     <p class="data">{{microscope_state.pos.x_mm.toFixed(2)}}</p>
-                                    <input type="number" min="0.01" max="100" step="0.01" value="1">
-                                    <button>Forward</button>
-                                    <button>Backward</button>
+                                    <input id="x_move_distance_mm" type="number" min="0.01" max="100" step="0.01" value="1">
+                                    <script>
+                                        function move_x(dist_sign){
+                                            let data={}
+                                            let x_move_distance_mm_el=document.getElementById("x_move_distance_mm")
+                                            if(!x_move_distance_mm_el)throw new Error("element not found")
+
+                                            data.dist_mm=dist_sign*parseFloat(x_move_distance_mm_el.value)
+
+                                            new XHR()
+                                                .onload((xhr)=>{
+                                                    let response=JSON.parse(xhr.responseText)
+                                                    console.log(response)
+                                                })
+                                                .onerror(()=>{
+                                                    console.error("error moving x")
+                                                })
+                                                .send("/api/action/move_x_by",data,method="POST")
+                                        }
+                                        function forward_x(){
+                                            move_x(1)
+                                        }
+                                        function backward_x(){
+                                            move_x(-1)
+                                        }
+
+                                        function move_y(dist_sign){
+                                            let data={}
+                                            let y_move_distance_mm_el=document.getElementById("y_move_distance_mm")
+                                            if(!y_move_distance_mm_el)throw new Error("element not found")
+
+                                            data.dist_mm=dist_sign*parseFloat(y_move_distance_mm_el.value)
+
+                                            new XHR()
+                                                .onload((xhr)=>{
+                                                    let response=JSON.parse(xhr.responseText)
+                                                    console.log(response)
+                                                })
+                                                .onerror(()=>{
+                                                    console.error("error moving y")
+                                                })
+                                                .send("/api/action/move_y_by",data,method="POST")
+                                        }
+                                        function forward_y(){
+                                            move_y(1)
+                                        }
+                                        function backward_y(){
+                                            move_y(-1)
+                                        }
+
+                                        function move_z(dist_sign){
+                                            let data={}
+                                            let z_move_distance_um_el=document.getElementById("z_move_distance_um")
+                                            if(!z_move_distance_um_el)throw new Error("element not found")
+
+                                            data.dist_mm=dist_sign*parseFloat(z_move_distance_um_el.value)*1e-3
+                                            console.log("moving z by",data.dist_mm.toFixed(3),"mm")
+
+                                            new XHR()
+                                                .onload((xhr)=>{
+                                                    let response=JSON.parse(xhr.responseText)
+                                                    console.log(response)
+                                                })
+                                                .onerror(()=>{
+                                                    console.error("error moving z")
+                                                })
+                                                .send("/api/action/move_z_by",data,method="POST")
+                                        }
+                                        function forward_z(){
+                                            move_z(1)
+                                        }
+                                        function backward_z(){
+                                            move_z(-1)
+                                        }
+                                    </script>
+                                    <button class="data" p:on-click="forward_x()">Forward</button>
+                                    <button class="data" p:on-click="backward_x()">Backward</button>
 
                                     <label>y (mm)</label>
                                     <p class="data">{{microscope_state.pos.y_mm.toFixed(2)}}</p>
-                                    <input type="number" min="0.01" max="100" step="0.01" value="1">
-                                    <button>Forward</button>
-                                    <button>Backward</button>
+                                    <input id="y_move_distance_mm" type="number" min="0.01" max="100" step="0.01" value="1">
+                                    <button class="data" p:on-click="forward_y()">Forward</button>
+                                    <button class="data" p:on-click="backward_y()">Backward</button>
 
                                     <label>z (um)</label>
                                     <p class="data">{{microscope_state.pos.z_um.toFixed(2)}}</p>
-                                    <input type="number" min="0.01" max="100" step="0.01" value="1">
-                                    <button>Forward</button>
-                                    <button>Backward</button>
+                                    <input id="z_move_distance_um" type="number" min="0.01" max="100" step="0.01" value="1">
+                                    <button class="data" p:on-click="forward_z()">Forward</button>
+                                    <button class="data" p:on-click="backward_z()">Backward</button>
 
                                     <button>Zero Z</button>
                                     <button class="col-span-2">enter loading position</button>

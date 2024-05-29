@@ -300,7 +300,9 @@ class Core:
 
         # register url rules requiring machine interaction
         app.add_url_rule(f"/api/get_info/stage_position", f"get_stage_position", self.get_stage_position,methods=["GET","POST"])
-        app.add_url_rule(f"/api/action/move_x_by", f"action_move_x_by", self.action_move_x_by,methods=["POST"])
+        app.add_url_rule(f"/api/action/move_x_by", f"action_move_x_by", lambda:self.action_move_by("x"),methods=["POST"])
+        app.add_url_rule(f"/api/action/move_y_by", f"action_move_y_by", lambda:self.action_move_by("y"),methods=["POST"])
+        app.add_url_rule(f"/api/action/move_z_by", f"action_move_z_by", lambda:self.action_move_by("z"),methods=["POST"])
         # register url for start_acquisition
         app.add_url_rule(f"/api/acquisition/start", f"start_acquisition", self.start_acquisition,methods=["POST"])
         # for get_acquisition_status
@@ -332,6 +334,9 @@ class Core:
 
     def get_stage_position(self):
         packet=self.mc.get_packet()
+        if packet is None:
+            return json.dumps({"status":"error","message":"no packet received"})
+        
         ret={
             "x_pos_mm":packet.x_pos_mm,
             "y_pos_mm":packet.y_pos_mm,
@@ -339,7 +344,7 @@ class Core:
         }
         return json.dumps({"status":"success","position":ret})
 
-    def action_move_x_by(self):
+    def action_move_by(self,axis:str):
         json_data=None
         try:
             json_data=request.get_json()
@@ -351,9 +356,9 @@ class Core:
         
         distance_mm=json_data['dist_mm']
         
-        self.mc.send_cmd(Command.move_by_mm("x",distance_mm))
+        self.mc.send_cmd(Command.move_by_mm(axis,distance_mm))
 
-        return json.dumps({"status": "success","moved_by_x_mm":distance_mm})
+        return json.dumps({"status": "success","moved_by_mm":distance_mm,"axis":axis})
 
     def start_acquisition(self):
         """
