@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define the Python version
-PYTHON_VERSION="3.10.9"
+PYTHON_VERSION="3.10.14"
 
 START_WD=$(pwd)
 

@@ -2,8 +2,8 @@
 
 START_WD=$(pwd)
 
-# Define the Python version
-PYTHON_VERSION="3.10.9"
+# Define the Python version (pick from https://www.python.org/downloads/)
+PYTHON_VERSION="3.10.14"
 
 # Define the installation directories
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -48,7 +48,8 @@ export PATH=$XZ_INSTALL_DIR/bin:$OPENSSL_INSTALL_DIR/bin:$PATH
 export LD_LIBRARY_PATH=$XZ_INSTALL_DIR/lib:$OPENSSL_INSTALL_DIR/lib:$LD_LIBRARY_PATH
 export C_INCLUDE_PATH=$XZ_INSTALL_DIR/include:$OPENSSL_INSTALL_DIR/include:$C_INCLUDE_PATH
 export LIBRARY_PATH=$XZ_INSTALL_DIR/lib:$OPENSSL_INSTALL_DIR/lib:$LIBRARY_PATH
-export LDFLAGS="${LDFLAGS} -Wl,-rpath=$OPENSSL_INSTALL_DIR/lib"
+export LDFLAGS="$LDFLAGS -L$OPENSSL_INSTALL_DIR/lib -L$XZ_INSTALL_DIR/lib"
+export CFLAGS="$CFLAGS -I$OPENSSL_INSTALL_DIR/include -I$XZ_INSTALL_DIR/include"
 
 # Download and compile python
 PYTHON_URL="https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz"
@@ -60,7 +61,7 @@ cd $PYTHON_SOURCE_DIR
 # + enable ssl support (required by pip for pypi packages) - this requires openssl to be installed on the system!
 # + also apply several optimizations to improve runtime performance (no --enable-optimizations flag \
 #   because pgo generates wrong raw profile data, version=8 instead of expected 9?!)
-./configure --prefix=$PYTHON_INSTALL_DIR --with-openssl=$OPENSSL_INSTALL_DIR --with-openssl-rpath=auto --with-lto --with-computed-gotos --with-ensurepip
+./configure --with-openssl=$OPENSSL_INSTALL_DIR --with-openssl-rpath=auto --prefix=$PYTHON_INSTALL_DIR --with-lto --with-computed-gotos --with-ensurepip
 make -j
 make -j install
 
