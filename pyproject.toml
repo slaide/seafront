@@ -6,9 +6,16 @@ authors=[
 ]
 dependencies = [
     "flask",
-    "git+https://github.com/slaide/daheng-imaging-gxipy.git",
-    "git+https://github.com/slaide/seafront-config.git",
+    "gxipy@git+https://github.com/slaide/daheng-imaging-gxipy",
+    "seaconfig@git+https://github.com/slaide/seafront-config",
     "pyserial",
     "crc",
     "pillow",
 ]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["seafront"]

@@ -48,6 +48,7 @@ export PATH=$XZ_INSTALL_DIR/bin:$OPENSSL_INSTALL_DIR/bin:$PATH
 export LD_LIBRARY_PATH=$XZ_INSTALL_DIR/lib:$OPENSSL_INSTALL_DIR/lib:$LD_LIBRARY_PATH
 export C_INCLUDE_PATH=$XZ_INSTALL_DIR/include:$OPENSSL_INSTALL_DIR/include:$C_INCLUDE_PATH
 export LIBRARY_PATH=$XZ_INSTALL_DIR/lib:$OPENSSL_INSTALL_DIR/lib:$LIBRARY_PATH
+export LDFLAGS="${LDFLAGS} -Wl,-rpath=$OPENSSL_INSTALL_DIR/lib"
 
 # Download and compile python
 PYTHON_URL="https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz"
@@ -59,7 +60,7 @@ cd $PYTHON_SOURCE_DIR
 # + enable ssl support (required by pip for pypi packages) - this requires openssl to be installed on the system!
 # + also apply several optimizations to improve runtime performance (no --enable-optimizations flag \
 #   because pgo generates wrong raw profile data, version=8 instead of expected 9?!)
-./configure --prefix=$PYTHON_INSTALL_DIR --with-openssl=$OPENSSL_INSTALL_DIR --with-lto --with-computed-gotos --with-ensurepip
+./configure --prefix=$PYTHON_INSTALL_DIR --with-openssl=$OPENSSL_INSTALL_DIR --with-openssl-rpath=auto --with-lto --with-computed-gotos --with-ensurepip
 make -j
 make -j install
 
@@ -71,8 +72,9 @@ echo "Python $PYTHON_VERSION installed successfully to $PYTHON_INSTALL_DIR"
 echo "Use 'source activate.sh' to activate this Python environment."
 
 # install package dependencies
-source $SCRIPT_DIR/activate.sh
+cd $SCRIPT_DIR
+source activate.sh
 python3 -m pip install --upgrade pip
-python3 -m pip install -r requirements.txt
 
 cd $SCRIPT_DIR/.. # project root dir
+python3 -m pip install -e .
