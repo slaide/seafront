@@ -42,9 +42,9 @@ class Camera:
     def __init__(self,device_info:list):
         self.device_info=device_info
 
-        self.vendor_name=device_info["vendor_name"]
-        self.model_name=device_info["model_name"]
-        self.sn=device_info["sn"]
+        self.vendor_name:str=device_info["vendor_name"]
+        self.model_name:str=device_info["model_name"]
+        self.sn:str=device_info["sn"]
 
         self.handle=None
 
@@ -221,6 +221,7 @@ class Camera:
             case _:
                 raise RuntimeError(f"unhandled unit {self.handle.ExposureTime.get_range()['unit']}")
         
+        print(f"setting exposure time to {exposure_time_native_unit} = {exposure_time_ms} as {self.handle.ExposureTime.get_range()['unit']}")
         return exposure_time_native_unit
 
     def acquire_with_config(

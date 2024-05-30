@@ -1,7 +1,8 @@
-import json, time, os, io
+import json, time, os, io, sys
 from flask import Flask, send_from_directory, request, send_file
 import numpy as np
 from PIL import Image
+import typing as tp
 
 from seaconfig import *
 from .hardware.camera import Camera, gxiapi
@@ -129,8 +130,8 @@ def get_hardware_capabilities():
                 z_offset_um=0
             ),
             AcquisitionChannelConfig(
-                name="Fluo 688 nm Ex",
-                handle="fluo688",
+                name="Fluo 638 nm Ex",
+                handle="fluo638",
                 illum_perc=100,
                 exposure_time_ms=5.0,
                 analog_gain=0,
@@ -172,7 +173,7 @@ def get_hardware_capabilities():
     }
     return json.dumps(ret)
 
-from .config.basics import _get_machine_defaults
+from .config.basics import _get_machine_defaults, config_list_as_dict
 
 @app.route("/api/get_features/machine_defaults", methods=["GET","POST"])
 def get_machine_defaults():
@@ -205,6 +206,26 @@ plate=Wellplate(
 is_first_start=os.environ.get("WERKZEUG_RUN_MAIN") != "true"
 
 class Core:
+    @property
+    def main_cam(self):
+        defaults=config_list_as_dict(_get_machine_defaults())
+        main_camera_model_name=defaults["main_camera_model"]["value"]
+        _main_cameras=[c for c in self.cams if c.model_name==main_camera_model_name]
+        if len(_main_cameras)==0:
+            raise RuntimeError(f"no camera with model name {main_camera_model_name} found")
+        main_camera=_main_cameras[0]
+        return main_camera
+
+    @property
+    def focus_cam(self):
+        defaults=config_list_as_dict(_get_machine_defaults())
+        focus_camera_model_name=defaults["focus_camera_model"]["value"]
+        _focus_cameras=[c for c in self.cams if c.model_name==focus_camera_model_name]
+        if len(_focus_cameras)==0:
+            raise RuntimeError(f"no camera with model name {focus_camera_model_name} found")
+        focus_camera=_focus_cameras[0]
+        return focus_camera
+
     def __init__(self):
         self.microcontrollers=Microcontroller.get_all()
         self.cams=Camera.get_all()
@@ -235,6 +256,18 @@ class Core:
                 # reinitialize motor drivers and DAC
                 mc.send_cmd(Command.initialize())
                 mc.send_cmd(Command.configure_actuators())
+
+                # make sure all illumination is off
+                for illum_src in [
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
+
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
+                ]:
+                    mc.send_cmd(Command.illumination_end(illum_src))
 
                 # when starting up the microscope, the initial position is considered (0,0,0)
                 # even homing considers the limits, so before homing, we need to disable the limits
@@ -268,45 +301,7 @@ class Core:
 
         print(f"found {len(self.cams)} cameras")
         for i,cam in enumerate(self.cams):
-            print(f"camera {i}:")
-            print(f" - vendor: {cam.vendor_name}")
-            print(f" - model: {cam.model_name}")
-            print(f" - sn: {cam.sn}")
-
             cam.open()
-
-            if False:
-                config=AcquisitionChannelConfig("whatever","dontcare",100,5.0,0,0)
-                img=cam.acquire_with_config(config)
-                print(f" - acquired image with shape {img.shape} and dtype {img.dtype}")
-
-                class Container:
-                    def __init__(self,total_num_images:int):
-                        self.num_images=0
-                        self.total_num_images=total_num_images
-
-                        self.total_t=0
-                        self.last_imaging_time=time.time()
-                    def __call__(self,img:gxiapi.RawImage):
-
-                        img=img.get_numpy_array()
-                        print(f" - acquired image with shape {img.shape} and dtype {img.dtype}")
-
-                        self.num_images+=1
-                        current_time=time.time()
-                        delta_t=current_time-self.last_imaging_time
-                        if self.num_images>1 and self.total_num_images>1:
-                            self.total_t+=delta_t/(self.total_num_images-1)
-                        self.last_imaging_time=current_time
-
-                        should_break=self.num_images>self.total_num_images
-                        if should_break and self.total_num_images>1:
-                            print(f"continuous: overhead at {config.exposure_time_ms}ms exposure time is {self.total_t*1e3-config.exposure_time_ms}ms")
-                        return should_break
-                    
-                cam.acquire_with_config(config,mode="until_stop",callback=Container(1))
-
-                #cam.close()
 
         # register url rules requiring machine interaction
         app.add_url_rule(f"/api/get_info/stage_position", f"get_stage_position", self.get_stage_position,methods=["GET","POST"])
@@ -328,13 +323,14 @@ class Core:
         app.add_url_rule("/api/action/leave_loading_position", "action_leave_loading_position", self.action_leave_loading_position,methods=["POST"])
         app.add_url_rule("/api/action/enter_loading_position", "action_enter_loading_position", self.action_enter_loading_position,methods=["POST"])
 
+        # snap channel
+        app.add_url_rule("/api/action/snap_channel", "snap_channel", self.snap_channel,methods=["POST"])
+
         self.latest_image_index=0
         self.images={}
 
     def snap_channel(self):
-        # TODO pick which cam
-        cam=self.cams[0]
-        cam.open()
+        cam=self.main_cam
 
         # get json data
         json_data=None
@@ -353,16 +349,29 @@ class Core:
         channel=AcquisitionChannelConfig(**json_data["channel"])
         print(f"channel config: {channel}")
 
-        cam.acquire_with_config(channel)
+        illum_code=ILLUMINATION_CODE.from_handle(channel.handle)
+        self.mc.send_cmd(Command.illumination_begin(illum_code,channel.illum_perc))
+        img=cam.acquire_with_config(channel)
+        self.mc.send_cmd(Command.illumination_end(illum_code))
+        if img is None:
+            return json.dumps({"status":"error","message":"failed to acquire image"})
+        
+        self.latest_image_index+=1
+        img_handle=f"{self.latest_image_index}"
+        self.images[img_handle]={
+            "img":img,
+            "timestamp":time.time()
+        }
+        print(f"saved image of shape {img.shape} with handle {img_handle}")
 
-        cam.close()
+        return json.dumps({"status":"success","img_handle":img_handle})
 
     def send_image_by_handle(self):
         """
             send image by handle, as get request to allow using this a img src
         """
 
-        img_handle=None
+        img_handle:tp.Optional[str]=None
         try:
             img_handle=request.args.get("img_handle")
         except Exception as e:
@@ -377,7 +386,10 @@ class Core:
         img_container=self.images[img_handle]
         img_raw=img_container['img']
 
-        img_pil=Image.fromarray(img_raw)
+        # convert from u12 to u8
+        img=(img_raw>>4).astype(np.uint8)
+
+        img_pil=Image.fromarray(img)
 
         img_io=io.BytesIO()
         img_pil.save(img_io,format="PNG")
@@ -390,24 +402,12 @@ class Core:
             send self.last_image as flask response
         """
 
-        # mock image data
-        self.latest_image_index+=1
-        img_handle=f"{self.latest_image_index}"
-        U12_MAX=2**12
-        new_img_data=np.random.randint(0,U12_MAX,(2500,2500),dtype=np.uint16)
-        # convert image from u16 to u8, by right shifting by 4, then casting to u8
-        # image display in the browser cannot handle more than 8 bits per channel
-        new_img_data=(new_img_data>>4).astype(np.uint8)
-        self.images[img_handle]={
-            "img":new_img_data,
-            "timestamp":time.time()
-        }
-
         # remove oldest images to keep buffer length capped at 8
         while len(self.images)>8:
             oldest_key=min(self.images,key=lambda k:self.images[k]["timestamp"])
             del self.images[oldest_key]
 
+        img_handle=f"{self.latest_image_index}"
         return json.dumps({"img_handle":img_handle})
 
     def move_to_well(self):
