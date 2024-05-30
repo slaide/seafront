@@ -9,7 +9,7 @@ dependencies = [
     "gxipy@git+https://github.com/slaide/daheng-imaging-gxipy",
     "seaconfig@git+https://github.com/slaide/seafront-config",
     "pyserial",
-    "crc",
+    "crc<2",
     "pillow",
 ]
 
