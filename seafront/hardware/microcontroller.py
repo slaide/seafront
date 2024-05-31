@@ -246,22 +246,22 @@ class CommandName(int,Enum):
     RESET = 255
 
 class ILLUMINATION_CODE(int,Enum):
-    ILLUMINATION_SOURCE_LED_ARRAY_FULL:int = 0
-    ILLUMINATION_SOURCE_LED_ARRAY_LEFT_HALF:int = 1
-    ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_HALF:int = 2
+    ILLUMINATION_SOURCE_LED_ARRAY_FULL = 0
+    ILLUMINATION_SOURCE_LED_ARRAY_LEFT_HALF = 1
+    ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_HALF = 2
 
-    ILLUMINATION_SOURCE_LED_ARRAY_LEFTB_RIGHTR:int = 3
-    ILLUMINATION_SOURCE_LED_ARRAY_LOW_NA:int = 4
-    ILLUMINATION_SOURCE_LED_ARRAY_LEFT_DOT:int = 5
-    ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_DOT:int = 6
+    ILLUMINATION_SOURCE_LED_ARRAY_LEFTB_RIGHTR = 3
+    ILLUMINATION_SOURCE_LED_ARRAY_LOW_NA = 4
+    ILLUMINATION_SOURCE_LED_ARRAY_LEFT_DOT = 5
+    ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_DOT = 6
 
-    ILLUMINATION_SOURCE_LED_EXTERNAL_FET:int = 20
+    ILLUMINATION_SOURCE_LED_EXTERNAL_FET = 20
 
-    ILLUMINATION_SOURCE_405NM:int = 11
-    ILLUMINATION_SOURCE_488NM:int = 12
-    ILLUMINATION_SOURCE_638NM:int = 13
-    ILLUMINATION_SOURCE_561NM:int = 14
-    ILLUMINATION_SOURCE_730NM:int = 15
+    ILLUMINATION_SOURCE_405NM = 11
+    ILLUMINATION_SOURCE_488NM = 12
+    ILLUMINATION_SOURCE_638NM = 13
+    ILLUMINATION_SOURCE_561NM = 14
+    ILLUMINATION_SOURCE_730NM = 15
 
     @property
     def is_led_matrix(self)->bool:
@@ -515,6 +515,8 @@ class Microcontroller:
 
                 ret=Microcontroller.Command()
 
+                ret.is_move_cmd=True
+
                 ret[1]=command_name
                 ret[2]=(partial_usteps>>(8*3))&0xFF
                 ret[3]=(partial_usteps>>(8*2))&0xFF
@@ -522,8 +524,6 @@ class Microcontroller:
                 ret[5]=(partial_usteps>>(8*0))&0xFF
 
                 rets.append(ret)
-
-            ret.is_move_cmd=True
 
             return rets
         
@@ -586,7 +586,7 @@ class Microcontroller:
             return ret
 
         @staticmethod
-        def move_to_mm(axis:tp.Literal["x","y"],coord_mm:float)->"Microcontroller.Command":
+        def move_to_mm(axis:tp.Literal["x","y","z"],coord_mm:float)->"Microcontroller.Command":
             """
                 move to z is currently TODO, and potentially dangerous. this command does not indicate completion, ever! (but it does move to the target position..)
             """
@@ -752,6 +752,7 @@ class Microcontroller:
         self.terminate_reading_received_packet_thread=False
         while not self.terminate_reading_received_packet_thread:
             # wait to receive data
+            assert self.handle is not None
             serial_in_waiting_status=self.handle.in_waiting
 
             if serial_in_waiting_status==0:
@@ -832,6 +833,7 @@ class Microcontroller:
                         if self.illum.locked():
                             self.illum.release()
                 
+                assert self.handle is not None
                 self.handle.write(cmd.bytes)
                 if cmd.wait_for_completion:
                     Microcontroller._wait_until_cmd_is_finished(self,cmd)
@@ -842,6 +844,7 @@ class Microcontroller:
         self.handle=serial.Serial(self.device_info.device,2000000)
 
     def close(self):
+        assert self.handle is not None
         self.handle.close()
         self.handle=None
 

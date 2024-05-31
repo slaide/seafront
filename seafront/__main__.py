@@ -3,6 +3,7 @@ from flask import Flask, send_from_directory, request, send_file
 import numpy as np
 from PIL import Image
 import typing as tp
+from dataclasses import dataclass
 
 from seaconfig import *
 from .hardware.camera import Camera, gxiapi
@@ -333,7 +334,7 @@ class Core:
         self.stream_handler=None
 
         self.latest_image_index=0
-        self.images={}
+        self.images:tp.Dict[str,"Core.ImageStoreEntry"]={}
 
     def _create_stream_handler(self):
         class StreamHandler:
@@ -358,19 +359,33 @@ class Core:
                 if img is None:
                     raise RuntimeError("no image received")
                 
-                img_np=img.get_numpy_array().copy()
+                img_np=img.get_numpy_array()
+                assert img_np is not None
+                img_np=img_np.copy()
                 
-                self.core.latest_image_index+=1
-                img_handle=f"{self.core.latest_image_index}"
-                self.core.images[img_handle]={
-                    "img":img_np,
-                    "timestamp":time.time()
-                }
-                print(f"saved image of shape {img_np.shape} and dtype {img_np.dtype} with handle {img_handle}")
+                self.core._store_new_image(img_np)
 
                 return self.should_stop
 
         return StreamHandler(self)
+
+    @dataclass
+    class ImageStoreEntry:
+        img:np.ndarray
+        timestamp:float
+
+    def _store_new_image(self,img:np.ndarray)->str:
+        """
+            store a new image, return the handle
+        """
+
+        self.latest_image_index+=1
+        img_handle=f"{self.latest_image_index}"
+        self.images[img_handle]=Core.ImageStoreEntry(img,time.time())
+
+        print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {img_handle}")
+
+        return img_handle
 
     def image_channel(self,mode:tp.Literal['snap','stream_begin','stream_end']):
         cam=self.main_cam
@@ -395,30 +410,28 @@ class Core:
             illum_code=ILLUMINATION_CODE.from_handle(channel.handle)
         except Exception as e:
             return json.dumps({"status":"error","message":"invalid channel handle"})
+        
+        if "machine_config" in json_data:
+            print("machine config:",json_data["machine_config"])
 
         match mode:
             case "snap":
-                if self.is_streaming:
+                if self.is_streaming or self.stream_handler is not None:
                     return json.dumps({"status":"error","message":"already streaming"})
                 
                 self.mc.send_cmd(Command.illumination_begin(illum_code,channel.illum_perc))
                 img=cam.acquire_with_config(channel)
                 self.mc.send_cmd(Command.illumination_end(illum_code))
-                print(f"after snap, image min max: {img.min()} {img.max()}")
                 if img is None:
                     return json.dumps({"status":"error","message":"failed to acquire image"})
+                print(f"after snap, image min max: {img.min()} {img.max()}")
                 
-                self.latest_image_index+=1
-                img_handle=f"{self.latest_image_index}"
-                self.images[img_handle]={
-                    "img":img,
-                    "timestamp":time.time()
-                }
+                img_handle=self._store_new_image(img)
                 print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {img_handle}")
 
                 return json.dumps({"status":"success","img_handle":img_handle})
             case "stream_begin":
-                if self.is_streaming:
+                if self.is_streaming or self.stream_handler is not None:
                     return json.dumps({"status":"error","message":"already streaming"})
 
                 self.is_streaming=True
@@ -430,7 +443,7 @@ class Core:
 
                 return json.dumps({"status":"success","channel":json_data["channel"]})
             case "stream_end":
-                if not self.is_streaming:
+                if not self.is_streaming or self.stream_handler is None:
                     return json.dumps({"status":"error","message":"not currently streaming"})
                 
                 self.stream_handler.should_stop=True
@@ -455,7 +468,6 @@ class Core:
         except Exception as e:
             pass
 
-        print("received img_handle:",img_handle)
         if img_handle is None:
             return json.dumps({"status":"error","message":"no img_handle provided"})
         
@@ -463,7 +475,7 @@ class Core:
             return json.dumps({"status":"error","message":f"img_handle {img_handle} not found"})
 
         img_container=self.images[img_handle]
-        img_raw=img_container['img']
+        img_raw=img_container.img
         print(f"img min max: {img_raw.min()} {img_raw.max()}")
 
         # convert from u12 to u8
@@ -492,7 +504,7 @@ class Core:
 
         # remove oldest images to keep buffer length capped at 8
         while len(self.images)>8:
-            oldest_key=min(self.images,key=lambda k:self.images[k]["timestamp"])
+            oldest_key=min(self.images,key=lambda k:self.images[k].timestamp)
             del self.images[oldest_key]
 
         img_handle=f"{self.latest_image_index}"
@@ -534,7 +546,7 @@ class Core:
         }
         return json.dumps({"status":"success","position":ret})
 
-    def action_move_by(self,axis:str):
+    def action_move_by(self,axis:tp.Literal["x","y","z"]):
         if self.is_in_loading_position:
             return json.dumps({"status":"error","message":"cannot move while in loading position"})
         

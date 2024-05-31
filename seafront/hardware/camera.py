@@ -33,13 +33,14 @@ class Camera:
         ret=[]
 
         if dev_num > 0:
+            assert dev_info_list is not None
             for dev_info in dev_info_list:
                 cam=Camera(dev_info)
                 ret.append(cam)
 
         return ret
 
-    def __init__(self,device_info:list):
+    def __init__(self,device_info:tp.Dict[str,str]):
         self.device_info=device_info
 
         self.vendor_name:str=device_info["vendor_name"]
@@ -150,6 +151,7 @@ class Camera:
         """
             set acquisition mode
         """
+        assert self.handle is not None
 
         if self.acq_mode==acq_mode:
             return
@@ -199,6 +201,7 @@ class Camera:
         """
             close device handle
         """
+        assert self.handle is not None
 
         # turning stream off takes 300ms (for continuous and single frame mode)
         self.is_streaming=False
@@ -211,17 +214,19 @@ class Camera:
         """
             convert exposure time from ms to the native unit of the camera
         """
+        assert self.handle is not None
 
         exposure_time_native_unit=exposure_time_ms
-        match self.handle.ExposureTime.get_range()['unit']:
+        exposure_time_range=self.handle.ExposureTime.get_range()
+        assert exposure_time_range is not None
+        match exposure_time_range['unit']:
             case 'us':
                 exposure_time_native_unit*=1e3
             case 'ms':
                 pass
             case _:
-                raise RuntimeError(f"unhandled unit {self.handle.ExposureTime.get_range()['unit']}")
+                raise RuntimeError(f"unhandled unit {exposure_time_range['unit']}")
         
-        print(f"setting exposure time to {exposure_time_native_unit} = {exposure_time_ms} as {self.handle.ExposureTime.get_range()['unit']}")
         return exposure_time_native_unit
 
     def acquire_with_config(
@@ -242,6 +247,8 @@ class Camera:
                 - None if mode is "until_stop"
         """
 
+        assert self.handle is not None
+
         # takes ca 10ms
         exposure_time_native_unit=self._exposure_time_ms_to_native(config.exposure_time_ms)
         self.handle.ExposureTime.set(exposure_time_native_unit)
@@ -251,6 +258,7 @@ class Camera:
 
         match mode:
             case "once":
+                assert self.handle is not None
                 # send command to trigger acquisition
                 self.handle.TriggerSoftware.send_command()
 
@@ -262,11 +270,17 @@ class Camera:
                     case gxiapi.GxFrameStatusList.SUCCESS: 
                         pass
 
-                np_img=img.get_numpy_array().copy()
+                if img is None:
+                    raise RuntimeError("did not receive an image")
+
+                np_img=img.get_numpy_array()
+                assert np_img is not None
+                np_img=np_img.copy()
                 return np_img
             
             case "until_stop":
 
+                assert callback is not None
                 stop_acquisition=False
                 def run_callback(img:gxiapi.RawImage):
                     nonlocal stop_acquisition

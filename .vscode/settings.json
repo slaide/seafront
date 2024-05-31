@@ -3,5 +3,11 @@
     "python.analysis.exclude": [
         "**/python_env/**"
     ],
-    "python.REPL.enableREPLSmartSend": false
+    "python.REPL.enableREPLSmartSend": false,
+    "python.analysis.typeCheckingMode": "standard",
+    "python.pythonPath": ".python_env/python-3.10.14/bin/python3",
+    "python.analysis.extraPaths":[
+        /* include this path for debugging where seaconfig is installed from a local path */
+        "../seafront-config"
+    ]
 }
