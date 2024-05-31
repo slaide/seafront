@@ -324,12 +324,55 @@ class Core:
         app.add_url_rule("/api/action/enter_loading_position", "action_enter_loading_position", self.action_enter_loading_position,methods=["POST"])
 
         # snap channel
-        app.add_url_rule("/api/action/snap_channel", "snap_channel", self.snap_channel,methods=["POST"])
+        app.add_url_rule("/api/action/snap_channel", "snap_channel", lambda:self.image_channel(mode='snap'),methods=["POST"])
+
+        # start streaming (i.e. acquire x images per sec, until stopped)
+        app.add_url_rule("/api/action/stream_channel_begin", "stream_channel_begin", lambda:self.image_channel(mode='stream_begin'),methods=["POST"])
+        app.add_url_rule("/api/action/stream_channel_end", "stream_channel_end", lambda:self.image_channel(mode='stream_end'),methods=["POST"])
+        self.is_streaming=False
+        self.stream_handler=None
 
         self.latest_image_index=0
         self.images={}
 
-    def snap_channel(self):
+    def _create_stream_handler(self):
+        class StreamHandler:
+            """
+                class used to control a streaming microscope
+
+                i.e. image acquisition is running in streaming mode
+            """
+            def __init__(self,core:"Core"):
+                self.core=core
+                self.should_stop=False
+            def __call__(self,img:gxiapi.RawImage):
+                if self.should_stop:
+                    return True
+                
+                match img.get_status():
+                    case gxiapi.GxFrameStatusList.INCOMPLETE:
+                        raise RuntimeError("incomplete frame")
+                    case gxiapi.GxFrameStatusList.SUCCESS:
+                        pass
+
+                if img is None:
+                    raise RuntimeError("no image received")
+                
+                img_np=img.get_numpy_array().copy()
+                
+                self.core.latest_image_index+=1
+                img_handle=f"{self.core.latest_image_index}"
+                self.core.images[img_handle]={
+                    "img":img_np,
+                    "timestamp":time.time()
+                }
+                print(f"saved image of shape {img_np.shape} and dtype {img_np.dtype} with handle {img_handle}")
+
+                return self.should_stop
+
+        return StreamHandler(self)
+
+    def image_channel(self,mode:tp.Literal['snap','stream_begin','stream_end']):
         cam=self.main_cam
 
         # get json data
@@ -345,26 +388,61 @@ class Core:
         if "channel" not in json_data:
             return json.dumps({"status": "error", "message": "no channel in json data"})
         
-        print(f"json_data: {json_data}")
         channel=AcquisitionChannelConfig(**json_data["channel"])
         print(f"channel config: {channel}")
 
-        illum_code=ILLUMINATION_CODE.from_handle(channel.handle)
-        self.mc.send_cmd(Command.illumination_begin(illum_code,channel.illum_perc))
-        img=cam.acquire_with_config(channel)
-        self.mc.send_cmd(Command.illumination_end(illum_code))
-        if img is None:
-            return json.dumps({"status":"error","message":"failed to acquire image"})
-        
-        self.latest_image_index+=1
-        img_handle=f"{self.latest_image_index}"
-        self.images[img_handle]={
-            "img":img,
-            "timestamp":time.time()
-        }
-        print(f"saved image of shape {img.shape} with handle {img_handle}")
+        try:
+            illum_code=ILLUMINATION_CODE.from_handle(channel.handle)
+        except Exception as e:
+            return json.dumps({"status":"error","message":"invalid channel handle"})
 
-        return json.dumps({"status":"success","img_handle":img_handle})
+        match mode:
+            case "snap":
+                if self.is_streaming:
+                    return json.dumps({"status":"error","message":"already streaming"})
+                
+                self.mc.send_cmd(Command.illumination_begin(illum_code,channel.illum_perc))
+                img=cam.acquire_with_config(channel)
+                self.mc.send_cmd(Command.illumination_end(illum_code))
+                print(f"after snap, image min max: {img.min()} {img.max()}")
+                if img is None:
+                    return json.dumps({"status":"error","message":"failed to acquire image"})
+                
+                self.latest_image_index+=1
+                img_handle=f"{self.latest_image_index}"
+                self.images[img_handle]={
+                    "img":img,
+                    "timestamp":time.time()
+                }
+                print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {img_handle}")
+
+                return json.dumps({"status":"success","img_handle":img_handle})
+            case "stream_begin":
+                if self.is_streaming:
+                    return json.dumps({"status":"error","message":"already streaming"})
+
+                self.is_streaming=True
+
+                self.stream_handler=self._create_stream_handler()
+                self.mc.send_cmd(Command.illumination_begin(illum_code,channel.illum_perc))
+                cam.acquire_with_config(channel,mode="until_stop",callback=self.stream_handler)
+                print("starting stream")
+
+                return json.dumps({"status":"success","channel":json_data["channel"]})
+            case "stream_end":
+                if not self.is_streaming:
+                    return json.dumps({"status":"error","message":"not currently streaming"})
+                
+                self.stream_handler.should_stop=True
+                self.mc.send_cmd(Command.illumination_end(illum_code))
+                print("starting stream")
+
+                self.stream_handler=None
+                self.is_streaming=False
+
+                return json.dumps({"status":"success","message":"successfully stopped streaming"})
+            case _o:
+                raise ValueError(f"invalid mode {_o}")
 
     def send_image_by_handle(self):
         """
@@ -377,6 +455,7 @@ class Core:
         except Exception as e:
             pass
 
+        print("received img_handle:",img_handle)
         if img_handle is None:
             return json.dumps({"status":"error","message":"no img_handle provided"})
         
@@ -385,14 +464,23 @@ class Core:
 
         img_container=self.images[img_handle]
         img_raw=img_container['img']
+        print(f"img min max: {img_raw.min()} {img_raw.max()}")
 
         # convert from u12 to u8
-        img=(img_raw>>4).astype(np.uint8)
+        print(f"img_raw shape: {img_raw.shape}, dtype: {img_raw.dtype}")
+        match img_raw.dtype:
+            case np.uint16:
+                img=(img_raw>>4).astype(np.uint8)
+            case np.uint8:
+                img=img_raw
+            case _:
+                raise ValueError(f"unexpected dtype {img_raw.dtype}")
 
-        img_pil=Image.fromarray(img)
+        img_downres=img[::5,::5]
+        img_pil=Image.fromarray(img_downres,mode="L")
 
         img_io=io.BytesIO()
-        img_pil.save(img_io,format="PNG")
+        img_pil.save(img_io,format="PNG",compress_level=2)
         img_io.seek(0)
 
         return send_file(img_io, mimetype='image/png')
@@ -426,8 +514,8 @@ class Core:
         
         well_name=json_data['well_name']
 
-        x_mm=plate.get_well_offset_x(well_name)
-        y_mm=plate.get_well_offset_y(well_name)
+        x_mm=plate.get_well_offset_x(well_name)+plate.Well_size_x_mm/2
+        y_mm=plate.get_well_offset_y(well_name)+plate.Well_size_y_mm/2
 
         self.mc.send_cmd(Command.move_to_mm("x",x_mm))
         self.mc.send_cmd(Command.move_to_mm("y",y_mm))

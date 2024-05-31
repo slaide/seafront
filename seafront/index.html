@@ -71,26 +71,25 @@
                             p:on-mouseup,mouseleave="plot_drag_end(event)"
                             p:on-dblclick="plot_fit(event)"
                         >
-                            <img id="testme" src="/img/cells.webp" width=600 height=600 />
-                            <img src="/img/cells2.webp" width=600 height=600 plot-x-min="200" plot-y-min="200" />
+                            <img id="view_latest_image" src="/img/cells.webp" width=2500 height=2500 />
                         </div>
                         <script>
-                            // on dom loaded, start 1s interval to fetch new image for #testme
+                            // on dom loaded, start 1s interval to fetch new image for #view_latest_image
                             document.addEventListener("DOMContentLoaded",function(){
-                                let testme=document.getElementById("testme")
+                                let view_latest_image=document.getElementById("view_latest_image")
                                 setInterval(function(){
                                     new XHR(false)
                                         .onload(function(xhr){
                                             let data=JSON.parse(xhr.responseText)
                                             let img_handle=data.img_handle
                                             
-                                            testme.src="/img/get_by_handle?img_handle="+img_handle
+                                            view_latest_image.src="/img/get_by_handle?img_handle="+img_handle
                                         })
                                         .onerror(function(){
                                             console.error("error fetching new image")
                                         })
                                         .send("/api/img/get_latest_handle",null,method="POST")
-                                },1e3)
+                                },1e3/10) // 10fps
                             })
                         </script>
 
@@ -617,11 +616,57 @@
                                     <input type="number" min="0" max="4" value="1" step="0.2">
 
                                     <div id="live-view-control" class="col-span-4">
-                                        <button>Start Live</button>
-                                        <button>Stop Live</button>
+                                        <script>
+                                            function start_streaming(){
+                                                let data={}
+                                                let streaming_channel_select_element=document.getElementById("streaming-channel-select")
+                                                let streaming_channel_handle=streaming_channel_select_element.value
+                                                console.log("starting streaming of channel",streaming_channel_handle,streaming_channel_select_element)
+                                                for(let channel of microscope_config.channels){
+                                                    if(channel.handle==streaming_channel_handle){
+                                                        data.channel=channel
+                                                        break
+                                                    }
+                                                }
+                                                if(!data.channel){
+                                                    window.alert("channel "+streaming_channel_handle+" not found")
+                                                }
+                                                new XHR(true)
+                                                    .onload(function(xhr){
+                                                        console.log("success")
+                                                    })
+                                                    .onerror(function(){
+                                                        console.log("error streaming channel "+streaming_channel_handle)
+                                                    })
+                                                    .send("api/action/stream_channel_begin",data,"POST")
+                                            }
+                                            function stop_streaming(){
+                                                let data={}
+                                                let streaming_channel_handle=document.getElementById("streaming-channel-select").value
+                                                for(let channel of microscope_config.channels){
+                                                    if(channel.handle==streaming_channel_handle){
+                                                        data.channel=channel
+                                                        break
+                                                    }
+                                                }
+                                                if(!data.channel){
+                                                    window.alert("channel "+streaming_channel_handle+" not found")
+                                                }
+                                                new XHR(true)
+                                                    .onload(function(xhr){
+                                                        console.log("success")
+                                                    })
+                                                    .onerror(function(){
+                                                        console.log("error streaming channel "+streaming_channel_handle)
+                                                    })
+                                                    .send("api/action/stream_channel_end",data,"POST")
+                                            }
+                                        </script>
+                                        <button class="data" p:on-click="start_streaming()">Start Streaming</button>
+                                        <button class="data" p:on-click="stop_streaming()">Stop Streaming</button>
 
                                         <label>channel</label>
-                                        <select>
+                                        <select id="streaming-channel-select">
                                             <template id="whatever" class="data" p:for="channel of microscope_config.channels">
                                                 <option value="{{channel.handle}}">{{channel.name}}</option>
                                             </template>

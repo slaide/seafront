@@ -262,7 +262,7 @@ class Camera:
                     case gxiapi.GxFrameStatusList.SUCCESS: 
                         pass
 
-                np_img=img.get_numpy_array()
+                np_img=img.get_numpy_array().copy()
                 return np_img
             
             case "until_stop":
@@ -272,6 +272,13 @@ class Camera:
                     nonlocal stop_acquisition
                     if stop_acquisition:
                         return
+                    
+                    match img.get_status():
+                        case gxiapi.GxFrameStatusList.INCOMPLETE:
+                            raise RuntimeError("incomplete frame")
+                        case gxiapi.GxFrameStatusList.SUCCESS: 
+                            pass
+
                     stop_acquisition=callback(img)
 
                 target_fps=5.0
