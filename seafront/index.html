@@ -61,7 +61,7 @@
                 </div>
                 <div id="view-show" class="tab-body-container">
                     <div id="live-view">
-                        <div>Fluo 405 nm Ex in B06</div>
+                        <div class="data">{{microscope_state.last_image_channel_name}}</div>
                         <div id="live-view-display" class="data plot-display"
                             p:init="plot_init(element)"
                             p:init-vis="plot_fit(element)"
@@ -81,9 +81,15 @@
                                     new XHR(false)
                                         .onload(function(xhr){
                                             let data=JSON.parse(xhr.responseText)
-                                            let img_handle=data.img_handle
-                                            
-                                            view_latest_image.src="/img/get_by_handle?img_handle="+img_handle
+                                            if(data.status=="success"){
+                                                let img_handle=data.img_handle
+
+                                                microscope_state.last_image_channel_name=data.channel.name
+                                                
+                                                view_latest_image.src="/img/get_by_handle?img_handle="+img_handle
+                                            }else{
+                                                console.error("error fetching new image",data)
+                                            }
                                         })
                                         .onerror(function(){
                                             console.error("error fetching new image")
@@ -542,15 +548,16 @@
 
                                     <script>
                                         function snapChannel(channel){
-                                            console.log("snapping channel",channel)
-
                                             let data=getConfigState()
                                             data.channel=channel
                                             
                                             new XHR()
                                                 .onload((xhr)=>{
                                                     let response=JSON.parse(xhr.responseText)
-                                                    console.log(response)
+                                                    if(response.status!="success"){
+                                                        console.error("error snapping channel",response)
+                                                        return
+                                                    }
                                                 })
                                                 .onerror(()=>{
                                                     console.error("error snapping channel")

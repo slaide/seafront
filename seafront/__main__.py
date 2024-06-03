@@ -397,16 +397,17 @@ class Core:
         self.latest_image_index=0
         self.images:tp.Dict[str,"Core.ImageStoreEntry"]={}
 
-    def _create_stream_handler(self):
+    def _create_stream_handler(self,channel_config:AcquisitionChannelConfig):
         class StreamHandler:
             """
                 class used to control a streaming microscope
 
                 i.e. image acquisition is running in streaming mode
             """
-            def __init__(self,core:"Core"):
+            def __init__(self,core:"Core",channel_config:AcquisitionChannelConfig):
                 self.core=core
                 self.should_stop=False
+                self.channel_config=channel_config
             def __call__(self,img:gxiapi.RawImage):
                 if self.should_stop:
                     return True
@@ -426,16 +427,17 @@ class Core:
 
                 img_np=Core._process_image(img_np)
                 
-                self.core._store_new_image(img_np)
+                self.core._store_new_image(img_np,self.channel_config)
 
                 return self.should_stop
 
-        return StreamHandler(self)
+        return StreamHandler(self,channel_config)
 
     @dataclass
     class ImageStoreEntry:
         img:np.ndarray
         timestamp:float
+        channel_config:AcquisitionChannelConfig
 
     @staticmethod
     def _process_image(img:np.ndarray)->np.ndarray:
@@ -468,14 +470,14 @@ class Core:
 
         return ret
 
-    def _store_new_image(self,img:np.ndarray)->str:
+    def _store_new_image(self,img:np.ndarray,channel_config:AcquisitionChannelConfig)->str:
         """
             store a new image, return the handle
         """
 
         self.latest_image_index+=1
         img_handle=f"{self.latest_image_index}"
-        self.images[img_handle]=Core.ImageStoreEntry(img,time.time())
+        self.images[img_handle]=Core.ImageStoreEntry(img,time.time(),channel_config)
 
         print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {img_handle}")
 
@@ -501,16 +503,14 @@ class Core:
         if "channel" not in json_data:
             return json.dumps({"status": "error", "message": "no channel in json data"})
         
-        channel=AcquisitionChannelConfig(**json_data["channel"])
-        print(f"channel config: {channel}")
+        channel_config=AcquisitionChannelConfig(**json_data["channel"])
 
         try:
-            illum_code=ILLUMINATION_CODE.from_handle(channel.handle)
+            illum_code=ILLUMINATION_CODE.from_handle(channel_config.handle)
         except Exception as e:
             return json.dumps({"status":"error","message":"invalid channel handle"})
         
         if "machine_config" in json_data:
-            print("machine config:",json_data["machine_config"])
             GlobalConfigHandler.override(json_data["machine_config"])
 
         match mode:
@@ -518,16 +518,14 @@ class Core:
                 if self.is_streaming or self.stream_handler is not None:
                     return json.dumps({"status":"error","message":"already streaming"})
                 
-                self.mc.send_cmd(Command.illumination_begin(illum_code,channel.illum_perc))
-                img=cam.acquire_with_config(channel)
+                self.mc.send_cmd(Command.illumination_begin(illum_code,channel_config.illum_perc))
+                img=cam.acquire_with_config(channel_config)
                 self.mc.send_cmd(Command.illumination_end(illum_code))
                 if img is None:
                     return json.dumps({"status":"error","message":"failed to acquire image"})
-                print(f"after snap, image min max: {img.min()} {img.max()}")
                 
                 img=Core._process_image(img)
-                img_handle=self._store_new_image(img)
-                print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {img_handle}")
+                img_handle=self._store_new_image(img,channel_config)
 
                 return json.dumps({"status":"success","img_handle":img_handle})
             case "stream_begin":
@@ -536,10 +534,9 @@ class Core:
 
                 self.is_streaming=True
 
-                self.stream_handler=self._create_stream_handler()
-                self.mc.send_cmd(Command.illumination_begin(illum_code,channel.illum_perc))
-                cam.acquire_with_config(channel,mode="until_stop",callback=self.stream_handler)
-                print("starting stream")
+                self.stream_handler=self._create_stream_handler(channel_config)
+                self.mc.send_cmd(Command.illumination_begin(illum_code,channel_config.illum_perc))
+                cam.acquire_with_config(channel_config,mode="until_stop",callback=self.stream_handler)
 
                 return json.dumps({"status":"success","channel":json_data["channel"]})
             case "stream_end":
@@ -548,7 +545,6 @@ class Core:
                 
                 self.stream_handler.should_stop=True
                 self.mc.send_cmd(Command.illumination_end(illum_code))
-                print("starting stream")
 
                 self.stream_handler=None
                 self.is_streaming=False
@@ -576,12 +572,12 @@ class Core:
 
         img_container=self.images[img_handle]
         img_raw=img_container.img
-        print(f"img min max: {img_raw.min()} {img_raw.max()}")
 
         # convert from u12 to u8
-        print(f"img_raw shape: {img_raw.shape}, dtype: {img_raw.dtype}")
         match img_raw.dtype:
             case np.uint16:
+                print(f"img_raw shape: {img_raw.shape}, dtype: {img_raw.dtype}")
+                print(f"img min max: {img_raw.min()} {img_raw.max()} (max u16 is {2**16-1}, max u12 is {2**12-1})")
                 img=(img_raw>>4).astype(np.uint8)
             case np.uint8:
                 img=img_raw
@@ -610,7 +606,11 @@ class Core:
             del self.images[oldest_key]
 
         img_handle=f"{self.latest_image_index}"
-        return json.dumps({"img_handle":img_handle})
+        if img_handle not in self.images:
+            return json.dumps({"status":"error","message":f"img_handle {img_handle} not found"})
+        
+        latest_img_info=self.images[img_handle]
+        return json.dumps({"status":"success","img_handle":img_handle,"channel":latest_img_info.channel_config.to_dict()})
 
     def move_to_well(self):
         if self.is_in_loading_position:
