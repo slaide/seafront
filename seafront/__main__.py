@@ -588,7 +588,9 @@ class Core:
             case _:
                 raise ValueError(f"unexpected dtype {img_raw.dtype}")
 
-        img_downres=img[::5,::5]
+        preview_resolution_scaling=GlobalConfigHandler.get_dict()["preview_resolution_scaling"].intvalue
+
+        img_downres=img[::preview_resolution_scaling,::preview_resolution_scaling]
         img_pil=Image.fromarray(img_downres,mode="L")
 
         img_io=io.BytesIO()

@@ -229,6 +229,13 @@ class GlobalConfigHandler:
                 value="/api/action/move_x_by",
             ),
 
+            ConfigItem(
+                name="preview resolution scaling",
+                handle="preview_resolution_scaling",
+                value_kind="number",
+                value=5,
+            ),
+
             *laser_autofocus_system_attributes,
             *main_camera_attributes,
         ]
