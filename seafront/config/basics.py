@@ -15,7 +15,7 @@ class ConfigItemOption:
 class ConfigItem:
     name:str
     handle:str
-    value_kind:str
+    value_kind:tp.Literal["number","text","option","action"]
     value:tp.Union[int,float,str]
     frozen:bool=False
     options:tp.Optional[tp.List[ConfigItemOption]]=None
@@ -72,6 +72,7 @@ class GlobalConfigHandler:
                 handle="main_camera_model",
                 value_kind="text",
                 value="MER2-1220-32U3M",
+                frozen=True,
             ),
             ConfigItem(
                 name="main camera objective",
