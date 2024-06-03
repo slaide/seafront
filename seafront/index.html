@@ -2,7 +2,10 @@
 <html>
     <head>
         <meta charset="utf-8">
-        <title>microscope</title>
+        <script>
+            const MAGNIFIER_GLASS="\u{1F50D}"
+        </script>
+        <title class="data">{{MAGNIFIER_GLASS}} {{microscope_state.state}} | {{microscope_state.machine_name}}</title>
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
@@ -73,31 +76,6 @@
                         >
                             <img id="view_latest_image" src="/img/cells.webp" width=2500 height=2500 />
                         </div>
-                        <script>
-                            // on dom loaded, start 1s interval to fetch new image for #view_latest_image
-                            document.addEventListener("DOMContentLoaded",function(){
-                                let view_latest_image=document.getElementById("view_latest_image")
-                                setInterval(function(){
-                                    new XHR(false)
-                                        .onload(function(xhr){
-                                            let data=JSON.parse(xhr.responseText)
-                                            if(data.status=="success"){
-                                                let img_handle=data.img_handle
-
-                                                microscope_state.last_image_channel_name=data.channel.name
-                                                
-                                                view_latest_image.src="/img/get_by_handle?img_handle="+img_handle
-                                            }else{
-                                                console.error("error fetching new image",data)
-                                            }
-                                        })
-                                        .onerror(function(){
-                                            console.error("error fetching new image")
-                                        })
-                                        .send("/api/img/get_latest_handle",null,method="POST")
-                                },1e3/10) // 10fps
-                            })
-                        </script>
 
                         <div id="live-view-x-axis-container">
                             <div class="data">{{PlotData.getFor(document.getElementById("live-view-display")).x_min.toFixed(2)}}</div>

@@ -1,18 +1,6 @@
 /** from p2.js */
 let _p=new Manager()
 
-new XHR(false)
-    .onload(function(xhr){
-        let data=JSON.parse(xhr.responseText)
-        for(let entry of data){
-            if(entry.name=="microscope name"){
-                console.log("connected to microscope: ",entry.value)
-                document.title=entry.value
-            }
-        }
-    })
-    .send("/api/get_features/machine_defaults")
-
 class ImagingChannel{
     /**
      * 
@@ -60,8 +48,11 @@ let microscope_config=_p.manage({
 
     channels:new XHR(false)
         .onload(function(xhr){
-            let channels=JSON.parse(xhr.responseText).main_camera_imaging_channels.map(channel=>{
-                return new ImagingChannel(
+            let data=JSON.parse(xhr.responseText)
+            let channels=data.main_camera_imaging_channels.map(
+                /** @ts-ignore */
+                function(channel){
+                    return new ImagingChannel(
                         channel.name,
                         channel.handle,
                         channel.illum_perc,
@@ -79,7 +70,10 @@ let microscope_config=_p.manage({
         .send("/api/get_features/hardware_capabilities"),
 })
 
+// 
 let microscope_state=_p.manage({
+    machine_name:"",
+    state:"idle",
     pos:{
         x_mm:12.123,
         y_mm:23.123,
@@ -106,7 +100,7 @@ function updateMicroscopePosition(){
     function onload(xhr){
         let data=JSON.parse(xhr.responseText)
         
-        if(!data.position){
+        if(!data.stage_position){
             return onerror()
         }
 
@@ -115,16 +109,24 @@ function updateMicroscopePosition(){
             last_update_successful=true
         }
 
-        microscope_state.pos.x_mm=data.position.x_pos_mm
-        microscope_state.pos.y_mm=data.position.y_pos_mm
-        microscope_state.pos.z_um=data.position.z_pos_mm*1e3
+        microscope_state.pos.x_mm=data.stage_position.x_pos_mm
+        microscope_state.pos.y_mm=data.stage_position.y_pos_mm
+        microscope_state.pos.z_um=data.stage_position.z_pos_mm*1e3
+
+        microscope_state.state=data.state
+
+        let view_latest_image=document.getElementById("view_latest_image")
+        if((view_latest_image instanceof HTMLImageElement) && data.latest_img!=null){
+            view_latest_image.src="/img/get_by_handle?img_handle="+data.latest_img.handle
+            microscope_state.last_image_channel_name=data.latest_img.channel.name
+        }
     
         updateInProgress=false
     }
     new XHR(true)
         .onload(onload)
         .onerror(onerror)
-        .send("/api/get_info/stage_position")
+        .send("/api/get_info/current_state")
 }
 setInterval(updateMicroscopePosition,1e3/15)
 
@@ -233,6 +235,14 @@ class WellplateType{
 let machine_defaults=_p.manage(new XHR(false)
     .onload(function(xhr){
         let data=JSON.parse(xhr.responseText)
+
+        for(let entry of data){
+            if(entry.name=="microscope name"){
+                console.log("connected to microscope: ",entry.value)
+                microscope_state.machine_name=entry.value
+            }
+        }
+
         return data
     })
     .send("/api/get_features/machine_defaults"))

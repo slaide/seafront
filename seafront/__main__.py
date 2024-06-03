@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 import typing as tp
 from dataclasses import dataclass
+from enum import Enum
 
 from seaconfig import *
 from .hardware.camera import Camera, gxiapi
@@ -265,6 +266,13 @@ class CoreLock:
         self._last_key_use=time.time()
         return True
 
+class CoreState(str,Enum):
+    Idle="idle"
+    ChannelSnap="channel_snap"
+    ChannelStream="channel_stream"
+    LoadingPosition="loading_position"
+    Moving="moving"
+
 class Core:
     @property
     def main_cam(self):
@@ -366,7 +374,7 @@ class Core:
             cam.open()
 
         # register url rules requiring machine interaction
-        app.add_url_rule(f"/api/get_info/stage_position", f"get_stage_position", self.get_stage_position,methods=["GET","POST"])
+        app.add_url_rule(f"/api/get_info/current_state", f"get_current_state", self.get_current_state,methods=["GET","POST"])
         app.add_url_rule(f"/api/action/move_x_by", f"action_move_x_by", lambda:self.action_move_by("x"),methods=["POST"])
         app.add_url_rule(f"/api/action/move_y_by", f"action_move_y_by", lambda:self.action_move_by("y"),methods=["POST"])
         app.add_url_rule(f"/api/action/move_z_by", f"action_move_z_by", lambda:self.action_move_by("z"),methods=["POST"])
@@ -376,8 +384,6 @@ class Core:
         app.add_url_rule(f"/api/acquisition/status", f"get_acquisition_status", self.get_acquisition_status,methods=["GET","POST"])
         # for move_to_well
         app.add_url_rule(f"/api/action/move_to_well", f"move_to_well", self.move_to_well,methods=["POST"])
-        # to send latest image
-        app.add_url_rule(f"/api/img/get_latest_handle", f"send_latest_image_handle", self.send_latest_image_handle,methods=["GET","POST"])
         # send image by handle
         app.add_url_rule(f"/img/get_by_handle", f"send_image_by_handle", self.send_image_by_handle,methods=["GET"])
         # loading position
@@ -394,8 +400,10 @@ class Core:
         self.is_streaming=False
         self.stream_handler=None
 
-        self.latest_image_index=0
+        self.latest_image_handle:tp.Optional[str]=None
         self.images:tp.Dict[str,"Core.ImageStoreEntry"]={}
+
+        self.state=CoreState.Idle
 
     def _create_stream_handler(self,channel_config:AcquisitionChannelConfig):
         class StreamHandler:
@@ -475,13 +483,17 @@ class Core:
             store a new image, return the handle
         """
 
-        self.latest_image_index+=1
-        img_handle=f"{self.latest_image_index}"
-        self.images[img_handle]=Core.ImageStoreEntry(img,time.time(),channel_config)
+        # TODO better image buffer handle generation
+        if self.latest_image_handle is None:
+            self.latest_image_handle=f"{0}"
+        else:
+            self.latest_image_handle=f"{int(self.latest_image_handle)+1}"
+            
+        self.images[self.latest_image_handle]=Core.ImageStoreEntry(img,time.time(),channel_config)
 
-        print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {img_handle}")
+        print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {self.latest_image_handle}")
 
-        return img_handle
+        return self.latest_image_handle
 
     def image_channel(self,mode:tp.Literal['snap','stream_begin','stream_end']):
         """
@@ -518,20 +530,26 @@ class Core:
                 if self.is_streaming or self.stream_handler is not None:
                     return json.dumps({"status":"error","message":"already streaming"})
                 
+                self.state=CoreState.ChannelSnap
+
                 self.mc.send_cmd(Command.illumination_begin(illum_code,channel_config.illum_perc))
                 img=cam.acquire_with_config(channel_config)
                 self.mc.send_cmd(Command.illumination_end(illum_code))
                 if img is None:
+                    self.state=CoreState.Idle
                     return json.dumps({"status":"error","message":"failed to acquire image"})
                 
+
                 img=Core._process_image(img)
                 img_handle=self._store_new_image(img,channel_config)
 
+                self.state=CoreState.Idle
                 return json.dumps({"status":"success","img_handle":img_handle})
             case "stream_begin":
                 if self.is_streaming or self.stream_handler is not None:
                     return json.dumps({"status":"error","message":"already streaming"})
 
+                self.state=CoreState.ChannelStream
                 self.is_streaming=True
 
                 self.stream_handler=self._create_stream_handler(channel_config)
@@ -549,6 +567,7 @@ class Core:
                 self.stream_handler=None
                 self.is_streaming=False
 
+                self.state=CoreState.Idle
                 return json.dumps({"status":"success","message":"successfully stopped streaming"})
             case _o:
                 raise ValueError(f"invalid mode {_o}")
@@ -557,6 +576,11 @@ class Core:
         """
             send image by handle, as get request to allow using this a img src
         """
+
+        # remove oldest images to keep buffer length capped (at 8)
+        while len(self.images)>8:
+            oldest_key=min(self.images,key=lambda k:self.images[k].timestamp)
+            del self.images[oldest_key]
 
         img_handle:tp.Optional[str]=None
         try:
@@ -595,23 +619,6 @@ class Core:
 
         return send_file(img_io, mimetype='image/png')
 
-    def send_latest_image_handle(self):
-        """
-            send self.last_image as flask response
-        """
-
-        # remove oldest images to keep buffer length capped at 8
-        while len(self.images)>8:
-            oldest_key=min(self.images,key=lambda k:self.images[k].timestamp)
-            del self.images[oldest_key]
-
-        img_handle=f"{self.latest_image_index}"
-        if img_handle not in self.images:
-            return json.dumps({"status":"error","message":f"img_handle {img_handle} not found"})
-        
-        latest_img_info=self.images[img_handle]
-        return json.dumps({"status":"success","img_handle":img_handle,"channel":latest_img_info.channel_config.to_dict()})
-
     def move_to_well(self):
         if self.is_in_loading_position:
             return json.dumps({"status":"error","message":"cannot move to well while in loading position"})
@@ -631,22 +638,34 @@ class Core:
         x_mm=plate.get_well_offset_x(well_name)+plate.Well_size_x_mm/2
         y_mm=plate.get_well_offset_y(well_name)+plate.Well_size_y_mm/2
 
+        self.state=CoreState.Moving
         self.mc.send_cmd(Command.move_to_mm("x",x_mm))
         self.mc.send_cmd(Command.move_to_mm("y",y_mm))
 
+        self.state=CoreState.Idle
         return json.dumps({"status":"success","message":"moved to well "+well_name})
 
-    def get_stage_position(self):
-        packet=self.mc.get_packet()
-        if packet is None:
-            return json.dumps({"status":"error","message":"no packet received"})
+    def get_current_state(self):
+        last_stage_position=self.mc.get_last_position()
+
+        img_handle=self.latest_image_handle
+        latest_img_info=None
+        if img_handle is not None:
+            latest_img_info={
+                "handle":img_handle,
+                "channel":self.images[img_handle].channel_config.to_dict()
+            }
         
-        ret={
-            "x_pos_mm":packet.x_pos_mm,
-            "y_pos_mm":packet.y_pos_mm,
-            "z_pos_mm":packet.z_pos_mm,
-        }
-        return json.dumps({"status":"success","position":ret})
+        return json.dumps({
+            "status":"success",
+            "state":self.state.value,
+            "stage_position":{
+                "x_pos_mm":last_stage_position.x_pos_mm,
+                "y_pos_mm":last_stage_position.y_pos_mm,
+                "z_pos_mm":last_stage_position.z_pos_mm,
+            },
+            "latest_img":latest_img_info
+        })
 
     def action_move_by(self,axis:tp.Literal["x","y","z"]):
         if self.is_in_loading_position:
@@ -663,13 +682,17 @@ class Core:
         
         distance_mm=json_data['dist_mm']
         
+        self.state=CoreState.Moving
         self.mc.send_cmd(Command.move_by_mm(axis,distance_mm))
 
+        self.state=CoreState.Idle
         return json.dumps({"status": "success","moved_by_mm":distance_mm,"axis":axis})
 
     def action_enter_loading_position(self):
         if self.is_in_loading_position:
             return json.dumps({"status":"error","message":"already in loading position"})
+        
+        self.state=CoreState.Moving
         
         # home z
         self.mc.send_cmd(Command.home("z"))
@@ -684,17 +707,20 @@ class Core:
         self.mc.send_cmd(Command.home("x"))
         
         self.is_in_loading_position=True
+        self.state=CoreState.LoadingPosition
         return json.dumps({"status":"success","message":"entered loading position"})
 
     def action_leave_loading_position(self):
         if not self.is_in_loading_position:
             return json.dumps({"status":"error","message":"not in loading position"})
         
+        self.state=CoreState.Moving
         self.mc.send_cmd(Command.move_to_mm("x",30))
         self.mc.send_cmd(Command.move_to_mm("y",30))
         self.mc.send_cmd(Command.move_to_mm("z",1))
         
         self.is_in_loading_position=False
+        self.state=CoreState.Idle
         return json.dumps({"status":"success","message":"left loading position"})
 
     def start_acquisition(self):

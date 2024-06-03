@@ -12,7 +12,6 @@ import serial.tools.list_ports
 import crc
 import numpy as np
 
-
 def intFromPayload(payload,start_index,num_bytes):
     ret=0
     for i in range(num_bytes):
@@ -166,8 +165,6 @@ class FirmwareDefinitions:
         else:
             return int(value_mm/(FirmwareDefinitions.STAGE_POS_SIGN_Z*FirmwareDefinitions.mm_per_ustep_z()))
 
-
-
 @dataclass(init=False)
 class MicrocontrollerStatusPackage:
     '''
@@ -202,19 +199,13 @@ class MicrocontrollerStatusPackage:
         self.crc:int=packet[23]
 
     @property
-    def x_pos_mm(self):
-        return FirmwareDefinitions.mm_per_ustep_x()*self.x_pos_usteps
-    @property
-    def y_pos_mm(self):
-        return FirmwareDefinitions.mm_per_ustep_y()*self.y_pos_usteps
-    @property
-    def z_pos_mm(self):
-        return FirmwareDefinitions.mm_per_ustep_z()*self.z_pos_usteps
+    def pos(self)->"Position":
+        return Position(x_usteps=self.x_pos_usteps,y_usteps=self.y_pos_usteps,z_usteps=self.z_pos_usteps)
 
     def __str__(self):
         s=", ".join(
             [f"{field.name}={getattr(self,field.name)!r}" for field in dataclasses.fields(self)]
-            +[f"x_pos_mm={self.x_pos_mm}", f"y_pos_mm={self.y_pos_mm}", f"z_pos_mm={self.z_pos_mm}"])
+            +[f"x_pos_mm={self.pos.x_pos_mm}", f"y_pos_mm={self.pos.y_pos_mm}", f"z_pos_mm={self.pos.z_pos_mm}"])
         print(s)
         return f"{type(self).__name__}({s})"
 
@@ -288,6 +279,22 @@ class ILLUMINATION_CODE(int,Enum):
                 return ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_HALF
             case _:
                 raise ValueError(f"unknown handle {handle}")
+
+@dataclass
+class Position:
+    x_usteps:int
+    y_usteps:int
+    z_usteps:int
+
+    @property
+    def x_pos_mm(self):
+        return FirmwareDefinitions.mm_per_ustep_x()*self.x_usteps
+    @property
+    def y_pos_mm(self):
+        return FirmwareDefinitions.mm_per_ustep_y()*self.y_usteps
+    @property
+    def z_pos_mm(self):
+        return FirmwareDefinitions.mm_per_ustep_z()*self.z_usteps
 
 class Microcontroller:
     class Command:
@@ -736,6 +743,8 @@ class Microcontroller:
 
         self.terminate_reading_received_packet_thread=False
 
+        self.last_position=Position(0,0,0)
+
     def _read_packets(self,until:tp.Callable[[MicrocontrollerStatusPackage],bool]):
         """
             read packets until 'until' returns True
@@ -777,8 +786,13 @@ class Microcontroller:
                 msg.append(ord(self.handle.read()))
 
             packet=MicrocontrollerStatusPackage(msg)
+            # save last position
+            self.last_position=packet.pos
             
             self.terminate_reading_received_packet_thread=until(packet)
+
+    def get_last_position(self)->Position:
+        return self.last_position
 
     def get_packet(self)->tp.Optional[MicrocontrollerStatusPackage]:
         """
@@ -818,7 +832,7 @@ class Microcontroller:
         with self.lock:
             for cmd in cmds:
                 cmd.set_id(self._get_next_cmd_id())
-                cmd[-1] = self.crc_calculator.calculate_checksum(cmd[:-1])
+                cmd[-1] = self.crc_calculator.calculate_checksum(cmd.bytes[:-1])
 
                 match cmd[1]:
                     case CommandName.TURN_ON_ILLUMINATION.value:
