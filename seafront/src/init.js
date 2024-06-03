@@ -101,6 +101,7 @@ function updateMicroscopePosition(){
     
         updateInProgress=false
     }
+    /** @param {XMLHttpRequest} xhr  */
     function onload(xhr){
         let data=JSON.parse(xhr.responseText)
         
@@ -221,5 +222,27 @@ class WellplateType{
             }
         }
         return null
+    }
+}
+
+/**
+ * low level machine control parameters, some of which may be configured/changed for an acquisition
+ * @type {object[]}
+ */
+let machine_defaults=_p.manage(new XHR(false)
+    .onload(function(xhr){
+        let data=JSON.parse(xhr.responseText)
+        return data
+    })
+    .send("/api/get_features/machine_defaults"))
+
+/**
+ * return current config state, including initial state sent from microscope
+ * (does not include other properties of the microscope, like stage position)
+ * @returns {object}
+ */
+function getConfigState(){
+    return {
+        machine_config:_p.getUnmanaged(machine_defaults)
     }
 }

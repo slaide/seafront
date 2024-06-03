@@ -174,7 +174,8 @@ def get_hardware_capabilities():
     }
     return json.dumps(ret)
 
-from .config.basics import _get_machine_defaults, config_list_as_dict
+from .config.basics import GlobalConfigHandler
+GlobalConfigHandler.reset()
 
 @app.route("/api/get_features/machine_defaults", methods=["GET","POST"])
 def get_machine_defaults():
@@ -185,7 +186,9 @@ def get_machine_defaults():
     (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
     """
 
-    return json.dumps(_get_machine_defaults())
+    items_json=GlobalConfigHandler.get(as_dict=True)
+
+    return json.dumps(items_json)
 
 plate=Wellplate(
     Manufacturer="perkin elmer",
@@ -203,14 +206,70 @@ plate=Wellplate(
     Num_wells_y=16,
 )
 
-# indicate if this is the first boot of the server
+# indicate if this is the first boot of the server (this only triggers when the flask is in debug mode)
 is_first_start=os.environ.get("WERKZEUG_RUN_MAIN") != "true"
+
+class CoreLock:
+    """
+        basic utility to generate a token that can be used to access mutating core functions (e.g. actions)
+    """
+
+    def __init__(self):
+        self._current_key:tp.Optional[str]=None
+        self._key_gen_time=None
+        """ timestamp when key was generated """
+        self._last_key_use=None
+        """ timestamp of last key use """
+    def gen_key(self,invalidate_old:bool=False)->tp.Optional[str]:
+        """
+            generate a new key, if there is no currently valid key
+
+            if invalidate_old is True, then the old key is discarded
+        """
+
+        if not (invalidate_old or self._current_key_is_expired()):
+            return None
+        
+        # use 32 bytes (256 bits) for key, i.e. 64 hex chars
+        # length may change at any point
+        self._current_key=os.urandom(32).hex()
+        self._key_gen_time=time.time()
+        self._last_key_use=self._key_gen_time
+
+        return self._current_key
+    
+    def _current_key_is_expired(self)->bool:
+        """
+            indicates if the current key is expired (i.e. returns True if key has expired)
+
+            if no key has yet been generated, also returns True
+
+            key expires 15 minutes after last use
+        """
+
+        if not self._last_key_use:
+            return True
+        return time.time()>(self._last_key_use+15*60)
+    
+    def key_is_valid(self,key:str)->bool:
+        key_is_current_key=key==self._current_key
+        if not key_is_current_key:
+            return False
+        # should be unreachable, but better here to reject than crash
+        if self._last_key_use is None:
+            return False
+        
+        key_has_expired=self._current_key_is_expired()
+        if key_has_expired:
+            return False
+        self._last_key_use=time.time()
+        return True
 
 class Core:
     @property
     def main_cam(self):
-        defaults=config_list_as_dict(_get_machine_defaults())
-        main_camera_model_name=defaults["main_camera_model"]["value"]
+        defaults=GlobalConfigHandler.get_dict()
+        main_camera_model_name=defaults["main_camera_model"].value
         _main_cameras=[c for c in self.cams if c.model_name==main_camera_model_name]
         if len(_main_cameras)==0:
             raise RuntimeError(f"no camera with model name {main_camera_model_name} found")
@@ -219,8 +278,8 @@ class Core:
 
     @property
     def focus_cam(self):
-        defaults=config_list_as_dict(_get_machine_defaults())
-        focus_camera_model_name=defaults["focus_camera_model"]["value"]
+        defaults=GlobalConfigHandler.get_dict()
+        focus_camera_model_name=defaults["focus_camera_model"].value
         _focus_cameras=[c for c in self.cams if c.model_name==focus_camera_model_name]
         if len(_focus_cameras)==0:
             raise RuntimeError(f"no camera with model name {focus_camera_model_name} found")
@@ -228,6 +287,8 @@ class Core:
         return focus_camera
 
     def __init__(self):
+        self.lock=CoreLock()
+
         self.microcontrollers=Microcontroller.get_all()
         self.cams=Camera.get_all()
 
@@ -301,7 +362,7 @@ class Core:
                 print("done initializing microcontroller")
 
         print(f"found {len(self.cams)} cameras")
-        for i,cam in enumerate(self.cams):
+        for cam in self.cams:
             cam.open()
 
         # register url rules requiring machine interaction
@@ -362,6 +423,8 @@ class Core:
                 img_np=img.get_numpy_array()
                 assert img_np is not None
                 img_np=img_np.copy()
+
+                img_np=Core._process_image(img_np)
                 
                 self.core._store_new_image(img_np)
 
@@ -373,6 +436,37 @@ class Core:
     class ImageStoreEntry:
         img:np.ndarray
         timestamp:float
+
+    @staticmethod
+    def _process_image(img:np.ndarray)->np.ndarray:
+        """
+            crop to size
+        """
+
+        g_config=GlobalConfigHandler.get_dict()
+        cam_img_width=g_config['main_camera_image_width_px']
+        assert cam_img_width is not None
+        target_width:int=cam_img_width.intvalue
+        assert isinstance(target_width,int), f"{type(target_width) = }"
+        cam_img_height=g_config['main_camera_image_height_px']
+        assert cam_img_height is not None
+        target_height:int=cam_img_height.intvalue
+        assert isinstance(target_height,int), f"{type(target_height) = }"
+        
+        current_height=img.shape[0]
+        current_width=img.shape[1]
+        print(f"cropping from (WxH) {current_width}x{current_height} to {target_width}x{target_height}")
+
+        assert target_width<=current_width, f"{target_width = } ; {current_width = }"
+        assert target_height<=current_height, f"{target_height = } ; {current_height = }"
+
+        x_offset=(current_width-target_width)//2
+        y_offset=(current_height-target_height)//2
+
+        # seemingly swap x and y because of numpy's row-major order
+        ret=img[y_offset:y_offset+target_height,x_offset:x_offset+target_width]
+
+        return ret
 
     def _store_new_image(self,img:np.ndarray)->str:
         """
@@ -388,6 +482,10 @@ class Core:
         return img_handle
 
     def image_channel(self,mode:tp.Literal['snap','stream_begin','stream_end']):
+        """
+            control imaging in a channel
+        """
+
         cam=self.main_cam
 
         # get json data
@@ -413,6 +511,7 @@ class Core:
         
         if "machine_config" in json_data:
             print("machine config:",json_data["machine_config"])
+            GlobalConfigHandler.override(json_data["machine_config"])
 
         match mode:
             case "snap":
@@ -426,6 +525,7 @@ class Core:
                     return json.dumps({"status":"error","message":"failed to acquire image"})
                 print(f"after snap, image min max: {img.min()} {img.max()}")
                 
+                img=Core._process_image(img)
                 img_handle=self._store_new_image(img)
                 print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {img_handle}")
 

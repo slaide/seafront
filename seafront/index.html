@@ -214,12 +214,6 @@
                                 function itemIsAction(item){
                                     return item.value_kind=="action"
                                 }
-                                let machine_defaults=_p.manage(new XHR(false)
-                                    .onload(function(xhr){
-                                        let data=JSON.parse(xhr.responseText)
-                                        return data
-                                    })
-                                    .send("/api/get_features/machine_defaults"))
                             </script>
 
                             <script>
@@ -549,6 +543,9 @@
                                     <script>
                                         function snapChannel(channel){
                                             console.log("snapping channel",channel)
+
+                                            let data=getConfigState()
+                                            data.channel=channel
                                             
                                             new XHR()
                                                 .onload((xhr)=>{
@@ -558,7 +555,7 @@
                                                 .onerror(()=>{
                                                     console.error("error snapping channel")
                                                 })
-                                                .send("/api/action/snap_channel",{"channel":channel},method="POST")
+                                                .send("/api/action/snap_channel",data,method="POST")
                                         }
                                     </script>
 
@@ -616,10 +613,10 @@
                                     <div id="live-view-control" class="col-span-4">
                                         <script>
                                             function start_streaming(){
-                                                let data={machine_config:machine_defaults}
+                                                let data=getConfigState()
+
                                                 let streaming_channel_select_element=document.getElementById("streaming-channel-select")
                                                 let streaming_channel_handle=streaming_channel_select_element.value
-                                                console.log("starting streaming of channel",streaming_channel_handle,streaming_channel_select_element)
                                                 for(let channel of microscope_config.channels){
                                                     if(channel.handle==streaming_channel_handle){
                                                         data.channel=channel
@@ -639,7 +636,8 @@
                                                     .send("api/action/stream_channel_begin",data,"POST")
                                             }
                                             function stop_streaming(){
-                                                let data={machine_config:machine_defaults}
+                                                let data=getConfigState()
+
                                                 let streaming_channel_handle=document.getElementById("streaming-channel-select").value
                                                 for(let channel of microscope_config.channels){
                                                     if(channel.handle==streaming_channel_handle){
