@@ -27,6 +27,7 @@ def twos_complement(v,num_bytes):
     else:
         payload = THRESHOLD + v # find two's complement
     return payload
+
 def twos_complement_rev(payload,num_bytes):
     THRESHOLD=2**(8*num_bytes)
     if payload <= THRESHOLD/2:
@@ -235,6 +236,24 @@ class CommandName(int,Enum):
     SET_PIN_LEVEL = 41
     INITIALIZE = 254
     RESET = 255
+
+class MCU_PINS:
+    PWM1 = 5
+    PWM2 = 4
+    PWM3 = 22
+    PWM4 = 3
+    PWM5 = 23
+    PWM6 = 2
+    PWM7 = 1
+    PWM9 = 6
+    PWM10 = 7
+    PWM11 = 8
+    PWM12 = 9
+    PWM13 = 10
+    PWM14 = 15
+    PWM15 = 24
+    PWM16 = 25
+    AF_LASER = 15
 
 class ILLUMINATION_CODE(int,Enum):
     ILLUMINATION_SOURCE_LED_ARRAY_FULL = 0
@@ -674,6 +693,32 @@ class Microcontroller:
             cmds.append(cmd)
 
             return cmds
+
+        @staticmethod
+        def set_pin_level(pin:int,level:int)->"Microcontroller.Command":
+            """
+            sets pin level (the interpretation of this is up to the firmware)
+
+            pin: pin number
+            level: 0 or 1
+            """
+
+            assert level in [0,1], f"invalid level {level}"
+
+            cmd = Microcontroller.Command()
+            cmd[1] = CommandName.SET_PIN_LEVEL.value
+            cmd[2] = pin
+            cmd[3] = level
+            return cmd
+
+        @staticmethod
+        def af_laser_illum_begin()->"Microcontroller.Command":
+            return Microcontroller.Command.set_pin_level(pin=MCU_PINS.AF_LASER,level=1)
+
+        @staticmethod
+        def af_laser_illum_end()->"Microcontroller.Command":
+            return Microcontroller.Command.set_pin_level(pin=MCU_PINS.AF_LASER,level=0)
+
 
     @staticmethod
     def _wait_until_cmd_is_finished(
