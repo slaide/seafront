@@ -5,12 +5,13 @@ authors=[
     {name="Patrick Hennig",email="patrick.hennig@uu.se"}
 ]
 dependencies = [
-    "flask",
-    "gxipy@git+https://github.com/slaide/daheng-imaging-gxipy",
-    "seaconfig@git+https://github.com/slaide/seafront-config",
-    "pyserial",
-    "crc<2",
-    "pillow",
+    "flask", # for communication with the outside world
+    "gxipy@git+https://github.com/slaide/daheng-imaging-gxipy", # camera apie
+    "seaconfig@git+https://github.com/slaide/seafront-config", # configuration file handling
+    "pyserial", # for microcontroller communication
+    "crc<2", # for basic microcontroller packet communication
+    "pillow", # for image format conversion to store to disk/send to client for display
+    "scipy", # for laser aufocus system signal processing
 ]
 
 [build-system]

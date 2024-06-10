@@ -5,6 +5,7 @@ from PIL import Image
 import typing as tp
 from dataclasses import dataclass
 from enum import Enum
+import scipy
 
 from seaconfig import *
 from .hardware.camera import Camera, gxiapi
@@ -273,6 +274,11 @@ class CoreState(str,Enum):
     LoadingPosition="loading_position"
     Moving="moving"
 
+@dataclass
+class LaserAutofocusCalibrationData:
+    um_per_px:float
+    x_reference:float
+
 class Core:
     @property
     def main_cam(self):
@@ -287,7 +293,7 @@ class Core:
     @property
     def focus_cam(self):
         defaults=GlobalConfigHandler.get_dict()
-        focus_camera_model_name=defaults["focus_camera_model"].value
+        focus_camera_model_name=defaults["laser_autofocus_camera_model"].value
         _focus_cameras=[c for c in self.cams if c.model_name==focus_camera_model_name]
         if len(_focus_cameras)==0:
             raise RuntimeError(f"no camera with model name {focus_camera_model_name} found")
@@ -386,7 +392,8 @@ class Core:
         app.add_url_rule(f"/api/action/move_to_well", f"move_to_well", self.move_to_well,methods=["POST"])
         # send image by handle
         app.add_url_rule(f"/img/get_by_handle", f"send_image_by_handle", self.send_image_by_handle,methods=["GET"])
-        # loading position
+
+        # loading position enter/leave
         self.is_in_loading_position=False
         app.add_url_rule("/api/action/leave_loading_position", "action_leave_loading_position", self.action_leave_loading_position,methods=["POST"])
         app.add_url_rule("/api/action/enter_loading_position", "action_enter_loading_position", self.action_enter_loading_position,methods=["POST"])
@@ -395,15 +402,191 @@ class Core:
         app.add_url_rule("/api/action/snap_channel", "snap_channel", lambda:self.image_channel(mode='snap'),methods=["POST"])
 
         # start streaming (i.e. acquire x images per sec, until stopped)
+        self.laser_af_calibration_data:tp.Optional[LaserAutofocusCalibrationData]=None
         app.add_url_rule("/api/action/stream_channel_begin", "stream_channel_begin", lambda:self.image_channel(mode='stream_begin'),methods=["POST"])
         app.add_url_rule("/api/action/stream_channel_end", "stream_channel_end", lambda:self.image_channel(mode='stream_end'),methods=["POST"])
         self.is_streaming=False
         self.stream_handler=None
 
+        # laser autofocus system
+        app.add_url_rule("/api/action/snap_reflection_autofocus", "snap_reflection_autofocus", self.snap_autofocus,methods=["POST"])
+        app.add_url_rule("/api/action/laser_af_calibrate", "laser_af_calibrate", self.laser_af_calibrate,methods=["POST"])
+        app.add_url_rule("/api/action/measure_displacement", "measure_displacement", self.measure_displacement,methods=["POST"])
+
+        # store last few images acquired with main imaging camera
+        # TODO store these per channel, up to e.g. 3 images per channel (for a total max of 3*num_channels)
         self.latest_image_handle:tp.Optional[str]=None
         self.images:tp.Dict[str,"Core.ImageStoreEntry"]={}
 
+        # only store the latest laser af image
+        self.laser_af_image_handle:tp.Optional[str]=None
+        self.laser_af_image:tp.Optional["Core.ImageStoreEntry"]=None
+
         self.state=CoreState.Idle
+
+    def _get_peak_coords(self,img:np.ndarray,use_glass_top:bool=False)->tp.Tuple[float,float]:
+        """
+            get peak coordinates of signal in this laser reflection autofocus image
+
+            for air-glass-water, the smaller peak corresponds to the glass-water interface, i.e. use_glass_top -> use smaller peak
+
+            expect some noise in this signal. for best results, use average of a few images recorded in quick succession
+        """
+
+        I = img
+        # get the y position of the spots
+        tmp = np.sum(I,axis=1)
+        y0 = np.argmax(tmp)
+        # crop along the y axis
+        I = I[y0-96:y0+96,:]
+        # signal along x
+        tmp = np.sum(I,axis=0)
+        # find peaks
+        peak_locations,_ = scipy.signal.find_peaks(tmp,distance=100)
+
+        idx = np.argsort(tmp[peak_locations])
+        peak_0_location=None
+        peak_1_location=None
+        if len(idx)==0:
+            raise Exception("did not find any peaks in Laser Reflection Autofocus signal. this is a major problem.")
+        
+        if use_glass_top:
+            assert len(idx)>1, "only found a single peak in the Laser Reflection Autofocus signal, but trying to use the second one."
+            peak_1_location = peak_locations[idx[-2]]
+            x1 = peak_1_location
+        else:
+            peak_0_location = peak_locations[idx[-1]]
+            x1 = peak_0_location
+
+        # find centroid
+        h,w = I.shape
+        x,y = np.meshgrid(range(w),range(h))
+        I = I[:,max(0,x1-64):min(w-1,x1+64)]
+        x = x[:,max(0,x1-64):min(w-1,x1+64)]
+        y = y[:,max(0,x1-64):min(w-1,x1+64)]
+        I = I.astype(float)
+        I = I - np.amin(I)
+        I[I/np.amax(I)<0.1] = 0
+        x1 = np.sum(x*I)/np.sum(I)
+        y1 = np.sum(y*I)/np.sum(I)
+
+        peak_x=x1
+        peak_y=y0-96+y1
+
+        peak_coords=(peak_x,peak_y)
+
+        return peak_coords
+
+    def laser_af_calibrate(self,z_mm_movement_range_mm:float=0.1,z_mm_backlash_counter:tp.Optional[float]=None)->str:
+        """
+            calibrate the laser autofocus
+
+            calculates the conversion factor between pixels and micrometers, and sets the reference for the laser autofocus signal
+
+            returns json-like string
+        """
+
+        # move down by half z range
+        if z_mm_backlash_counter:
+            self.mc.send_cmd(Command.move_by_mm("z",-(z_mm_movement_range_mm/2+z_mm_backlash_counter)))
+            self.mc.send_cmd(Command.move_by_mm("z",z_mm_backlash_counter))
+        else:
+            self.mc.send_cmd(Command.move_by_mm("z",-z_mm_movement_range_mm/2))
+
+        # measure pos
+        res=json.loads(self.snap_autofocus())
+        if res["status"]!="success":
+            return json.dumps({"status":"error","message":"failed to snap autofocus image [1]"})
+        if self.laser_af_image is None:
+            return json.dumps({"status":"error","message":"no laser autofocus image found [1]"})
+        x0,y0 = self._get_peak_coords(self.laser_af_image.img)
+
+        # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
+        self.mc.send_cmd(Command.move_by_mm("z",z_mm_movement_range_mm/2))
+
+        res=json.loads(self.snap_autofocus())
+        if res["status"]!="success":
+            return json.dumps({"status":"error","message":"failed to snap autofocus image [2]"})
+        if self.laser_af_image is None:
+            return json.dumps({"status":"error","message":"no laser autofocus image found [2]"})
+        x1,y1 = self._get_peak_coords(self.laser_af_image.img)
+
+        # move up by half range again
+        self.mc.send_cmd(Command.move_by_mm("z",z_mm_movement_range_mm/2))
+
+        # measure position
+        res=json.loads(self.snap_autofocus())
+        if res["status"]!="success":
+            return json.dumps({"status":"error","message":"failed to snap autofocus image [3]"})
+        if self.laser_af_image is None:
+            return json.dumps({"status":"error","message":"no laser autofocus image found [3]"})
+        x2,y2 = self._get_peak_coords(self.laser_af_image.img)
+
+        # move to original position
+        self.mc.send_cmd(Command.move_by_mm("z",-z_mm_movement_range_mm/2))
+
+        self.laser_af_calibration_data=LaserAutofocusCalibrationData(
+            # calculate the conversion factor, based on lowest and highest measured position
+            um_per_px=z_mm_movement_range_mm*1e3/(x2-x0),
+            # set reference position
+            x_reference=x1
+        )
+
+        return json.dumps({"status":"success"})
+
+    def measure_displacement(self,override_num_images:tp.Optional[int]=None)->str:
+        """
+            measure current displacement from reference position
+
+            returns json-like string
+        """
+        if self.laser_af_calibration_data is None:
+            return json.dumps({"status":"error","message":"laser autofocus not calibrated"})
+
+        # get laser spot location
+        # sometimes one of the two expected dots cannot be found in _get_laser_spot_centroid because the plate is so far off the focus plane though, catch that case
+        try:
+            res=json.loads(self.snap_autofocus())
+            if res["status"]!="success":
+                return json.dumps({"status":"error","message":"failed to snap autofocus image"})
+            if self.laser_af_image is None:
+                return json.dumps({"status":"error","message":"no laser autofocus image found"})
+            x,y=self._get_peak_coords(self.laser_af_image.img)
+
+            # calculate displacement
+            displacement_um = (x - self.laser_af_calibration_data.x_reference)*self.laser_af_calibration_data.um_per_px
+        except:
+            return json.dumps({"status":"error","message":"failed to measure displacement (got no signal)"})
+
+        return json.dumps({"status":"success","displacement_um":displacement_um})
+
+    def snap_autofocus(self)->str:
+        """
+            snap a laser autofocus image
+
+            returns json-like string
+        """
+
+        self.mc.send_cmd(Command.af_laser_illum_begin())
+        
+        channel_config=AcquisitionChannelConfig(name="whatever",handle="whatever",illum_perc=100,exposure_time_ms=5.0,analog_gain=10,z_offset_um=0)
+
+        cam=self.focus_cam
+        img=cam.acquire_with_config(channel_config)
+        if img is None:
+            self.state=CoreState.Idle
+            return json.dumps({"status":"error","message":"failed to acquire image"})
+        
+        #img=Core._process_image(img)
+        img_handle=self._store_new_laseraf_image(img,channel_config)
+
+        if True:
+            peak_coords=self._get_peak_coords(img)
+            print(f"peak coords = {peak_coords}")
+
+        self.mc.send_cmd(Command.af_laser_illum_end())
+
+        return json.dumps({"status":"success","img_handle":img_handle})
 
     def _create_stream_handler(self,channel_config:AcquisitionChannelConfig):
         class StreamHandler:
@@ -477,6 +660,23 @@ class Core:
         ret=img[y_offset:y_offset+target_height,x_offset:x_offset+target_width]
 
         return ret
+
+    def _store_new_laseraf_image(self,img:np.ndarray,channel_config:AcquisitionChannelConfig)->str:
+        """
+            store a new laser autofocus image, return the handle
+        """
+
+        # TODO better image buffer handle generation
+        if self.laser_af_image_handle is None:
+            self.laser_af_image_handle=f"laseraf_{0}"
+        else:
+            self.laser_af_image_handle=f"laseraf_{int(self.laser_af_image_handle.split('_')[1])+1}"
+            
+        self.laser_af_image=Core.ImageStoreEntry(img,time.time(),channel_config)
+
+        print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {self.latest_image_handle}")
+
+        return self.laser_af_image_handle
 
     def _store_new_image(self,img:np.ndarray,channel_config:AcquisitionChannelConfig)->str:
         """
@@ -577,24 +777,33 @@ class Core:
             send image by handle, as get request to allow using this a img src
         """
 
-        # remove oldest images to keep buffer length capped (at 8)
-        while len(self.images)>8:
-            oldest_key=min(self.images,key=lambda k:self.images[k].timestamp)
-            del self.images[oldest_key]
-
         img_handle:tp.Optional[str]=None
         try:
             img_handle=request.args.get("img_handle")
         except Exception as e:
             pass
 
-        if img_handle is None:
-            return json.dumps({"status":"error","message":"no img_handle provided"})
-        
-        if img_handle not in self.images:
-            return json.dumps({"status":"error","message":f"img_handle {img_handle} not found"})
+        img_container=None
+        if img_handle==self.laser_af_image_handle:
+            img_container=self.laser_af_image
 
-        img_container=self.images[img_handle]
+        else:
+            # remove oldest images to keep buffer length capped (at 8)
+            while len(self.images)>8:
+                oldest_key=min(self.images,key=lambda k:self.images[k].timestamp)
+                del self.images[oldest_key]
+
+            if img_handle is None:
+                return json.dumps({"status":"error","message":"no img_handle provided"})
+            
+            if img_handle not in self.images:
+                return json.dumps({"status":"error","message":f"img_handle {img_handle} not found"})
+
+            img_container=self.images[img_handle]
+
+        if img_container is None:
+            return json.dumps({"status":"error","message":"no image found"})
+
         img_raw=img_container.img
 
         # convert from u12 to u8

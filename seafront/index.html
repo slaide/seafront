@@ -162,13 +162,58 @@
                         <input type="number" min="0" max="936" value="100" step="1">
                         <label>analog gain</label>
                         <input type="number" min="0" max="24" value="0" step="1">
-                        <button>snap</button>
+                        <script>
+                            function snapReflectionAutofocus(){
+                                new XHR(false)
+                                    .onload((xhr)=>{
+                                        let response=JSON.parse(xhr.responseText)
+                                        if(response.status!="success"){
+                                            console.error("error snapping reflection autofocus",response)
+                                            return
+                                        }
+                                        let handle=response.img_handle
+                                        let img=document.getElementById("view_af_image")
+                                        img.src="/img/get_by_handle?img_handle="+handle
+                                    })
+                                    .onerror(()=>{
+                                        console.error("error snapping reflection autofocus")
+                                    })
+                                    .send("/api/action/snap_reflection_autofocus",{"exposure_time_ms":100,"analog_gain":0},method="POST")
+                            }
+                        </script>
+                        <button class="data" p:on-click="snapReflectionAutofocus()">snap</button>
 
                         <label>num images</label>
                         <input type="number" min="3" max="43" step="2" value="11">
                         <label>total delta z [um]</label>
                         <input type="number" min="10" max="1000" step="10" value="400">
                         <button>run</button>
+
+                        <style>
+                            #laser-af-view{
+                                overflow-y: visible;
+                            }
+                            #live-af-view-display{
+                                width:100%;
+                                height:700px;
+                            }
+                            #view_af_image{
+                                
+                            }
+                        </style>
+                        <div id="laser-af-view">
+                            <div id="live-af-view-display" class="data plot-display"
+                                p:init="plot_init(element)"
+                                p:init-vis="plot_fit(element)"
+                                p:on-wheel="plot_zoom(event)"
+                                p:on-mousedown="plot_drag_start(event)"
+                                p:on-mousemove="plot_drag_move(event)"
+                                p:on-mouseup,mouseleave="plot_drag_end(event)"
+                                p:on-dblclick="plot_fit(event)"
+                            >
+                                <img id="view_af_image" src="/img/cells.webp" width=2500 height=2500 />
+                            </div>
+                        </div>
                     </div>
                     <div id="low-level-config-view">
                         <style>
@@ -725,12 +770,14 @@
                                             if(!z_move_distance_um_el)throw new Error("element not found")
 
                                             data.dist_mm=dist_sign*parseFloat(z_move_distance_um_el.value)*1e-3
-                                            console.log("moving z by",data.dist_mm.toFixed(3),"mm")
 
                                             new XHR()
                                                 .onload((xhr)=>{
                                                     let response=JSON.parse(xhr.responseText)
-                                                    console.log(response)
+                                                    if(response.status!="success"){
+                                                        console.error("error moving z",response)
+                                                        return
+                                                    }
                                                 })
                                                 .onerror(()=>{
                                                     console.error("error moving z")
@@ -795,15 +842,50 @@
                                 <div id="laser-autofocus-config" class="section">
                                     <p class="section-header col-span-3">Laser Reflection Autofocus <a class="data" href="{{docLinks.laserReflectionAutofocusControl}}" target="_blank">Help</a></p>
 
-                                    <button>Initialize</button>
-                                    <button>Go to reference</button>
-                                    <button>Set as reference</button>
+                                    <script>
+                                        function setLaserAutofocusReference(){
+                                            new XHR()
+                                                .onload((xhr)=>{
+                                                    let response=JSON.parse(xhr.responseText)
+                                                    if(response.status!="success"){
+                                                        console.error("error setting laser autofocus reference",response)
+                                                        return
+                                                    }
+                                                })
+                                                .onerror(()=>{
+                                                    console.error("error setting laser autofocus reference")
+                                                })
+                                                .send("/api/action/laser_af_calibrate",null,method="POST")
+                                        }
+                                    </script>
+                                    <button class="data col-span-2" p:on-click="setLaserAutofocusReference()">Calibrate Laser Autofocus now</button>
+                                    <button>Go to last calibrated Z</button>
                                     <label>measured offset (um)</label>
-                                    <p>-97.24</p>
-                                    <button>Measure offset</button>
-                                    <label>z offset target (um)</label>
+                                    <script>
+                                        let laserautofocusdata=_p.manage({currentOffset:0.0})
+                                    </script>
+                                    <p class="data">{{laserautofocusdata.currentOffset.toFixed(2)}}</p>
+                                    <script>
+                                        function measureLaserAutofocusOffset(){
+                                            new XHR()
+                                                .onload((xhr)=>{
+                                                    let response=JSON.parse(xhr.responseText)
+                                                    if(response.status!="success"){
+                                                        console.error("error measuring laser autofocus offset",response)
+                                                        return
+                                                    }
+                                                    laserautofocusdata.currentOffset=response.displacement_um
+                                                })
+                                                .onerror(()=>{
+                                                    console.error("error measuring laser autofocus offset")
+                                                })
+                                                .send("/api/action/measure_displacement",null,method="POST")
+                                        }
+                                    </script>
+                                    <button class="data" p:on-click="measureLaserAutofocusOffset()">Measure current Z offset</button>
+                                    <label>Target Z offset (um)</label>
                                     <input type="number" min="-100" max="100" value="0" step="0.1">
-                                    <button>go to target</button>
+                                    <button>Go to target offset</button>
                                 </div>
 
                                 <style>
