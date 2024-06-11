@@ -412,6 +412,7 @@ class Core:
         app.add_url_rule("/api/action/snap_reflection_autofocus", "snap_reflection_autofocus", self.snap_autofocus,methods=["POST"])
         app.add_url_rule("/api/action/laser_af_calibrate", "laser_af_calibrate", self.laser_af_calibrate,methods=["POST"])
         app.add_url_rule("/api/action/measure_displacement", "measure_displacement", self.measure_displacement,methods=["POST"])
+        app.add_url_rule("/api/action/laser_autofocus_move_to_target_offset", "laser_autofocus_move_to_target_offset", self.laser_autofocus_move_to_target_offset,methods=["POST"])
 
         # store last few images acquired with main imaging camera
         # TODO store these per channel, up to e.g. 3 images per channel (for a total max of 3*num_channels)
@@ -424,9 +425,49 @@ class Core:
 
         self.state=CoreState.Idle
 
+    def laser_autofocus_move_to_target_offset(self)->str:
+        """
+            move to target offset, using laser autofocus
+
+             returns json-like string
+        """
+
+        if self.laser_af_calibration_data is None:
+            return json.dumps({"status":"error","message":"laser autofocus not calibrated"})
+        
+        if self.state!=CoreState.Idle:
+            return json.dumps({"status":"error","message":"cannot move while in non-idle state"})
+        
+        data=None
+        try:
+            data=request.get_json()
+        except Exception as e:
+            pass
+
+        if data is None:
+            return json.dumps({"status":"error","message":"no json data"})
+        
+        res=json.loads(self.measure_displacement())
+        if res["status"]!="success":
+            return json.dumps({"status":"error","message":"failed to measure displacement"})
+        
+        if "target_offset_um" not in data:
+            return json.dumps({"status":"error","message":"no target_offset_um in json data"})
+        target_displacement_um=data["target_offset_um"]
+
+        current_displacement_um=res["displacement_um"]
+        distance_to_move_to_target_mm=(target_displacement_um-current_displacement_um)*1e-3
+
+        old_state=self.state
+        self.state=CoreState.Moving
+        self.mc.send_cmd(Command.move_by_mm("z",distance_to_move_to_target_mm))
+        self.state=old_state
+
+        return json.dumps({"status":"success"})
+
     def _get_peak_coords(self,img:np.ndarray,use_glass_top:bool=False)->tp.Tuple[float,float]:
         """
-            get peak coordinates of signal in this laser reflection autofocus image
+            get peak coordinates of signal (two separate 2D gaussians) in this laser reflection autofocus image
 
             for air-glass-water, the smaller peak corresponds to the glass-water interface, i.e. use_glass_top -> use smaller peak
 
@@ -579,10 +620,6 @@ class Core:
         
         #img=Core._process_image(img)
         img_handle=self._store_new_laseraf_image(img,channel_config)
-
-        if True:
-            peak_coords=self._get_peak_coords(img)
-            print(f"peak coords = {peak_coords}")
 
         self.mc.send_cmd(Command.af_laser_illum_end())
 

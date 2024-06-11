@@ -726,7 +726,10 @@
                                             new XHR()
                                                 .onload((xhr)=>{
                                                     let response=JSON.parse(xhr.responseText)
-                                                    console.log(response)
+                                                    if(response.status!="success"){
+                                                        console.error("error moving x",response)
+                                                        return
+                                                    }
                                                 })
                                                 .onerror(()=>{
                                                     console.error("error moving x")
@@ -750,7 +753,10 @@
                                             new XHR()
                                                 .onload((xhr)=>{
                                                     let response=JSON.parse(xhr.responseText)
-                                                    console.log(response)
+                                                    if(response.status!="success"){
+                                                        console.error("error moving y",response)
+                                                        return
+                                                    }
                                                 })
                                                 .onerror(()=>{
                                                     console.error("error moving y")
@@ -884,8 +890,30 @@
                                     </script>
                                     <button class="data" p:on-click="measureLaserAutofocusOffset()">Measure current Z offset</button>
                                     <label>Target Z offset (um)</label>
-                                    <input type="number" min="-100" max="100" value="0" step="0.1">
-                                    <button>Go to target offset</button>
+                                    <input id="laser-autofocus-target-offset-um" type="number" min="-100" max="100" value="0" step="0.1">
+                                    <script>
+                                        function moveToTargetOffset(){
+                                            const offset_element=document.getElementById("laser-autofocus-target-offset-um")
+                                            const target_offset_um=parseFloat(offset_element.value)
+                                            const data={
+                                                target_offset_um:target_offset_um
+                                            }
+
+                                            new XHR(false)
+                                                .onload((xhr)=>{
+                                                    let response=JSON.parse(xhr.responseText)
+                                                    if(response.status!="success"){
+                                                        console.error("error moving to target offset",response)
+                                                        return
+                                                    }
+                                                })
+                                                .onerror(()=>{
+                                                    console.error("error moving to target offset")
+                                                })
+                                                .send("/api/action/laser_autofocus_move_to_target_offset",data,method="POST")
+                                        }
+                                    </script>
+                                    <button class="data" p:on-click="moveToTargetOffset()">Move to target offset</button>
                                 </div>
 
                                 <style>
