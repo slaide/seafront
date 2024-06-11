@@ -224,43 +224,8 @@
                             }
                         </style>
                         <div>
-                            <script>
-                                function getInputType(item){
-                                    if(item.value_kind=="number"){
-                                        return "number"
-                                    }else if(item.value_kind=="text"){
-                                        return "text"
-                                    }else{
-                                        throw new Error("unknown type "+item.value_kind)
-                                    }
-                                }
-                                function itemIsRawInput(item){
-                                    return item.value_kind=="number" || item.value_kind=="text"
-                                }
-                                function itemIsOptionInput(item){
-                                    return item.value_kind=="option"
-                                }
-                                function itemIsAction(item){
-                                    return item.value_kind=="action"
-                                }
-                            </script>
-
-                            <script>
-                                let machine_value_filter=_p.manage({value:""})
-                                function match_name(name){
-                                    if(machine_value_filter.value.length==0)
-                                        return true;
-
-                                    const lowercasename=name.toLowerCase()
-                                    const lowercasemachine_value_filter=machine_value_filter.value.toLowerCase()
-                                    const ret=lowercasename.includes(lowercasemachine_value_filter)
-                                    return ret
-                                }
-                                let filtered_machine_defaults=_p.manage([])
-                                function filter_results(){
-                                    filtered_machine_defaults.splice(0,filtered_machine_defaults.length,...machine_defaults.filter((item)=>match_name(item.name)))
-                                }
-                            </script>
+                            <script src="src/hardware_config_menu.js"></script>
+                            
                             <label>Only display entries where name contains:</label>
                             <input type="text" class="data" p:bind="machine_value_filter.value" p:on-input="filter_results()" p:init-vis="filter_results()"/>
 
@@ -641,52 +606,8 @@
                                     <input type="number" min="0" max="4" value="1" step="0.2">
 
                                     <div id="live-view-control" class="col-span-4">
-                                        <script>
-                                            function start_streaming(){
-                                                let data=getConfigState()
+                                        <script src="src/control_camera_acquisition.js">
 
-                                                let streaming_channel_select_element=document.getElementById("streaming-channel-select")
-                                                let streaming_channel_handle=streaming_channel_select_element.value
-                                                for(let channel of microscope_config.channels){
-                                                    if(channel.handle==streaming_channel_handle){
-                                                        data.channel=channel
-                                                        break
-                                                    }
-                                                }
-                                                if(!data.channel){
-                                                    window.alert("channel "+streaming_channel_handle+" not found")
-                                                }
-                                                new XHR(true)
-                                                    .onload(function(xhr){
-                                                        console.log("success")
-                                                    })
-                                                    .onerror(function(){
-                                                        console.log("error streaming channel "+streaming_channel_handle)
-                                                    })
-                                                    .send("api/action/stream_channel_begin",data,"POST")
-                                            }
-                                            function stop_streaming(){
-                                                let data=getConfigState()
-
-                                                let streaming_channel_handle=document.getElementById("streaming-channel-select").value
-                                                for(let channel of microscope_config.channels){
-                                                    if(channel.handle==streaming_channel_handle){
-                                                        data.channel=channel
-                                                        break
-                                                    }
-                                                }
-                                                if(!data.channel){
-                                                    window.alert("channel "+streaming_channel_handle+" not found")
-                                                }
-                                                new XHR(true)
-                                                    .onload(function(xhr){
-                                                        console.log("success")
-                                                    })
-                                                    .onerror(function(){
-                                                        console.log("error streaming channel "+streaming_channel_handle)
-                                                    })
-                                                    .send("api/action/stream_channel_end",data,"POST")
-                                            }
                                         </script>
                                         <button class="data" p:on-click="start_streaming()">Start Streaming</button>
                                         <button class="data" p:on-click="stop_streaming()">Stop Streaming</button>
@@ -712,91 +633,11 @@
                                 <div id="objective-position" class="section">
                                     <p class="section-header col-span-5">Objective Position <a class="data" href="{{docLinks.objectivePositionControl}}" target="_blank">Help</a></p>
 
+                                    <script src="src/immediate_move_stage.js"></script>
+
                                     <label>x (mm)</label>
                                     <p class="data">{{microscope_state.pos.x_mm.toFixed(2)}}</p>
                                     <input id="x_move_distance_mm" type="number" min="0.01" max="100" step="0.01" value="1">
-                                    <script>
-                                        function move_x(dist_sign){
-                                            let data={}
-                                            let x_move_distance_mm_el=document.getElementById("x_move_distance_mm")
-                                            if(!x_move_distance_mm_el)throw new Error("element not found")
-
-                                            data.dist_mm=dist_sign*parseFloat(x_move_distance_mm_el.value)
-
-                                            new XHR()
-                                                .onload((xhr)=>{
-                                                    let response=JSON.parse(xhr.responseText)
-                                                    if(response.status!="success"){
-                                                        console.error("error moving x",response)
-                                                        return
-                                                    }
-                                                })
-                                                .onerror(()=>{
-                                                    console.error("error moving x")
-                                                })
-                                                .send("/api/action/move_x_by",data,method="POST")
-                                        }
-                                        function forward_x(){
-                                            move_x(1)
-                                        }
-                                        function backward_x(){
-                                            move_x(-1)
-                                        }
-
-                                        function move_y(dist_sign){
-                                            let data={}
-                                            let y_move_distance_mm_el=document.getElementById("y_move_distance_mm")
-                                            if(!y_move_distance_mm_el)throw new Error("element not found")
-
-                                            data.dist_mm=dist_sign*parseFloat(y_move_distance_mm_el.value)
-
-                                            new XHR()
-                                                .onload((xhr)=>{
-                                                    let response=JSON.parse(xhr.responseText)
-                                                    if(response.status!="success"){
-                                                        console.error("error moving y",response)
-                                                        return
-                                                    }
-                                                })
-                                                .onerror(()=>{
-                                                    console.error("error moving y")
-                                                })
-                                                .send("/api/action/move_y_by",data,method="POST")
-                                        }
-                                        function forward_y(){
-                                            move_y(1)
-                                        }
-                                        function backward_y(){
-                                            move_y(-1)
-                                        }
-
-                                        function move_z(dist_sign){
-                                            let data={}
-                                            let z_move_distance_um_el=document.getElementById("z_move_distance_um")
-                                            if(!z_move_distance_um_el)throw new Error("element not found")
-
-                                            data.dist_mm=dist_sign*parseFloat(z_move_distance_um_el.value)*1e-3
-
-                                            new XHR()
-                                                .onload((xhr)=>{
-                                                    let response=JSON.parse(xhr.responseText)
-                                                    if(response.status!="success"){
-                                                        console.error("error moving z",response)
-                                                        return
-                                                    }
-                                                })
-                                                .onerror(()=>{
-                                                    console.error("error moving z")
-                                                })
-                                                .send("/api/action/move_z_by",data,method="POST")
-                                        }
-                                        function forward_z(){
-                                            move_z(1)
-                                        }
-                                        function backward_z(){
-                                            move_z(-1)
-                                        }
-                                    </script>
                                     <button class="data" p:on-click="forward_x()">Forward</button>
                                     <button class="data" p:on-click="backward_x()">Backward</button>
 
@@ -813,28 +654,7 @@
                                     <button class="data" p:on-click="backward_z()">Backward</button>
 
                                     <button>Zero Z</button>
-                                    <script>
-                                        function enterLoadingPosition(){
-                                            new XHR(true)
-                                                .onload(function(xhr){
-                                                    console.log("left loading position")
-                                                })
-                                                .onerror(function(){
-                                                    console.error("error entering loading position")
-                                                })
-                                                .send("/api/action/enter_loading_position",null,"POST")
-                                        }
-                                        function leaveLoadingPosition(){
-                                            new XHR(true)
-                                                .onload(function(xhr){
-                                                    console.log("left loading position")
-                                                })
-                                                .onerror(function(){
-                                                    console.error("error entering loading position")
-                                                })
-                                                .send("/api/action/leave_loading_position",null,"POST")
-                                        }
-                                    </script>
+                                    <script src="src/loading_position.js"></script>
                                     <button class="col-span-2 data" p:on-click="enterLoadingPosition()">enter loading position</button>
                                     <button class="col-span-2 data" p:on-click="leaveLoadingPosition()">leave loading position</button>
                                 </div>
@@ -848,72 +668,16 @@
                                 <div id="laser-autofocus-config" class="section">
                                     <p class="section-header col-span-3">Laser Reflection Autofocus <a class="data" href="{{docLinks.laserReflectionAutofocusControl}}" target="_blank">Help</a></p>
 
-                                    <script>
-                                        function setLaserAutofocusReference(){
-                                            new XHR()
-                                                .onload((xhr)=>{
-                                                    let response=JSON.parse(xhr.responseText)
-                                                    if(response.status!="success"){
-                                                        console.error("error setting laser autofocus reference",response)
-                                                        return
-                                                    }
-                                                })
-                                                .onerror(()=>{
-                                                    console.error("error setting laser autofocus reference")
-                                                })
-                                                .send("/api/action/laser_af_calibrate",null,method="POST")
-                                        }
-                                    </script>
+                                    <script src="src/laser_autofocus.js"></script>
+
                                     <button class="data col-span-2" p:on-click="setLaserAutofocusReference()">Calibrate Laser Autofocus now</button>
                                     <button>Go to last calibrated Z</button>
                                     <label>measured offset (um)</label>
-                                    <script>
-                                        let laserautofocusdata=_p.manage({currentOffset:0.0})
-                                    </script>
                                     <p class="data">{{laserautofocusdata.currentOffset.toFixed(2)}}</p>
-                                    <script>
-                                        function measureLaserAutofocusOffset(){
-                                            new XHR()
-                                                .onload((xhr)=>{
-                                                    let response=JSON.parse(xhr.responseText)
-                                                    if(response.status!="success"){
-                                                        console.error("error measuring laser autofocus offset",response)
-                                                        return
-                                                    }
-                                                    laserautofocusdata.currentOffset=response.displacement_um
-                                                })
-                                                .onerror(()=>{
-                                                    console.error("error measuring laser autofocus offset")
-                                                })
-                                                .send("/api/action/measure_displacement",null,method="POST")
-                                        }
-                                    </script>
                                     <button class="data" p:on-click="measureLaserAutofocusOffset()">Measure current Z offset</button>
                                     <label>Target Z offset (um)</label>
                                     <input id="laser-autofocus-target-offset-um" type="number" min="-100" max="100" value="0" step="0.1">
-                                    <script>
-                                        function moveToTargetOffset(){
-                                            const offset_element=document.getElementById("laser-autofocus-target-offset-um")
-                                            const target_offset_um=parseFloat(offset_element.value)
-                                            const data={
-                                                target_offset_um:target_offset_um
-                                            }
-
-                                            new XHR(false)
-                                                .onload((xhr)=>{
-                                                    let response=JSON.parse(xhr.responseText)
-                                                    if(response.status!="success"){
-                                                        console.error("error moving to target offset",response)
-                                                        return
-                                                    }
-                                                })
-                                                .onerror(()=>{
-                                                    console.error("error moving to target offset")
-                                                })
-                                                .send("/api/action/laser_autofocus_move_to_target_offset",data,method="POST")
-                                        }
-                                    </script>
-                                    <button class="data" p:on-click="moveToTargetOffset()">Move to target offset</button>
+                                    <button class="data" p:on-click="laserAutofocusMoveToTargetOffset()">Move to target offset</button>
                                 </div>
 
                                 <style>

@@ -227,10 +227,13 @@ class WellplateType{
         return null
     }
 }
+/**
+ * @typedef {object&{value_kind:string,name:string,handle:string}} HardwareConfigItem
+ */
 
 /**
  * low level machine control parameters, some of which may be configured/changed for an acquisition
- * @type {object[]}
+ * @type {HardwareConfigItem[]}
  */
 let machine_defaults=_p.manage(new XHR(false)
     .onload(function(xhr){
