@@ -36,6 +36,27 @@ function itemIsOptionInput(item){
 function itemIsAction(item){
     return item.value_kind=="action"
 }
+/**
+ * 
+ * @param {HardwareConfigItem} item 
+ * @returns 
+ */
+function executeActionItem(item){
+    if(!itemIsAction(item)){throw new Error("item is not an action")}
+    // send xhr with item.value as url
+    new XHR(true)
+        .onload((xhr)=>{
+            let response=JSON.parse(xhr.responseText)
+            if(response.status!="success"){
+                console.error("action failed",item,response)
+            }
+        })
+        .onerror(()=>{
+            console.error("action failed",item)
+        })
+        // @ts-ignore
+        .send(item.value,null,"POST")
+}
 
 let machine_value_filter=_p.manage({value:""})
 /**

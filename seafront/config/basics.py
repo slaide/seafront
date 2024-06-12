@@ -10,6 +10,19 @@ class ConfigItemOption:
 
     def to_dict(self)->dict:
         return dc.asdict(self)
+    
+    @staticmethod
+    def get_bool_options()->tp.List["ConfigItemOption"]:
+        return [
+            ConfigItemOption(
+                name="Yes",
+                handle="yes",
+            ),
+            ConfigItemOption(
+                name="No",
+                handle="no",
+            ),
+        ]
 
 @dataclass
 class ConfigItem:
@@ -24,6 +37,13 @@ class ConfigItem:
     def intvalue(self)->int:
         assert isinstance(self.value,int), f"{self.value = } ; {type(self.value) = }"
         return self.value
+    
+    @property
+    def boolvalue(self)->bool:
+        # from ConfigItemOption.get_bool_options()
+        assert isinstance(self.value,str), f"{self.value = } ; {type(self.value) = }"
+        print(f"{self.name=} {self.value = }")
+        return self.value=="yes"
 
     def override(self,other:"ConfigItem"):
         """
@@ -54,17 +74,6 @@ class GlobalConfigHandler:
         these settings may be changed on the client side, for individual acquisitions
         (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
         """
-
-        bool_options=[
-            ConfigItemOption(
-                name="Yes",
-                handle="yes",
-            ),
-            ConfigItemOption(
-                name="No",
-                handle="no",
-            ),
-        ]
 
         main_camera_attributes=[
             ConfigItem(
@@ -147,6 +156,22 @@ class GlobalConfigHandler:
                 value_kind="number",
                 value=2500,
             ),
+            ConfigItem(
+                name="main camera flip image horizontally",
+                handle="main_camera_image_flip_horizontal",
+                value_kind="option",
+                value="no",
+                options=ConfigItemOption.get_bool_options(),
+                frozen=True, # unfrozen for debugging!
+            ),
+            ConfigItem(
+                name="main camera flip image vertically",
+                handle="main_camera_image_flip_vertical",
+                value_kind="option",
+                value="yes",
+                options=ConfigItemOption.get_bool_options(),
+                frozen=True, # unfrozen for debugging!
+            ),
         ]
 
         laser_autofocus_system_attributes=[
@@ -155,7 +180,7 @@ class GlobalConfigHandler:
                 handle="laser_autofocus_available",
                 value_kind="option",
                 value="yes",
-                options=bool_options,
+                options=ConfigItemOption.get_bool_options(),
                 frozen=True,
             ),
             ConfigItem(
@@ -217,6 +242,13 @@ class GlobalConfigHandler:
             ),
 
             ConfigItem(
+                name="calibrate top left of B2 here",
+                handle="calibrate_B2_here",
+                value_kind="action",
+                value="/api/action/calibrate_stage_xy_here",
+            ),
+
+            ConfigItem(
                 name="base output storage directory",
                 handle="base_image_output_dir",
                 value_kind="text",
@@ -224,17 +256,10 @@ class GlobalConfigHandler:
             ),
 
             ConfigItem(
-                name="move in x by",
-                handle="action_move_x_by",
-                value_kind="action",
-                value="/api/action/move_x_by",
-            ),
-
-            ConfigItem(
                 name="preview resolution scaling",
                 handle="preview_resolution_scaling",
                 value_kind="number",
-                value=5,
+                value=3, # performance wise, on an rpi5 value=3 drops about every 15th frame -> good compromise
             ),
 
             *laser_autofocus_system_attributes,

@@ -74,7 +74,7 @@
                             p:on-mouseup,mouseleave="plot_drag_end(event)"
                             p:on-dblclick="plot_fit(event)"
                         >
-                            <img id="view_latest_image" src="/img/cells.webp" width=2500 height=2500 />
+                            <img id="view_latest_image" src="/img/cells.webp" width=2500 height=2500/>
                         </div>
 
                         <div id="live-view-x-axis-container">
@@ -225,7 +225,7 @@
                         </style>
                         <div>
                             <script src="src/hardware_config_menu.js"></script>
-                            
+
                             <label>Only display entries where name contains:</label>
                             <input type="text" class="data" p:bind="machine_value_filter.value" p:on-input="filter_results()" p:init-vis="filter_results()"/>
 
@@ -235,17 +235,17 @@
                                 <input p:if="!item.frozen && itemIsRawInput(item)" type="{{getInputType(item)}}" p:bind="item.value"/>
                                 <input p:if="item.frozen && itemIsRawInput(item)" type="{{getInputType(item)}}" p:bind="item.value" disabled/>
 
-                                <select p:if="!item.frozen && itemIsOptionInput(item)" value="{{item.value}}">
+                                <select p:if="!item.frozen && itemIsOptionInput(item)" value="{{item.value}}" p:bind="item.value">
                                     <template p:for="option of item.options">
                                         <option value="{{option.handle}}">{{option.name}}</option>
                                     </template>
                                 </select>
-                                <select p:if="item.frozen && itemIsOptionInput(item)" value="{{item.value}}" disabled>
+                                <select p:if="item.frozen && itemIsOptionInput(item)" value="{{item.value}}" p:bind="item.value" disabled>
                                     <template p:for="option of item.options">
                                         <option value="{{option.handle}}">{{option.name}}</option>
                                     </template>
                                 </select>
-                                <button p:if="itemIsAction(item)"></button>
+                                <button p:if="itemIsAction(item)" p:on-click="executeActionItem(item)">Execute</button>
                             </template>
                         </div>
                     </div>

@@ -837,6 +837,9 @@ class Microcontroller:
             self.terminate_reading_received_packet_thread=until(packet)
 
     def get_last_position(self)->Position:
+        # attempt to read a packet to update the position if no command is currently being awaited to update the position implicitely
+        self.get_packet()
+            
         return self.last_position
 
     def get_packet(self)->tp.Optional[MicrocontrollerStatusPackage]:

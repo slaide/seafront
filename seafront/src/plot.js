@@ -15,9 +15,17 @@ class PlotData{
         this.elements=elements
     }
 
+    /**
+     * get delta x (x_max-x_min)
+     * @returns {number}
+     */
     getDeltaX(){
         return this.x_max-this.x_min
     }
+    /**
+     * get delta y (y_max-y_min)
+     * @returns {number}
+     */
     getDeltaY(){
         return this.y_max-this.y_min
     }
@@ -148,7 +156,7 @@ const plot_update=function(plot){
         child.style.setProperty("--bottom",(child_plot_data.y_min-plot_data.y_min)*scale_y+"px")
     }
 }
-let zoom_speed=0.01;
+let zoom_speed=0.02;
 let invert_scroll=true;
 
 /**
@@ -156,30 +164,42 @@ let invert_scroll=true;
  * @param {WheelEvent} event 
  */
 function plot_zoom(event){
-    event.preventDefault();
+    event.preventDefault()
 
     let plot = event.currentTarget
     if(!(plot instanceof HTMLElement)){throw new Error("plot is not an html element")}
 
-    let zoom_delta=event.deltaY;
-    if(Math.abs(zoom_delta)>5){
-        zoom_delta=Math.sign(zoom_delta)*5;
+    let zoom_delta=event.deltaY
+    const MAX_ZOOM_DELTA=5
+    if(Math.abs(zoom_delta)>MAX_ZOOM_DELTA){
+        zoom_delta=Math.sign(zoom_delta)*MAX_ZOOM_DELTA
     }
 
     // scrolling up naturally zooms out
-    let zoom=zoom_speed*zoom_delta;
+    let zoom=zoom_speed*zoom_delta
     if(invert_scroll){
-        zoom*=-1;
+        zoom*=-1
     }
     
     let plot_data=PlotData.getFor(plot)
-    let x_range = plot_data.getDeltaX()
-    let y_range = plot_data.getDeltaY()
+    const x_range = plot_data.getDeltaX()
+    const y_range = plot_data.getDeltaY()
 
-    plot_data.x_min += x_range*zoom
-    plot_data.x_max -= x_range*zoom
-    plot_data.y_min += y_range*zoom
-    plot_data.y_max -= y_range*zoom
+    // zoom in on cursor position with the frame
+    const rect=plot.getBoundingClientRect()
+    let x_frac=(event.clientX-rect.left)/rect.width
+    let y_frac=(event.clientY-rect.top)/rect.height
+
+    const zoom_balance_xmin_frac=x_frac
+    const zoom_balance_xmax_frac=1-zoom_balance_xmin_frac
+    // y is inverted compared to x because html origin is top left
+    const zoom_balance_ymax_frac=y_frac
+    const zoom_balance_ymin_frac=1-zoom_balance_ymax_frac
+
+    plot_data.x_min += x_range*zoom*zoom_balance_xmin_frac
+    plot_data.x_max -= x_range*zoom*zoom_balance_xmax_frac
+    plot_data.y_min += y_range*zoom*zoom_balance_ymin_frac
+    plot_data.y_max -= y_range*zoom*zoom_balance_ymax_frac
 
     plot_data.update()
 }

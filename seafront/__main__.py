@@ -414,6 +414,10 @@ class Core:
         app.add_url_rule("/api/action/measure_displacement", "measure_displacement", self.measure_displacement,methods=["POST"])
         app.add_url_rule("/api/action/laser_autofocus_move_to_target_offset", "laser_autofocus_move_to_target_offset", self.laser_autofocus_move_to_target_offset,methods=["POST"])
 
+        app.add_url_rule("/api/action/calibrate_stage_xy_here", "calibrate_stage_xy_here", self.calibrate_stage_xy_here,methods=["POST"])
+        self.calibrated_stage_position:tp.Tuple[float,float]=(0,0)
+        " pos x,y in mm, where the top left corner of B2 is set as reference"
+
         # store last few images acquired with main imaging camera
         # TODO store these per channel, up to e.g. 3 images per channel (for a total max of 3*num_channels)
         self.latest_image_handle:tp.Optional[str]=None
@@ -424,6 +428,19 @@ class Core:
         self.laser_af_image:tp.Optional["Core.ImageStoreEntry"]=None
 
         self.state=CoreState.Idle
+
+    def calibrate_stage_xy_here(self)->str:
+        """
+            set current xy position as top left corner of B2, which is used as reference to calculate all other positions on a plate
+        """
+
+        current_pos=self.mc.get_last_position()
+        ref_x_mm=current_pos.x_pos_mm-plate.get_well_offset_x("B02")
+        ref_y_mm=current_pos.y_pos_mm-plate.get_well_offset_y("B02")
+
+        self.calibrated_stage_position=(ref_x_mm,ref_y_mm)
+
+        return json.dumps({"status":"success"})
 
     def laser_autofocus_move_to_target_offset(self)->str:
         """
@@ -674,6 +691,7 @@ class Core:
         """
 
         g_config=GlobalConfigHandler.get_dict()
+
         cam_img_width=g_config['main_camera_image_width_px']
         assert cam_img_width is not None
         target_width:int=cam_img_width.intvalue
@@ -695,6 +713,18 @@ class Core:
 
         # seemingly swap x and y because of numpy's row-major order
         ret=img[y_offset:y_offset+target_height,x_offset:x_offset+target_width]
+
+        flip_img_horizontal=g_config['main_camera_image_flip_horizontal']
+        assert flip_img_horizontal is not None
+        if flip_img_horizontal.boolvalue:
+            ret=np.flip(ret,axis=1)
+
+        flip_img_vertical=g_config['main_camera_image_flip_vertical']
+        assert flip_img_vertical is not None
+        if flip_img_vertical.boolvalue:
+            ret=np.flip(ret,axis=0)
+
+        print(f"flipped vertically {flip_img_vertical.boolvalue}, flipped horizontally {flip_img_horizontal.boolvalue}")
 
         return ret
 
@@ -884,6 +914,10 @@ class Core:
         x_mm=plate.get_well_offset_x(well_name)+plate.Well_size_x_mm/2
         y_mm=plate.get_well_offset_y(well_name)+plate.Well_size_y_mm/2
 
+        # apply calibration
+        x_mm-=self.calibrated_stage_position[0]
+        y_mm-=self.calibrated_stage_position[1]
+
         self.state=CoreState.Moving
         self.mc.send_cmd(Command.move_to_mm("x",x_mm))
         self.mc.send_cmd(Command.move_to_mm("y",y_mm))
@@ -901,13 +935,17 @@ class Core:
                 "handle":img_handle,
                 "channel":self.images[img_handle].channel_config.to_dict()
             }
+
+        ref_x_mm,ref_y_mm=self.calibrated_stage_position
+        x_pos_mm=ref_x_mm+last_stage_position.x_pos_mm
+        y_pos_mm=ref_y_mm+last_stage_position.y_pos_mm
         
         return json.dumps({
             "status":"success",
             "state":self.state.value,
             "stage_position":{
-                "x_pos_mm":last_stage_position.x_pos_mm,
-                "y_pos_mm":last_stage_position.y_pos_mm,
+                "x_pos_mm":x_pos_mm,
+                "y_pos_mm":y_pos_mm,
                 "z_pos_mm":last_stage_position.z_pos_mm,
             },
             "latest_img":latest_img_info

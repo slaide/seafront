@@ -83,6 +83,8 @@ let microscope_state=_p.manage({
 })
 let last_update_successful=true
 let updateInProgress=false
+/** @type{Map<HTMLImageElement,object&{loaded:boolean}>} */
+const element_image_load_state=new Map()
 function updateMicroscopePosition(){
     if(updateInProgress)return;
 
@@ -117,7 +119,33 @@ function updateMicroscopePosition(){
 
         let view_latest_image=document.getElementById("view_latest_image")
         if((view_latest_image instanceof HTMLImageElement) && data.latest_img!=null){
-            view_latest_image.src="/img/get_by_handle?img_handle="+data.latest_img.handle
+            if(!element_image_load_state.has(view_latest_image)){
+                // indicate that the current state has finished loading on initilization
+                element_image_load_state.set(view_latest_image,{loaded:true})
+            }
+
+            // check if the image has finished loading
+            let element_load_state=element_image_load_state.get(view_latest_image)
+            if(!element_load_state){throw new Error("element load state is null")}
+            if(!element_load_state.loaded){
+                // skip updating if loading is still ongoing, otherwise processing will stop and nothing will be displayed
+                // while a new image arrives
+                console.error("image not loaded yet, skipping update")
+            }else{
+                const new_src="/img/get_by_handle?img_handle="+data.latest_img.handle
+                // if the src is a new one
+                if(view_latest_image.src!==new_src){
+                    // indicate that loading has not yet finished, init load (by setting .src)
+                    element_load_state.loaded=false
+                    view_latest_image.src=new_src
+
+                    // set callback on load finish
+                    const f=function(){
+                        element_load_state.loaded=true
+                    }
+                    view_latest_image.addEventListener("load",f,{once:true})
+                }
+            }
             microscope_state.last_image_channel_name=data.latest_img.channel.name
         }
     
@@ -228,7 +256,7 @@ class WellplateType{
     }
 }
 /**
- * @typedef {object&{value_kind:string,name:string,handle:string}} HardwareConfigItem
+ * @typedef {object&{value_kind:string,name:string,handle:string,value:string|number}} HardwareConfigItem
  */
 
 /**
