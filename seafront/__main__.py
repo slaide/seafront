@@ -375,9 +375,20 @@ class Core:
                 mc.send_cmd(Command.move_by_mm("z",1))
                 print("done initializing microcontroller")
 
+        defaults=GlobalConfigHandler.get_dict()
+        main_camera_model_name=defaults["main_camera_model"].value
+        focus_camera_model_name=defaults["laser_autofocus_camera_model"].value
+
         print(f"found {len(self.cams)} cameras")
         for cam in self.cams:
-            cam.open()
+            if cam.model_name==main_camera_model_name:
+                device_type="main"
+            elif cam.model_name==focus_camera_model_name:
+                device_type="autofocus"
+            else:
+                raise RuntimeError(f"unknown camera model name {cam.model_name} is neither main nor autofocus camera")
+            
+            cam.open(device_type=device_type)
 
         # register url rules requiring machine interaction
         app.add_url_rule(f"/api/get_info/current_state", f"get_current_state", self.get_current_state,methods=["GET","POST"])
@@ -418,6 +429,9 @@ class Core:
         self.calibrated_stage_position:tp.Tuple[float,float]=(0,0)
         " pos x,y in mm, where the top left corner of B2 is set as reference"
 
+        # for turn_off_all_illumination
+        app.add_url_rule("/api/action/turn_off_all_illumination", "turn_off_all_illumination", self.turn_off_all_illumination,methods=["POST"])
+
         # store last few images acquired with main imaging camera
         # TODO store these per channel, up to e.g. 3 images per channel (for a total max of 3*num_channels)
         self.latest_image_handle:tp.Optional[str]=None
@@ -428,6 +442,30 @@ class Core:
         self.laser_af_image:tp.Optional["Core.ImageStoreEntry"]=None
 
         self.state=CoreState.Idle
+
+    def turn_off_all_illumination(self)->str:
+        """
+            turn off all illumination sources (rather, send signal to do so. this function does not check if any are on before sending the signals)
+
+            this function is NOT for regular operation!
+            it does not verify that the microscope is not in any acquisition state
+
+            returns json-like string
+        """
+
+        # make sure all illumination is off
+        for illum_src in [
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
+
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
+        ]:
+            self.mc.send_cmd(Command.illumination_end(illum_src))
+
+        return json.dumps({"status":"success"})
 
     def calibrate_stage_xy_here(self)->str:
         """
@@ -683,6 +721,7 @@ class Core:
         img:np.ndarray
         timestamp:float
         channel_config:AcquisitionChannelConfig
+        bit_depth:int
 
     @staticmethod
     def _process_image(img:np.ndarray)->np.ndarray:
@@ -703,7 +742,6 @@ class Core:
         
         current_height=img.shape[0]
         current_width=img.shape[1]
-        print(f"cropping from (WxH) {current_width}x{current_height} to {target_width}x{target_height}")
 
         assert target_width<=current_width, f"{target_width = } ; {current_width = }"
         assert target_height<=current_height, f"{target_height = } ; {current_height = }"
@@ -724,8 +762,6 @@ class Core:
         if flip_img_vertical.boolvalue:
             ret=np.flip(ret,axis=0)
 
-        print(f"flipped vertically {flip_img_vertical.boolvalue}, flipped horizontally {flip_img_horizontal.boolvalue}")
-
         return ret
 
     def _store_new_laseraf_image(self,img:np.ndarray,channel_config:AcquisitionChannelConfig)->str:
@@ -739,9 +775,20 @@ class Core:
         else:
             self.laser_af_image_handle=f"laseraf_{int(self.laser_af_image_handle.split('_')[1])+1}"
             
-        self.laser_af_image=Core.ImageStoreEntry(img,time.time(),channel_config)
+        pxfmt_int,pxfmt_str=self.focus_cam.handle.PixelFormat.get() # type: ignore
+        match pxfmt_int:
+            case gxiapi.GxPixelFormatEntry.MONO8:
+                pixel_depth=8
+            case gxiapi.GxPixelFormatEntry.MONO10:
+                pixel_depth=10
+            case gxiapi.GxPixelFormatEntry.MONO12:
+                pixel_depth=12
+            case _unknown:
+                raise ValueError(f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
 
-        print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {self.latest_image_handle}")
+        self.laser_af_image=Core.ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
+
+        print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {self.laser_af_image_handle}")
 
         return self.laser_af_image_handle
 
@@ -755,8 +802,19 @@ class Core:
             self.latest_image_handle=f"{0}"
         else:
             self.latest_image_handle=f"{int(self.latest_image_handle)+1}"
+
+        pxfmt_int,pxfmt_str=self.main_cam.handle.PixelFormat.get() # type: ignore
+        match pxfmt_int:
+            case gxiapi.GxPixelFormatEntry.MONO8:
+                pixel_depth=8
+            case gxiapi.GxPixelFormatEntry.MONO10:
+                pixel_depth=10
+            case gxiapi.GxPixelFormatEntry.MONO12:
+                pixel_depth=12
+            case _unknown:
+                raise ValueError(f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
             
-        self.images[self.latest_image_handle]=Core.ImageStoreEntry(img,time.time(),channel_config)
+        self.images[self.latest_image_handle]=Core.ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
 
         print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {self.latest_image_handle}")
 
@@ -876,10 +934,15 @@ class Core:
         # convert from u12 to u8
         match img_raw.dtype:
             case np.uint16:
-                print(f"img_raw shape: {img_raw.shape}, dtype: {img_raw.dtype}")
-                print(f"img min max: {img_raw.min()} {img_raw.max()} (max u16 is {2**16-1}, max u12 is {2**12-1})")
-                img=(img_raw>>4).astype(np.uint8)
+                match img_container.bit_depth:
+                    case 12:
+                        img=(img_raw>>(16-12)).astype(np.uint8)
+                    case 10:
+                        img=(img_raw>>(16-10)).astype(np.uint8)
+                    case _:
+                        raise ValueError(f"unexpected bit depth {img_container.bit_depth}")
             case np.uint8:
+                assert img_container.bit_depth==8, f"unexpected {img_container.bit_depth = }"
                 img=img_raw
             case _:
                 raise ValueError(f"unexpected dtype {img_raw.dtype}")
@@ -930,7 +993,7 @@ class Core:
 
         img_handle=self.latest_image_handle
         latest_img_info=None
-        if img_handle is not None:
+        if img_handle is not None and img_handle in self.images:
             latest_img_info={
                 "handle":img_handle,
                 "channel":self.images[img_handle].channel_config.to_dict()

@@ -46,10 +46,11 @@ class Camera:
         self.vendor_name:str=device_info["vendor_name"]
         self.model_name:str=device_info["model_name"]
         self.sn:str=device_info["sn"]
+        self.device_type=None
 
         self.handle=None
 
-    def open(self):
+    def open(self,device_type:tp.Literal["main","autofocus"]):
         """
             open device for interaction
         """
@@ -58,6 +59,8 @@ class Camera:
         self.handle=Camera.device_manager.open_device_by_sn(self.sn)
         if self.handle is None:
             raise RuntimeError(f"failed to open camera {self.device_info}")
+        
+        self.device_type=device_type
 
         # prints some camera hardware information
         if False:
@@ -133,6 +136,10 @@ class Camera:
 
         # set acquisition mode
         self.handle.AcquisitionMode.set(gxiapi.GxAcquisitionModeEntry.CONTINUOUS)
+
+        # set pixel format
+        self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO8)
+        self.pixel_format=gxiapi.GxPixelFormatEntry.MONO8
 
         self.is_streaming=False
         self.acq_mode=None
@@ -248,6 +255,47 @@ class Camera:
         """
 
         assert self.handle is not None
+
+        # set pixel format
+        g_config=GlobalConfigHandler.get_dict()
+        match self.device_type:
+            case "main":
+                pixel_format_item=g_config["main_camera_pixel_format"]
+            case "autofocus":
+                pixel_format_item=g_config["laser_autofocus_pixel_format"]
+            case _:
+                raise RuntimeError(f"unsupported device type {self.device_type}")
+
+        assert pixel_format_item is not None
+        pixel_format=pixel_format_item.value
+        format_is_supported=len([k for k in self.handle.PixelFormat.get_range().keys() if k.lower()==pixel_format.lower()])>0 # type: ignore
+        if not format_is_supported:
+            raise RuntimeError(f"unsupported pixel format {pixel_format}")
+
+        # pixel format change is not possible while streaming
+        # turning the stream off takes nearly half a second, so we cache the current pixel format
+        # and only pause streaming to change it, if necessary
+        match pixel_format:
+            case "mono8":
+                if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO8:
+                    self.handle.stream_off()
+                    self.pixel_format=gxiapi.GxPixelFormatEntry.MONO8
+                    self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO8)
+                    self.handle.stream_on()
+            case "mono10":
+                if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO10:
+                    self.handle.stream_off()
+                    self.pixel_format=gxiapi.GxPixelFormatEntry.MONO10
+                    self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO10)
+                    self.handle.stream_on()
+            case "mono12":
+                if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO12:
+                    self.handle.stream_off()
+                    self.pixel_format=gxiapi.GxPixelFormatEntry.MONO12
+                    self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO12)
+                    self.handle.stream_on()
+            case _:
+                raise RuntimeError(f"unsupported pixel format {pixel_format}")
 
         # takes ca 10ms
         exposure_time_native_unit=self._exposure_time_ms_to_native(config.exposure_time_ms)

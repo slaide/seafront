@@ -42,7 +42,6 @@ class ConfigItem:
     def boolvalue(self)->bool:
         # from ConfigItemOption.get_bool_options()
         assert isinstance(self.value,str), f"{self.value = } ; {type(self.value) = }"
-        print(f"{self.name=} {self.value = }")
         return self.value=="yes"
 
     def override(self,other:"ConfigItem"):
@@ -246,6 +245,13 @@ class GlobalConfigHandler:
                 handle="calibrate_B2_here",
                 value_kind="action",
                 value="/api/action/calibrate_stage_xy_here",
+            ),
+
+            ConfigItem(
+                name="turn off all illumination",
+                handle="illumination_off",
+                value_kind="action",
+                value="/api/action/turn_off_all_illumination",
             ),
 
             ConfigItem(
