@@ -74,6 +74,7 @@ let microscope_config=_p.manage({
 let microscope_state=_p.manage({
     machine_name:"",
     state:"idle",
+    streaming:false,
     pos:{
         x_mm:12.123,
         y_mm:23.123,
@@ -132,7 +133,14 @@ function updateMicroscopePosition(){
                 // while a new image arrives
                 console.error("image not loaded yet, skipping update")
             }else{
-                const new_src="/img/get_by_handle?img_handle="+data.latest_img.handle
+                let src_api_action=""
+                if(microscope_state.streaming){
+                    src_api_action="/img/get_by_handle_streaming"
+                }else{
+                    src_api_action="/img/get_by_handle"
+                }
+                const new_src=src_api_action+"?img_handle="+data.latest_img.handle
+                
                 // if the src is a new one
                 if(view_latest_image.src!==new_src){
                     // indicate that loading has not yet finished, init load (by setting .src)

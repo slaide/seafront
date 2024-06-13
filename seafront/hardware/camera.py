@@ -240,7 +240,8 @@ class Camera:
         self,
         config:AcquisitionChannelConfig,
         mode:tp.Literal["once","until_stop"]="once",
-        callback:tp.Optional[tp.Callable[[gxiapi.RawImage],bool]]=None
+        callback:tp.Optional[tp.Callable[[gxiapi.RawImage],bool]]=None,
+        target_framerate_hz:float=5.0
     )->tp.Optional[np.ndarray]:
         """
             acquire image with given configuration
@@ -343,12 +344,11 @@ class Camera:
 
                     stop_acquisition=callback(img)
 
-                target_fps=5.0
                 # adjust target framerate for acquisition overhead
                 # ... this is not quite right, but yields better results than no adjustment
-                s_per_frame=1.0/target_fps
-                target_fps=1.0/(s_per_frame-max(20-config.exposure_time_ms,0)*1e-3)
-                self._set_acquisition_mode(AcquisitionMode.CONTINUOUS,with_cb=run_callback,continuous_target_fps=target_fps)
+                s_per_frame=1.0/target_framerate_hz
+                target_framerate_hz=1.0/(s_per_frame-max(20-config.exposure_time_ms,0)*1e-3)
+                self._set_acquisition_mode(AcquisitionMode.CONTINUOUS,with_cb=run_callback,continuous_target_fps=target_framerate_hz)
 
                 while not stop_acquisition:
                     # sleep for duration of exposure time, but no more than 100ms

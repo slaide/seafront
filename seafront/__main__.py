@@ -402,7 +402,8 @@ class Core:
         # for move_to_well
         app.add_url_rule(f"/api/action/move_to_well", f"move_to_well", self.move_to_well,methods=["POST"])
         # send image by handle
-        app.add_url_rule(f"/img/get_by_handle", f"send_image_by_handle", self.send_image_by_handle,methods=["GET"])
+        app.add_url_rule(f"/img/get_by_handle", f"send_image_by_handle", lambda:self.send_image_by_handle(quick_preview=False),methods=["GET"])
+        app.add_url_rule(f"/img/get_by_handle_preview", f"send_image_by_handle_preview", lambda:self.send_image_by_handle(quick_preview=True),methods=["GET"])
 
         # loading position enter/leave
         self.is_in_loading_position=False
@@ -874,12 +875,17 @@ class Core:
                 if self.is_streaming or self.stream_handler is not None:
                     return json.dumps({"status":"error","message":"already streaming"})
 
+                if not "framerate_hz" in json_data:
+                    return json.dumps({"status":"error","message":"no framerate_hz in json data"})
+                
+                framerate_hz=json_data["framerate_hz"]
+
                 self.state=CoreState.ChannelStream
                 self.is_streaming=True
 
                 self.stream_handler=self._create_stream_handler(channel_config)
                 self.mc.send_cmd(Command.illumination_begin(illum_code,channel_config.illum_perc))
-                cam.acquire_with_config(channel_config,mode="until_stop",callback=self.stream_handler)
+                cam.acquire_with_config(channel_config,mode="until_stop",callback=self.stream_handler,target_framerate_hz=framerate_hz)
 
                 return json.dumps({"status":"success","channel":json_data["channel"]})
             case "stream_end":
@@ -897,7 +903,7 @@ class Core:
             case _o:
                 raise ValueError(f"invalid mode {_o}")
 
-    def send_image_by_handle(self):
+    def send_image_by_handle(self,quick_preview:bool=False):
         """
             send image by handle, as get request to allow using this a img src
         """
@@ -947,16 +953,45 @@ class Core:
             case _:
                 raise ValueError(f"unexpected dtype {img_raw.dtype}")
 
-        preview_resolution_scaling=GlobalConfigHandler.get_dict()["preview_resolution_scaling"].intvalue
+        if quick_preview:
+            preview_resolution_scaling=GlobalConfigHandler.get_dict()["streaming_preview_resolution_scaling"].intvalue
 
-        img_downres=img[::preview_resolution_scaling,::preview_resolution_scaling]
-        img_pil=Image.fromarray(img_downres,mode="L")
+            img=img[::preview_resolution_scaling,::preview_resolution_scaling]
+
+        img_pil=Image.fromarray(img,mode="L")
 
         img_io=io.BytesIO()
-        img_pil.save(img_io,format="PNG",compress_level=2)
+        
+        if quick_preview:
+            g_config=GlobalConfigHandler.get_dict()
+            streaming_format_item=g_config["streaming_preview_format"]
+            assert streaming_format_item is not None
+            streaming_format=streaming_format_item.value
+            match streaming_format:
+                case "jpeg":
+                    pil_kwargs,mimetype={"format":"JPEG","quality":90},"image/jpeg"
+                case "png":
+                    pil_kwargs,mimetype={"format":"PNG","compress_level":3},"image/png"
+                case _other:
+                    raise ValueError(f"unexpected streaming_preview_format format {streaming_format}")
+                
+        else:
+            g_config=GlobalConfigHandler.get_dict()
+            streaming_format_item=g_config["image_display_format"]
+            assert streaming_format_item is not None
+            streaming_format=streaming_format_item.value
+            match streaming_format:
+                case "jpeg":
+                    pil_kwargs,mimetype={"format":"JPEG","quality":95},"image/jpeg"
+                case "png":
+                    pil_kwargs,mimetype={"format":"PNG","compress_level":6},"image/png"
+                case _other:
+                    raise ValueError(f"unexpected image_display_format format {streaming_format}")
+            
+        img_pil.save(img_io,**pil_kwargs)
         img_io.seek(0)
 
-        return send_file(img_io, mimetype='image/png')
+        return send_file(img_io, mimetype=mimetype)
 
     def move_to_well(self):
         if self.is_in_loading_position:

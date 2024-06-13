@@ -261,11 +261,47 @@ class GlobalConfigHandler:
                 value="/mnt/squid/",
             ),
 
+            # preview settings are performance sensitive
+            # e.g. on an rpi5, the max streaming framerate for jpeg at scale=2 resolution is 5fps
+            #      but for png, to reach 5fps the resolution must be at least scale=5
             ConfigItem(
-                name="preview resolution scaling",
-                handle="preview_resolution_scaling",
+                name="streaming preview resolution scaling",
+                handle="streaming_preview_resolution_scaling",
                 value_kind="number",
-                value=3, # performance wise, on an rpi5 value=3 drops about every 15th frame -> good compromise
+                value=2,
+            ),
+            ConfigItem(
+                name="streaming preview image format",
+                handle="streaming_preview_format",
+                value_kind="option",
+                value="jpeg",
+                options=[
+                    ConfigItemOption(
+                        name="JPEG",
+                        handle="jpeg",
+                    ),
+                    ConfigItemOption(
+                        name="PNG",
+                        handle="png",
+                    ),
+                ]
+            ),
+
+            ConfigItem(
+                name="full image display format",
+                handle="image_display_format",
+                value_kind="option",
+                value="jpeg",
+                options=[
+                    ConfigItemOption(
+                        name="JPEG",
+                        handle="jpeg",
+                    ),
+                    ConfigItemOption(
+                        name="PNG",
+                        handle="png",
+                    ),
+                ]
             ),
 
             *laser_autofocus_system_attributes,

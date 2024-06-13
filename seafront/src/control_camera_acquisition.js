@@ -1,6 +1,6 @@
 
 function start_streaming(){
-    /** @type{object&{channel?:any}} */
+    /** @type{object&{channel?:any,framerate_hz?:number}} */
     let data=getConfigState()
 
     let streaming_channel_select_element=document.getElementById("streaming-channel-select")
@@ -12,9 +12,17 @@ function start_streaming(){
             break
         }
     }
+
+    const framerate_element=document.getElementById("streaming-framerate-hz")
+    if(!(framerate_element instanceof HTMLInputElement)){throw new Error("streaming-framerate-hz not found")}
+    data.framerate_hz=parseFloat(framerate_element.value)
+
     if(!data.channel){
         window.alert("channel "+streaming_channel_handle+" not found")
     }
+
+    microscope_state.streaming=true
+
     new XHR(true)
         .onload(function(xhr){
             const response=JSON.parse(xhr.responseText)
@@ -43,6 +51,9 @@ function stop_streaming(){
     if(!data.channel){
         window.alert("channel "+streaming_channel_handle+" not found")
     }
+
+    microscope_state.streaming=false
+    
     new XHR(true)
         .onload(function(xhr){
             const response=JSON.parse(xhr.responseText)
