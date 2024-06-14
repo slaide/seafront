@@ -80,6 +80,10 @@ let microscope_state=_p.manage({
         y_mm:23.123,
         z_um:4312.0,
     },
+    fov_size:{
+        x_mm:0.9,
+        y_mm:0.9,
+    },
     last_image_channel_name:"No image acquired yet",
 })
 let last_update_successful=true
