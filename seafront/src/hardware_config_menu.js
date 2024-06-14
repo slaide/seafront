@@ -60,9 +60,9 @@ function executeActionItem(item){
 
 let machine_value_filter=_p.manage({value:""})
 /**
- * 
+ * check if name contains the filter query
  * @param {string} name
- * @returns 
+ * @returns {boolean}
  */
 function match_name(name){
     if(machine_value_filter.value.length==0)
@@ -75,6 +75,13 @@ function match_name(name){
 }
 /** @type{HardwareConfigItem[]} */
 let filtered_machine_defaults=_p.manage([])
+
+/**
+ * apply the filter to the machine_defaults and store the result in filtered_machine_defaults
+ * 
+ * used as callback (on the search bar)
+ */
 function filter_results(){
-    filtered_machine_defaults.splice(0,filtered_machine_defaults.length,...machine_defaults.filter((item)=>match_name(item.name)))
+    filtered_machine_defaults.length=0
+    filtered_machine_defaults.splice(0,0,...machine_defaults.filter((item)=>match_name(item.name)))
 }

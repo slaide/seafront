@@ -57,7 +57,7 @@ def send_img_from_remote_storage():
     """
 
     # get query parameters
-    image_path=request.args.get("image_path")
+    image_path=request.args.get("image_path",type=str)
     if image_path is None:
         return json.dumps({"status":"error","message":"no image_path provided"})
 

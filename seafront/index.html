@@ -230,8 +230,6 @@
                             <input type="text" class="data" p:bind="machine_value_filter.value" p:on-input="filter_results()" p:init-vis="filter_results()"/>
 
                             <template class="data" p:for="item of filtered_machine_defaults">
-                                <label class="data">{{item.name}}</label>
-
                                 <input p:if="!item.frozen && itemIsRawInput(item)" type="{{getInputType(item)}}" p:bind="item.value"/>
                                 <input p:if="item.frozen && itemIsRawInput(item)" type="{{getInputType(item)}}" p:bind="item.value" disabled/>
 
@@ -246,6 +244,8 @@
                                     </template>
                                 </select>
                                 <button p:if="itemIsAction(item)" p:on-click="executeActionItem(item)">Execute</button>
+
+                                <label class="data">{{item.name}}</label>
                             </template>
                         </div>
                     </div>
