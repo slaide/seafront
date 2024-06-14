@@ -827,7 +827,12 @@ class Core:
             
         self.images[self.latest_image_handle]=Core.ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
 
-        print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {self.latest_image_handle}")
+        # remove oldest images to keep buffer length capped (at 8)
+        while len(self.images)>8:
+            oldest_key=min(self.images,key=lambda k:self.images[k].timestamp)
+            del self.images[oldest_key].img # delete this explicitely to free ndarray memory
+            del self.images[oldest_key]
+            gc.collect() # force gc collection because these images really take up a lot of storage
 
         return self.latest_image_handle
 
@@ -929,11 +934,6 @@ class Core:
             img_container=self.laser_af_image
 
         else:
-            # remove oldest images to keep buffer length capped (at 8)
-            while len(self.images)>8:
-                oldest_key=min(self.images,key=lambda k:self.images[k].timestamp)
-                del self.images[oldest_key]
-
             if img_handle is None:
                 return json.dumps({"status":"error","message":"no img_handle provided"})
             
