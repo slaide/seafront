@@ -135,7 +135,7 @@ function updateMicroscopePosition(){
             }else{
                 let src_api_action=""
                 if(microscope_state.streaming){
-                    src_api_action="/img/get_by_handle_streaming"
+                    src_api_action="/img/get_by_handle_preview"
                 }else{
                     src_api_action="/img/get_by_handle"
                 }
