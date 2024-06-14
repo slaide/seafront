@@ -84,6 +84,8 @@ let microscope_state=_p.manage({
 })
 let last_update_successful=true
 let updateInProgress=false
+/** @type{number?} */
+let loadTimer=null
 /** @type{Map<HTMLImageElement,object&{loaded:boolean}>} */
 const element_image_load_state=new Map()
 function updateMicroscopePosition(){
@@ -129,9 +131,9 @@ function updateMicroscopePosition(){
             let element_load_state=element_image_load_state.get(view_latest_image)
             if(!element_load_state){throw new Error("element load state is null")}
             if(!element_load_state.loaded){
-                // skip updating if loading is still ongoing, otherwise processing will stop and nothing will be displayed
-                // while a new image arrives
-                console.error("image not loaded yet, skipping update")
+                // skip updating if loading is still ongoing, otherwise processing will stop and
+                // nothing will be displayed while a new image arrives
+                console.warn("image not loaded yet, skipping update")
             }else{
                 let src_api_action=""
                 if(microscope_state.streaming){
@@ -147,11 +149,33 @@ function updateMicroscopePosition(){
                     element_load_state.loaded=false
                     view_latest_image.src=new_src
 
+                    if(data.latest_img.width_px!=null && data.latest_img.width_px!=view_latest_image.getAttribute("width"))
+                        view_latest_image.setAttribute("width",data.latest_img.width_px)
+                    if(data.latest_img.height_px!=null && data.latest_img.height_px!=view_latest_image.getAttribute("height"))
+                        view_latest_image.setAttribute("height",data.latest_img.height_px)
+
                     // set callback on load finish
                     const f=function(){
+                        // remove the callback
+                        if(loadTimer!=null){
+                            clearTimeout(loadTimer)
+                            loadTimer=null
+                        }
+                        view_latest_image.removeEventListener("load",f)
+                        view_latest_image.removeEventListener("error",f)
+
                         element_load_state.loaded=true
                     }
+                    // consider image loaded either on actual load, or on error
                     view_latest_image.addEventListener("load",f,{once:true})
+                    view_latest_image.addEventListener("error",f,{once:true})
+                    // if the image is not done loading after 3 seconds, assume it failed
+                    loadTimer=setTimeout(f,3e3)
+
+                    // if image is already loaded, call the function immediately
+                    if(view_latest_image.complete){
+                        f()
+                    }
                 }
             }
             microscope_state.last_image_channel_name=data.latest_img.channel.name

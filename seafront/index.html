@@ -66,13 +66,8 @@
                     <div id="live-view">
                         <div class="data">{{microscope_state.last_image_channel_name}}</div>
                         <div id="live-view-display" class="data plot-display"
-                            p:init="plot_init(element)"
-                            p:init-vis="plot_fit(element)"
-                            p:on-wheel="plot_zoom(event)"
-                            p:on-mousedown="plot_drag_start(event)"
-                            p:on-mousemove="plot_drag_move(event)"
-                            p:on-mouseup,mouseleave="plot_drag_end(event)"
-                            p:on-dblclick="plot_fit(event)"
+                            p:init="Plot.plot_init(element)"
+                            p:init-vis="Plot.plot_fit(element)"
                         >
                             <img id="view_latest_image" src="/img/cells.webp" width=2500 height=2500/>
                         </div>
@@ -140,13 +135,8 @@
                                 <div id="live-view-{{channel.handle}}">
                                     <div>{{channel.name}}</div>
                                     <div class="data plot-display"
-                                        p:init="plot_init(element)"
-                                        p:init-vis="plot_fit(element)"
-                                        p:on-wheel="plot_zoom(event)"
-                                        p:on-mousedown="plot_drag_start(event)"
-                                        p:on-mousemove="plot_drag_move(event)"
-                                        p:on-mouseup,mouseleave="plot_drag_end(event)"
-                                        p:on-dblclick="plot_fit(event)"
+                                        p:init="Plot.plot_init(element)"
+                                        p:init-vis="Plot.plot_fit(element)"
                                     >
                                         <img src="/img/cells.webp" width=600 height=600/>
                                         <img src="/img/cells2.webp" width=600 height=600 plot-x-min="200" plot-y-min="200"/>
@@ -173,6 +163,10 @@
                                         }
                                         let handle=response.img_handle
                                         let img=document.getElementById("view_af_image")
+                                        if(response.width_px!=null)
+                                            img.setAttribute("width",response.width_px)
+                                        if(response.height_px!=null)
+                                            img.setAttribute("height",response.height_px)
                                         img.src="/img/get_by_handle?img_handle="+handle
                                     })
                                     .onerror(()=>{
@@ -203,13 +197,8 @@
                         </style>
                         <div id="laser-af-view">
                             <div id="live-af-view-display" class="data plot-display"
-                                p:init="plot_init(element)"
-                                p:init-vis="plot_fit(element)"
-                                p:on-wheel="plot_zoom(event)"
-                                p:on-mousedown="plot_drag_start(event)"
-                                p:on-mousemove="plot_drag_move(event)"
-                                p:on-mouseup,mouseleave="plot_drag_end(event)"
-                                p:on-dblclick="plot_fit(event)"
+                                p:init="Plot.plot_init(element)"
+                                p:init-vis="Plot.plot_fit(element)"
                             >
                                 <img id="view_af_image" src="/img/cells.webp" width=2500 height=2500 />
                             </div>
@@ -488,13 +477,38 @@
 
                                 <div class="section" id="objective-position-on-plate-container">
                                     <p class="section-header col-span-1"><b>TODO</b> objective position overview</p>
+                                    <style>
+                                        .plateclass{
+                                            position:absolute;
+
+                                            z-index:0;
+                                            border:1px solid green;
+                                        }
+                                        .cellclass{
+                                            position:absolute;
+
+                                            z-index:1;
+
+                                            border:1px solid black;
+                                        }
+                                    </style>
                                     <script>
                                         function initObjectivePositionObserver(element){
-                                            // set height and width to maintain 12/8 aspect ratio (more wide than high)
-                                            element.style.setProperty("aspect-ratio","12/8")
-                                            // set width to max possible
-                                            //element.style.setProperty("width","calc( 100% - 2px)")
-                                            element.style.setProperty("border","1px solid black")
+                                            let plate=document.createElement("div")
+                                            element.appendChild(plate)
+                                            const plate_length_mm=127.76
+                                            const plate_width_mm=85.48
+                                            plate.outerHTML="<div class='plateclass' width='"+plate_length_mm.toFixed(2)+"' height='"+plate_width_mm.toFixed(2)+"'></div>"
+
+                                            for(let i=0;i<3;i++){
+                                                for(let j=0;j<4;j++){
+                                                    let cell=document.createElement("div")
+                                                    element.appendChild(cell)
+
+                                                    const inter_well_distance=4.5
+                                                    cell.outerHTML="<div width='3' height='3' class='cellclass' plot-x-min="+(i*inter_well_distance).toString()+" plot-y-min="+(j*inter_well_distance).toString()+"></div>"
+                                                }
+                                            }
                                         }
                                     </script>
                                     <style>
@@ -502,8 +516,19 @@
                                             display:grid;
                                             grid-template-columns: repeat(1,1fr);
                                         }
+                                        #objective-position-on-plate{
+                                            position:relative;
+
+                                            /* set height and width to maintain 12/8 aspect ratio */
+                                            aspect-ratio:12/8;
+                                            border:1px solid black;
+                                        }
                                     </style>
-                                    <div id="objective-position-on-plate" class="data" p:init="initObjectivePositionObserver(element)"></div>
+                                    <div id="objective-position-on-plate" class="data plot-display"
+                                        p:init="Plot.plot_init(element);initObjectivePositionObserver(element)"
+                                        p:init-vis="Plot.plot_fit(element)"
+                                    >
+                                    </div>
                                 </div>
                             </div>
                             <div id="lighting-control">

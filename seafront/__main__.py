@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 import scipy
 import glob
+import gc
 
 from seaconfig import *
 from .hardware.camera import Camera, gxiapi
@@ -209,6 +210,8 @@ plate=Wellplate(
     Well_size_y_mm=3.65,
     Num_wells_x=24,
     Num_wells_y=16,
+    #width_mm=127.76,
+    #height_mm=85.48,
 )
 
 # indicate if this is the first boot of the server (this only triggers when the flask is in debug mode)
@@ -684,12 +687,16 @@ class Core:
             self.state=CoreState.Idle
             return json.dumps({"status":"error","message":"failed to acquire image"})
         
-        #img=Core._process_image(img)
         img_handle=self._store_new_laseraf_image(img,channel_config)
 
         self.mc.send_cmd(Command.af_laser_illum_end())
 
-        return json.dumps({"status":"success","img_handle":img_handle})
+        return json.dumps({
+            "status":"success",
+            "img_handle":img_handle,
+            "width_px":img.shape[1],
+            "height_px":img.shape[0],
+        })
 
     def _create_stream_handler(self,channel_config:AcquisitionChannelConfig):
         class StreamHandler:
@@ -1041,7 +1048,9 @@ class Core:
         if img_handle is not None and img_handle in self.images:
             latest_img_info={
                 "handle":img_handle,
-                "channel":self.images[img_handle].channel_config.to_dict()
+                "channel":self.images[img_handle].channel_config.to_dict(),
+                "width_px":self.images[img_handle].img.shape[1],
+                "height_px":self.images[img_handle].img.shape[0],
             }
 
         ref_x_mm,ref_y_mm=self.calibrated_stage_position
