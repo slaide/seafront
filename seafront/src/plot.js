@@ -314,10 +314,10 @@ class Plot{
             child.style.setProperty("--height",child_height+"px");
             child.classList.add("plot-img")
 
-            // set callback for width or height attribute change on child to update corresponding data and update the plot
+            // set callback for attribute change on child to update corresponding data and update the plot
             let observer = new MutationObserver((mutationsList, observer) => {
                 for(let mutation of mutationsList){
-                    if(mutation.type==="attributes" && (mutation.attributeName==="width" || mutation.attributeName==="height")){
+                    if(mutation.type==="attributes" && mutation.attributeName!=null && (["width","height","plot-x-min","plot-x-max","plot-y-min","plot-x-max"].indexOf(mutation.attributeName)>-1)){
                         let child_width=PlotData.getClientWidth(child)
                         let child_height=PlotData.getClientHeight(child)
             
@@ -326,7 +326,7 @@ class Plot{
 
                         PlotData._elementPlotData.set(child,PlotData.constructForElement(child))
 
-                        Plot.plot_fit(plot)
+                        PlotData.getFor(plot).update()
                     }
                 }
             })
