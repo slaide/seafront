@@ -6,11 +6,14 @@ import typing as tp
 from dataclasses import dataclass
 from enum import Enum
 import scipy
+import glob
 
 from seaconfig import *
 from .hardware.camera import Camera, gxiapi
 from .hardware.microcontroller import Microcontroller, ILLUMINATION_CODE
 Command=Microcontroller.Command
+
+_DEBUG_P2JS=False
 
 app = Flask(__name__, static_folder='src')
 
@@ -389,6 +392,13 @@ class Core:
                 raise RuntimeError(f"unknown camera model name {cam.model_name} is neither main nor autofocus camera")
             
             cam.open(device_type=device_type)
+
+        if _DEBUG_P2JS:
+            def sendp2():
+                print("sending p2.js",list(glob.glob("../../web-pjs/p2.js")))
+                return send_file("../../web-pjs/p2.js")
+
+            app.add_url_rule(f"/p2.js", f"returnp2fromparentprojdir", sendp2,methods=["GET","POST"])
 
         # register url rules requiring machine interaction
         app.add_url_rule(f"/api/get_info/current_state", f"get_current_state", self.get_current_state,methods=["GET","POST"])

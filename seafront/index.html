@@ -552,6 +552,37 @@
                                                 })
                                                 .send("/api/action/snap_channel",data,method="POST")
                                         }
+
+                                        function ensureInputLimits(input_element){
+                                            let current_value=parseFloat(input_element.value)||0
+
+                                            let min_value=parseFloat(input_element.getAttribute("min"))
+                                            if(min_value!=null && current_value<min_value)
+                                                current_value=min_value
+
+                                            let max_value=parseFloat(input_element.getAttribute("max"))
+                                            if(max_value!=null && current_value>max_value)
+                                                current_value=max_value
+
+                                            let num_digits=2
+
+                                            let step=parseFloat(input_element.getAttribute("step"))
+                                            if(step!=null){
+                                                let remainder=current_value%step
+                                                if(remainder!=0){
+                                                    let new_value=current_value-remainder
+                                                    if(remainder>step/2)
+                                                        new_value+=step
+                                                        current_value=new_value
+                                                }
+
+                                                // get num digits from step value, e.g. 0.x -> 1, 0.0x -> 2, 0.00x -> 3
+                                                // or generally: xe-n -> n
+                                                num_digits=Math.max(0,Math.ceil(-Math.log10(step)))
+                                            }
+
+                                            input_element.value=current_value.toFixed(num_digits)
+                                        }
                                     </script>
 
                                     <template class="data" p:for="channel of microscope_config.channels">
@@ -562,22 +593,30 @@
                                             <input type="number"
                                                 min="{{limits.illumination_percent.min}}"
                                                 max="{{limits.illumination_percent.max}}"
-                                                value="{{limits.illumination_percent.default}}" step="0.1" class="data" p:bind="channel.illum_perc">
+                                                value="{{limits.illumination_percent.default}}" step="0.1"
+                                                p:on-blur="ensureInputLimits(element)"
+                                                class="data" p:bind="channel.illum_perc">
                                             <label>Exposure time (ms)</label>
                                             <input type="number"
                                                 min="{{limits.exposure_time_ms.min}}"
                                                 max="{{limits.exposure_time_ms.max}}"
-                                                value="{{limits.exposure_time_ms.default}}" step="0.1" class="data" p:bind="channel.exposure_time_ms">
+                                                value="{{limits.exposure_time_ms.default}}" step="0.1"
+                                                p:on-blur="ensureInputLimits(element)"
+                                                class="data" p:bind="channel.exposure_time_ms">
                                             <label>Analog Gain</label>
                                             <input type="number"
                                                 min="{{limits.analog_gain.min}}"
                                                 max="{{limits.analog_gain.max}}"
-                                                value="{{limits.analog_gain.default}}" step="0.1" class="data" p:bind="channel.analog_gain">
+                                                value="{{limits.analog_gain.default}}" step="0.1"
+                                                p:on-blur="ensureInputLimits(element)"
+                                                class="data" p:bind="channel.analog_gain">
                                             <label>Z Offset (um)</label>
                                             <input type="number"
                                                 min="{{limits.z_offset_um.min}}"
                                                 max="{{limits.z_offset_um.max}}"
-                                                value="{{limits.z_offset_um.default}}" step="0.1" class="data" p:bind="channel.z_offset_um">
+                                                value="{{limits.z_offset_um.default}}" step="0.1"
+                                                p:on-blur="ensureInputLimits(element)"
+                                                class="data" p:bind="channel.z_offset_um">
                                         </div>
                                     </template>
                                 </div>
