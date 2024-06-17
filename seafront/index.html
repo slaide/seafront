@@ -434,7 +434,11 @@
                                         <div id="site-selection-centerer">
                                             <template p:for="row of grid_mask">
                                                 <template p:for="cell of row">
-                                                    <div grid-column="{{cell.col+1}}" grid-row="{{cell.row+1}}" class="{{cell.selected?'blue':''}}" p:on-click="toggleGridItem(cell)"></div>
+                                                    <div class="{{cell.selected?'blue':''}}"
+                                                        grid-column="{{cell.col+1}}"
+                                                        grid-row="{{cell.row+1}}"
+                                                        p:on-click="toggleGridItem(cell)"
+                                                    ></div>
                                                 </template>
                                             </template>
                                         </div>
@@ -470,7 +474,10 @@
                                     <script src="src/well_navigator.js"></script>
                                     <div id="well-navigator-container" class="data" p:init="initwellnavigator()">
                                         <template class="data" p:for="well of plate_wells">
-                                            <div p:on-dblclick="clickWell(well)">{{well.label}}</div>
+                                            <div class="{{well.selected?'blue':''}}"
+                                                p:on-click="clickWell(well)"
+                                                p:on-dblclick="dblclickWell(well)"
+                                            >{{well.label}}</div>
                                         </template>
                                     </div>
                                 </div>

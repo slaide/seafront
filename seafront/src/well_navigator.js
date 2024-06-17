@@ -4,10 +4,12 @@ class WellIndex{
      * 
      * @param {number} row
      * @param {number} col
+     * @param {boolean?} selected
      */
-    constructor(row,col){
+    constructor(row,col,selected=true){
         this.row=row
         this.col=col
+        this.selected=selected
     }
     get name(){
         let row_name=String.fromCharCode(64+this.row)
@@ -57,7 +59,7 @@ function initwellnavigator(){
     
     for(let i=0;i<num_rows;i++){
         for(let j=0;j<num_cols;j++){
-            let new_well = new WellIndex(i,j)
+            let new_well = new WellIndex(i,j,false)
             
             new_plate_wells.push(new_well)
         }
@@ -72,6 +74,14 @@ function initwellnavigator(){
  * @param {WellIndex} item 
  */
 function clickWell(item){
+    item.selected=!item.selected
+}
+
+/**
+ * 
+ * @param {WellIndex} item 
+ */
+function dblclickWell(item){
     if(item.col==0 || item.row==0)return;
 
     let xhr=null
