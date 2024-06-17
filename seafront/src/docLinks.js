@@ -27,6 +27,4 @@ let docLinks={
     objectivePositionControl:docBaseLink+"#5d7b1f71b64a438d972620fcee32f83d",
     // https://www.notion.so/SQUID-Microscope-Overview-9e3f4750ddc34e8b8641c23c456ae771?pvs=4#55a36b2c6bae4d6f9fb6640961eaa09c
     laserReflectionAutofocusControl:docBaseLink+"#55a36b2c6bae4d6f9fb6640961eaa09c",
-    // https://www.notion.so/SQUID-Microscope-Overview-9e3f4750ddc34e8b8641c23c456ae771?pvs=4#561a851d9be6487bb6c3fa057096e259
-    softwareAutofocusControl:docBaseLink+"#561a851d9be6487bb6c3fa057096e259",
 }
