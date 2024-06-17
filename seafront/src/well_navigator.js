@@ -100,7 +100,7 @@ function _wellPointer_update(){
     let end_col_index=Math.max(start_col,end_col)
 
     // state to set items to is opposite of state of first item
-    const set_state=!drag_info.prev_state.get(drag_info.start)
+    let set_state=!drag_info.prev_state.get(drag_info.start)
 
     for(let i=0;i<plate_wells.length;i++){
         let well=plate_wells[i]
@@ -113,7 +113,10 @@ function _wellPointer_update(){
         }
 
         // if the well is in the selected range, then it should be selected, otherwise check prev_state and apply that
-        if(well.row>=start_row_index && well.row<=end_row_index && well.col>=start_col_index && well.col<=end_col_index){
+        if(
+            well.row>=start_row_index && well.row<=end_row_index
+            && well.col>=start_col_index && well.col<=end_col_index
+        ){
             well.selected=set_state
         }else{
             let prev_state=drag_info.prev_state.get(well)
@@ -151,6 +154,8 @@ function wellPointerDown(event,item){
     drag_info.start=item
     drag_info.end=item
     drag_info.prev_state=new Map()
+
+    drag_info.prev_state.set(item,item.selected)
 
     _wellPointer_update()
 }
