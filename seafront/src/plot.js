@@ -308,7 +308,7 @@ class Plot{
                 Plot.plot_update(plot)
                 plotHasChanged=false
             }
-        },1000/10)// check once per 10 seconds if the plot needs updating
+        },1000/15)// check once per 10 seconds if the plot needs updating
 
         /** @param {HTMLElement} child */
         function processChild(child){
