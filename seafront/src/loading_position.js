@@ -2,7 +2,10 @@
 function enterLoadingPosition(){
     new XHR(true)
         .onload(function(xhr){
-            console.log("left loading position")
+            let data=JSON.parse(xhr.responseText)
+            if(data.status!="success"){
+                console.error("error entering loading position",data)
+            }
         })
         .onerror(function(){
             console.error("error entering loading position")
@@ -12,10 +15,13 @@ function enterLoadingPosition(){
 function leaveLoadingPosition(){
     new XHR(true)
         .onload(function(xhr){
-            console.log("left loading position")
+            let data=JSON.parse(xhr.responseText)
+            if(data.status!="success"){
+                console.error("error leaving loading position",data)
+            }
         })
         .onerror(function(){
-            console.error("error entering loading position")
+            console.error("error leaving loading position")
         })
         .send("/api/action/leave_loading_position",null,"POST")
 }
