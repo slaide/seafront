@@ -4,7 +4,7 @@ class WellIndex{
      * 
      * @param {number} row
      * @param {number} col
-     * @param {boolean?} selected
+     * @param {boolean} selected
      */
     constructor(row,col,selected=true){
         this.row=row
@@ -61,12 +61,12 @@ function initwellnavigator(){
         for(let j=0;j<num_cols;j++){
             let new_well = new WellIndex(i,j,false)
             
-            new_plate_wells.push(new_well)
+            new_plate_wells.push(_p.manage(new_well))
         }
     }
 
     plate_wells.length=0
-    plate_wells.splice(0,0,...new_plate_wells)
+    plate_wells.push(...new_plate_wells)
 }
 
 /**
@@ -74,7 +74,112 @@ function initwellnavigator(){
  * @param {WellIndex} item 
  */
 function clickWell(item){
+    return
+    if(item.col==0 || item.row==0)return;
     item.selected=!item.selected
+}
+
+/** @type{object&{start:WellIndex?,end:WellIndex?,prev_state:Map<WellIndex,boolean>?}} */
+let drag_info={
+    start:null,
+    end:null,
+    prev_state:null,
+}
+function _wellPointer_update(){
+    if(!(drag_info.start && drag_info.end && drag_info.prev_state))return
+
+    let start_row=drag_info.start.row
+    let start_col=drag_info.start.col
+    let end_row=drag_info.end.row
+    let end_col=drag_info.end.col
+
+    let start_row_index=Math.min(start_row,end_row)
+    let end_row_index=Math.max(start_row,end_row)
+
+    let start_col_index=Math.min(start_col,end_col)
+    let end_col_index=Math.max(start_col,end_col)
+
+    // state to set items to is opposite of state of first item
+    const set_state=!drag_info.prev_state.get(drag_info.start)
+
+    for(let i=0;i<plate_wells.length;i++){
+        let well=plate_wells[i]
+
+        // skip headers
+        if(well.col==0 || well.row==0)continue
+
+        if(!drag_info.prev_state.has(well)){
+            drag_info.prev_state.set(well,well.selected)
+        }
+
+        // if the well is in the selected range, then it should be selected, otherwise check prev_state and apply that
+        if(well.row>=start_row_index && well.row<=end_row_index && well.col>=start_col_index && well.col<=end_col_index){
+            well.selected=set_state
+        }else{
+            let prev_state=drag_info.prev_state.get(well)
+            if(prev_state==undefined)continue
+            well.selected=prev_state
+        }
+    }
+}
+
+function wellPointerCancel(){
+    if(!(drag_info.start && drag_info.end && drag_info.prev_state))return
+
+    // restore previous state
+    for(let i=0;i<plate_wells.length;i++){
+        let well=plate_wells[i]
+
+        let prev_well_state=drag_info.prev_state.get(well)
+        if(prev_well_state==undefined)continue
+
+        well.selected=prev_well_state
+    }
+
+    drag_info.start=null
+    drag_info.end=null
+    drag_info.prev_state=new Map()
+}
+
+/**
+ * 
+ * @param {PointerEvent} event
+ * @param {WellIndex} item 
+ */
+function wellPointerDown(event,item){
+    event.preventDefault()
+    drag_info.start=item
+    drag_info.end=item
+    drag_info.prev_state=new Map()
+
+    _wellPointer_update()
+}
+/**
+ * 
+ * @param {PointerEvent} event
+ * @param {WellIndex} item 
+ */
+function wellPointerUp(event,item){
+    if(!drag_info.start)return
+    event.preventDefault()
+
+    drag_info.start=null
+    drag_info.end=null
+    drag_info.prev_state=new Map()
+}
+
+/**
+ * 
+ * @param {PointerEvent} event
+ * @param {WellIndex} item 
+ */
+function wellPointerUpdate(event,item){
+    if(!drag_info.start)return
+    event.preventDefault()
+
+    drag_info.end=item
+    
+    _wellPointer_update()
 }
 
 /**

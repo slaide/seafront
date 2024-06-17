@@ -9,7 +9,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@83c136f/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@cf18df7/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/init.js"></script>
@@ -472,11 +472,16 @@
 
                                     <link href="css/well_navigator.css" rel="stylesheet">
                                     <script src="src/well_navigator.js"></script>
-                                    <div id="well-navigator-container" class="data" p:init="initwellnavigator()">
+                                    <div id="well-navigator-container" class="data"
+                                        p:init="initwellnavigator()"
+                                        p:on-mouseleave="wellPointerCancel()"
+                                    >
                                         <template class="data" p:for="well of plate_wells">
                                             <div class="{{well.selected?'blue':''}}"
-                                                p:on-click="clickWell(well)"
                                                 p:on-dblclick="dblclickWell(well)"
+                                                p:on-mousedown="wellPointerDown(event,well)"
+                                                p:on-mouseenter="wellPointerUpdate(event,well)"
+                                                p:on-mouseup="wellPointerUp(event,well)"
                                             >{{well.label}}</div>
                                         </template>
                                     </div>
