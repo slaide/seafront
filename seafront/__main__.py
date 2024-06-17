@@ -210,8 +210,8 @@ plate=Wellplate(
     Well_size_y_mm=3.65,
     Num_wells_x=24,
     Num_wells_y=16,
-    #width_mm=127.76,
-    #height_mm=85.48,
+    Length_mm=127.76,
+    Width_mm=85.48,
 )
 
 # indicate if this is the first boot of the server (this only triggers when the flask is in debug mode)

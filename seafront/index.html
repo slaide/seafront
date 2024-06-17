@@ -494,57 +494,6 @@
                                             text-align: center;
                                         }
                                     </style>
-                                    <script>
-                                        function initObjectivePositionObserver(element){
-                                            let plate=document.createElement("div")
-                                            element.appendChild(plate)
-
-                                            const plate_length_mm=127.76
-                                            const plate_width_mm=85.48
-                                            const plate_a1_y_offset_mm=9.0
-                                            const plate_a1_x_offset_mm=12.1
-                                            const inter_well_distance=4.5
-                                            const plate_num_cols=24
-                                            const plate_num_rows=16
-
-                                            const _ignore_plate_info_from_python=`
-                                                Manufacturer="perkin elmer",
-                                                Model_name="384 well plate",
-                                                Model_id_manufacturer="pe-384",
-                                                Model_id="",
-                                                Offset_A1_x_mm=12.1,
-                                                Offset_A1_y_mm=9.0,
-                                                Offset_bottom_mm=14.35-10.4,
-                                                Well_distance_x_mm=4.5,
-                                                Well_distance_y_mm=4.5,
-                                                Well_size_x_mm=3.65,
-                                                Well_size_y_mm=3.65,
-                                                Num_wells_x=24,
-                                                Num_wells_y=16,
-                                            `
-
-                                            plate.outerHTML="<div class='plateclass' width='"
-                                                +plate_length_mm.toFixed(2)
-                                                +"' height='"
-                                                +plate_width_mm.toFixed(2)
-                                                +"'></div>"
-
-                                            for(let i=0;i<plate_num_cols;i++){
-                                                for(let j=0;j<plate_num_rows;j++){
-                                                    let well_name=String.fromCharCode(65+j)+String(i+1)
-
-                                                    let cell=document.createElement("div")
-                                                    element.appendChild(cell)
-
-                                                    cell.outerHTML="<div width='3' height='3' class='cellclass' plot-x-min="
-                                                        +(plate_a1_x_offset_mm+i*inter_well_distance).toString()
-                                                        +" plot-y-min="
-                                                        +(plate_a1_y_offset_mm+j*inter_well_distance).toString()
-                                                        +">"+well_name+"</div>"
-                                                }
-                                            }
-                                        }
-                                    </script>
                                     <style>
                                         #objective-position-on-plate-container{
                                             display:grid;
@@ -562,11 +511,36 @@
                                             z-index:2;
                                         }
                                     </style>
+                                    <script src="src/plate_observer.js"></script>
                                     <div id="objective-position-on-plate" class="data plot-display"
-                                        p:init="Plot.plot_init(element);initObjectivePositionObserver(element)"
+                                        p:init="Plot.plot_init(element)"
                                         p:init-vis="Plot.plot_fit(element)"
                                     >
-                                        <div width='{{microscope_state.fov_size.x_mm}}' height='{{microscope_state.fov_size.y_mm}}' class="objectiveclass data" plot-x-min="{{microscope_state.pos.x_mm}}" plot-y-min="{{microscope_state.pos.y_mm}}"></div>
+                                        <!-- plate (outline) -->
+                                        <div class='plateclass data'
+                                            width='{{WellplateType.fromHandle(microscope_config.wellplate_type).length_mm.toFixed(2)}}'
+                                            height='{{WellplateType.fromHandle(microscope_config.wellplate_type).width_mm.toFixed(2)}}'
+                                        ></div>
+
+                                        <!-- wells -->
+                                        <template class="data" p:for="w of well_list">
+                                            <div class='cellclass'
+                                                width='{{w.w}}'
+                                                height='{{w.h}}'
+                                                plot-x-min="{{w.pxm}}"
+                                                plot-y-min="{{w.pym}}"
+                                            >
+                                                {{w.text}}
+                                            </div>
+                                        </template>
+
+                                        <!-- objective -->
+                                        <div class="objectiveclass data" 
+                                            width='{{microscope_state.fov_size.x_mm}}'
+                                            height='{{microscope_state.fov_size.y_mm}}'
+                                            plot-x-min="{{microscope_state.pos.x_mm}}"
+                                            plot-y-min="{{microscope_state.pos.y_mm}}"
+                                        ></div>
                                     </div>
                                 </div>
                             </div>

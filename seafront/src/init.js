@@ -1,6 +1,15 @@
 /** from p2.js */
 let _p=new Manager()
 
+/**
+ * make array of length n, with elements 0,1,2,...,n-1
+ * @param {number} n
+ * @returns {number[]}
+ */
+function range(n){
+    return Array.from({length:n},(v,i)=>i)
+}
+
 class ImagingChannel{
     /**
      * 
@@ -226,6 +235,58 @@ class WellplateType{
     constructor(handle,name){
         this.handle=handle
         this.name=name
+    }
+
+    /*
+        on the server (in python), we have the following info about each plate type:
+
+        Manufacturer="perkin elmer",
+        Model_name="384 well plate",
+        Model_id_manufacturer="pe-384",
+        Model_id="",
+        Offset_A1_x_mm=12.1,
+        Offset_A1_y_mm=9.0,
+        Offset_bottom_mm=14.35-10.4,
+        Well_distance_x_mm=4.5,
+        Well_distance_y_mm=4.5,
+        Well_size_x_mm=3.65,
+        Well_size_y_mm=3.65,
+        Num_wells_x=24,
+        Num_wells_y=16,
+    */
+
+    get length_mm(){
+        return 127.76
+    }
+    get width_mm(){
+        return 85.48
+    }
+    get a1_y_offset_mm(){
+        return 9.0
+    }
+    get a1_x_offset_mm(){
+        return 12.1
+    }
+    get well_distance_mm(){
+        if(this.handle.endsWith("96")){
+            return 9.0
+        }else if(this.handle.endsWith("384")){
+            return 4.5
+        }else{throw new Error("unknown plate type "+this.handle+" for well navigator")}
+    }
+    get well_width_mm(){
+        if(this.handle.endsWith("96")){
+            return 6.0
+        }else if(this.handle.endsWith("384")){
+            return 3.0
+        }else{throw new Error("unknown plate type "+this.handle+" for well navigator")}
+    }
+    get well_length_mm(){
+        if(this.handle.endsWith("96")){
+            return 6.0
+        }else if(this.handle.endsWith("384")){
+            return 3.0
+        }else{throw new Error("unknown plate type "+this.handle+" for well navigator")}
     }
 
     get num_cols(){
