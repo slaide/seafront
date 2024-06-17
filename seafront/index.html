@@ -69,7 +69,7 @@
                             p:init="Plot.plot_init(element)"
                             p:init-vis="Plot.plot_fit(element)"
                         >
-                            <img id="view_latest_image" src="/img/cells.webp" width=2500 height=2500/>
+                            <img id="view_latest_image" src="" width=2500 height=2500/>
                         </div>
 
                         <div id="live-view-x-axis-container">
@@ -138,8 +138,8 @@
                                         p:init="Plot.plot_init(element)"
                                         p:init-vis="Plot.plot_fit(element)"
                                     >
-                                        <img src="/img/cells.webp" width=600 height=600/>
-                                        <img src="/img/cells2.webp" width=600 height=600 plot-x-min="200" plot-y-min="200"/>
+                                        <img src="" width=600 height=600/>
+                                        <img src="" width=600 height=600 plot-x-min="200" plot-y-min="200"/>
                                     </div>
                                 </div>
                             </template>
@@ -189,10 +189,7 @@
                             }
                             #live-af-view-display{
                                 width:100%;
-                                height:700px;
-                            }
-                            #view_af_image{
-                                
+                                aspect-ratio:3/2;
                             }
                         </style>
                         <div id="laser-af-view">
@@ -200,7 +197,7 @@
                                 p:init="Plot.plot_init(element)"
                                 p:init-vis="Plot.plot_fit(element)"
                             >
-                                <img id="view_af_image" src="/img/cells.webp" width=2500 height=2500 />
+                                <img id="view_af_image" width=3000 height=2000 />
                             </div>
                         </div>
                     </div>
