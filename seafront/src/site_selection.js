@@ -26,7 +26,7 @@ const updateGridMask=function(){
     for(let i=0;i<num_rows;i++){
         let row=[]
         for(let j=0;j<num_cols;j++){
-            row.push({row:i,col:j,selected:true})
+            row.push(new SiteSelectionCell(i,j,true))
         }
         grid_mask.push(row)
     }
