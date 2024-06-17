@@ -302,6 +302,14 @@ class Plot{
         plot.addEventListener("mouseleave",Plot.plot_drag_end)
         plot.addEventListener("dblclick",Plot.plot_fit)
 
+        let plotHasChanged=false
+        setInterval(function(){
+            if(plotHasChanged){
+                Plot.plot_update(plot)
+                plotHasChanged=false
+            }
+        },1000/10)// check once per 10 seconds if the plot needs updating
+
         /** @param {HTMLElement} child */
         function processChild(child){
             // ensure there is plot data for each child
@@ -317,7 +325,14 @@ class Plot{
             // set callback for attribute change on child to update corresponding data and update the plot
             let observer = new MutationObserver((mutationsList, observer) => {
                 for(let mutation of mutationsList){
-                    if(mutation.type==="attributes" && mutation.attributeName!=null && (["width","height","plot-x-min","plot-x-max","plot-y-min","plot-x-max"].indexOf(mutation.attributeName)>-1)){
+                    if(
+                        mutation.type==="attributes"
+                        && mutation.attributeName!=null
+                        && (
+                            ["width","height","plot-x-min","plot-x-max","plot-y-min","plot-x-max"]
+                            .indexOf(mutation.attributeName) > -1
+                        )
+                    ){
                         let child_width=PlotData.getClientWidth(child)
                         let child_height=PlotData.getClientHeight(child)
             
@@ -326,7 +341,8 @@ class Plot{
 
                         PlotData._elementPlotData.set(child,PlotData.constructForElement(child))
 
-                        PlotData.getFor(plot).update()
+                        // request plot update
+                        plotHasChanged=true
                     }
                 }
             })
@@ -350,6 +366,9 @@ class Plot{
                     for(let node of mutation.addedNodes){
                         if(node instanceof HTMLElement){
                             processChild(node)
+                            
+                            // request plot update
+                            plotHasChanged=true
                         }
                     }
                 }
