@@ -79,6 +79,7 @@ def get_hardware_capabilities():
     """
 
     ret={
+        # these are mocked values (should actually originate from seafront-config)
         "wellplate_types":[
             {
                 "name":"Perkin Elmer 96",
@@ -109,6 +110,12 @@ def get_hardware_capabilities():
                 "handle":"tf384",
                 "num_rows":16,
                 "num_cols":24,
+            },
+            {
+                "name":"Thermo Fischer 1536",
+                "handle":"tf1536",
+                "num_rows":32,
+                "num_cols":48,
             }
         ],
         "main_camera_imaging_channels":[c.to_dict() for c in [
@@ -408,12 +415,15 @@ class Core:
         app.add_url_rule(f"/api/action/move_x_by", f"action_move_x_by", lambda:self.action_move_by("x"),methods=["POST"])
         app.add_url_rule(f"/api/action/move_y_by", f"action_move_y_by", lambda:self.action_move_by("y"),methods=["POST"])
         app.add_url_rule(f"/api/action/move_z_by", f"action_move_z_by", lambda:self.action_move_by("z"),methods=["POST"])
+
         # register url for start_acquisition
         app.add_url_rule(f"/api/acquisition/start", f"start_acquisition", self.start_acquisition,methods=["POST"])
         # for get_acquisition_status
         app.add_url_rule(f"/api/acquisition/status", f"get_acquisition_status", self.get_acquisition_status,methods=["GET","POST"])
+
         # for move_to_well
         app.add_url_rule(f"/api/action/move_to_well", f"move_to_well", self.move_to_well,methods=["POST"])
+
         # send image by handle
         app.add_url_rule(f"/img/get_by_handle", f"send_image_by_handle", lambda:self.send_image_by_handle(quick_preview=False),methods=["GET"])
         app.add_url_rule(f"/img/get_by_handle_preview", f"send_image_by_handle_preview", lambda:self.send_image_by_handle(quick_preview=True),methods=["GET"])
@@ -1139,7 +1149,18 @@ class Core:
         if json_data is None:
             return json.dumps({"status": "error", "message": "no json data"})
         
+        # get machine config
+        if "machine_config" not in json_data:
+            return json.dumps({"status": "error", "message": "no machine_config in json data"})
+        
+        GlobalConfigHandler.override(json_data["machine_config"])
+        
+        # get acquisition config
+        if "config_file" not in json_data:
+            return json.dumps({"status": "error", "message": "no config_file in json data"})
+        
         config = AcquisitionConfig.from_json(json_data["config_file"])
+
         print("starting acquisition with config:",config)
 
         # TODO generate some unique acqisition id to identify this acquisition by

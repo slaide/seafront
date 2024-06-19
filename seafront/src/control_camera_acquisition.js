@@ -1,7 +1,10 @@
 
 function start_streaming(){
-    /** @type{object&{channel?:any,framerate_hz?:number}} */
-    let data=getConfigState()
+    let data={
+        machine_config:getConfigState(),
+        framerate_hz:5,
+        channel:null
+    }
 
     let streaming_channel_select_element=document.getElementById("streaming-channel-select")
     if(!(streaming_channel_select_element instanceof HTMLSelectElement)){throw new Error("streaming-channel-select not found")}
@@ -36,8 +39,10 @@ function start_streaming(){
         .send("api/action/stream_channel_begin",data,"POST")
 }
 function stop_streaming(){
-    /** @type{object&{channel?:any}} */
-    let data=getConfigState()
+    let data={
+        machine_config:getConfigState(),
+        channel:null
+    }
 
     let streaming_channel_select_element=document.getElementById("streaming-channel-select")
     if(!(streaming_channel_select_element instanceof HTMLSelectElement)){throw new Error("streaming-channel-select not found")}

@@ -5,12 +5,16 @@ class PlotItemData{
      * @param {number} x_max 
      * @param {number} y_min 
      * @param {number} y_max 
+     * @param {number} width
+     * @param {number} height 
      */
-    constructor(x_min,x_max,y_min,y_max){
+    constructor(x_min,x_max,y_min,y_max,width,height){
         this.x_min=x_min
         this.x_max=x_max
         this.y_min=y_min
         this.y_max=y_max
+        this.width=width
+        this.height=height
     }
 
     /**
@@ -36,7 +40,7 @@ class PlotItemData{
     static getClientWidth(element){
         let width=element.clientWidth
 
-        let width_attribute=element.getAttribute("width")
+        const width_attribute=element.getAttribute("width")
         if(width_attribute){
             width=parseFloat(width_attribute)
         }
@@ -51,7 +55,7 @@ class PlotItemData{
     static getClientHeight(element){
         let height=element.clientHeight
 
-        let height_attribute=element.getAttribute("height")
+        const height_attribute=element.getAttribute("height")
         if(height_attribute){
             height=parseFloat(height_attribute)
         }
@@ -67,10 +71,12 @@ class PlotData extends PlotItemData{
      * @param {number} x_max 
      * @param {number} y_min 
      * @param {number} y_max 
+     * @param {number} width
+     * @param {number} height 
      * @param {HTMLElement[]} elements elements to share this plot data with
      */
-    constructor(x_min,x_max,y_min,y_max,elements=[]){
-        super(x_min,x_max,y_min,y_max)
+    constructor(x_min,x_max,y_min,y_max,width,height,elements=[]){
+        super(x_min,x_max,y_min,y_max,width,height)
         this.elements=elements
     }
 
@@ -90,8 +96,8 @@ class PlotData extends PlotItemData{
             initial_x_min=0
         }
         // if initial_x_max is nan, set to initial_x_min+child.clientWidth
+        const element_width=this.getClientWidth(element)
         if(isNaN(initial_x_max)){
-            let element_width=this.getClientWidth(element)
             initial_x_max=initial_x_min+element_width
         }
         // if initial_y_min is nan, set to 0
@@ -99,12 +105,12 @@ class PlotData extends PlotItemData{
             initial_y_min=0
         }
         // if initial_y_max is nan, set to initial_y_min+child.clientHeight
+        const element_height=this.getClientHeight(element)
         if(isNaN(initial_y_max)){
-            let element_height=this.getClientHeight(element)
             initial_y_max=initial_y_min+element_height
         }
 
-        return new PlotData(initial_x_min,initial_x_max,initial_y_min,initial_y_max,[element])
+        return new PlotData(initial_x_min,initial_x_max,initial_y_min,initial_y_max,element_width,element_height,[element])
     }
 
     /** @type {Map<HTMLElement,PlotData>} */
@@ -120,16 +126,18 @@ class PlotData extends PlotItemData{
             this._elementPlotData.set(element,PlotData.constructForElement(element))
         }
 
-        let ret=this._elementPlotData.get(element)
+        const ret=this._elementPlotData.get(element)
         if(!ret){throw new Error("unreachable")}
 
         return ret
     }
 
     update(){
-        for(let element of this.elements){
-            Plot.plot_update(element)
-        }
+        requestAnimationFrame(()=>{
+            for(let element of this.elements){
+                Plot._update(element)
+            }
+        })
     }
     /**
      * link this PlotData element instance to a given HTMLElement
@@ -151,37 +159,49 @@ class PlotData extends PlotItemData{
 }
 
 class Plot{
+    static zoom_speed=0.02
+    static invert_scroll=true
+
     /**
      * update plot display given current state
      * @param {HTMLElement} plot 
      */
-    static plot_update(plot){
-        let plot_data=PlotData.getFor(plot)
+    static _update(plot){
+        const plot_data=PlotData.getFor(plot)
 
-        let x_range = plot_data.x_max - plot_data.x_min;
-        let y_range = plot_data.y_max - plot_data.y_min;
-
-        let plot_x_size=PlotData.getClientWidth(plot)
-        let plot_y_size=PlotData.getClientHeight(plot)
-
-        let scale_x=(plot_x_size/x_range);
-        let scale_y=(plot_y_size/y_range);
+        const scale_x=(plot_data.width/plot_data.getDeltaX())
+        const scale_y=(plot_data.height/plot_data.getDeltaY())
 
         for(let child of plot.children){
             if(!(child instanceof HTMLElement)){continue}
-            let child_plot_data=PlotData.getFor(child)
-            let c_width=child_plot_data.getDeltaX()
-            let c_height=child_plot_data.getDeltaY()
+            const child_plot_data=PlotData.getFor(child)
 
-            child.style.setProperty("--scale-x",scale_x+"")
-            child.style.setProperty("--scale-y",scale_y+"")
+            // only change the attributes if they have changed, to avoid costly DOM updates
 
-            child.style.setProperty("--left",(child_plot_data.x_min-plot_data.x_min)*scale_x+"px")
-            child.style.setProperty("--bottom",(child_plot_data.y_min-plot_data.y_min)*scale_y+"px")
+            const current_scale_x=child.style.getPropertyValue("--scale-x")
+            const new_scale_x=scale_x+""
+            if(current_scale_x!==new_scale_x){
+                child.style.setProperty("--scale-x",new_scale_x)
+            }
+            const current_scale_y=child.style.getPropertyValue("--scale-y")
+            const new_scale_y=scale_y+""
+            if(current_scale_y!==new_scale_y){
+                child.style.setProperty("--scale-y",new_scale_y)
+            }
+
+            const current_left=child.style.getPropertyValue("--left")
+            const new_left=(child_plot_data.x_min-plot_data.x_min)*scale_x+"px"
+            if(current_left!==new_left){
+                child.style.setProperty("--left",new_left)
+            }
+
+            const current_bottom=child.style.getPropertyValue("--bottom")
+            const new_bottom=(child_plot_data.y_min-plot_data.y_min)*scale_y+"px"
+            if(current_bottom!==new_bottom){
+                child.style.setProperty("--bottom",new_bottom)
+            }
         }
     }
-    static zoom_speed=0.02
-    static invert_scroll=true
 
     /**
      * handle zoom (scroll/wheel) event on plot
@@ -190,7 +210,7 @@ class Plot{
     static plot_zoom(event){
         event.preventDefault()
 
-        let plot = event.currentTarget
+        const plot = event.currentTarget
         if(!(plot instanceof HTMLElement)){throw new Error("plot is not an html element")}
 
         let zoom_delta=event.deltaY
@@ -211,8 +231,8 @@ class Plot{
 
         // zoom in on cursor position with the frame
         const rect=plot.getBoundingClientRect()
-        let x_frac=(event.clientX-rect.left)/rect.width
-        let y_frac=(event.clientY-rect.top)/rect.height
+        const x_frac=(event.clientX-rect.left)/rect.width
+        const y_frac=(event.clientY-rect.top)/rect.height
 
         const zoom_balance_xmin_frac=x_frac
         const zoom_balance_xmax_frac=1-zoom_balance_xmin_frac
@@ -249,18 +269,18 @@ class Plot{
         if(plotDragData && plotDragData.in_progress){
             event.preventDefault()
 
-            let plot_data=PlotData.getFor(plot)
-            let x_range = plot_data.getDeltaX()
-            let y_range = plot_data.getDeltaY()
+            const plot_data=PlotData.getFor(plot)
+            const x_range = plot_data.getDeltaX()
+            const y_range = plot_data.getDeltaY()
 
-            let plot_x_size=PlotData.getClientWidth(plot)
-            let plot_y_size=PlotData.getClientHeight(plot)
+            const plot_x_size=PlotData.getClientWidth(plot)
+            const plot_y_size=PlotData.getClientHeight(plot)
 
-            let scale_x=(plot_x_size/x_range)
-            let scale_y=(plot_y_size/y_range)
+            const scale_x=(plot_x_size/x_range)
+            const scale_y=(plot_y_size/y_range)
 
-            let x_delta = event.clientX-plotDragData.x_start
-            let y_delta = event.clientY-plotDragData.y_start
+            const x_delta = event.clientX-plotDragData.x_start
+            const y_delta = event.clientY-plotDragData.y_start
 
             plot_data.x_min -= x_delta/scale_x
             plot_data.x_max -= x_delta/scale_x
@@ -305,48 +325,52 @@ class Plot{
         let plotHasChanged=false
         setInterval(function(){
             if(plotHasChanged){
-                Plot.plot_update(plot)
                 plotHasChanged=false
+                const plot_data=PlotData.getFor(plot)
+
+                plot_data.update()
             }
-        },1000/15)// check once per 10 seconds if the plot needs updating
+        },1e3/30)// 1e3/x -> check x times per second if the plot needs updating
+
+        // set callback for attribute change on child to update corresponding data and update the plot
+        const attribute_change_observer = new MutationObserver((mutationsList, observer) => {
+            for(let mutation of mutationsList){
+                if(
+                    mutation.type==="attributes"
+                    && mutation.attributeName!=null
+                    && (
+                        ["width","height","plot-x-min","plot-x-max","plot-y-min","plot-x-max"]
+                        .indexOf(mutation.attributeName) > -1
+                    )
+                ){
+                    const child=mutation.target
+                    if(!(child instanceof HTMLElement))throw new Error("unreachable")
+
+                    const child_data=PlotData.getFor(child)
+                    child.style.setProperty("--width",child_data.width+"px");
+                    child.style.setProperty("--height",child_data.height+"px");
+
+                    PlotData._elementPlotData.set(child,PlotData.constructForElement(child))
+
+                    // request plot update
+                    plotHasChanged=true
+                }
+            }
+        })
 
         /** @param {HTMLElement} child */
         function processChild(child){
             // ensure there is plot data for each child
-            PlotData.getFor(child)
+            const child_plot_data=PlotData.getFor(child)
 
-            let child_width=PlotData.getClientWidth(child)
-            let child_height=PlotData.getClientHeight(child)
+            const child_width=child_plot_data.width
+            const child_height=child_plot_data.height
 
             child.style.setProperty("--width",child_width+"px");
             child.style.setProperty("--height",child_height+"px");
             child.classList.add("plot-img")
-
-            // set callback for attribute change on child to update corresponding data and update the plot
-            let observer = new MutationObserver((mutationsList, observer) => {
-                for(let mutation of mutationsList){
-                    if(
-                        mutation.type==="attributes"
-                        && mutation.attributeName!=null
-                        && (
-                            ["width","height","plot-x-min","plot-x-max","plot-y-min","plot-x-max"]
-                            .indexOf(mutation.attributeName) > -1
-                        )
-                    ){
-                        let child_width=PlotData.getClientWidth(child)
-                        let child_height=PlotData.getClientHeight(child)
             
-                        child.style.setProperty("--width",child_width+"px");
-                        child.style.setProperty("--height",child_height+"px");
-
-                        PlotData._elementPlotData.set(child,PlotData.constructForElement(child))
-
-                        // request plot update
-                        plotHasChanged=true
-                    }
-                }
-            })
-            observer.observe(child, {attributes:true})
+            attribute_change_observer.observe(child, {attributes:true})
         }
 
         for(let child of plot.children){
@@ -360,7 +384,7 @@ class Plot{
         }
 
         // register callback for new children added after this function has run
-        let observer = new MutationObserver((mutationsList, observer) => {
+        const add_child_observer = new MutationObserver((mutationsList, observer) => {
             for(let mutation of mutationsList){
                 if(mutation.type==="childList"){
                     for(let node of mutation.addedNodes){
@@ -374,7 +398,7 @@ class Plot{
                 }
             }
         })
-        observer.observe(plot, {childList:true})
+        add_child_observer.observe(plot, {childList:true})
 
         Plot.plot_fit(plot)
     }
@@ -403,9 +427,11 @@ class Plot{
             y_max=Math.max(y_max,child_plot_data.y_max)
         }
 
+        let plot_data=PlotData.getFor(plot_element)
+
         // adjust limits to ensure aspect ratio consistent with plot_element size
-        let plot_width=PlotData.getClientWidth(plot_element)
-        let plot_height=PlotData.getClientHeight(plot_element)
+        let plot_width=plot_data.width
+        let plot_height=plot_data.height
 
         // aspect ratio is width/height -> larger aspect ratio -> more x per y
         let plot_native_aspect_ratio=plot_width/plot_height
@@ -425,7 +451,6 @@ class Plot{
             y_max=y_center+y_range/2
         }
 
-        let plot_data=PlotData.getFor(plot_element)
         plot_data.x_min=x_min
         plot_data.x_max=x_max
         plot_data.y_min=y_min
@@ -435,3 +460,18 @@ class Plot{
     }
 }
 
+/**
+ * this is used as a p:init callback
+ * @param {HTMLElement} element 
+ */
+function linkPlots(element){
+    let plots=element.querySelectorAll(".plot-display")
+    if(plots.length==0)throw new Error("no plot-display elements found")
+    if(plots.length!=1)console.warn("expected exactly one plot-display element, found "+plots.length);
+    // @ts-ignore
+    let plot_data=PlotData.getFor(plots[0])
+    for(let plot_element of plots){
+        // @ts-ignore
+        plot_data.link(plot_element)
+    }
+}

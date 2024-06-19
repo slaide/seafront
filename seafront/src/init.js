@@ -50,10 +50,15 @@ let microscope_config=_p.manage({
             h:2,
             m:1,
             s:4,
-        }
+        },
+
+        /** @type {SiteSelectionCell[]} */
+        mask:[]
     },
     
     wellplate_type:"fa96",
+    /** @type{WellIndex[]} */
+    plate_wells:[],
 
     channels:new XHR(false)
         .onload(function(xhr){
@@ -272,6 +277,8 @@ class WellplateType{
             return 9.0
         }else if(this.handle.endsWith("384")){
             return 4.5
+        }else if(this.handle.endsWith("1536")){
+            return 2.25
         }else{throw new Error("unknown plate type "+this.handle+" for well navigator")}
     }
     get well_width_mm(){
@@ -279,6 +286,8 @@ class WellplateType{
             return 6.0
         }else if(this.handle.endsWith("384")){
             return 3.0
+        }else if(this.handle.endsWith("1536")){
+            return 1.5
         }else{throw new Error("unknown plate type "+this.handle+" for well navigator")}
     }
     get well_length_mm(){
@@ -286,6 +295,8 @@ class WellplateType{
             return 6.0
         }else if(this.handle.endsWith("384")){
             return 3.0
+        }else if(this.handle.endsWith("1536")){
+            return 1.5
         }else{throw new Error("unknown plate type "+this.handle+" for well navigator")}
     }
 
@@ -294,6 +305,8 @@ class WellplateType{
             return 12
         }else if(this.handle.endsWith("384")){
             return 24
+        }else if(this.handle.endsWith("1536")){
+            return 48
         }else{
             throw new Error("unknown plate type "+this.handle+" for well navigator")
         }
@@ -303,6 +316,8 @@ class WellplateType{
             return 8
         }else if(this.handle.endsWith("384")){
             return 16
+        }else if(this.handle.endsWith("1536")){
+            return 32
         }else{
             throw new Error("unknown plate type "+this.handle+" for well navigator")
         }
@@ -319,6 +334,7 @@ class WellplateType{
         let ret=[]
         for(let plate_type of plate_types){
             let num_wells=plate_type.num_cols*plate_type.num_rows
+            
             /** @type {WellplateType[]?} */
             let entries=null
             for(let e of ret){
@@ -376,12 +392,11 @@ let machine_defaults=_p.manage(new XHR(false)
     .send("/api/get_features/machine_defaults"))
 
 /**
- * return current config state, including initial state sent from microscope
+ * return current machine config state, including initial state sent from microscope
  * (does not include other properties of the microscope, like stage position)
- * @returns {object}
+ * @returns {HardwareConfigItem[]}
  */
 function getConfigState(){
-    return {
-        machine_config:_p.getUnmanaged(machine_defaults)
-    }
+    //@ts-ignore
+    return _p.getUnmanaged(machine_defaults)
 }

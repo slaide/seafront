@@ -11,6 +11,9 @@ class WellIndex{
         this.col=col
         this.selected=selected
     }
+    get isHeader(){
+        return this.row==0 || this.col==0
+    }
     get name(){
         let row_name=String.fromCharCode(64+this.row)
         let col_name=this.col
@@ -32,8 +35,6 @@ class WellIndex{
         return ""
     }
 }
-/** @type{WellIndex[]} */
-const plate_wells=_p.manage([])
 
 /**
  * called when the selected well plate is changed or initially set
@@ -55,31 +56,29 @@ function initwellnavigator(){
     element.style.setProperty("--num-cols",num_cols+"");
     element.style.setProperty("--num-rows",num_rows+"");
 
+    microscope_config.plate_wells.length=0
+
     let new_plate_wells=[]
     
     for(let i=0;i<num_rows;i++){
         for(let j=0;j<num_cols;j++){
             let new_well = new WellIndex(i,j,false)
             
+            // bug in p2.js: if the object is not managed, the container will
+            //      trigger change updates on every member access, and receive
+            //      an additional element that is undefined
             new_plate_wells.push(_p.manage(new_well))
         }
     }
 
-    plate_wells.length=0
-    plate_wells.push(...new_plate_wells)
+    microscope_config.plate_wells.push(...new_plate_wells)
 }
 
-/**
- * 
- * @param {WellIndex} item 
- */
-function clickWell(item){
-    return
-    if(item.col==0 || item.row==0)return;
-    item.selected=!item.selected
-}
-
-/** @type{object&{start:WellIndex?,end:WellIndex?,prev_state:Map<WellIndex,boolean>?}} */
+/** @type{object&{
+ *      start: WellIndex?,
+ *      end: WellIndex?,
+ *      prev_state: Map< WellIndex, boolean>?
+ * }} */
 let drag_info={
     start:null,
     end:null,
@@ -102,11 +101,11 @@ function _wellPointer_update(){
     // state to set items to is opposite of state of first item
     let set_state=!drag_info.prev_state.get(drag_info.start)
 
-    for(let i=0;i<plate_wells.length;i++){
-        let well=plate_wells[i]
+    for(let i=0;i<microscope_config.plate_wells.length;i++){
+        let well=microscope_config.plate_wells[i]
 
         // skip headers
-        if(well.col==0 || well.row==0)continue
+        if(well.isHeader)continue
 
         if(!drag_info.prev_state.has(well)){
             drag_info.prev_state.set(well,well.selected)
@@ -130,8 +129,8 @@ function wellPointerCancel(){
     if(!(drag_info.start && drag_info.end && drag_info.prev_state))return
 
     // restore previous state
-    for(let i=0;i<plate_wells.length;i++){
-        let well=plate_wells[i]
+    for(let i=0;i<microscope_config.plate_wells.length;i++){
+        let well=microscope_config.plate_wells[i]
 
         let prev_well_state=drag_info.prev_state.get(well)
         if(prev_well_state==undefined)continue

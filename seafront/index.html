@@ -9,7 +9,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@cf18df7/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@54c0dfd/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/init.js"></script>
@@ -121,15 +121,6 @@
                                 grid-template-rows: min-content 1fr;
                             }
                         </style>
-                        <script>
-                            function linkPlots(element){
-                                let plots=element.querySelectorAll(".plot-display")
-                                let plot_data=PlotData.getFor(plots[0])
-                                for(let plot_element of plots){
-                                    plot_data.link(plot_element)
-                                }
-                            }
-                        </script>
                         <div id="grid-view-container" class="data" p:init-vis="linkPlots(element)">
                             <template class="data" p:for="channel of microscope_config.channels">
                                 <div id="live-view-{{channel.handle}}">
@@ -148,33 +139,13 @@
                         <input type="number" min="2" max="4" value="2" class="data" p:init="setGridViewCols({target:element})" p:on-input="setGridViewCols(event)">
                     </div>
                     <div id="af-debug-panel" class="data">
+                        <script src="src/autofocus_debug.js"></script>
+
                         <label>exposure time [ms]</label>
                         <input type="number" min="0" max="936" value="100" step="1">
                         <label>analog gain</label>
                         <input type="number" min="0" max="24" value="0" step="1">
-                        <script>
-                            function snapReflectionAutofocus(){
-                                new XHR(false)
-                                    .onload((xhr)=>{
-                                        let response=JSON.parse(xhr.responseText)
-                                        if(response.status!="success"){
-                                            console.error("error snapping reflection autofocus",response)
-                                            return
-                                        }
-                                        let handle=response.img_handle
-                                        let img=document.getElementById("view_af_image")
-                                        if(response.width_px!=null)
-                                            img.setAttribute("width",response.width_px)
-                                        if(response.height_px!=null)
-                                            img.setAttribute("height",response.height_px)
-                                        img.src="/img/get_by_handle?img_handle="+handle
-                                    })
-                                    .onerror(()=>{
-                                        console.error("error snapping reflection autofocus")
-                                    })
-                                    .send("/api/action/snap_reflection_autofocus",{"exposure_time_ms":100,"analog_gain":0},method="POST")
-                            }
-                        </script>
+
                         <button class="data" p:on-click="snapReflectionAutofocus()">snap</button>
 
                         <label>num images</label>
@@ -271,61 +242,12 @@
                                 background:linear-gradient(to right, #adf8c1 var(--percent-done), white var(--percent-done));
                             }
                         </style>
-                        <script>
-                            let progress_element=null
-                            function removecontainerelement(element){
-                                progress_element=element
-                                element.parentElement?.removeChild(element)
-                            }
-                        </script>
+
+                        <script src="src/acquisition.js"></script>
                         <div class="data" p:init="removecontainerelement(element)" id="acquisitionprogresscontainer">
                             <div>acquisition progress:</div>
                             <div id="acquisition-progress-bar2"></div>
                         </div>
-                        <script>
-                            function start_acquisition(){
-                                new XHR(false)
-                                    .onload((xhr)=>{
-                                        let acquisition_id=JSON.parse(xhr.responseText).acquisition_id
-                                        
-                                        let last_request=null
-                                        spawnModal("Acquisition Progress",progress_element,{
-                                            oninit:function(){
-                                                const updateIntervalHandle=setInterval(function(){
-                                                    last_request=new XHR()
-                                                        .onload((xhr)=>{
-                                                            if(last_request!=null && last_request.xhr!=xhr)
-                                                                return;
-
-                                                            let progress=JSON.parse(xhr.responseText)
-                                                            progress_element.children[1].innerText=progress.message
-                                                            progress_element.children[1].style.setProperty(
-                                                                "--percent-done",
-                                                                progress.acquisition_progress.current_num_images
-                                                                /progress.acquisition_meta_information.total_num_images
-                                                                *100
-                                                                +"%"
-                                                            )
-                                                            
-                                                            // stop polling when acquisition is done
-                                                            if(progress.acquisition_progress.current_num_images==progress.acquisition_meta_information.total_num_images){
-                                                                clearInterval(updateIntervalHandle)
-                                                            }
-                                                        })
-                                                        .onerror(()=>{
-                                                            console.error("error getting acquisition progress")
-                                                        })
-                                                        .send("/api/acquisition/status",{"acquisition_id":acquisition_id},method="POST")
-                                                },1e3/15)
-                                            }
-                                        })
-                                    })
-                                    .onerror(()=>{
-                                        console.error("error starting acquisition")
-                                    })
-                                    .send("/api/acquisition/start",{"config_file":microscope_config},method="POST")
-                            }
-                        </script>
                         <button id="start-acquisition-button" class="data" p:on-click="start_acquisition()">start acquisition</button>
                     </div>
 
@@ -429,14 +351,12 @@
 
                                     <div id="site-selection" class="data" p:init="updateGridMask()">
                                         <div id="site-selection-centerer">
-                                            <template p:for="row of grid_mask">
-                                                <template p:for="cell of row">
-                                                    <div class="{{cell.selected?'blue':''}}"
-                                                        grid-column="{{cell.col+1}}"
-                                                        grid-row="{{cell.row+1}}"
-                                                        p:on-click="toggleGridItem(cell)"
-                                                    ></div>
-                                                </template>
+                                            <template p:for="cell of microscope_config.grid.mask">
+                                                <div class="{{cell.selected?'blue':''}}"
+                                                    grid-column="{{cell.col+1}}"
+                                                    grid-row="{{cell.row+1}}"
+                                                    p:on-click="toggleGridItem(cell)"
+                                                ></div>
                                             </template>
                                         </div>
                                     </div>
@@ -467,19 +387,36 @@
                                         </select>
                                     </div>
 
+                                    <style>
+                                        /* a set of classes to vertically center a text box*/
+                                        .vert-center-container{
+                                            display: flex;
+                                            justify-content: center; /* Align horizontal */
+                                            align-items: center; /* Align vertical */
+                                        }
+                                        .whiteTextOnBlackBackground{
+                                            background:black;
+                                            color:white;
+                                            font-weight:bold;
+                                            font-family: sans-serif;
+                                        }
+                                    </style>
+
                                     <link href="css/well_navigator.css" rel="stylesheet">
                                     <script src="src/well_navigator.js"></script>
                                     <div id="well-navigator-container" class="data"
                                         p:init="initwellnavigator()"
                                         p:on-mouseleave="wellPointerCancel()"
                                     >
-                                        <template class="data" p:for="well of plate_wells">
-                                            <div class="{{well.selected?'blue':''}}"
+                                        <template class="data" p:for="well of microscope_config.plate_wells">
+                                            <div class="{{well.selected?'blue':''}} {{well.isHeader?'whiteTextOnBlackBackground':''}} vert-center-container"
                                                 p:on-dblclick="dblclickWell(well)"
                                                 p:on-mousedown="wellPointerDown(event,well)"
                                                 p:on-mouseenter="wellPointerUpdate(event,well)"
                                                 p:on-mouseup="wellPointerUp(event,well)"
-                                            >{{well.label}}</div>
+                                            >
+                                                {{well.label}}
+                                            </div>
                                         </template>
                                     </div>
                                 </div>
@@ -502,8 +439,7 @@
                                             font-size: calc( 0.08em * var(--scale-y));
                                             text-align: center;
                                         }
-                                    </style>
-                                    <style>
+
                                         #objective-position-on-plate-container{
                                             display:grid;
                                             grid-template-columns: repeat(1,1fr);
@@ -533,7 +469,7 @@
 
                                         <!-- wells -->
                                         <template class="data" p:for="w of well_list">
-                                            <div class='cellclass'
+                                            <div class="cellclass vert-center-container whiteTextOnBlackBackground"
                                                 width='{{w.w}}'
                                                 height='{{w.h}}'
                                                 plot-x-min="{{w.pxm}}"
@@ -581,56 +517,7 @@
                                 <div id="all-channel-container" class="section">
                                     <p class="section-header col-span-6">Imaging Channel Configuration <a class="data" href="{{docLinks.imagingChannelConfig}}" target="_blank">Help</a></p>
 
-                                    <script>
-                                        function snapChannel(channel){
-                                            let data=getConfigState()
-                                            data.channel=channel
-                                            
-                                            new XHR()
-                                                .onload((xhr)=>{
-                                                    let response=JSON.parse(xhr.responseText)
-                                                    if(response.status!="success"){
-                                                        console.error("error snapping channel",response)
-                                                        return
-                                                    }
-                                                })
-                                                .onerror(()=>{
-                                                    console.error("error snapping channel")
-                                                })
-                                                .send("/api/action/snap_channel",data,method="POST")
-                                        }
-
-                                        function ensureInputLimits(input_element){
-                                            let current_value=parseFloat(input_element.value)||0
-
-                                            let min_value=parseFloat(input_element.getAttribute("min"))
-                                            if(min_value!=null && current_value<min_value)
-                                                current_value=min_value
-
-                                            let max_value=parseFloat(input_element.getAttribute("max"))
-                                            if(max_value!=null && current_value>max_value)
-                                                current_value=max_value
-
-                                            let num_digits=2
-
-                                            let step=parseFloat(input_element.getAttribute("step"))
-                                            if(step!=null){
-                                                let remainder=current_value%step
-                                                if(remainder!=0){
-                                                    let new_value=current_value-remainder
-                                                    if(remainder>step/2)
-                                                        new_value+=step
-                                                        current_value=new_value
-                                                }
-
-                                                // get num digits from step value, e.g. 0.x -> 1, 0.0x -> 2, 0.00x -> 3
-                                                // or generally: xe-n -> n
-                                                num_digits=Math.max(0,Math.ceil(-Math.log10(step)))
-                                            }
-
-                                            input_element.value=current_value.toFixed(num_digits)
-                                        }
-                                    </script>
+                                    <script src="src/channel_snapshot.js"></script>
 
                                     <template class="data" p:for="channel of microscope_config.channels">
                                         <div class="one-channel-container">
