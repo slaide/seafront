@@ -1,6 +1,9 @@
 import typing as tp
 from dataclasses import dataclass
 import dataclasses as dc
+import os
+from pathlib import Path
+import json
 
 @dataclass
 class ConfigItemOption:
@@ -48,7 +51,7 @@ class ConfigItem:
         """
             update value from other item
         """
-        assert self.handle==other.handle
+        assert self.handle==other.handle, f"{self.handle = } ; {other.handle = }"
         match self.value_kind:
             case "number":
                 if isinstance(self.value,int):
@@ -65,6 +68,22 @@ class ConfigItem:
         return ret
 
 class GlobalConfigHandler:
+    seafront_home:tp.Optional[Path]=None
+
+    @staticmethod
+    def CRITICAL_MACHINE_DEFAULTS():
+        assert GlobalConfigHandler.seafront_home is not None
+        return {
+            "main_camera_model":"MER2-1220-32U3M",
+            "laser_autofocus_camera_model":"MER2-630-60U3M",
+            "microscope_name":"unnamed HCS SQUID",
+            "base_image_output_dir":str(GlobalConfigHandler.seafront_home/"images"),
+            "laser_autofocus_available":"yes",
+            "calibration_offset_x_mm":0.0,
+            "calibration_offset_y_mm":0.0,
+            "calibration_offset_z_mm":0.0,
+        }
+
     @staticmethod
     def _defaults()->tp.List[ConfigItem]:
         """
@@ -74,12 +93,46 @@ class GlobalConfigHandler:
         (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
         """
 
+        if GlobalConfigHandler.seafront_home is not None:
+            SEAFRONT_HOME=GlobalConfigHandler.seafront_home
+        else:
+            # construct SEAFRONT_HOME, from $SEAFRONT_HOME or $HOME/seafront
+            env_seafront_home=os.getenv("SEAFRONT_HOME")
+            if env_seafront_home is not None:
+                SEAFRONT_HOME=Path(env_seafront_home)
+
+            else:
+                # get home dir of user
+                home_dir=os.environ.get("HOME")
+                if home_dir is None:
+                    raise ValueError("could not find home directory")
+                
+                SEAFRONT_HOME=Path(home_dir)/"seafront"
+
+            GlobalConfigHandler.seafront_home=SEAFRONT_HOME
+
+        if not SEAFRONT_HOME.exists():
+            SEAFRONT_HOME.mkdir(parents=True)
+        DEFAULT_IMAGE_STORAGE_DIR=SEAFRONT_HOME/"images"
+        if not DEFAULT_IMAGE_STORAGE_DIR.exists():
+            DEFAULT_IMAGE_STORAGE_DIR.mkdir(parents=True)
+        
+        CONFIG_FILE_PATH=SEAFRONT_HOME/"config.json"
+        if not CONFIG_FILE_PATH.exists():
+            # create config file
+            with open(CONFIG_FILE_PATH,"w") as f:
+                json.dump(GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS(),f,indent=4)
+    
+        # load config file
+        with open(CONFIG_FILE_PATH,"r") as f:
+            critical_machine_config=json.load(f)
+
         main_camera_attributes=[
             ConfigItem(
                 name="main camera model",
                 handle="main_camera_model",
                 value_kind="text",
-                value="MER2-1220-32U3M",
+                value=critical_machine_config["main_camera_model"],
                 frozen=True,
             ),
             ConfigItem(
@@ -178,7 +231,7 @@ class GlobalConfigHandler:
                 name="laser autofocus system available",
                 handle="laser_autofocus_available",
                 value_kind="option",
-                value="yes",
+                value=critical_machine_config["laser_autofocus_available"],
                 options=ConfigItemOption.get_bool_options(),
                 frozen=True,
             ),
@@ -186,7 +239,7 @@ class GlobalConfigHandler:
                 name="laser autofocus camera model",
                 handle="laser_autofocus_camera_model",
                 value_kind="text",
-                value="MER2-630-60U3M",
+                value=critical_machine_config["laser_autofocus_camera_model"],
                 frozen=True,
             ),
             ConfigItem(
@@ -218,16 +271,10 @@ class GlobalConfigHandler:
                 ],
             ),
             ConfigItem(
-                name="laser autofocus image width [px]",
-                handle="laser_autofocus_image_width_px",
-                value_kind="number",
-                value=3000,
-            ),
-            ConfigItem(
-                name="laser autofocus image height [px]",
-                handle="laser_autofocus_image_height_px",
-                value_kind="number",
-                value=400,
+                name="laser autofocus warm up laser",
+                handle="laser_af_warm_up_laser",
+                value_kind="action",
+                value="/api/action/laser_af_warm_up_laser",
             ),
         ]
 
@@ -236,7 +283,7 @@ class GlobalConfigHandler:
                 name="microscope name",
                 handle="microscope_name",
                 value_kind="text",
-                value="HCS SQUID main #3",
+                value=critical_machine_config["microscope_name"],
                 frozen=True,
             ),
 
@@ -245,6 +292,24 @@ class GlobalConfigHandler:
                 handle="calibrate_B2_here",
                 value_kind="action",
                 value="/api/action/calibrate_stage_xy_here",
+            ),
+            ConfigItem(
+                name="calibration offset x [mm]",
+                handle="calibration_offset_x_mm",
+                value_kind="number",
+                value=critical_machine_config["calibration_offset_x_mm"],
+            ),
+            ConfigItem(
+                name="calibration offset y [mm]",
+                handle="calibration_offset_y_mm",
+                value_kind="number",
+                value=critical_machine_config["calibration_offset_y_mm"],
+            ),
+            ConfigItem(
+                name="calibration offset z [mm]",
+                handle="calibration_offset_z_mm",
+                value_kind="number",
+                value=critical_machine_config["calibration_offset_z_mm"],
             ),
 
             ConfigItem(
@@ -258,7 +323,7 @@ class GlobalConfigHandler:
                 name="base output storage directory",
                 handle="base_image_output_dir",
                 value_kind="text",
-                value="/mnt/squid/",
+                value=critical_machine_config["base_image_output_dir"],
             ),
 
             # preview settings are performance sensitive
@@ -373,6 +438,28 @@ class GlobalConfigHandler:
                 index=get_index(handle)
                 assert index is not None
                 GlobalConfigHandler._config_list[index].override(item)
+
+    @staticmethod
+    def store():
+        """
+        write current config to disk
+        """
+
+        assert GlobalConfigHandler.seafront_home is not None
+        SEAFRONT_HOME=GlobalConfigHandler.seafront_home
+        CONFIG_FILE_PATH=SEAFRONT_HOME/"config.json"
+        assert GlobalConfigHandler._config_list is not None
+        critical_machine_config=GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS()
+
+        # store items from current config if their key is present in critical defaults
+        store_dict={}
+        current_config=GlobalConfigHandler.get_dict()
+        for key,value in critical_machine_config.items():
+            if key in current_config:
+                store_dict[key]=current_config[key].value
+
+        with open(CONFIG_FILE_PATH,"w") as f:
+            json.dump(store_dict,f,indent=4)
 
     @staticmethod
     def reset():

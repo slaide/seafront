@@ -1,5 +1,7 @@
 
 function enterLoadingPosition(){
+    const data={}
+    
     new XHR(true)
         .onload(function(xhr){
             let data=JSON.parse(xhr.responseText)
@@ -10,9 +12,11 @@ function enterLoadingPosition(){
         .onerror(function(){
             console.error("error entering loading position")
         })
-        .send("/api/action/enter_loading_position",null,"POST")
+        .send("/api/action/enter_loading_position",data,"POST")
 }
 function leaveLoadingPosition(){
+    const data={}
+
     new XHR(true)
         .onload(function(xhr){
             let data=JSON.parse(xhr.responseText)
@@ -23,5 +27,5 @@ function leaveLoadingPosition(){
         .onerror(function(){
             console.error("error leaving loading position")
         })
-        .send("/api/action/leave_loading_position",null,"POST")
+        .send("/api/action/leave_loading_position",data,"POST")
 }

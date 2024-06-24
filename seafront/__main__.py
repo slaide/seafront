@@ -8,13 +8,15 @@ from enum import Enum
 import scipy
 import glob
 import gc
+import threading as th
+import queue as q
 
 from seaconfig import *
+from .config.basics import ConfigItem, GlobalConfigHandler
 from .hardware.camera import Camera, gxiapi
-from .hardware.microcontroller import Microcontroller, ILLUMINATION_CODE
-Command=Microcontroller.Command
+from .hardware.microcontroller import Microcontroller, Command, ILLUMINATION_CODE
 
-_DEBUG_P2JS=False
+_DEBUG_P2JS=True
 
 app = Flask(__name__, static_folder='src')
 
@@ -292,6 +294,415 @@ class LaserAutofocusCalibrationData:
     um_per_px:float
     x_reference:float
 
+class CoreStreamHandler:
+    """
+        class used to control a streaming microscope
+
+        i.e. image acquisition is running in streaming mode
+    """
+    def __init__(self,core:"Core",channel_config:AcquisitionChannelConfig):
+        self.core=core
+        self.should_stop=False
+        self.channel_config=channel_config
+    def __call__(self,img:gxiapi.RawImage):
+        if self.should_stop:
+            return True
+        
+        match img.get_status():
+            case gxiapi.GxFrameStatusList.INCOMPLETE:
+                raise RuntimeError("incomplete frame")
+            case gxiapi.GxFrameStatusList.SUCCESS:
+                pass
+
+        if img is None:
+            raise RuntimeError("no image received")
+        
+        img_np=img.get_numpy_array()
+        assert img_np is not None
+        img_np=img_np.copy()
+
+        img_np=Core._process_image(img_np)
+        
+        self.core._store_new_image(img_np,self.channel_config)
+
+        return self.should_stop
+
+class CoreCommand:
+    """ virtual base class for core commands """
+    def __init__(*args,**kwargs):
+        pass
+    def run(self,core:"Core")->str:
+        raise NotImplementedError("run not implemented for basic CoreCommand")
+    
+CoreCommandDerived=tp.TypeVar("CoreCommandDerived",bound=CoreCommand)
+
+class MoveBy(CoreCommand):
+    def __init__(self,axis:tp.Literal["x","y","z"],distance_mm:float):
+        super()
+        self.axis:tp.Literal["x","y","z"]=axis
+        self.distance_mm=distance_mm
+
+    def run(self,core:"Core")->str:
+        core.state=CoreState.Moving
+
+        core.mc.send_cmd(Command.move_by_mm(self.axis,self.distance_mm))
+
+        core.state=CoreState.Idle
+
+        return json.dumps({"status": "success","moved_by_mm":self.distance_mm,"axis":self.axis})
+
+class LoadingPositionEnter(CoreCommand):
+    def __init__(self):
+        super()
+    def run(self,core:"Core")->str:
+        if core.is_in_loading_position:
+            return json.dumps({"status":"error","message":"already in loading position"})
+        
+        core.state=CoreState.Moving
+        
+        # home z
+        core.mc.send_cmd(Command.home("z"))
+
+        # clear clamp in y first
+        core.mc.send_cmd(Command.move_to_mm("y",30))
+        # then clear clamp in x
+        core.mc.send_cmd(Command.move_to_mm("x",30))
+
+        # then home y, x
+        core.mc.send_cmd(Command.home("y"))
+        core.mc.send_cmd(Command.home("x"))
+        
+        core.is_in_loading_position=True
+
+        core.state=CoreState.LoadingPosition
+
+        return json.dumps({"status":"success","message":"entered loading position"})
+
+class LoadingPositionLeave(CoreCommand):
+    def __init__(self):
+        super()
+    def run(self,core:"Core")->str:
+        if not core.is_in_loading_position:
+            return json.dumps({"status":"error","message":"not in loading position"})
+        
+        core.state=CoreState.Moving
+
+        core.mc.send_cmd(Command.move_to_mm("x",30))
+        core.mc.send_cmd(Command.move_to_mm("y",30))
+        core.mc.send_cmd(Command.move_to_mm("z",1))
+        
+        core.is_in_loading_position=False
+
+        core.state=CoreState.Idle
+
+        return json.dumps({"status":"success","message":"left loading position"})
+
+class _ChannelAcquisitionControl(CoreCommand):
+    """
+        control imaging in a channel
+    """
+
+    def __init__(
+        self,
+        mode:tp.Literal['snap','stream_begin','stream_end'],
+        channel:dict,
+        machine_config:tp.Optional[list]=None,
+        framerate_hz:tp.Optional[float]=None
+    ):
+        super()
+        self.mode=mode
+        self.channel=channel
+        self.machine_config=machine_config
+        self.framerate_hz=framerate_hz
+
+    def run(self,core:"Core")->str:
+        cam=core.main_cam
+        
+        channel_config=AcquisitionChannelConfig(**self.channel)
+
+        try:
+            illum_code=ILLUMINATION_CODE.from_handle(channel_config.handle)
+        except Exception as e:
+            return json.dumps({"status":"error","message":"invalid channel handle"})
+        
+        if self.machine_config is not None:
+            GlobalConfigHandler.override(self.machine_config)
+
+        match self.mode:
+            case "snap":
+                if core.is_streaming or core.stream_handler is not None:
+                    return json.dumps({"status":"error","message":"already streaming"})
+                
+                core.state=CoreState.ChannelSnap
+
+                core.mc.send_cmd(Command.illumination_begin(illum_code,channel_config.illum_perc))
+                img=cam.acquire_with_config(channel_config)
+                core.mc.send_cmd(Command.illumination_end(illum_code))
+                if img is None:
+                    core.state=CoreState.Idle
+                    return json.dumps({"status":"error","message":"failed to acquire image"})
+                
+
+                img=Core._process_image(img)
+                img_handle=core._store_new_image(img,channel_config)
+
+                core.state=CoreState.Idle
+
+                return json.dumps({"status":"success","img_handle":img_handle})
+            
+            case "stream_begin":
+                if core.is_streaming or core.stream_handler is not None:
+                    return json.dumps({"status":"error","message":"already streaming"})
+
+                if self.framerate_hz is None:
+                    return json.dumps({"status":"error","message":"no framerate_hz in json data"})
+
+                core.state=CoreState.ChannelStream
+                core.is_streaming=True
+
+                core.stream_handler=CoreStreamHandler(core,channel_config)
+
+                core.mc.send_cmd(Command.illumination_begin(illum_code,channel_config.illum_perc))
+
+                cam.acquire_with_config(
+                    channel_config,
+                    mode="until_stop",
+                    callback=core.stream_handler,
+                    target_framerate_hz=self.framerate_hz
+                )
+
+                return json.dumps({"status":"success","channel":self.channel})
+            
+            case "stream_end":
+                if not core.is_streaming or core.stream_handler is None:
+                    return json.dumps({"status":"error","message":"not currently streaming"})
+                
+                core.stream_handler.should_stop=True
+                core.mc.send_cmd(Command.illumination_end(illum_code))
+
+                core.stream_handler=None
+                core.is_streaming=False
+
+                core.state=CoreState.Idle
+                return json.dumps({"status":"success","message":"successfully stopped streaming"})
+            
+            case _o:
+                raise ValueError(f"invalid mode {_o}")
+
+class ChannelSnapshot(_ChannelAcquisitionControl):
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,mode="snap",**kwargs)
+class ChannelStreamBegin(_ChannelAcquisitionControl):
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,mode="stream_begin",**kwargs)
+class ChannelStreamEnd(_ChannelAcquisitionControl):
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,mode="stream_end",**kwargs)
+
+class MoveToWell(CoreCommand):
+    def __init__(self,well_name:str):
+        super()
+        self.well_name=well_name
+
+    def run(self,core:"Core")->str:
+        if core.is_in_loading_position:
+            return json.dumps({"status":"error","message":"cannot move to well while in loading position"})
+
+        # fov offset, because the microcontroller does not move the center of the FOV to the target position
+        FOV_OFFSET_X_MM=0.3
+        FOV_OFFSET_Y_MM=0.3
+
+        x_mm=plate.get_well_offset_x(self.well_name)+plate.Well_size_x_mm/2-FOV_OFFSET_X_MM
+        y_mm=plate.get_well_offset_y(self.well_name)+plate.Well_size_y_mm/2-FOV_OFFSET_Y_MM
+
+        x_mm=core.pos_x_real_to_measured(x_mm)
+        y_mm=core.pos_y_real_to_measured(y_mm)
+
+        if x_mm<0:
+            return json.dumps({"status":"error","message":f"x coordinate out of bounds {x_mm = }"})
+        if y_mm<0:
+            return json.dumps({"status":"error","message":f"y coordinate out of bounds {y_mm = }"})
+
+        prev_state=core.state
+        core.state=CoreState.Moving
+
+        core.mc.send_cmd(Command.move_to_mm("x",x_mm))
+        core.mc.send_cmd(Command.move_to_mm("y",y_mm))
+
+        core.state=prev_state
+
+        return json.dumps({"status":"success","message":"moved to well "+self.well_name})
+
+class AutofocusMeasureDisplacement(CoreCommand):
+    """
+        measure current displacement from reference position
+
+        returns json-like string
+    """
+
+    def __init__(self,override_num_images:tp.Optional[int]=None):
+        super()
+        self.override_num_images=override_num_images
+        
+    def run(self,core:"Core")->str:
+        if core.laser_af_calibration_data is None:
+            return json.dumps({"status":"error","message":"laser autofocus not calibrated"})
+
+        # get laser spot location
+        # sometimes one of the two expected dots cannot be found in _get_laser_spot_centroid because the plate is so far off the focus plane though, catch that case
+        try:
+            res=json.loads(AutofocusSnap().run(core))
+            if res["status"]!="success":
+                return json.dumps({"status":"error","message":"failed to snap autofocus image"})
+            if core.laser_af_image is None:
+                return json.dumps({"status":"error","message":"no laser autofocus image found"})
+            x,y=core._get_peak_coords(core.laser_af_image.img)
+
+            # calculate displacement
+            displacement_um = (x - core.laser_af_calibration_data.x_reference)*core.laser_af_calibration_data.um_per_px
+        except:
+            return json.dumps({"status":"error","message":"failed to measure displacement (got no signal)"})
+
+        return json.dumps({"status":"success","displacement_um":displacement_um})
+
+class AutofocusSnap(CoreCommand):
+    """
+        snap a laser autofocus image
+
+        returns json-like string
+    """
+
+    def __init__(self,exposure_time_ms:float=5,analog_gain:float=10,turn_laser_on:bool=True,turn_laser_off:bool=True):
+        super()
+        self.exposure_time_ms=exposure_time_ms
+        self.analog_gain=analog_gain
+        self.turn_laser_on=turn_laser_on
+        self.turn_laser_off=turn_laser_off
+
+    def run(self,core:"Core")->str:
+        if self.turn_laser_on:
+            core.mc.send_cmd(Command.af_laser_illum_begin())
+        
+        channel_config=AcquisitionChannelConfig(
+            name="laser autofocus acquisition",
+            handle="__invalid_laser_autofocus_channel__", # unused
+            illum_perc=100, # this is not actually used
+            exposure_time_ms=self.exposure_time_ms,
+            analog_gain=self.analog_gain,
+            z_offset_um=0 # just for clarity in code (not used)
+        )
+        print(f"acquiring laser autofocus image with config {channel_config}")
+
+        img=core.focus_cam.acquire_with_config(channel_config)
+        if img is None:
+            self.state=CoreState.Idle
+            return json.dumps({"status":"error","message":"failed to acquire image"})
+        
+        img_handle=core._store_new_laseraf_image(img,channel_config)
+
+        if self.turn_laser_off:
+            core.mc.send_cmd(Command.af_laser_illum_end())
+
+        return json.dumps({
+            "status":"success",
+            "img_handle":img_handle,
+            "width_px":img.shape[1],
+            "height_px":img.shape[0],
+        })
+
+class AutofocusLaserWarmup(CoreCommand):
+    """
+        warm up the laser for autofocus
+
+        sometimes the laser needs to stay on for a little bit before it can be used (the short on-time of ca. 5ms is
+        sometimes not enough to turn the laser on properly without a recent warmup)
+    """
+
+    def __init__(self,warmup_time_s:float=0.5):
+        super()
+        self.warmup_time_s=warmup_time_s
+
+    def run(self,core:"Core")->str:
+        core.mc.send_cmd(Command.af_laser_illum_begin())
+
+        # wait for the laser to warm up
+        time.sleep(self.warmup_time_s)
+
+        core.mc.send_cmd(Command.af_laser_illum_end())
+
+        return json.dumps({"status":"success"})
+
+class IlluminationEndAll(CoreCommand):
+    """
+        turn off all illumination sources (rather, send signal to do so. this function does not check if any are on before sending the signals)
+
+        this function is NOT for regular operation!
+        it does not verify that the microscope is not in any acquisition state
+
+        returns json-like string
+    """
+
+    def __init__(self):
+        super()
+
+    def run(self,core:"Core")->str:
+        # make sure all illumination is off
+        for illum_src in [
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
+
+            ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
+        ]:
+            core.mc.send_cmd(Command.illumination_end(illum_src))
+
+        return json.dumps({"status":"success"})
+
+class AutofocusApproachTargetDisplacement(CoreCommand):
+    """
+        move to target offset, using laser autofocus
+
+            returns json-like string
+    """
+
+    def __init__(self,target_offset_um:float):
+        super()
+        self.target_offset_um=target_offset_um
+
+    def run(self,core:"Core")->str:
+        if core.laser_af_calibration_data is None:
+            return json.dumps({"status":"error","message":"laser autofocus not calibrated"})
+        
+        if core.state!=CoreState.Idle:
+            return json.dumps({"status":"error","message":"cannot move while in non-idle state"})
+        
+        res=json.loads(AutofocusMeasureDisplacement().run(core))
+        if res["status"]!="success":
+            return json.dumps({"status":"error","message":"failed to measure displacement"})
+        current_displacement_um=res["displacement_um"]
+
+        distance_to_move_to_target_mm=(self.target_offset_um-current_displacement_um)*1e-3
+
+        old_state=core.state
+
+        core.state=CoreState.Moving
+
+        core.mc.send_cmd(Command.move_by_mm("z",distance_to_move_to_target_mm))
+
+        core.state=old_state
+
+        return json.dumps({"status":"success"})
+
+@dataclass
+class ImageStoreEntry:
+    """ utility class to store camera images with some metadata """
+    img:np.ndarray
+    timestamp:float
+    channel_config:AcquisitionChannelConfig
+    bit_depth:int
+
 class Core:
     @property
     def main_cam(self):
@@ -312,6 +723,42 @@ class Core:
             raise RuntimeError(f"no camera with model name {focus_camera_model_name} found")
         focus_camera=_focus_cameras[0]
         return focus_camera
+
+    @property
+    def calibrated_stage_position(self)->tp.Tuple[float,float]:
+        """
+        return calibrated XY stage offset from GlobalConfigHandler in order (x_mm,y_mm)
+        """
+
+        off_x_mm=GlobalConfigHandler.get_dict()["calibration_offset_x_mm"].value
+        assert type(off_x_mm) is float, f"off_x_mm is {off_x_mm} of type {type(off_x_mm)}"
+        off_y_mm=GlobalConfigHandler.get_dict()["calibration_offset_y_mm"].value
+        assert type(off_y_mm) is float, f"off_y_mm is {off_y_mm} of type {type(off_y_mm)}"
+
+        return (off_x_mm,off_y_mm)
+
+    # real/should position = measured/is position + calibrated offset
+
+    def pos_x_measured_to_real(self,x_mm:float)->float:
+        """
+        convert measured x position to real position
+        """
+        return x_mm+self.calibrated_stage_position[0]
+    def pos_y_measured_to_real(self,y_mm:float)->float:
+        """
+        convert measured y position to real position
+        """
+        return y_mm+self.calibrated_stage_position[1]
+    def pos_x_real_to_measured(self,x_mm:float)->float:
+        """
+        convert real x position to measured position
+        """
+        return x_mm-self.calibrated_stage_position[0]
+    def pos_y_real_to_measured(self,y_mm:float)->float:
+        """
+        convert real y position to measured position
+        """
+        return y_mm-self.calibrated_stage_position[1]
 
     def __init__(self):
         self.lock=CoreLock()
@@ -339,6 +786,8 @@ class Core:
 
             # if flask server is restarted, we can skip this initialization (the microscope retains its state across reconnects)
             if is_first_start:
+                print("initializing microcontroller")
+
                 # reset the MCU
                 mc.send_cmd(Command.reset())
 
@@ -346,6 +795,7 @@ class Core:
                 mc.send_cmd(Command.initialize())
                 mc.send_cmd(Command.configure_actuators())
 
+                print("ensuring illumination is off")
                 # make sure all illumination is off
                 for illum_src in [
                     ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
@@ -357,6 +807,8 @@ class Core:
                     ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
                 ]:
                     mc.send_cmd(Command.illumination_end(illum_src))
+
+                print("calibrating xy stage")
 
                 # when starting up the microscope, the initial position is considered (0,0,0)
                 # even homing considers the limits, so before homing, we need to disable the limits
@@ -386,7 +838,11 @@ class Core:
 
                 # and move objective up, slightly
                 mc.send_cmd(Command.move_by_mm("z",1))
-                print("done initializing microcontroller")
+
+                print("warming up autofocus laser")
+                AutofocusLaserWarmup().run(self)
+
+                print("done initializing microscope")
 
         defaults=GlobalConfigHandler.get_dict()
         main_camera_model_name=defaults["main_camera_model"].value
@@ -410,86 +866,135 @@ class Core:
 
             app.add_url_rule(f"/p2.js", f"returnp2fromparentprojdir", sendp2,methods=["GET","POST"])
 
+        def wrap_command(cls: tp.Type[CoreCommandDerived])->str:
+            """
+                wrap a command to be used as flask route
+
+                handles: authentication, request json data presence, command verification
+
+                to run a command:
+                    - the request must contain a json object that includes some data
+                    - the data mus contain information related to verification of the user to run the command
+                    - the data must be valid for the requested command
+            """
+
+            # get json data
+            json_data=None
+            try:
+                json_data=request.get_json()
+            except Exception as e:
+                pass
+
+            if json_data is None:
+                return json.dumps({"status": "error", "message": "no json data"})
+
+            ret=None
+            try:
+                ret=cls(**json_data)
+            except Exception as e:
+                return json.dumps({"status": "error", "detail":"error constructing command", "message": str(e)})
+
+            if ret is None:
+                return json.dumps({"status": "error", "message": "command construction failed unexpectedly"})
+
+            try:
+                return ret.run(self)
+            except Exception as e:
+                return json.dumps({"status": "error", "detail":"error running command", "message": str(e)})
+
         # register url rules requiring machine interaction
-        app.add_url_rule(f"/api/get_info/current_state", f"get_current_state", self.get_current_state,methods=["GET","POST"])
-        app.add_url_rule(f"/api/action/move_x_by", f"action_move_x_by", lambda:self.action_move_by("x"),methods=["POST"])
-        app.add_url_rule(f"/api/action/move_y_by", f"action_move_y_by", lambda:self.action_move_by("y"),methods=["POST"])
-        app.add_url_rule(f"/api/action/move_z_by", f"action_move_z_by", lambda:self.action_move_by("z"),methods=["POST"])
+        app.add_url_rule(
+            f"/api/get_info/current_state", f"get_current_state",
+            self.get_current_state,methods=["GET","POST"])
+
+        # register urls for immediate moves
+        app.add_url_rule(
+            f"/api/action/move_by", f"action_move_by",
+            lambda:wrap_command(MoveBy),methods=["POST"])
 
         # register url for start_acquisition
-        app.add_url_rule(f"/api/acquisition/start", f"start_acquisition", self.start_acquisition,methods=["POST"])
+        app.add_url_rule(
+            f"/api/acquisition/start", f"start_acquisition",
+            self.start_acquisition,methods=["POST"])
         # for get_acquisition_status
-        app.add_url_rule(f"/api/acquisition/status", f"get_acquisition_status", self.get_acquisition_status,methods=["GET","POST"])
+        app.add_url_rule(
+            f"/api/acquisition/status", f"get_acquisition_status",
+            self.get_acquisition_status,methods=["GET","POST"])
 
         # for move_to_well
-        app.add_url_rule(f"/api/action/move_to_well", f"move_to_well", self.move_to_well,methods=["POST"])
+        app.add_url_rule(
+            f"/api/action/move_to_well", f"move_to_well",
+            lambda:wrap_command(MoveToWell),methods=["POST"])
 
         # send image by handle
-        app.add_url_rule(f"/img/get_by_handle", f"send_image_by_handle", lambda:self.send_image_by_handle(quick_preview=False),methods=["GET"])
-        app.add_url_rule(f"/img/get_by_handle_preview", f"send_image_by_handle_preview", lambda:self.send_image_by_handle(quick_preview=True),methods=["GET"])
+        app.add_url_rule(
+            f"/img/get_by_handle", f"send_image_by_handle",
+            lambda:self.send_image_by_handle(quick_preview=False),methods=["GET"])
+        app.add_url_rule(
+            f"/img/get_by_handle_preview", f"send_image_by_handle_preview",
+            lambda:self.send_image_by_handle(quick_preview=True),methods=["GET"])
 
         # loading position enter/leave
         self.is_in_loading_position=False
-        app.add_url_rule("/api/action/leave_loading_position", "action_leave_loading_position", self.action_leave_loading_position,methods=["POST"])
-        app.add_url_rule("/api/action/enter_loading_position", "action_enter_loading_position", self.action_enter_loading_position,methods=["POST"])
+        app.add_url_rule(
+            "/api/action/enter_loading_position", "action_enter_loading_position", 
+            lambda:wrap_command(LoadingPositionEnter),methods=["POST"])
+        app.add_url_rule(
+            "/api/action/leave_loading_position", "action_leave_loading_position", 
+            lambda:wrap_command(LoadingPositionLeave),methods=["POST"])
 
         # snap channel
-        app.add_url_rule("/api/action/snap_channel", "snap_channel", lambda:self.image_channel(mode='snap'),methods=["POST"])
+        app.add_url_rule(
+            "/api/action/snap_channel", "snap_channel", 
+            lambda:wrap_command(ChannelSnapshot),methods=["POST"])
 
         # start streaming (i.e. acquire x images per sec, until stopped)
-        self.laser_af_calibration_data:tp.Optional[LaserAutofocusCalibrationData]=None
-        app.add_url_rule("/api/action/stream_channel_begin", "stream_channel_begin", lambda:self.image_channel(mode='stream_begin'),methods=["POST"])
-        app.add_url_rule("/api/action/stream_channel_end", "stream_channel_end", lambda:self.image_channel(mode='stream_end'),methods=["POST"])
         self.is_streaming=False
-        self.stream_handler=None
+        self.stream_handler:tp.Optional[CoreStreamHandler]=None
+        app.add_url_rule(
+            "/api/action/stream_channel_begin", "stream_channel_begin", 
+            lambda:wrap_command(ChannelStreamBegin),methods=["POST"])
+        app.add_url_rule(
+            "/api/action/stream_channel_end", "stream_channel_end", 
+            lambda:wrap_command(ChannelStreamEnd),methods=["POST"])
 
         # laser autofocus system
-        app.add_url_rule("/api/action/snap_reflection_autofocus", "snap_reflection_autofocus", self.snap_autofocus,methods=["POST"])
-        app.add_url_rule("/api/action/laser_af_calibrate", "laser_af_calibrate", self.laser_af_calibrate,methods=["POST"])
-        app.add_url_rule("/api/action/measure_displacement", "measure_displacement", self.measure_displacement,methods=["POST"])
-        app.add_url_rule("/api/action/laser_autofocus_move_to_target_offset", "laser_autofocus_move_to_target_offset", self.laser_autofocus_move_to_target_offset,methods=["POST"])
+        self.laser_af_calibration_data:tp.Optional[LaserAutofocusCalibrationData]=None
+        app.add_url_rule(
+            "/api/action/snap_reflection_autofocus", "snap_reflection_autofocus", 
+            lambda:wrap_command(AutofocusSnap),methods=["POST"])
+        app.add_url_rule(
+            "/api/action/measure_displacement", "measure_displacement", 
+            lambda:wrap_command(AutofocusMeasureDisplacement),methods=["POST"])
+        app.add_url_rule(
+            "/api/action/laser_autofocus_move_to_target_offset", "laser_autofocus_move_to_target_offset", 
+            lambda:wrap_command(AutofocusApproachTargetDisplacement),methods=["POST"])
+        app.add_url_rule(
+            "/api/action/laser_af_calibrate", "laser_af_calibrate", 
+            self.laser_af_calibrate_here,methods=["POST"])
+        app.add_url_rule(
+            "/api/action/laser_af_warm_up_laser", "laser_af_warm_up_laser",
+            lambda:wrap_command(AutofocusLaserWarmup),methods=["POST"])
 
-        app.add_url_rule("/api/action/calibrate_stage_xy_here", "calibrate_stage_xy_here", self.calibrate_stage_xy_here,methods=["POST"])
-        self.calibrated_stage_position:tp.Tuple[float,float]=(0,0)
-        " pos x,y in mm, where the top left corner of B2 is set as reference"
+        app.add_url_rule(
+            "/api/action/calibrate_stage_xy_here", "calibrate_stage_xy_here", 
+            self.calibrate_stage_xy_here,methods=["POST"])
 
         # for turn_off_all_illumination
-        app.add_url_rule("/api/action/turn_off_all_illumination", "turn_off_all_illumination", self.turn_off_all_illumination,methods=["POST"])
+        app.add_url_rule(
+            "/api/action/turn_off_all_illumination", "turn_off_all_illumination", 
+            lambda:wrap_command(IlluminationEndAll),methods=["POST"])
 
         # store last few images acquired with main imaging camera
         # TODO store these per channel, up to e.g. 3 images per channel (for a total max of 3*num_channels)
         self.latest_image_handle:tp.Optional[str]=None
-        self.images:tp.Dict[str,"Core.ImageStoreEntry"]={}
+        self.images:tp.Dict[str,"ImageStoreEntry"]={}
 
         # only store the latest laser af image
         self.laser_af_image_handle:tp.Optional[str]=None
-        self.laser_af_image:tp.Optional["Core.ImageStoreEntry"]=None
+        self.laser_af_image:tp.Optional["ImageStoreEntry"]=None
 
         self.state=CoreState.Idle
-
-    def turn_off_all_illumination(self)->str:
-        """
-            turn off all illumination sources (rather, send signal to do so. this function does not check if any are on before sending the signals)
-
-            this function is NOT for regular operation!
-            it does not verify that the microscope is not in any acquisition state
-
-            returns json-like string
-        """
-
-        # make sure all illumination is off
-        for illum_src in [
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
-
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
-        ]:
-            self.mc.send_cmd(Command.illumination_end(illum_src))
-
-        return json.dumps({"status":"success"})
 
     def calibrate_stage_xy_here(self)->str:
         """
@@ -497,50 +1002,27 @@ class Core:
         """
 
         current_pos=self.mc.get_last_position()
-        ref_x_mm=current_pos.x_pos_mm-plate.get_well_offset_x("B02")
-        ref_y_mm=current_pos.y_pos_mm-plate.get_well_offset_y("B02")
 
-        self.calibrated_stage_position=(ref_x_mm,ref_y_mm)
+        # real/should position = measured/is position + calibrated offset
+        # i.e. calibrated offset = real/should position - measured/is position
+        ref_x_mm=plate.get_well_offset_x("B02")-current_pos.x_pos_mm
+        ref_y_mm=plate.get_well_offset_y("B02")-current_pos.y_pos_mm
 
-        return json.dumps({"status":"success"})
-
-    def laser_autofocus_move_to_target_offset(self)->str:
-        """
-            move to target offset, using laser autofocus
-
-             returns json-like string
-        """
-
-        if self.laser_af_calibration_data is None:
-            return json.dumps({"status":"error","message":"laser autofocus not calibrated"})
-        
-        if self.state!=CoreState.Idle:
-            return json.dumps({"status":"error","message":"cannot move while in non-idle state"})
-        
-        data=None
-        try:
-            data=request.get_json()
-        except Exception as e:
-            pass
-
-        if data is None:
-            return json.dumps({"status":"error","message":"no json data"})
-        
-        res=json.loads(self.measure_displacement())
-        if res["status"]!="success":
-            return json.dumps({"status":"error","message":"failed to measure displacement"})
-        
-        if "target_offset_um" not in data:
-            return json.dumps({"status":"error","message":"no target_offset_um in json data"})
-        target_displacement_um=data["target_offset_um"]
-
-        current_displacement_um=res["displacement_um"]
-        distance_to_move_to_target_mm=(target_displacement_um-current_displacement_um)*1e-3
-
-        old_state=self.state
-        self.state=CoreState.Moving
-        self.mc.send_cmd(Command.move_by_mm("z",distance_to_move_to_target_mm))
-        self.state=old_state
+        # new_config_items:tp.Union[tp.Dict[str,ConfigItem
+        GlobalConfigHandler.override({
+            "calibration_offset_x_mm":ConfigItem(
+                name="ignored",
+                handle="calibration_offset_x_mm",
+                value_kind="number",
+                value=ref_x_mm,
+            ),
+            "calibration_offset_y_mm":ConfigItem(
+                name="ignored",
+                handle="calibration_offset_y_mm",
+                value_kind="number",
+                value=ref_y_mm,
+            )
+        })
 
         return json.dumps({"status":"success"})
 
@@ -597,7 +1079,7 @@ class Core:
 
         return peak_coords
 
-    def laser_af_calibrate(self,z_mm_movement_range_mm:float=0.1,z_mm_backlash_counter:tp.Optional[float]=None)->str:
+    def laser_af_calibrate_here(self,z_mm_movement_range_mm:float=0.1,z_mm_backlash_counter:tp.Optional[float]=None)->str:
         """
             calibrate the laser autofocus
 
@@ -614,7 +1096,7 @@ class Core:
             self.mc.send_cmd(Command.move_by_mm("z",-z_mm_movement_range_mm/2))
 
         # measure pos
-        res=json.loads(self.snap_autofocus())
+        res=json.loads(AutofocusSnap().run(self))
         if res["status"]!="success":
             return json.dumps({"status":"error","message":"failed to snap autofocus image [1]"})
         if self.laser_af_image is None:
@@ -624,7 +1106,7 @@ class Core:
         # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
         self.mc.send_cmd(Command.move_by_mm("z",z_mm_movement_range_mm/2))
 
-        res=json.loads(self.snap_autofocus())
+        res=json.loads(AutofocusSnap().run(self))
         if res["status"]!="success":
             return json.dumps({"status":"error","message":"failed to snap autofocus image [2]"})
         if self.laser_af_image is None:
@@ -635,7 +1117,7 @@ class Core:
         self.mc.send_cmd(Command.move_by_mm("z",z_mm_movement_range_mm/2))
 
         # measure position
-        res=json.loads(self.snap_autofocus())
+        res=json.loads(AutofocusSnap().run(self))
         if res["status"]!="success":
             return json.dumps({"status":"error","message":"failed to snap autofocus image [3]"})
         if self.laser_af_image is None:
@@ -653,103 +1135,6 @@ class Core:
         )
 
         return json.dumps({"status":"success"})
-
-    def measure_displacement(self,override_num_images:tp.Optional[int]=None)->str:
-        """
-            measure current displacement from reference position
-
-            returns json-like string
-        """
-        if self.laser_af_calibration_data is None:
-            return json.dumps({"status":"error","message":"laser autofocus not calibrated"})
-
-        # get laser spot location
-        # sometimes one of the two expected dots cannot be found in _get_laser_spot_centroid because the plate is so far off the focus plane though, catch that case
-        try:
-            res=json.loads(self.snap_autofocus())
-            if res["status"]!="success":
-                return json.dumps({"status":"error","message":"failed to snap autofocus image"})
-            if self.laser_af_image is None:
-                return json.dumps({"status":"error","message":"no laser autofocus image found"})
-            x,y=self._get_peak_coords(self.laser_af_image.img)
-
-            # calculate displacement
-            displacement_um = (x - self.laser_af_calibration_data.x_reference)*self.laser_af_calibration_data.um_per_px
-        except:
-            return json.dumps({"status":"error","message":"failed to measure displacement (got no signal)"})
-
-        return json.dumps({"status":"success","displacement_um":displacement_um})
-
-    def snap_autofocus(self)->str:
-        """
-            snap a laser autofocus image
-
-            returns json-like string
-        """
-
-        self.mc.send_cmd(Command.af_laser_illum_begin())
-        
-        channel_config=AcquisitionChannelConfig(name="whatever",handle="whatever",illum_perc=100,exposure_time_ms=5.0,analog_gain=10,z_offset_um=0)
-
-        cam=self.focus_cam
-        img=cam.acquire_with_config(channel_config)
-        if img is None:
-            self.state=CoreState.Idle
-            return json.dumps({"status":"error","message":"failed to acquire image"})
-        
-        img_handle=self._store_new_laseraf_image(img,channel_config)
-
-        self.mc.send_cmd(Command.af_laser_illum_end())
-
-        return json.dumps({
-            "status":"success",
-            "img_handle":img_handle,
-            "width_px":img.shape[1],
-            "height_px":img.shape[0],
-        })
-
-    def _create_stream_handler(self,channel_config:AcquisitionChannelConfig):
-        class StreamHandler:
-            """
-                class used to control a streaming microscope
-
-                i.e. image acquisition is running in streaming mode
-            """
-            def __init__(self,core:"Core",channel_config:AcquisitionChannelConfig):
-                self.core=core
-                self.should_stop=False
-                self.channel_config=channel_config
-            def __call__(self,img:gxiapi.RawImage):
-                if self.should_stop:
-                    return True
-                
-                match img.get_status():
-                    case gxiapi.GxFrameStatusList.INCOMPLETE:
-                        raise RuntimeError("incomplete frame")
-                    case gxiapi.GxFrameStatusList.SUCCESS:
-                        pass
-
-                if img is None:
-                    raise RuntimeError("no image received")
-                
-                img_np=img.get_numpy_array()
-                assert img_np is not None
-                img_np=img_np.copy()
-
-                img_np=Core._process_image(img_np)
-                
-                self.core._store_new_image(img_np,self.channel_config)
-
-                return self.should_stop
-
-        return StreamHandler(self,channel_config)
-
-    @dataclass
-    class ImageStoreEntry:
-        img:np.ndarray
-        timestamp:float
-        channel_config:AcquisitionChannelConfig
-        bit_depth:int
 
     @staticmethod
     def _process_image(img:np.ndarray)->np.ndarray:
@@ -814,7 +1199,7 @@ class Core:
             case _unknown:
                 raise ValueError(f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
 
-        self.laser_af_image=Core.ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
+        self.laser_af_image=ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
 
         print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {self.laser_af_image_handle}")
 
@@ -842,7 +1227,7 @@ class Core:
             case _unknown:
                 raise ValueError(f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
             
-        self.images[self.latest_image_handle]=Core.ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
+        self.images[self.latest_image_handle]=ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
 
         # remove oldest images to keep buffer length capped (at 8)
         while len(self.images)>8:
@@ -852,88 +1237,6 @@ class Core:
             gc.collect() # force gc collection because these images really take up a lot of storage
 
         return self.latest_image_handle
-
-    def image_channel(self,mode:tp.Literal['snap','stream_begin','stream_end']):
-        """
-            control imaging in a channel
-        """
-
-        cam=self.main_cam
-
-        # get json data
-        json_data=None
-        try:
-            json_data=request.get_json()
-        except Exception as e:
-            pass
-
-        if json_data is None:
-            return json.dumps({"status": "error", "message": "no json data"})
-        
-        if "channel" not in json_data:
-            return json.dumps({"status": "error", "message": "no channel in json data"})
-        
-        channel_config=AcquisitionChannelConfig(**json_data["channel"])
-
-        try:
-            illum_code=ILLUMINATION_CODE.from_handle(channel_config.handle)
-        except Exception as e:
-            return json.dumps({"status":"error","message":"invalid channel handle"})
-        
-        if "machine_config" in json_data:
-            GlobalConfigHandler.override(json_data["machine_config"])
-
-        match mode:
-            case "snap":
-                if self.is_streaming or self.stream_handler is not None:
-                    return json.dumps({"status":"error","message":"already streaming"})
-                
-                self.state=CoreState.ChannelSnap
-
-                self.mc.send_cmd(Command.illumination_begin(illum_code,channel_config.illum_perc))
-                img=cam.acquire_with_config(channel_config)
-                self.mc.send_cmd(Command.illumination_end(illum_code))
-                if img is None:
-                    self.state=CoreState.Idle
-                    return json.dumps({"status":"error","message":"failed to acquire image"})
-                
-
-                img=Core._process_image(img)
-                img_handle=self._store_new_image(img,channel_config)
-
-                self.state=CoreState.Idle
-                return json.dumps({"status":"success","img_handle":img_handle})
-            case "stream_begin":
-                if self.is_streaming or self.stream_handler is not None:
-                    return json.dumps({"status":"error","message":"already streaming"})
-
-                if not "framerate_hz" in json_data:
-                    return json.dumps({"status":"error","message":"no framerate_hz in json data"})
-                
-                framerate_hz=json_data["framerate_hz"]
-
-                self.state=CoreState.ChannelStream
-                self.is_streaming=True
-
-                self.stream_handler=self._create_stream_handler(channel_config)
-                self.mc.send_cmd(Command.illumination_begin(illum_code,channel_config.illum_perc))
-                cam.acquire_with_config(channel_config,mode="until_stop",callback=self.stream_handler,target_framerate_hz=framerate_hz)
-
-                return json.dumps({"status":"success","channel":json_data["channel"]})
-            case "stream_end":
-                if not self.is_streaming or self.stream_handler is None:
-                    return json.dumps({"status":"error","message":"not currently streaming"})
-                
-                self.stream_handler.should_stop=True
-                self.mc.send_cmd(Command.illumination_end(illum_code))
-
-                self.stream_handler=None
-                self.is_streaming=False
-
-                self.state=CoreState.Idle
-                return json.dumps({"status":"success","message":"successfully stopped streaming"})
-            case _o:
-                raise ValueError(f"invalid mode {_o}")
 
     def send_image_by_handle(self,quick_preview:bool=False):
         """
@@ -1020,36 +1323,6 @@ class Core:
 
         return send_file(img_io, mimetype=mimetype)
 
-    def move_to_well(self):
-        if self.is_in_loading_position:
-            return json.dumps({"status":"error","message":"cannot move to well while in loading position"})
-        
-        # get well_name from request
-        json_data=None
-        try:
-            json_data=request.get_json()
-        except Exception as e:
-            pass
-
-        if json_data is None:
-            return json.dumps({"status": "error", "message": "no json data"})
-        
-        well_name=json_data['well_name']
-
-        x_mm=plate.get_well_offset_x(well_name)+plate.Well_size_x_mm/2
-        y_mm=plate.get_well_offset_y(well_name)+plate.Well_size_y_mm/2
-
-        # apply calibration
-        x_mm-=self.calibrated_stage_position[0]
-        y_mm-=self.calibrated_stage_position[1]
-
-        self.state=CoreState.Moving
-        self.mc.send_cmd(Command.move_to_mm("x",x_mm))
-        self.mc.send_cmd(Command.move_to_mm("y",y_mm))
-
-        self.state=CoreState.Idle
-        return json.dumps({"status":"success","message":"moved to well "+well_name})
-
     def get_current_state(self):
         last_stage_position=self.mc.get_last_position()
 
@@ -1063,9 +1336,9 @@ class Core:
                 "height_px":self.images[img_handle].img.shape[0],
             }
 
-        ref_x_mm,ref_y_mm=self.calibrated_stage_position
-        x_pos_mm=ref_x_mm+last_stage_position.x_pos_mm
-        y_pos_mm=ref_y_mm+last_stage_position.y_pos_mm
+        # supposed=real-calib
+        x_pos_mm=self.pos_x_measured_to_real(last_stage_position.x_pos_mm)
+        y_pos_mm=self.pos_y_measured_to_real(last_stage_position.y_pos_mm)
         
         return json.dumps({
             "status":"success",
@@ -1077,62 +1350,6 @@ class Core:
             },
             "latest_img":latest_img_info
         })
-
-    def action_move_by(self,axis:tp.Literal["x","y","z"]):
-        if self.is_in_loading_position:
-            return json.dumps({"status":"error","message":"cannot move while in loading position"})
-        
-        json_data=None
-        try:
-            json_data=request.get_json()
-        except Exception as e:
-            pass
-
-        if json_data is None:
-            return json.dumps({"status": "error", "message": "no json data"})
-        
-        distance_mm=json_data['dist_mm']
-        
-        self.state=CoreState.Moving
-        self.mc.send_cmd(Command.move_by_mm(axis,distance_mm))
-
-        self.state=CoreState.Idle
-        return json.dumps({"status": "success","moved_by_mm":distance_mm,"axis":axis})
-
-    def action_enter_loading_position(self):
-        if self.is_in_loading_position:
-            return json.dumps({"status":"error","message":"already in loading position"})
-        
-        self.state=CoreState.Moving
-        
-        # home z
-        self.mc.send_cmd(Command.home("z"))
-
-        # clear clamp in y first
-        self.mc.send_cmd(Command.move_to_mm("y",30))
-        # then clear clamp in x
-        self.mc.send_cmd(Command.move_to_mm("x",30))
-
-        # then home y, x
-        self.mc.send_cmd(Command.home("y"))
-        self.mc.send_cmd(Command.home("x"))
-        
-        self.is_in_loading_position=True
-        self.state=CoreState.LoadingPosition
-        return json.dumps({"status":"success","message":"entered loading position"})
-
-    def action_leave_loading_position(self):
-        if not self.is_in_loading_position:
-            return json.dumps({"status":"error","message":"not in loading position"})
-        
-        self.state=CoreState.Moving
-        self.mc.send_cmd(Command.move_to_mm("x",30))
-        self.mc.send_cmd(Command.move_to_mm("y",30))
-        self.mc.send_cmd(Command.move_to_mm("z",1))
-        
-        self.is_in_loading_position=False
-        self.state=CoreState.Idle
-        return json.dumps({"status":"success","message":"left loading position"})
 
     def start_acquisition(self):
         """
@@ -1258,6 +1475,7 @@ class Core:
         for cam in self.cams:
             cam.close()
 
+        GlobalConfigHandler.store()
 
 
 if __name__ == "__main__":
@@ -1269,4 +1487,5 @@ if __name__ == "__main__":
     except Exception:
         pass
 
+    print("shutting down")
     core.close()

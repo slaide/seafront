@@ -2,6 +2,8 @@
 let laserautofocusdata=_p.manage({currentOffset:0.0})
 
 function measureLaserAutofocusOffset(){
+    let data={}
+
     new XHR()
         .onload((xhr)=>{
             let response=JSON.parse(xhr.responseText)
@@ -14,10 +16,12 @@ function measureLaserAutofocusOffset(){
         .onerror(()=>{
             console.error("error measuring laser autofocus offset")
         })
-        .send("/api/action/measure_displacement",null,"POST")
+        .send("/api/action/measure_displacement",data,"POST")
 }
 
 function setLaserAutofocusReference(){
+    let data={}
+    
     new XHR()
         .onload((xhr)=>{
             let response=JSON.parse(xhr.responseText)
@@ -29,7 +33,7 @@ function setLaserAutofocusReference(){
         .onerror(()=>{
             console.error("error setting laser autofocus reference")
         })
-        .send("/api/action/laser_af_calibrate",null,"POST")
+        .send("/api/action/laser_af_calibrate",data,"POST")
 }
 
 function laserAutofocusMoveToTargetOffset(){

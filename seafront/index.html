@@ -452,8 +452,15 @@
                                             border:1px solid black;
                                         }
                                         .objectiveclass{
-                                            background:red;
+                                            background:darkred;
+                                            opacity: 0.9;
                                             z-index:2;
+                                        }
+                                        .whiteTextOnGreyBackground{
+                                            background:grey;
+                                            color:white;
+                                            font-family: sans-serif;
+                                            font-weight: bold;
                                         }
                                     </style>
                                     <script src="src/plate_observer.js"></script>
@@ -469,7 +476,7 @@
 
                                         <!-- wells -->
                                         <template class="data" p:for="w of well_list">
-                                            <div class="cellclass vert-center-container whiteTextOnBlackBackground"
+                                            <div class="cellclass vert-center-container whiteTextOnGreyBackground"
                                                 width='{{w.w}}'
                                                 height='{{w.h}}'
                                                 plot-x-min="{{w.pxm}}"
