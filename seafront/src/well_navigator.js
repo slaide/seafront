@@ -196,7 +196,11 @@ function dblclickWell(item){
     let xhr=null
     xhr=new XHR(true)
         .onload(function(xhr){
-            console.log("moved to well",item)
+            let response=JSON.parse(xhr.responseText)
+            if(response.status!="success"){
+                console.error("failed to move to well",item)
+                return
+            }
         })
         .onerror(function(){
             console.error("failed to move to well",item)
