@@ -56,7 +56,9 @@ let microscope_config=_p.manage({
         mask:[]
     },
     
-    wellplate_type:"fa96",
+    // some [arbitrary] default
+    wellplate_type:"fa384",
+
     /** @type{WellIndex[]} */
     plate_wells:[],
 
