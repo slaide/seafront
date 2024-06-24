@@ -9,7 +9,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@54c0dfd/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@a1a7d4a/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/init.js"></script>
@@ -142,9 +142,9 @@
                         <script src="src/autofocus_debug.js"></script>
 
                         <label>exposure time [ms]</label>
-                        <input type="number" min="0" max="936" value="100" step="1">
+                        <input id="laser-af-debug-exposure-time-ms" type="number" min="0" max="936" value="5" step="1">
                         <label>analog gain</label>
-                        <input type="number" min="0" max="24" value="0" step="1">
+                        <input id="laser-af-debug-analog-gain" type="number" min="0" max="24" value="10" step="1">
 
                         <button class="data" p:on-click="snapReflectionAutofocus()">snap</button>
 
