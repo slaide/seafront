@@ -37,10 +37,6 @@ def send_css(path):
 def send_js(path):
     return send_from_directory('src', path)
 
-@app.route('/p/<path:path>')
-def send_p(path):
-    return send_from_directory('p', path)
-
 # dummy data
 remote_image_path_map:dict[str,dict]={
     "/server/data/acquisition/a65914/D05_2_3_1_1_fluo405.tiff":{
