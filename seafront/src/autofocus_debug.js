@@ -1,5 +1,18 @@
 
 function snapReflectionAutofocus(){
+    const exposure_time_input_element=document.getElementById("laser-af-debug-exposure-time-ms")
+    if(!(exposure_time_input_element instanceof HTMLInputElement))throw new Error("element with id 'laser-af-debug-exposure-time-ms' is not an input element")
+    const exposure_time_ms=parseFloat(exposure_time_input_element.value)
+
+    const analog_gain_input_element=document.getElementById("laser-af-debug-analog-gain")
+    if(!(analog_gain_input_element instanceof HTMLInputElement))throw new Error("element with id 'laser-af-debug-analog-gain' is not an input element")
+    const analog_gain=parseFloat(analog_gain_input_element.value)
+
+    let data={
+        "exposure_time_ms":exposure_time_ms,
+        "analog_gain":analog_gain,
+    }
+
     new XHR(false)
         .onload((xhr)=>{
             let response=JSON.parse(xhr.responseText)
@@ -20,5 +33,5 @@ function snapReflectionAutofocus(){
         .onerror(()=>{
             console.error("error snapping reflection autofocus")
         })
-        .send("/api/action/snap_reflection_autofocus",{"exposure_time_ms":100,"analog_gain":0},"POST")
+        .send("/api/action/snap_reflection_autofocus",data,"POST")
 }
