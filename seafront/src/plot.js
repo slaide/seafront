@@ -161,6 +161,25 @@ class PlotData extends PlotItemData{
 class Plot{
     static zoom_speed=0.02
     static invert_scroll=true
+    static resizeObserver = new ResizeObserver(entries=>{
+        for(let entry of entries){
+            if(!(entry.target instanceof HTMLElement)){continue}
+            Plot.resize(entry.target)
+        }
+    })
+
+    /**
+     * callback to resize plot when element size changes
+     * @param {HTMLElement} plot
+     */
+    static resize(plot){
+        const plot_data=PlotData.getFor(plot)
+
+        plot_data.width=PlotData.getClientWidth(plot)
+        plot_data.height=PlotData.getClientHeight(plot)
+
+        plot_data.update()
+    }
 
     /**
      * update plot display given current state
@@ -321,6 +340,8 @@ class Plot{
         plot.addEventListener("mouseup",Plot.plot_drag_end)
         plot.addEventListener("mouseleave",Plot.plot_drag_end)
         plot.addEventListener("dblclick",Plot.plot_fit)
+        
+        Plot.resizeObserver.observe(plot)
 
         let plotHasChanged=false
         setInterval(function(){
