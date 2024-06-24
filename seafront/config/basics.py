@@ -226,57 +226,61 @@ class GlobalConfigHandler:
             ),
         ]
 
-        laser_autofocus_system_attributes=[
-            ConfigItem(
-                name="laser autofocus system available",
-                handle="laser_autofocus_available",
-                value_kind="option",
-                value=critical_machine_config["laser_autofocus_available"],
-                options=ConfigItemOption.get_bool_options(),
-                frozen=True,
-            ),
-            ConfigItem(
-                name="laser autofocus camera model",
-                handle="laser_autofocus_camera_model",
-                value_kind="text",
-                value=critical_machine_config["laser_autofocus_camera_model"],
-                frozen=True,
-            ),
-            ConfigItem(
-                name="laser autofocus exposure time [ms]",
-                handle="laser_autofocus_exposure_time_ms",
-                value_kind="number",
-                value=5.0,
-            ),
-            ConfigItem(
-                name="laser autofocus camera analog gain",
-                handle="laser_autofocus_analog_gain",
-                value_kind="number",
-                value=0,
-            ),
-            ConfigItem(
-                name="laser autofocus camera pixel format",
-                handle="laser_autofocus_pixel_format",
-                value_kind="option",
-                value="mono8",
-                options=[
-                    ConfigItemOption(
-                        name="8 Bit",
-                        handle="mono8",
-                    ),
-                    ConfigItemOption(
-                        name="10 Bit",
-                        handle="mono10",
-                    ),
-                ],
-            ),
-            ConfigItem(
-                name="laser autofocus warm up laser",
-                handle="laser_af_warm_up_laser",
-                value_kind="action",
-                value="/api/action/laser_af_warm_up_laser",
-            ),
-        ]
+        laser_autofocus_system_available_attribute=ConfigItem(
+            name="laser autofocus system available",
+            handle="laser_autofocus_available",
+            value_kind="option",
+            value=critical_machine_config["laser_autofocus_available"],
+            options=ConfigItemOption.get_bool_options(),
+            frozen=True,
+        )
+
+        if laser_autofocus_system_available_attribute.boolvalue:
+            laser_autofocus_system_attributes=[
+                ConfigItem(
+                    name="laser autofocus camera model",
+                    handle="laser_autofocus_camera_model",
+                    value_kind="text",
+                    value=critical_machine_config["laser_autofocus_camera_model"],
+                    frozen=True,
+                ),
+                ConfigItem(
+                    name="laser autofocus exposure time [ms]",
+                    handle="laser_autofocus_exposure_time_ms",
+                    value_kind="number",
+                    value=5.0,
+                ),
+                ConfigItem(
+                    name="laser autofocus camera analog gain",
+                    handle="laser_autofocus_analog_gain",
+                    value_kind="number",
+                    value=0,
+                ),
+                ConfigItem(
+                    name="laser autofocus camera pixel format",
+                    handle="laser_autofocus_pixel_format",
+                    value_kind="option",
+                    value="mono8",
+                    options=[
+                        ConfigItemOption(
+                            name="8 Bit",
+                            handle="mono8",
+                        ),
+                        ConfigItemOption(
+                            name="10 Bit",
+                            handle="mono10",
+                        ),
+                    ],
+                ),
+                ConfigItem(
+                    name="laser autofocus warm up laser",
+                    handle="laser_af_warm_up_laser",
+                    value_kind="action",
+                    value="/api/action/laser_af_warm_up_laser",
+                ),
+            ]
+        else:
+            laser_autofocus_system_attributes=[]
 
         ret=[
             ConfigItem(
@@ -369,7 +373,9 @@ class GlobalConfigHandler:
                 ]
             ),
 
+            laser_autofocus_system_available_attribute,
             *laser_autofocus_system_attributes,
+
             *main_camera_attributes,
         ]
 
