@@ -1,4 +1,4 @@
-# this code is heavily inspired by github.com/hongquanli/octopi-research
+# this code is written on top of the firmware specifications in github.com/hongquanli/octopi-research
 
 import time
 import typing as tp
@@ -315,415 +315,415 @@ class Position:
     def z_pos_mm(self):
         return FirmwareDefinitions.mm_per_ustep_z()*self.z_usteps
 
-class Microcontroller:
-    class Command:
-        def __init__(self):
-            self.bytes=bytearray(FirmwareDefinitions.COMMAND_PACKET_LENGTH)
-            self.wait_for_completion=True
 
-            self.is_move_cmd=False
-        
-        def __getitem__(self,i:int):
-            return self.bytes[i]
-        def __setitem__(self,i:int,newval:int):
-            self.bytes[i]=newval
-        def __len__(self):
-            return len(self.bytes)
-        
-        def set_id(self,id:int):
-            self[0]=id
+class Command:
+    def __init__(self):
+        self.bytes=bytearray(FirmwareDefinitions.COMMAND_PACKET_LENGTH)
+        self.wait_for_completion=True
 
-        @staticmethod
-        def reset()->"Microcontroller.Command":
-            ret=Microcontroller.Command()
-            ret[1]=CommandName.RESET.value
+        self.is_move_cmd=False
+    
+    def __getitem__(self,i:int):
+        return self.bytes[i]
+    def __setitem__(self,i:int,newval:int):
+        self.bytes[i]=newval
+    def __len__(self):
+        return len(self.bytes)
+    
+    def set_id(self,id:int):
+        self[0]=id
 
-            return ret
+    @staticmethod
+    def reset()->"Command":
+        ret=Command()
+        ret[1]=CommandName.RESET.value
 
-        @staticmethod
-        def initialize()->"Microcontroller.Command":
-            ret=Microcontroller.Command()
-            ret[1]=CommandName.INITIALIZE.value
+        return ret
 
-            return ret
-        
-        @staticmethod
-        def set_leadscrew_pitch(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
-            ret=Microcontroller.Command()
-            ret[1]=CommandName.SET_LEAD_SCREW_PITCH.value
+    @staticmethod
+    def initialize()->"Command":
+        ret=Command()
+        ret[1]=CommandName.INITIALIZE.value
 
-            axis_int=None
-            screw_pitch_mm=None
-            match axis:
-                case "x":
-                    axis_int=FirmwareDefinitions.AXIS_X
-                    screw_pitch_mm=FirmwareDefinitions.SCREW_PITCH_X_MM
-                case "y":
-                    axis_int=FirmwareDefinitions.AXIS_Y
-                    screw_pitch_mm=FirmwareDefinitions.SCREW_PITCH_Y_MM
-                case "z":
-                    axis_int=FirmwareDefinitions.AXIS_Z
-                    screw_pitch_mm=FirmwareDefinitions.SCREW_PITCH_Z_MM
-                case _:
-                    raise RuntimeError("invalid axis "+axis)
+        return ret
+    
+    @staticmethod
+    def set_leadscrew_pitch(axis:tp.Literal["x","y","z"])->"Command":
+        ret=Command()
+        ret[1]=CommandName.SET_LEAD_SCREW_PITCH.value
+
+        axis_int=None
+        screw_pitch_mm=None
+        match axis:
+            case "x":
+                axis_int=FirmwareDefinitions.AXIS_X
+                screw_pitch_mm=FirmwareDefinitions.SCREW_PITCH_X_MM
+            case "y":
+                axis_int=FirmwareDefinitions.AXIS_Y
+                screw_pitch_mm=FirmwareDefinitions.SCREW_PITCH_Y_MM
+            case "z":
+                axis_int=FirmwareDefinitions.AXIS_Z
+                screw_pitch_mm=FirmwareDefinitions.SCREW_PITCH_Z_MM
+            case _:
+                raise RuntimeError("invalid axis "+axis)
 
 
-            ret[2]=axis_int
-            ret[3]=(int(screw_pitch_mm*1e3)>>8*1)&0xFF
-            ret[4]=(int(screw_pitch_mm*1e3)>>8*0)&0xFF
+        ret[2]=axis_int
+        ret[3]=(int(screw_pitch_mm*1e3)>>8*1)&0xFF
+        ret[4]=(int(screw_pitch_mm*1e3)>>8*0)&0xFF
 
-            return ret
-        
-        @staticmethod
-        def configure_motor_driver(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
-            ret=Microcontroller.Command()
-            ret[1]=CommandName.CONFIGURE_STEPPER_DRIVER.value
+        return ret
+    
+    @staticmethod
+    def configure_motor_driver(axis:tp.Literal["x","y","z"])->"Command":
+        ret=Command()
+        ret[1]=CommandName.CONFIGURE_STEPPER_DRIVER.value
 
-            axis_int=None
-            microstepping_default=None
-            motor_rms_current=None
-            motor_i_hold=None
-            match axis:
-                case "x":
-                    axis_int=FirmwareDefinitions.AXIS_X
-                    microstepping_default=FirmwareDefinitions.MICROSTEPPING_DEFAULT_X
-                    motor_rms_current=FirmwareDefinitions.X_MOTOR_RMS_CURRENT_mA
-                    motor_i_hold=FirmwareDefinitions.X_MOTOR_I_HOLD
-                case "y":
-                    axis_int=FirmwareDefinitions.AXIS_Y
-                    microstepping_default=FirmwareDefinitions.MICROSTEPPING_DEFAULT_Y
-                    motor_rms_current=FirmwareDefinitions.Y_MOTOR_RMS_CURRENT_mA
-                    motor_i_hold=FirmwareDefinitions.Y_MOTOR_I_HOLD
-                case "z":
-                    axis_int=FirmwareDefinitions.AXIS_Z
-                    microstepping_default=FirmwareDefinitions.MICROSTEPPING_DEFAULT_Z
-                    motor_rms_current=FirmwareDefinitions.Z_MOTOR_RMS_CURRENT_mA
-                    motor_i_hold=FirmwareDefinitions.Z_MOTOR_I_HOLD
-                case _:
-                    raise RuntimeError("invalid axis "+axis)
-                
+        axis_int=None
+        microstepping_default=None
+        motor_rms_current=None
+        motor_i_hold=None
+        match axis:
+            case "x":
+                axis_int=FirmwareDefinitions.AXIS_X
+                microstepping_default=FirmwareDefinitions.MICROSTEPPING_DEFAULT_X
+                motor_rms_current=FirmwareDefinitions.X_MOTOR_RMS_CURRENT_mA
+                motor_i_hold=FirmwareDefinitions.X_MOTOR_I_HOLD
+            case "y":
+                axis_int=FirmwareDefinitions.AXIS_Y
+                microstepping_default=FirmwareDefinitions.MICROSTEPPING_DEFAULT_Y
+                motor_rms_current=FirmwareDefinitions.Y_MOTOR_RMS_CURRENT_mA
+                motor_i_hold=FirmwareDefinitions.Y_MOTOR_I_HOLD
+            case "z":
+                axis_int=FirmwareDefinitions.AXIS_Z
+                microstepping_default=FirmwareDefinitions.MICROSTEPPING_DEFAULT_Z
+                motor_rms_current=FirmwareDefinitions.Z_MOTOR_RMS_CURRENT_mA
+                motor_i_hold=FirmwareDefinitions.Z_MOTOR_I_HOLD
+            case _:
+                raise RuntimeError("invalid axis "+axis)
             
-            ret[2]=axis_int
-            ret[3]=max(min(microstepping_default,255),1)
-            ret[4]=(motor_rms_current>>8*1)&0xFF
-            ret[5]=(motor_rms_current>>8*0)&0xFF
-            ret[6]=int(motor_i_hold*255)
-
-            return ret
         
-        @staticmethod
-        def set_max_velocity_acceleration(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
-            ret=Microcontroller.Command()
-            ret[1]=CommandName.SET_MAX_VELOCITY_ACCELERATION.value
+        ret[2]=axis_int
+        ret[3]=max(min(microstepping_default,255),1)
+        ret[4]=(motor_rms_current>>8*1)&0xFF
+        ret[5]=(motor_rms_current>>8*0)&0xFF
+        ret[6]=int(motor_i_hold*255)
 
-            axis_int=None
-            max_vel_mm=None
-            max_acc_mm=None
-            match axis:
-                case "x":
-                    axis_int=FirmwareDefinitions.AXIS_X
-                    max_vel_mm=FirmwareDefinitions.MAX_VELOCITY_X_mm
-                    max_acc_mm=FirmwareDefinitions.MAX_ACCELERATION_X_mm
-                case "y":
-                    axis_int=FirmwareDefinitions.AXIS_Y
-                    max_vel_mm=FirmwareDefinitions.MAX_VELOCITY_Y_mm
-                    max_acc_mm=FirmwareDefinitions.MAX_ACCELERATION_Y_mm
-                case "z":
-                    axis_int=FirmwareDefinitions.AXIS_Z
-                    max_vel_mm=FirmwareDefinitions.MAX_VELOCITY_Z_mm
-                    max_acc_mm=FirmwareDefinitions.MAX_ACCELERATION_Z_mm
-                case _:
-                    raise RuntimeError("invalid axis "+axis)
-                
+        return ret
+    
+    @staticmethod
+    def set_max_velocity_acceleration(axis:tp.Literal["x","y","z"])->"Command":
+        ret=Command()
+        ret[1]=CommandName.SET_MAX_VELOCITY_ACCELERATION.value
+
+        axis_int=None
+        max_vel_mm=None
+        max_acc_mm=None
+        match axis:
+            case "x":
+                axis_int=FirmwareDefinitions.AXIS_X
+                max_vel_mm=FirmwareDefinitions.MAX_VELOCITY_X_mm
+                max_acc_mm=FirmwareDefinitions.MAX_ACCELERATION_X_mm
+            case "y":
+                axis_int=FirmwareDefinitions.AXIS_Y
+                max_vel_mm=FirmwareDefinitions.MAX_VELOCITY_Y_mm
+                max_acc_mm=FirmwareDefinitions.MAX_ACCELERATION_Y_mm
+            case "z":
+                axis_int=FirmwareDefinitions.AXIS_Z
+                max_vel_mm=FirmwareDefinitions.MAX_VELOCITY_Z_mm
+                max_acc_mm=FirmwareDefinitions.MAX_ACCELERATION_Z_mm
+            case _:
+                raise RuntimeError("invalid axis "+axis)
             
-            ret[2]=axis_int
-            ret[3]=(int(max_vel_mm*100)>>8*1)&0xFF
-            ret[4]=(int(max_vel_mm*100)>>8*0)&0xFF
-            ret[5]=(int(max_acc_mm*10)>>8*1)&0xFF
-            ret[6]=(int(max_acc_mm*10)>>8*0)&0xFF
-
-            return ret
         
-        @staticmethod
-        def set_limit_switch_polarity(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
-            ret=Microcontroller.Command()
+        ret[2]=axis_int
+        ret[3]=(int(max_vel_mm*100)>>8*1)&0xFF
+        ret[4]=(int(max_vel_mm*100)>>8*0)&0xFF
+        ret[5]=(int(max_acc_mm*10)>>8*1)&0xFF
+        ret[6]=(int(max_acc_mm*10)>>8*0)&0xFF
 
-            ret[1]=CommandName.SET_LIM_SWITCH_POLARITY.value
-            match axis:
-                case "x":
-                    ret[2]=FirmwareDefinitions.AXIS_X
-                    ret[3]=FirmwareDefinitions.X_HOME_SWITCH_POLARITY
-                case "y":
-                    ret[2]=FirmwareDefinitions.AXIS_Y
-                    ret[3]=FirmwareDefinitions.Y_HOME_SWITCH_POLARITY
-                case "z":
-                    ret[2]=FirmwareDefinitions.AXIS_Z
-                    ret[3]=FirmwareDefinitions.Z_HOME_SWITCH_POLARITY
+        return ret
+    
+    @staticmethod
+    def set_limit_switch_polarity(axis:tp.Literal["x","y","z"])->"Command":
+        ret=Command()
 
-            return ret
-        
-        @staticmethod
-        def configure_actuators()->tp.List["Microcontroller.Command"]:
-            rets=[]
+        ret[1]=CommandName.SET_LIM_SWITCH_POLARITY.value
+        match axis:
+            case "x":
+                ret[2]=FirmwareDefinitions.AXIS_X
+                ret[3]=FirmwareDefinitions.X_HOME_SWITCH_POLARITY
+            case "y":
+                ret[2]=FirmwareDefinitions.AXIS_Y
+                ret[3]=FirmwareDefinitions.Y_HOME_SWITCH_POLARITY
+            case "z":
+                ret[2]=FirmwareDefinitions.AXIS_Z
+                ret[3]=FirmwareDefinitions.Z_HOME_SWITCH_POLARITY
 
-            # set lead screw pitch
-            rets.append(Microcontroller.Command.set_leadscrew_pitch("x"))
-            rets.append(Microcontroller.Command.set_leadscrew_pitch("y"))
-            rets.append(Microcontroller.Command.set_leadscrew_pitch("z"))
+        return ret
+    
+    @staticmethod
+    def configure_actuators()->tp.List["Command"]:
+        rets=[]
 
-            # stepper driver (microstepping,rms current and I_hold)
-            rets.append(Microcontroller.Command.configure_motor_driver("x"))
-            rets.append(Microcontroller.Command.configure_motor_driver("y"))
-            rets.append(Microcontroller.Command.configure_motor_driver("z"))
+        # set lead screw pitch
+        rets.append(Command.set_leadscrew_pitch("x"))
+        rets.append(Command.set_leadscrew_pitch("y"))
+        rets.append(Command.set_leadscrew_pitch("z"))
 
-            # max velocity and acceleration
-            rets.append(Microcontroller.Command.set_max_velocity_acceleration("x"))
-            rets.append(Microcontroller.Command.set_max_velocity_acceleration("y"))
-            rets.append(Microcontroller.Command.set_max_velocity_acceleration("z"))
+        # stepper driver (microstepping,rms current and I_hold)
+        rets.append(Command.configure_motor_driver("x"))
+        rets.append(Command.configure_motor_driver("y"))
+        rets.append(Command.configure_motor_driver("z"))
 
-            # homing direction
-            rets.append(Microcontroller.Command.set_limit_switch_polarity("x"))
-            rets.append(Microcontroller.Command.set_limit_switch_polarity("y"))
-            rets.append(Microcontroller.Command.set_limit_switch_polarity("z"))
+        # max velocity and acceleration
+        rets.append(Command.set_max_velocity_acceleration("x"))
+        rets.append(Command.set_max_velocity_acceleration("y"))
+        rets.append(Command.set_max_velocity_acceleration("z"))
 
-            return rets
-        
-        @staticmethod
-        def home(direction:tp.Literal["x","y","z"])->"Microcontroller.Command":
-            ret = Microcontroller.Command()
-            ret[1] = CommandName.HOME_OR_ZERO.value
-            match direction:
-                case "x":
-                    ret[2] = FirmwareDefinitions.AXIS_X
-                    # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
-                    ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X+1)/2)
-                case "y":
-                    ret[2] = FirmwareDefinitions.AXIS_Y
-                    # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
-                    ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y+1)/2)
-                case "z":
-                    ret[2] = FirmwareDefinitions.AXIS_Z
-                    # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
-                    ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z+1)/2)
-                case _:
-                    raise RuntimeError("invalid direction "+direction)
+        # homing direction
+        rets.append(Command.set_limit_switch_polarity("x"))
+        rets.append(Command.set_limit_switch_polarity("y"))
+        rets.append(Command.set_limit_switch_polarity("z"))
+
+        return rets
+    
+    @staticmethod
+    def home(direction:tp.Literal["x","y","z"])->"Command":
+        ret = Command()
+        ret[1] = CommandName.HOME_OR_ZERO.value
+        match direction:
+            case "x":
+                ret[2] = FirmwareDefinitions.AXIS_X
+                # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
+                ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X+1)/2)
+            case "y":
+                ret[2] = FirmwareDefinitions.AXIS_Y
+                # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
+                ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y+1)/2)
+            case "z":
+                ret[2] = FirmwareDefinitions.AXIS_Z
+                # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
+                ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z+1)/2)
+            case _:
+                raise RuntimeError("invalid direction "+direction)
+
+        ret.is_move_cmd=True
+
+        return ret
+    
+    @staticmethod
+    def move_by_mm(direction:tp.Literal["x","y","z"],distance_mm:float)->tp.List["Command"]:
+        num_usteps=None
+        command_name=None
+        match direction:
+            case "x":
+                num_usteps=FirmwareDefinitions.mm_to_ustep_x(distance_mm)
+                command_name=CommandName.MOVE_X.value
+            case "y":
+                num_usteps=FirmwareDefinitions.mm_to_ustep_y(distance_mm)
+                command_name=CommandName.MOVE_Y.value
+            case "z":
+                num_usteps=FirmwareDefinitions.mm_to_ustep_z(distance_mm)
+                command_name=CommandName.MOVE_Z.value
+            case _:
+                raise RuntimeError("invalid direction "+direction)
+            
+
+        rets=[]
+        usteps_remaining=num_usteps
+        MAX_USTEPS=2**31-1
+        while np.abs(usteps_remaining)>0:
+            partial_usteps=max(min(usteps_remaining,MAX_USTEPS),-MAX_USTEPS)
+            usteps_remaining-=partial_usteps
+
+            partial_usteps=twos_complement(partial_usteps,4)
+
+            ret=Command()
 
             ret.is_move_cmd=True
 
-            return ret
+            ret[1]=command_name
+            ret[2]=(partial_usteps>>(8*3))&0xFF
+            ret[3]=(partial_usteps>>(8*2))&0xFF
+            ret[4]=(partial_usteps>>(8*1))&0xFF
+            ret[5]=(partial_usteps>>(8*0))&0xFF
+
+            rets.append(ret)
+
+        return rets
+    
+    @staticmethod
+    def set_limit_mm(axis:tp.Literal["x","y","z"],coord:float,direction:tp.Literal["lower","upper"])->"Command":
+        ret=Command()
+        ret[1]=CommandName.SET_LIM.value
+
+        match (axis,direction):
+            case ("x","upper"):
+                usteps=FirmwareDefinitions.mm_to_ustep_x(coord)
+                limit_code=LIMIT_CODE.X_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X > 0 else LIMIT_CODE.X_NEGATIVE
+            case ("x","lower"):
+                usteps=FirmwareDefinitions.mm_to_ustep_x(coord)
+                limit_code=LIMIT_CODE.X_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X < 0 else LIMIT_CODE.X_NEGATIVE
+            case ("y","upper"):
+                usteps=FirmwareDefinitions.mm_to_ustep_y(coord)
+                limit_code=LIMIT_CODE.Y_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y > 0 else LIMIT_CODE.Y_NEGATIVE
+            case ("y","lower"):
+                usteps=FirmwareDefinitions.mm_to_ustep_y(coord)
+                limit_code=LIMIT_CODE.Y_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y < 0 else LIMIT_CODE.Y_NEGATIVE
+            case ("z","upper"):
+                usteps=FirmwareDefinitions.mm_to_ustep_z(coord)
+                limit_code=LIMIT_CODE.Z_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z > 0 else LIMIT_CODE.Z_NEGATIVE
+            case ("z","lower"):
+                usteps=FirmwareDefinitions.mm_to_ustep_z(coord)
+                limit_code=LIMIT_CODE.Z_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z < 0 else LIMIT_CODE.Z_NEGATIVE
+            case _:
+                raise ValueError(f"unsupported axis {axis}")
         
-        @staticmethod
-        def move_by_mm(direction:tp.Literal["x","y","z"],dist_mm:float)->tp.List["Microcontroller.Command"]:
-            num_usteps=None
-            command_name=None
-            match direction:
-                case "x":
-                    num_usteps=FirmwareDefinitions.mm_to_ustep_x(dist_mm)
-                    command_name=CommandName.MOVE_X.value
-                case "y":
-                    num_usteps=FirmwareDefinitions.mm_to_ustep_y(dist_mm)
-                    command_name=CommandName.MOVE_Y.value
-                case "z":
-                    num_usteps=FirmwareDefinitions.mm_to_ustep_z(dist_mm)
-                    command_name=CommandName.MOVE_Z.value
-                case _:
-                    raise RuntimeError("invalid direction "+direction)
-                
+        ret[2] = limit_code
+        payload = twos_complement(usteps,4)
+        ret[3] = (payload>>8*3)&0xFF
+        ret[4] = (payload>>8*2)&0xFF
+        ret[5] = (payload>>8*1)&0xFF
+        ret[6] = (payload>>8*0)&0xFF
+        return ret
+    
+    @staticmethod
+    def set_zero(axis:tp.Literal["x","y","z"])->"Command":
+        """
+            set current position on axis to 0
+        """
 
-            rets=[]
-            usteps_remaining=num_usteps
-            MAX_USTEPS=2**31-1
-            while np.abs(usteps_remaining)>0:
-                partial_usteps=max(min(usteps_remaining,MAX_USTEPS),-MAX_USTEPS)
-                usteps_remaining-=partial_usteps
+        ret=Command()
+        ret[1]=CommandName.HOME_OR_ZERO.value
 
-                partial_usteps=twos_complement(partial_usteps,4)
-
-                ret=Microcontroller.Command()
-
-                ret.is_move_cmd=True
-
-                ret[1]=command_name
-                ret[2]=(partial_usteps>>(8*3))&0xFF
-                ret[3]=(partial_usteps>>(8*2))&0xFF
-                ret[4]=(partial_usteps>>(8*1))&0xFF
-                ret[5]=(partial_usteps>>(8*0))&0xFF
-
-                rets.append(ret)
-
-            return rets
-        
-        @staticmethod
-        def set_limit_mm(axis:tp.Literal["x","y","z"],coord:float,direction:tp.Literal["lower","upper"])->"Microcontroller.Command":
-            ret=Microcontroller.Command()
-            ret[1]=CommandName.SET_LIM.value
-
-            match (axis,direction):
-                case ("x","upper"):
-                    usteps=FirmwareDefinitions.mm_to_ustep_x(coord)
-                    limit_code=LIMIT_CODE.X_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X > 0 else LIMIT_CODE.X_NEGATIVE
-                case ("x","lower"):
-                    usteps=FirmwareDefinitions.mm_to_ustep_x(coord)
-                    limit_code=LIMIT_CODE.X_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X < 0 else LIMIT_CODE.X_NEGATIVE
-                case ("y","upper"):
-                    usteps=FirmwareDefinitions.mm_to_ustep_y(coord)
-                    limit_code=LIMIT_CODE.Y_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y > 0 else LIMIT_CODE.Y_NEGATIVE
-                case ("y","lower"):
-                    usteps=FirmwareDefinitions.mm_to_ustep_y(coord)
-                    limit_code=LIMIT_CODE.Y_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y < 0 else LIMIT_CODE.Y_NEGATIVE
-                case ("z","upper"):
-                    usteps=FirmwareDefinitions.mm_to_ustep_z(coord)
-                    limit_code=LIMIT_CODE.Z_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z > 0 else LIMIT_CODE.Z_NEGATIVE
-                case ("z","lower"):
-                    usteps=FirmwareDefinitions.mm_to_ustep_z(coord)
-                    limit_code=LIMIT_CODE.Z_POSITIVE if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z < 0 else LIMIT_CODE.Z_NEGATIVE
-                case _:
-                    raise ValueError(f"unsupported axis {axis}")
+        match axis:
+            case "x":
+                ret[2]=FirmwareDefinitions.AXIS_X
+            case "y":
+                ret[2]=FirmwareDefinitions.AXIS_Y
+            case "z":
+                ret[2]=FirmwareDefinitions.AXIS_Z
+            case _:
+                raise RuntimeError("invalid axis "+axis)
             
-            ret[2] = limit_code
-            payload = twos_complement(usteps,4)
-            ret[3] = (payload>>8*3)&0xFF
-            ret[4] = (payload>>8*2)&0xFF
-            ret[5] = (payload>>8*1)&0xFF
-            ret[6] = (payload>>8*0)&0xFF
-            return ret
-        
-        @staticmethod
-        def set_zero(axis:tp.Literal["x","y","z"])->"Microcontroller.Command":
-            """
-                set current position on axis to 0
-            """
+        ret[3] = HOME_OR_ZERO.ZERO
 
-            ret=Microcontroller.Command()
-            ret[1]=CommandName.HOME_OR_ZERO.value
+        return ret
 
-            match axis:
-                case "x":
-                    ret[2]=FirmwareDefinitions.AXIS_X
-                case "y":
-                    ret[2]=FirmwareDefinitions.AXIS_Y
-                case "z":
-                    ret[2]=FirmwareDefinitions.AXIS_Z
-                case _:
-                    raise RuntimeError("invalid axis "+axis)
-                
-            ret[3] = HOME_OR_ZERO.ZERO
+    @staticmethod
+    def move_to_mm(axis:tp.Literal["x","y","z"],coord_mm:float)->"Command":
+        """
+            move to z is currently TODO, and potentially dangerous. this command does not indicate completion, ever! (but it does move to the target position..)
+        """
 
-            return ret
+        ret=Command()
 
-        @staticmethod
-        def move_to_mm(axis:tp.Literal["x","y","z"],coord_mm:float)->"Microcontroller.Command":
-            """
-                move to z is currently TODO, and potentially dangerous. this command does not indicate completion, ever! (but it does move to the target position..)
-            """
+        axis_cmd=None
+        move_usteps=None
 
-            ret=Microcontroller.Command()
+        match axis:
+            case "x":
+                axis_cmd=CommandName.MOVETO_X.value
+                move_usteps=FirmwareDefinitions.mm_to_ustep_x(coord_mm)
+            case "y":
+                axis_cmd=CommandName.MOVETO_Y.value
+                move_usteps=FirmwareDefinitions.mm_to_ustep_y(coord_mm)
+            case "z":
+                axis_cmd=CommandName.MOVETO_Z.value
+                move_usteps=FirmwareDefinitions.mm_to_ustep_z(coord_mm)
+            case _:
+                raise RuntimeError("invalid axis "+axis)
+            
+        move_usteps=twos_complement(move_usteps,4)
 
-            axis_cmd=None
-            move_usteps=None
+        ret[1]=axis_cmd
+        ret[2]=(move_usteps>>(8*3))&0xFF
+        ret[3]=(move_usteps>>(8*2))&0xFF
+        ret[4]=(move_usteps>>(8*1))&0xFF
+        ret[5]=(move_usteps>>(8*0))&0xFF
 
-            match axis:
-                case "x":
-                    axis_cmd=CommandName.MOVETO_X.value
-                    move_usteps=FirmwareDefinitions.mm_to_ustep_x(coord_mm)
-                case "y":
-                    axis_cmd=CommandName.MOVETO_Y.value
-                    move_usteps=FirmwareDefinitions.mm_to_ustep_y(coord_mm)
-                case "z":
-                    axis_cmd=CommandName.MOVETO_Z.value
-                    move_usteps=FirmwareDefinitions.mm_to_ustep_z(coord_mm)
-                case _:
-                    raise RuntimeError("invalid axis "+axis)
-                
-            move_usteps=twos_complement(move_usteps,4)
+        ret.is_move_cmd=True
 
-            ret[1]=axis_cmd
-            ret[2]=(move_usteps>>(8*3))&0xFF
-            ret[3]=(move_usteps>>(8*2))&0xFF
-            ret[4]=(move_usteps>>(8*1))&0xFF
-            ret[5]=(move_usteps>>(8*0))&0xFF
+        return ret
 
-            ret.is_move_cmd=True
+    @staticmethod
+    def illumination_begin(illumination_source:ILLUMINATION_CODE,intensity_percent:float)->tp.List["Command"]:
+        """
+            turn on illumination source, and set intensity
 
-            return ret
+            intensity_percent: should be in range [0;100] - will be internally clamped to [0;100] for safety either way
+        """
 
-        @staticmethod
-        def illumination_begin(illumination_source:ILLUMINATION_CODE,intensity_percent:float)->tp.List["Microcontroller.Command"]:
-            """
-                turn on illumination source, and set intensity
+        cmds=[]
 
-                intensity_percent: should be in range [0;100] - will be internally clamped to [0;100] for safety either way
-            """
+        INTENSITY_INT_MAX=0xFFFF
+        intensity_int=int(intensity_percent/100*INTENSITY_INT_MAX)
+        intensity_clamped=max(min(intensity_int,INTENSITY_INT_MAX),0)
 
-            cmds=[]
+        cmd = Command()
+        if illumination_source.is_led_matrix:
+            cmd[1] = CommandName.SET_ILLUMINATION_LED_MATRIX.value
+        else:
+            cmd[1] = CommandName.SET_ILLUMINATION.value
+        cmd[2] = illumination_source.value
+        cmd[3] = (intensity_clamped >>8*1) & 0xFF
+        cmd[4] = (intensity_clamped >>8*0) & 0xFF
+        cmds.append(cmd)
 
-            INTENSITY_INT_MAX=0xFFFF
-            intensity_int=int(intensity_percent/100*INTENSITY_INT_MAX)
-            intensity_clamped=max(min(intensity_int,INTENSITY_INT_MAX),0)
+        cmd = Command()
+        cmd[1] = CommandName.TURN_ON_ILLUMINATION.value
+        cmds.append(cmd)
 
-            cmd = Microcontroller.Command()
-            if illumination_source.is_led_matrix:
-                cmd[1] = CommandName.SET_ILLUMINATION_LED_MATRIX.value
-            else:
-                cmd[1] = CommandName.SET_ILLUMINATION.value
+        return cmds
+
+    @staticmethod
+    def illumination_end(illumination_source:tp.Optional[ILLUMINATION_CODE]=None)->tp.List["Command"]:
+        cmds=[]
+        if illumination_source is not None:
+            cmd = Command()
+            cmd[1] = CommandName.SET_ILLUMINATION.value
             cmd[2] = illumination_source.value
-            cmd[3] = (intensity_clamped >>8*1) & 0xFF
-            cmd[4] = (intensity_clamped >>8*0) & 0xFF
+            cmd[3] = 0
+            cmd[4] = 0
             cmds.append(cmd)
+        
+        cmd = Command()
+        cmd[1] = CommandName.TURN_OFF_ILLUMINATION.value
+        cmds.append(cmd)
 
-            cmd = Microcontroller.Command()
-            cmd[1] = CommandName.TURN_ON_ILLUMINATION.value
-            cmds.append(cmd)
+        return cmds
 
-            return cmds
+    @staticmethod
+    def set_pin_level(pin:int,level:int)->"Command":
+        """
+        sets pin level (the interpretation of this is up to the firmware)
 
-        @staticmethod
-        def illumination_end(illumination_source:tp.Optional[ILLUMINATION_CODE]=None)->tp.List["Microcontroller.Command"]:
-            cmds=[]
-            if illumination_source is not None:
-                cmd = Microcontroller.Command()
-                cmd[1] = CommandName.SET_ILLUMINATION.value
-                cmd[2] = illumination_source.value
-                cmd[3] = 0
-                cmd[4] = 0
-                cmds.append(cmd)
-            
-            cmd = Microcontroller.Command()
-            cmd[1] = CommandName.TURN_OFF_ILLUMINATION.value
-            cmds.append(cmd)
+        pin: pin number
+        level: 0 or 1
+        """
 
-            return cmds
+        assert level in [0,1], f"invalid level {level}"
 
-        @staticmethod
-        def set_pin_level(pin:int,level:int)->"Microcontroller.Command":
-            """
-            sets pin level (the interpretation of this is up to the firmware)
+        cmd = Command()
+        cmd[1] = CommandName.SET_PIN_LEVEL.value
+        cmd[2] = pin
+        cmd[3] = level
+        return cmd
 
-            pin: pin number
-            level: 0 or 1
-            """
+    @staticmethod
+    def af_laser_illum_begin()->"Command":
+        return Command.set_pin_level(pin=MCU_PINS.AF_LASER,level=1)
 
-            assert level in [0,1], f"invalid level {level}"
+    @staticmethod
+    def af_laser_illum_end()->"Command":
+        return Command.set_pin_level(pin=MCU_PINS.AF_LASER,level=0)
 
-            cmd = Microcontroller.Command()
-            cmd[1] = CommandName.SET_PIN_LEVEL.value
-            cmd[2] = pin
-            cmd[3] = level
-            return cmd
-
-        @staticmethod
-        def af_laser_illum_begin()->"Microcontroller.Command":
-            return Microcontroller.Command.set_pin_level(pin=MCU_PINS.AF_LASER,level=1)
-
-        @staticmethod
-        def af_laser_illum_end()->"Microcontroller.Command":
-            return Microcontroller.Command.set_pin_level(pin=MCU_PINS.AF_LASER,level=0)
-
-
+class Microcontroller:
     @staticmethod
     def _wait_until_cmd_is_finished(
         mc:"Microcontroller",
-        cmd:"Microcontroller.Command",
+        cmd:"Command",
         additional_delay:tp.Optional[float]=None
     ):
         last_position_x=0
@@ -837,7 +837,11 @@ class Microcontroller:
             self.terminate_reading_received_packet_thread=until(packet)
 
     def get_last_position(self)->Position:
-        # attempt to read a packet to update the position if no command is currently being awaited to update the position implicitely
+        """
+        get last known position of the stage
+
+        this function works even if another command is currently running
+        """
         self.get_packet()
             
         return self.last_position
@@ -857,6 +861,7 @@ class Microcontroller:
             nonlocal packet
             packet=packet_in
             return True
+        
         self._read_packets(read_one_packet)
         return packet
 
@@ -870,7 +875,7 @@ class Microcontroller:
         self._last_command_id=(self._last_command_id+1)%256
         return self._last_command_id
 
-    def send_cmd(self,cmd_in:tp.Union["Microcontroller.Command",tp.List["Microcontroller.Command"]]):
+    def send_cmd(self,cmd_in:tp.Union["Command",tp.List["Command"]]):
         if isinstance(cmd_in,list):
             cmds=cmd_in
         else:
