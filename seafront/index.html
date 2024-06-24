@@ -483,8 +483,8 @@
                                         <div class="objectiveclass data" 
                                             width='{{microscope_state.fov_size.x_mm}}'
                                             height='{{microscope_state.fov_size.y_mm}}'
-                                            plot-x-min="{{microscope_state.pos.x_mm}}"
-                                            plot-y-min="{{microscope_state.pos.y_mm}}"
+                                            plot-x-min="{{microscope_state.pos.x_mm - (microscope_state.fov_size.x_mm)/2 }}"
+                                            plot-y-min="{{microscope_state.pos.y_mm - (microscope_state.fov_size.y_mm)/2 }}"
                                         ></div>
                                     </div>
                                 </div>
