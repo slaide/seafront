@@ -9,7 +9,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@a1a7d4a/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@e35ab0da8b8bc1822d9c5422be2d6229d8b890be/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/init.js"></script>
@@ -231,7 +231,6 @@
 
                         <style>
                             #acquisition-progress-bar2{
-                                height:1.5em;
                                 width:100%;
 
                                 border:1px solid black;
@@ -528,7 +527,10 @@
 
                                     <template class="data" p:for="channel of microscope_config.channels">
                                         <div class="one-channel-container">
-                                            <p class="col-span-2">{{channel.name}}</p>
+                                            <p class="col-span-2">
+                                                <input id="acquisition-channel-enabled-checkbox-{{channel.handle}}" type="checkbox" p:bind="channel.enabled">
+                                                <label for="acquisition-channel-enabled-checkbox-{{channel.handle}}">{{channel.name}}</label>
+                                            </p>
                                             <button class="col-span-2" p:on-click="snapChannel(channel)">Snap</button>
                                             <label class="data" p:tooltip="hello there">Illumination (%)</label>
                                             <input type="number"

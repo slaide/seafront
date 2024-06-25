@@ -778,8 +778,6 @@ class Microcontroller:
 
         self.lock=threading.Lock()
         """ lock on hardware control """
-        self.send_is_holding_lock=False
-        """ indicate that the send function is holding the lock """
         self.illum=threading.Lock()
         """ lock on illumination control """
 
@@ -842,28 +840,17 @@ class Microcontroller:
 
         this function works even if another command is currently running
         """
-        self.get_packet()
+
+        if self.lock.acquire(blocking=False):
+            def read_one_packet(packet_in:MicrocontrollerStatusPackage)->bool:
+                return True
             
+            # internally updates the last known position
+            self._read_packets(read_one_packet)
+
+            self.lock.release()
+
         return self.last_position
-
-    def get_packet(self)->tp.Optional[MicrocontrollerStatusPackage]:
-        """
-            read one package and return it
-
-            this function may return None if no package can be received (e.g. because a command is currently running that is blocking the packet queue)
-        """
-
-        if self.send_is_holding_lock:
-            return None
-
-        packet=None
-        def read_one_packet(packet_in:MicrocontrollerStatusPackage)->bool:
-            nonlocal packet
-            packet=packet_in
-            return True
-        
-        self._read_packets(read_one_packet)
-        return packet
 
     def _get_next_cmd_id(self)->int:
         """
@@ -881,7 +868,6 @@ class Microcontroller:
         else:
             cmds=[cmd_in]
 
-        self.send_is_holding_lock=True
         with self.lock:
             for cmd in cmds:
                 cmd.set_id(self._get_next_cmd_id())
@@ -904,8 +890,6 @@ class Microcontroller:
                 self.handle.write(cmd.bytes)
                 if cmd.wait_for_completion:
                     Microcontroller._wait_until_cmd_is_finished(self,cmd)
-
-        self.send_is_holding_lock=False
 
     def open(self):
         self.handle=serial.Serial(self.device_info.device,2000000)

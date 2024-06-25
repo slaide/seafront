@@ -19,14 +19,16 @@ class ImagingChannel{
      * @param {number} exposure_time_ms 
      * @param {number} analog_gain 
      * @param {number} z_offset_um 
+     * @param {boolean} enabled
      */
-    constructor(name,handle,illum_perc,exposure_time_ms,analog_gain,z_offset_um){
+    constructor(name,handle,illum_perc,exposure_time_ms,analog_gain,z_offset_um,enabled=true){
         this.name=name
         this.handle=handle
         this.illum_perc=illum_perc
         this.exposure_time_ms=exposure_time_ms
         this.analog_gain=analog_gain
         this.z_offset_um=z_offset_um
+        this.enabled=enabled
     }
 }
 
@@ -34,6 +36,9 @@ let microscope_config=_p.manage({
     project_name:"",
     plate_name:"",
     cell_line:"",
+
+    // TODO make this configurable somewhere in the GUI
+    autofocus_enabled:true,
 
     grid:{
         num_x:2,
@@ -62,6 +67,7 @@ let microscope_config=_p.manage({
     /** @type{WellIndex[]} */
     plate_wells:[],
 
+    /** @type{ImagingChannel[]} */
     channels:new XHR(false)
         .onload(function(xhr){
             let data=JSON.parse(xhr.responseText)

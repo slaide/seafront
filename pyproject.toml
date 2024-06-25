@@ -12,7 +12,9 @@ dependencies = [
     "crc<2", # for basic microcontroller packet communication
     "pillow", # for image format conversion to store to disk/send to client for display
     "scipy", # for laser aufocus system signal processing
-    "numpy", # for data (func args) validation
+    "numpy", # for signal processing and various math
+    "tifffile", # for tiff image format
+    "imagecodecs", # for image compression
 ]
 
 [build-system]

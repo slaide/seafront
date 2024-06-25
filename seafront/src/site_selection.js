@@ -2,11 +2,13 @@ class SiteSelectionCell{
     /**
      * @param {number} row
      * @param {number} col
+     * @param {number} plane
      * @param {boolean} selected
      */
-    constructor(row,col,selected=true){
+    constructor(row,col,plane,selected=true){
         this.row=row
         this.col=col
+        this.plane=plane
         this.selected=selected
     }
 }
@@ -27,7 +29,7 @@ const updateGridMask=function(){
 
         for(let i=0;i<num_rows;i++){
             for(let j=0;j<num_cols;j++){
-                const new_cell=new SiteSelectionCell(i,j,true)
+                const new_cell=new SiteSelectionCell(i,j,0,true)
                 microscope_config.grid.mask.push(new_cell)
             }
         }

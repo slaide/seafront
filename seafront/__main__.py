@@ -10,6 +10,10 @@ import glob
 import gc
 import threading as th
 import queue as q
+import datetime as dt
+from pathlib import Path
+import tifffile
+import re
 
 from seaconfig import *
 from .config.basics import ConfigItem, GlobalConfigHandler
@@ -17,6 +21,9 @@ from .hardware.camera import Camera, gxiapi
 from .hardware.microcontroller import Microcontroller, Command, ILLUMINATION_CODE
 
 _DEBUG_P2JS=True
+
+# precompile regex for performance
+name_validity_regex=re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 app = Flask(__name__, static_folder='src')
 
@@ -65,7 +72,19 @@ def send_img_from_remote_storage():
 
     return send_from_directory(remote_image_path_map[image_path]["dir"], remote_image_path_map[image_path]["filename"])
 
-somemap:dict[str,dict]={}
+somemap:dict={}
+"""
+actual type is:
+tp.Dict[str,{
+    "acquisition_id":str,
+    "queue_in":q.Queue,
+        "queue to send messages to the thread"
+    "queue_out":q.Queue,
+        "queue to receive messages from the thread"
+    "last_status":tp.Optional[dict],
+    "thread_is_running":boolean,
+}]
+"""
 
 # get objectives
 @app.route("/api/get_features/hardware_capabilities", methods=["GET","POST"])
@@ -396,6 +415,10 @@ class LoadingPositionLeave(CoreCommand):
 class _ChannelAcquisitionControl(CoreCommand):
     """
         control imaging in a channel
+
+        return value fields:
+            - img_handle:str (only for snap mode)
+            - channel:dict (only for stream_begin mode)
     """
 
     def __init__(
@@ -495,15 +518,63 @@ class ChannelStreamEnd(_ChannelAcquisitionControl):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,mode="stream_end",**kwargs)
 
+class MoveTo(CoreCommand):
+    """
+    move to target coordinates
+
+    any of the arguments may be None, in which case the corresponding axis is not moved
+
+    these coordinates are internally adjusted to take the calibration into account
+    """
+    def __init__(self,x_mm:tp.Optional[float],y_mm:tp.Optional[float],z_mm:tp.Optional[float]=None):
+        super()
+
+        self.x_mm=x_mm
+        self.y_mm=y_mm
+        self.z_mm=z_mm
+
+    def run(self,core:"Core")->str:
+        if core.is_in_loading_position:
+            return json.dumps({"status":"error","message":"cannot move to well while in loading position"})
+
+        if self.x_mm is not None and self.x_mm<0:
+            return json.dumps({"status":"error","message":f"x coordinate out of bounds {self.x_mm = }"})
+        if self.y_mm is not None and self.y_mm<0:
+            return json.dumps({"status":"error","message":f"y coordinate out of bounds {self.y_mm = }"})
+        if self.z_mm is not None and self.z_mm<0:
+            return json.dumps({"status":"error","message":f"z coordinate out of bounds {self.z_mm = }"})
+
+        prev_state=core.state
+        core.state=CoreState.Moving
+
+        if self.x_mm is not None:
+            x_mm=core.pos_x_real_to_measured(self.x_mm)
+            if x_mm<0:
+                return json.dumps({"status":"error","message":f"calibrated x coordinate out of bounds {x_mm = }"})
+            core.mc.send_cmd(Command.move_to_mm("x",x_mm))
+
+        if self.y_mm is not None:
+            y_mm=core.pos_y_real_to_measured(self.y_mm)
+            if y_mm<0:
+                return json.dumps({"status":"error","message":f"calibrated y coordinate out of bounds {y_mm = }"})
+            core.mc.send_cmd(Command.move_to_mm("y",y_mm))
+
+        if self.z_mm is not None:
+            z_mm=core.pos_z_real_to_measured(self.z_mm)
+            if z_mm<0:
+                return json.dumps({"status":"error","message":f"calibrated z coordinate out of bounds {z_mm = }"})
+            core.mc.send_cmd(Command.move_to_mm("z",z_mm))
+
+        core.state=prev_state
+
+        return json.dumps({"status":"success","message":"moved to x={self.x_mm:.2f} y={self.y_mm:.2f}mm"})
+
 class MoveToWell(CoreCommand):
     def __init__(self,well_name:str):
         super()
         self.well_name=well_name
 
     def run(self,core:"Core")->str:
-        if core.is_in_loading_position:
-            return json.dumps({"status":"error","message":"cannot move to well while in loading position"})
-
         # fov offset, because the microcontroller does not move the center of the FOV to the target position
         FOV_OFFSET_X_MM=0.3
         FOV_OFFSET_Y_MM=0.3
@@ -511,27 +582,19 @@ class MoveToWell(CoreCommand):
         x_mm=plate.get_well_offset_x(self.well_name)+plate.Well_size_x_mm/2-FOV_OFFSET_X_MM
         y_mm=plate.get_well_offset_y(self.well_name)+plate.Well_size_y_mm/2-FOV_OFFSET_Y_MM
 
-        x_mm=core.pos_x_real_to_measured(x_mm)
-        y_mm=core.pos_y_real_to_measured(y_mm)
-
-        if x_mm<0:
-            return json.dumps({"status":"error","message":f"x coordinate out of bounds {x_mm = }"})
-        if y_mm<0:
-            return json.dumps({"status":"error","message":f"y coordinate out of bounds {y_mm = }"})
-
-        prev_state=core.state
-        core.state=CoreState.Moving
-
-        core.mc.send_cmd(Command.move_to_mm("x",x_mm))
-        core.mc.send_cmd(Command.move_to_mm("y",y_mm))
-
-        core.state=prev_state
+        res_str=MoveTo(x_mm,y_mm).run(core)
+        res=json.loads(res_str)
+        if res["status"]!="success":
+            return res_str
 
         return json.dumps({"status":"success","message":"moved to well "+self.well_name})
 
 class AutofocusMeasureDisplacement(CoreCommand):
     """
         measure current displacement from reference position
+
+        return value fields:
+            - displacement_um:float
 
         returns json-like string
     """
@@ -721,7 +784,7 @@ class Core:
         return focus_camera
 
     @property
-    def calibrated_stage_position(self)->tp.Tuple[float,float]:
+    def calibrated_stage_position(self)->tp.Tuple[float,float,float]:
         """
         return calibrated XY stage offset from GlobalConfigHandler in order (x_mm,y_mm)
         """
@@ -730,8 +793,10 @@ class Core:
         assert type(off_x_mm) is float, f"off_x_mm is {off_x_mm} of type {type(off_x_mm)}"
         off_y_mm=GlobalConfigHandler.get_dict()["calibration_offset_y_mm"].value
         assert type(off_y_mm) is float, f"off_y_mm is {off_y_mm} of type {type(off_y_mm)}"
+        # TODO this is currently unused
+        off_z_mm=0
 
-        return (off_x_mm,off_y_mm)
+        return (off_x_mm,off_y_mm,off_z_mm)
 
     # real/should position = measured/is position + calibrated offset
 
@@ -745,6 +810,11 @@ class Core:
         convert measured y position to real position
         """
         return y_mm+self.calibrated_stage_position[1]
+    def pos_z_measured_to_real(self,z_mm:float)->float:
+        """
+        convert measured z position to real position
+        """
+        return z_mm+self.calibrated_stage_position[2]
     def pos_x_real_to_measured(self,x_mm:float)->float:
         """
         convert real x position to measured position
@@ -755,6 +825,11 @@ class Core:
         convert real y position to measured position
         """
         return y_mm-self.calibrated_stage_position[1]
+    def pos_z_real_to_measured(self,z_mm:float)->float:
+        """
+        convert real z position to measured position
+        """
+        return z_mm-self.calibrated_stage_position[2]
 
     def __init__(self):
         self.lock=CoreLock()
@@ -991,6 +1066,8 @@ class Core:
         self.laser_af_image:tp.Optional["ImageStoreEntry"]=None
 
         self.state=CoreState.Idle
+
+        self.acquisition_thread=None
 
     def calibrate_stage_xy_here(self)->str:
         """
@@ -1362,6 +1439,12 @@ class Core:
         if json_data is None:
             return json.dumps({"status": "error", "message": "no json data"})
         
+        if self.acquisition_thread is not None:
+            if self.acquisition_thread.is_alive():
+                return json.dumps({"status": "error", "message": "acquisition already running"})
+            else:
+                self.acquisition_thread=None
+        
         # get machine config
         if "machine_config" not in json_data:
             return json.dumps({"status": "error", "message": "no machine_config in json data"})
@@ -1379,13 +1462,297 @@ class Core:
         # TODO generate some unique acqisition id to identify this acquisition by
         # must be robust against server restarts, and async requests
         # must also cache previous run results, to allow fetching information from past acquisitions
-        acquisition_id="a65914"
+        RANDOM_ACQUISITION_ID="a65914"
+        # actual acquisition id has some unique identifier, plus a timestamp for legacy reasons
+        # TODO remove the timestamp from the directory name in the future, because this is a horribly hacky way
+        # to handle duplicate directory names, which should be avoided anyway
+        acquisition_id=f"{RANDOM_ACQUISITION_ID}_{dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')}"
+
+        print(f"acquiring '{acquisition_id}':")
+
+        well_sites=config.grid.mask
+        # the grid is centered around the center of the well
+        site_topleft_x_mm=plate.Well_size_x_mm / 2 - (config.grid.num_x * config.grid.delta_x_mm) / 2
+        "offset of top left site from top left corner of the well, in x, in mm"
+        site_topleft_y_mm=plate.Well_size_y_mm / 2 - (config.grid.num_y * config.grid.delta_y_mm) / 2
+        "offset of top left site from top left corner of the well, in y, in mm"
+
+        num_wells=len(config.plate_wells)
+        num_sites=len(well_sites)
+        num_channels=len(config.channels)
+        num_images_total=num_wells*num_sites*num_channels
+        print(f"acquiring {num_wells} wells, {num_sites} sites, {num_channels} channels, i.e. {num_images_total} images")
+
+        if num_images_total==0:
+            return json.dumps({"status":"error","message":"no images to acquire"})
+
+        # calculate meta information about acquisition
+        g_config=GlobalConfigHandler.get_dict()
+        cam_img_width=g_config['main_camera_image_width_px']
+        assert cam_img_width is not None
+        target_width:int=cam_img_width.intvalue
+        cam_img_height=g_config['main_camera_image_height_px']
+        assert cam_img_height is not None
+        target_height:int=cam_img_height.intvalue
+        # get byte size per pixel from config main camera pixel format
+        main_cam_pix_format=g_config['main_camera_pixel_format']
+        assert main_cam_pix_format is not None
+        match main_cam_pix_format.value:
+            case "mono8":
+                bytes_per_pixel=1
+            case "mono10":
+                bytes_per_pixel=2
+            case "mono12":
+                bytes_per_pixel=2
+            case _unexpected:
+                raise ValueError(f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}")
+            
+        image_size_bytes=target_width*target_height*bytes_per_pixel
+        max_storage_size_images_GB=num_images_total*image_size_bytes
+
+        # 1) sort wells
+        # 2) sort channels (by z order)
+
+        DISPLACEMENT_THRESHOLD_UM=0.5
+        "z movement below this threshold is not performed"
+
+        base_storage_path_item=g_config["base_image_output_dir"]
+        assert base_storage_path_item is not None
+        assert type(base_storage_path_item.value) is str
+        base_storage_path=Path(base_storage_path_item.value)
+        assert base_storage_path.exists(), f"{base_storage_path = } does not exist"
+
+        project_name_is_acceptable=len(config.project_name) and name_validity_regex.match(config.project_name)
+        if not project_name_is_acceptable:
+            return json.dumps({
+                "status":"error",
+                "message":"project name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes"
+            })
+        plate_name_is_acceptable=len(config.plate_name)>0 and name_validity_regex.match(config.plate_name)
+        if not plate_name_is_acceptable:
+            return json.dumps({
+                "status":"error",
+                "message":"plate name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes"
+            })
+
+        project_output_path=base_storage_path/config.project_name/config.plate_name/acquisition_id
+        project_output_path.mkdir(parents=True)
+
+        channels:tp.List[AcquisitionChannelConfig]=[]
+        for channel in config.channels:
+            if channel.enabled:
+                channels.append(channel)
+
+        def run_acquisition(q_in:q.Queue,q_out:q.Queue):
+            try:
+                # counters on acquisition progress
+                start_time=time.time()
+                start_time_iso_str=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+                last_image_information=None
+
+                num_images_acquired=0
+                storage_usage_bytes=0
+
+                # get current z coordinate as z reference
+                reference_z_mm=self.mc.get_last_position().z_pos_mm
+
+                # run acquisition:
+
+                # 3) for well in wells:
+                for well in config.plate_wells:
+                # 4)for site in well:
+                    for site in well_sites:
+                # 5)    go to site
+                        site_x_mm=plate.get_well_offset_x(well.well_name)+site_topleft_x_mm+site.col*config.grid.delta_x_mm
+                        site_y_mm=plate.get_well_offset_y(well.well_name)+site_topleft_y_mm+site.row*config.grid.delta_y_mm
+
+                        res_str=MoveTo(site_x_mm,site_y_mm).run(self)
+                        res=json.loads(res_str)
+                        if res["status"]!="success":
+                            q_out.put({"status":"error","message":f"failed to move to site {site} in well {well} because {res['message']}"})
+                            return
+
+                # 6)    run autofocus
+                        if config.autofocus_enabled:
+                            for num_autofocus_attempts in range(3):
+                                current_displacement_res=AutofocusMeasureDisplacement().run(self)
+                                current_displacement=json.loads(current_displacement_res)
+                                if current_displacement["status"]!="success":
+                                    q_out.put({"status":"error","message":f"failed to measure autofocus displacement at site {site} in well {well} because {current_displacement['message']}"})
+                                    return
+                                
+                                current_displacement_um=current_displacement["displacement_um"]
+                                if current_displacement_um<DISPLACEMENT_THRESHOLD_UM:
+                                    break
+                                
+                                res_str=AutofocusApproachTargetDisplacement(0).run(self)
+                                res=json.loads(res_str)
+                                if res["status"]!="success":
+                                    q_out.put({"status":"error","message":f"failed to autofocus at site {site} in well {well} because {res['message']}"})
+                                    return
+                            
+                            reference_z_mm=self.mc.get_last_position().z_pos_mm
+                        
+                # 7)    for channel in channels:
+                        for channel in channels:
+                # 8)        move to channel offset
+                            current_z_mm=self.mc.get_last_position().z_pos_mm
+                            channel_z_mm=channel.z_offset_um*1e-3+reference_z_mm
+                            distance_z_to_move_mm=channel_z_mm-current_z_mm
+                            if np.abs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_UM:
+                                res_str=MoveTo(None,None,channel_z_mm).run(self)
+
+                # 9)        snap image
+                            res_str=_ChannelAcquisitionControl("snap",channel.to_dict()).run(self)
+                            res=json.loads(res_str)
+                            if res["status"]!="success":
+                                q_out.put({"status":"error","message":f"failed to snap image at site {site} in well {well} because {res['message']}"})
+                                return                           
+
+                            img_handle=res["img_handle"]
+                            if not img_handle in self.images:
+                                q_out.put({"status":"error","message":f"image handle {img_handle} not found in image buffer"})
+                                return
+                            
+                            img=self.images[img_handle].img
+                            
+                # 10)       store image
+                            image_storage_path=f"{str(project_output_path)}/{well.well_name}_1_{site.col+1}_{site.row+1}_{site.plane+1}_{channel.handle}.tiff"
+                            # add metadata to the file, based on tags from https://exiftool.org/TagNames/EXIF.html
+                            PIXEL_SIZE_UM=900/2500 # 2500px wide fov covers 0.9mm
+
+                            if channel.handle[:3]=="BF ":
+                                light_source_type=4 # Flash (seems like the best fit)
+                            else:
+                                light_source_type=2 # Fluorescent
+
+
+                            # store img as .tif file
+                            tifffile.imwrite(
+                                str(image_storage_path),
+                                img,
+
+                                compression='LZW', # LZW or zlib (are lossless formats)
+                                compressionargs={},# for zlib: {'level': 8},
+                                maxworkers=3,
+
+                                # this metadata is just embedded as a comment in the file
+                                metadata={
+                                    # non-standard tag, because the standard bitsperpixel has a real meaning in the image image data, but
+                                    # values that are not multiple of 8 cannot be used with compression
+                                    "BitsPerPixel":self.images[img_handle].bit_depth,
+                                    "BitPaddingInfo":"lower bits are padding with 0s",
+
+                                    # non-standard tag
+                                    "LightSourceName":channel.name,
+
+                                    "ExposureTimeMS":f"{channel.exposure_time_ms:.2f}",
+                                    "AnalogGainDB":f"{channel.analog_gain:.2f}",
+                                },
+
+                                photometric="minisblack",
+                                resolutionunit=3, # 3 = cm
+                                resolution=(1/(PIXEL_SIZE_UM*1e-6),1/(PIXEL_SIZE_UM*1e-6)),
+                                extratags=[
+                                    # tuples as accepted at https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L856
+                                    # tags may be specified as string interpretable by https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L5000
+                                    ("Make", 's', 0, self.main_cam.vendor_name, True),
+                                    ("Model", 's', 0, self.main_cam.model_name, True),
+
+                                    # apparently these are not widely supported
+                                    ("ExposureTime", 'q', 1, int(channel.exposure_time_ms*1e3), True),
+                                    ("LightSource", 'h', 1, light_source_type, True),
+                                ]
+                            )
+                            # also update the image buffer
+                            img_handle=self._store_new_image(img,channel)
+
+                            num_images_acquired+=1
+                            # get storage size from filesystem because tiff compression may reduce size below size in memory
+                            try:
+                                file_size_on_disk=Path(image_storage_path).stat().st_size
+                                storage_usage_bytes+=file_size_on_disk
+                            except:
+                                # ignore any errors here, because this is not an essential feature
+                                pass
+
+                            # status items
+                            last_image_information={
+                                "well":well.well_name,
+                                "site":{
+                                    "x":site.col,
+                                    "y":site.row,
+                                    "z":0,
+                                },
+                                "timepoint":1,
+                                "channel_name":channel.name,
+                                "full_path":image_storage_path,
+                                "handle":img_handle,
+                            }
+                            time_since_start_s=time.time()-start_time
+                            if num_images_acquired>0:
+                                estimated_total_time_s=time_since_start_s*(num_images_total-num_images_acquired)/num_images_acquired
+                            else:
+                                estimated_total_time_s=None
+
+                            status={
+                                "status":"success",
+
+                                "acquisition_id":acquisition_id,
+                                "acquisition_status":"running",
+                                "acquisition_progress":{
+                                    # measureable progress
+                                    "current_num_images":num_images_acquired,
+                                    "time_since_start_s":time_since_start_s,
+                                    "start_time_iso":start_time_iso_str,
+                                    "current_storage_usage_GB":storage_usage_bytes/(1024**3),
+
+                                    # estimated completion time information
+                                    # estimation may be more complex than linear interpolation, hence done on server side
+                                    "estimated_total_time_s":estimated_total_time_s,
+
+                                    # last image that was acquired
+                                    "last_image":last_image_information,
+                                },
+
+                                # some meta information about the acquisition, derived from configuration file
+                                # i.e. this is not updated during acquisition
+                                "acquisition_meta_information":{
+                                    "total_num_images":num_images_total,
+                                    "max_storage_size_images_GB":max_storage_size_images_GB,
+                                },
+
+                                "acquisition_config":config.to_dict(),
+
+                                "message":f"Acquisition is {(100*num_images_acquired/num_images_total):.2f}% complete"
+                            }
+
+                            # make sure the queue does not exceed empty queue before we put the update
+                            MAX_QUEUE_SIZE_SOFT=8
+                            while q_out.qsize()>MAX_QUEUE_SIZE_SOFT:
+                                try:
+                                    q_out.get_nowait()
+                                except q.Empty:
+                                    break
+                            q_out.put(status)
+
+            except Exception as e:
+                import traceback
+                full_error=traceback.format_exc()
+                q_out.put({"status":"error","message":f"acquisition thread failed because {str(e)}, more specifically: {full_error}"})
+                return
+
+        queue_in=q.Queue()
+        queue_out=q.Queue()
+        self.acquisition_thread=th.Thread(target=run_acquisition,args=(queue_in,queue_out))
+        self.acquisition_thread.start()
 
         somemap[acquisition_id]={
             "acquisition_id":acquisition_id,
-            "acquisition_config":config,
-            "num_images_acquired":0,
-            "num_images_total":1000,
+            "queue_in":queue_in,
+            "queue_out":queue_out,
+            "last_status":None,
+            "thread_is_running":True,
         }
 
         return json.dumps({"status": "success","acquisition_id":acquisition_id})
@@ -1403,66 +1770,36 @@ class Core:
 
         if acquisition_id is None:
             return json.dumps({"status":"error","message":"no acquisition_id provided"})
-        
-        # TODO get status of acquisition with id "acquisition_id"
-        # just mock something for now
 
         if acquisition_id not in somemap:
             return json.dumps({"status":"error","message":"acquisition_id is invalid"})
 
         acq_res=somemap[acquisition_id]
-        acq_res["num_images_acquired"]+=1
-        if acq_res["num_images_acquired"]>=acq_res["num_images_total"]:
-            acq_res["num_images_acquired"]=acq_res["num_images_total"]
 
-        ret={
-            # request success
-            "status":"success",
+        # actual code to check if acquisition is running
+        msg=None
+        while True:
+            try:
+                msg=acq_res["queue_out"].get_nowait()
+            except q.Empty:
+                break
 
-            "acquisition_id":acquisition_id,
-            "acquisition_status":"running",
-            "acquisition_progress":{
-                # measureable progress
-                "current_num_images":acq_res["num_images_acquired"],
-                "time_since_start_s":50,
-                "start_time_iso":"2021-01-01T12:00:00",
-                "current_storage_usage_GB":4.3,
+        if msg is not None:
+            acq_res["last_status"]=msg
+        else:
+            msg=acq_res["last_status"]
 
-                # estimated completion time information
-                # estimation may be more complex than linear interpolation, hence done on server side
-                "estimated_total_time_s":100,
+        if msg is None:
+            return json.dumps({"status":"error","message":"no status available"})
 
-                # last image that was acquired
-                "last_image":{
-                    "well":"D05",
-                    "site":{
-                        "x":2,
-                        "y":3,
-                        "z":1,
-                    },
-                    "timepoint":1,
-                    "channel":"fluo405",
-                    "full_path":"/server/data/acquisition/a65914/D05_2_3_1_1_fluo405.tiff"
-                },
-            },
+        if msg["status"]!="success":
+            if self.acquisition_thread is not None:
+                print("waiting for acquisition thread to terminate")
+                self.acquisition_thread.join()
+                print("acquisition thread terminated")
+                self.acquisition_thread=None
 
-            # some meta information about the acquisition, derived from configuration file
-            "acquisition_meta_information":{
-                "total_num_images":acq_res["num_images_total"],
-                "max_storage_size_images_GB":10,
-            },
-
-            "acquisition_config":{
-                # full acquisition config copy here
-            },
-
-            "message":f"Acquisition is running, {100*acq_res['num_images_acquired']/acq_res['num_images_total']}% complete"
-        }
-        if acq_res["num_images_acquired"]==acq_res["num_images_total"]:
-            ret["acquisition_status"]="finished"
-            ret["message"]="Acquisition is finished"
-
-        return json.dumps(ret)
+        return json.dumps(msg)
     
     def close(self):
         for mc in self.microcontrollers:
