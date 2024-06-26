@@ -513,6 +513,21 @@
                                         --width:100%;
                                         display:grid;
                                         grid-template-columns: repeat(7,auto);
+                                        grid-template-rows: repeat(100,min-content);
+                                    }
+                                    #all-channel-container > *{
+                                        background-origin: padding-box;
+                                    }
+                                    /* all 7 elements in every second row, starting at the first row*/
+                                    #all-channel-container > :not(button):nth-child(14n+18),
+                                    #all-channel-container > :not(button):nth-child(14n+19),
+                                    #all-channel-container > :not(button):nth-child(14n+20),
+                                    #all-channel-container > :not(button):nth-child(14n+21),
+                                    #all-channel-container > :not(button):nth-child(14n+22),
+                                    #all-channel-container > :not(button):nth-child(14n+23),
+                                    #all-channel-container > :not(button):nth-child(14n+24)
+                                    {
+                                        background-color:rgb(230, 230, 230);
                                     }
                                 </style>
                                 <div id="all-channel-container" class="section">
