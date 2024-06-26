@@ -43,6 +43,9 @@ function itemIsAction(item){
  */
 function executeActionItem(item){
     if(!itemIsAction(item)){throw new Error("item is not an action")}
+
+    const data={}
+
     // send xhr with item.value as url
     new XHR(true)
         .onload((xhr)=>{
@@ -55,7 +58,7 @@ function executeActionItem(item){
             console.error("action failed",item)
         })
         // @ts-ignore
-        .send(item.value,null,"POST")
+        .send(item.value,data,"POST")
 }
 
 let machine_value_filter=_p.manage({value:""})
