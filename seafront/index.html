@@ -511,53 +511,53 @@
                                 <style>
                                     #all-channel-container{
                                         --width:100%;
-                                    }
-                                    .one-channel-container{
                                         display:grid;
-                                        grid-template-columns: repeat(6,auto);
+                                        grid-template-columns: repeat(7,auto);
                                     }
                                 </style>
                                 <div id="all-channel-container" class="section">
-                                    <p class="section-header col-span-6">Imaging Channel Configuration <a class="data" href="{{docLinks.imagingChannelConfig}}" target="_blank">Help</a></p>
+                                    <p class="section-header col-span-7">Imaging Channel Configuration <a class="data" href="{{docLinks.imagingChannelConfig}}" target="_blank">Help</a></p>
 
                                     <script src="src/channel_snapshot.js"></script>
 
+                                    <label><!-- channel enabled checkbox --></label>
+                                    <label><!-- channel name --></label>
+                                    <label><!-- snap button column --></label>
+                                    <label>Exposure time (ms)</label>
+                                    <label>Analog Gain</label>
+                                    <label>Z Offset (um)</label>
+                                    <label class="data" p:tooltip="hello there">Illumination (%)</label>
+
                                     <template class="data" p:for="channel of microscope_config.channels">
-                                        <div class="one-channel-container">
-                                            <p class="col-span-2">
-                                                <input id="acquisition-channel-enabled-checkbox-{{channel.handle}}" type="checkbox" p:bind="channel.enabled">
-                                                <label for="acquisition-channel-enabled-checkbox-{{channel.handle}}">{{channel.name}}</label>
-                                            </p>
-                                            <button class="col-span-2" p:on-click="snapChannel(channel)">Snap</button>
-                                            <label class="data" p:tooltip="hello there">Illumination (%)</label>
-                                            <input type="number"
-                                                min="{{limits.illumination_percent.min}}"
-                                                max="{{limits.illumination_percent.max}}"
-                                                value="{{limits.illumination_percent.default}}" step="0.1"
-                                                p:on-blur="ensureInputLimits(element)"
-                                                class="data" p:bind="channel.illum_perc">
-                                            <label>Exposure time (ms)</label>
-                                            <input type="number"
-                                                min="{{limits.exposure_time_ms.min}}"
-                                                max="{{limits.exposure_time_ms.max}}"
-                                                value="{{limits.exposure_time_ms.default}}" step="0.1"
-                                                p:on-blur="ensureInputLimits(element)"
-                                                class="data" p:bind="channel.exposure_time_ms">
-                                            <label>Analog Gain</label>
-                                            <input type="number"
-                                                min="{{limits.analog_gain.min}}"
-                                                max="{{limits.analog_gain.max}}"
-                                                value="{{limits.analog_gain.default}}" step="0.1"
-                                                p:on-blur="ensureInputLimits(element)"
-                                                class="data" p:bind="channel.analog_gain">
-                                            <label>Z Offset (um)</label>
-                                            <input type="number"
-                                                min="{{limits.z_offset_um.min}}"
-                                                max="{{limits.z_offset_um.max}}"
-                                                value="{{limits.z_offset_um.default}}" step="0.1"
-                                                p:on-blur="ensureInputLimits(element)"
-                                                class="data" p:bind="channel.z_offset_um">
-                                        </div>
+                                        <input id="acquisition-channel-enabled-checkbox-{{channel.handle}}" type="checkbox" p:bind="channel.enabled">
+                                        <label for="acquisition-channel-enabled-checkbox-{{channel.handle}}">{{channel.name}}</label>
+
+                                        <button p:on-click="snapChannel(channel)">Snap</button>
+
+                                        <input type="number"
+                                            min="{{limits.exposure_time_ms.min}}"
+                                            max="{{limits.exposure_time_ms.max}}"
+                                            value="{{limits.exposure_time_ms.default}}" step="0.1"
+                                            p:on-blur="ensureInputLimits(element)"
+                                            class="data" p:bind="channel.exposure_time_ms">
+                                        <input type="number"
+                                            min="{{limits.analog_gain.min}}"
+                                            max="{{limits.analog_gain.max}}"
+                                            value="{{limits.analog_gain.default}}" step="0.1"
+                                            p:on-blur="ensureInputLimits(element)"
+                                            class="data" p:bind="channel.analog_gain">
+                                        <input type="number"
+                                            min="{{limits.z_offset_um.min}}"
+                                            max="{{limits.z_offset_um.max}}"
+                                            value="{{limits.z_offset_um.default}}" step="0.1"
+                                            p:on-blur="ensureInputLimits(element)"
+                                            class="data" p:bind="channel.z_offset_um">
+                                        <input type="number"
+                                            min="{{limits.illumination_percent.min}}"
+                                            max="{{limits.illumination_percent.max}}"
+                                            value="{{limits.illumination_percent.default}}" step="0.1"
+                                            p:on-blur="ensureInputLimits(element)"
+                                            class="data" p:bind="channel.illum_perc">
                                     </template>
                                 </div>
 
