@@ -15,7 +15,7 @@ function snapReflectionAutofocus(){
         "analog_gain":analog_gain,
     }
 
-    new XHR(false)
+    new XHR(true)
         .onload((xhr)=>{
             progress_indicator.stop()
 
