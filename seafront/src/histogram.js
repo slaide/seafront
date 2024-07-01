@@ -23,7 +23,7 @@ function rand(min_v,max_v){
 function nrand(n,min_v,max_v){
     let out=[]
     for(let i=0;i<n;i++){
-        out.push(rand(min_v,max_v))
+        out.push(Math.exp(rand(min_v,max_v)))
     }
     return out
 }
@@ -42,49 +42,50 @@ const data = [{
     y: nrand(6,10,200),
     type: 'line',
     name: "Fluo 688 nm Ex"
-}];
+}]
 
 const layout={
-    title: 'Create a Static Chart',
+    autosize:true,
+
     showlegend: true,
     legend: {
-        orientation: 'h',
-        y:-0.4,
+        //orientation: 'h',
     },
-    margin: { t: 0,l:20,b:20,r:0},
-    updatemenus: [{
-        type: 'buttons',
-        direction: 'left',
-        x: 0.1,
-        xanchor: 'center',
-        y: -0.15,
-        yanchor: 'top',
-        buttons: [
-            {
-                method: 'relayout',
-                args: ['yaxis.type', 'linear'],
-                label: 'Y\' = Y'
-            }, {
-                method: 'relayout',
-                args: ['yaxis.type', 'log'],
-                label: 'Y\' = log(Y)'
-            }
-        ]
-    }]
+
+    yaxis: {
+        title:"relative frequency",
+        type: 'log',
+        autorange: true,
+        // disable ticks
+        showticklabels: false,
+    },
+    xaxis:{
+        title: "relative intensity",
+        tickvals: [0,50,100,150,200,255],
+        ticktext: ["0","50","100","150","200","255"]
+    },
+
+    margin: {
+        t:20, // top margin for pan/zoom buttons
+        l:0, // reduced y axis margin
+        b:40, // bottom margin for x-axis title
+    },
 }
 
 const config={
     responsive: true,
-    // staticPlot: true,
-    // displayModeBar: false,
-};
-let observer = new MutationObserver(function(mutations) {
-    window.dispatchEvent(new Event('resize'));
-});
+    modeBarButtonsToRemove:['sendDataToCloud'],
+    showLink:false,
+    displaylogo:false,
+}
 
 let child = document.getElementById('histogram-panel');
 if(!child){throw new Error("child is null")}
-observer.observe(child, {attributes: true})
+
+new ResizeObserver(function(){
+    // @ts-ignore
+    Plotly.relayout('histogram-panel', {autosize: true});
+}).observe(child)
 
 /// @ts-ignore
 Plotly.newPlot('histogram-panel', data, layout, config);
