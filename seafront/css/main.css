@@ -1,9 +1,14 @@
-
+.command-is-running{
+    cursor:wait;
+}
 #main{
     height:100vh;
     overflow-y: hidden;
-    display:flex;
-    --left-fraction: 0.66;
+    display:grid;
+    --leftCol:2fr;
+    --rightCol:1fr;
+    grid-template-columns: var(--leftCol) 20px var(--rightCol);
+    grid-template-rows: calc(100% - 2em) 2em;
 }
 #main > *.separator-vert{
     margin-inline:0.5em;
@@ -12,10 +17,10 @@
     padding:0.3em;
 }
 #main-view{
-    flex:var(--left-fraction);
+    overflow-y: hidden;
+    max-height:100%;
 }
 #main-control{
-    flex:calc( 1 - var(--left-fraction));
     height:100%;
     overflow: hidden;
 }
@@ -25,4 +30,8 @@
     overflow-y: auto;
     display:grid;
     row-gap:0.5em;
+}
+#main-commandline{
+    grid-column: span 3;
+    border-top:1px solid black;
 }

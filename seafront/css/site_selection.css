@@ -29,3 +29,6 @@
 .blue{
     background:lightblue;
 }
+.site-selection-item{
+    cursor:pointer;
+}

@@ -7,9 +7,13 @@ function snapChannel(channel){
         machine_config:getConfigState(),
         channel:channel
     }
+
+    progress_indicator.run("Snapping  "+channel.name)
     
     new XHR()
         .onload((xhr)=>{
+            progress_indicator.stop()
+            
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
                 console.error("error snapping channel",response)
@@ -17,6 +21,8 @@ function snapChannel(channel){
             }
         })
         .onerror(()=>{
+            progress_indicator.stop()
+            
             console.error("error snapping channel")
         })
         .send("/api/action/snap_channel",data,"POST")

@@ -35,5 +35,8 @@ const dragmouse=function(event){
     }
     if(!dragInfo.drag_element){throw new Error("drag element is null")}
     if(!(dragInfo.drag_element.parentNode instanceof HTMLElement)){throw new Error("drag element parent is null")}
-    dragInfo.drag_element.parentNode.style.setProperty("--left-fraction",(newx/window.innerWidth)+"")
+
+    const left_frac=newx/window.innerWidth
+    dragInfo.drag_element.parentNode.style.setProperty("--leftCol",left_frac+"fr")
+    dragInfo.drag_element.parentNode.style.setProperty("--rightCol",(1-left_frac)+"fr")
 }

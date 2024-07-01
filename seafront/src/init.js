@@ -408,3 +408,35 @@ function getConfigState(){
     //@ts-ignore
     return _p.getUnmanaged(machine_defaults)
 }
+
+class CommandProgressIndicator{
+    constructor(){
+        this.current_command=null
+    }
+    get statusText(){
+        if(this.current_command==null){
+            return "Idle"
+        }
+        
+        return this.current_command
+    }
+    /**
+     * 
+     * @param {string} command 
+     */
+    run(command){
+        if(this.current_command!=null){
+            throw new Error("command already running")
+        }
+        this.current_command=command
+        // change cursor to indicate command is running
+        document.body.classList.add("command-is-running")
+    }
+    stop(){
+        this.current_command=null
+        // change cursor back to normal
+        document.body.classList.remove("command-is-running")
+    }
+}
+
+const progress_indicator=new CommandProgressIndicator()

@@ -46,15 +46,21 @@ function executeActionItem(item){
 
     const data={}
 
+    progress_indicator.run("machine action "+item.name)
+
     // send xhr with item.value as url
     new XHR(true)
         .onload((xhr)=>{
+            progress_indicator.stop()
+            
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
                 console.error("action failed",item,response)
             }
         })
         .onerror(()=>{
+            progress_indicator.stop()
+            
             console.error("action failed",item)
         })
         // @ts-ignore

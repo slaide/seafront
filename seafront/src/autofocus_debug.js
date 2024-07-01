@@ -8,6 +8,8 @@ function snapReflectionAutofocus(){
     if(!(analog_gain_input_element instanceof HTMLInputElement))throw new Error("element with id 'laser-af-debug-analog-gain' is not an input element")
     const analog_gain=parseFloat(analog_gain_input_element.value)
 
+    progress_indicator.run("Snapping reflection autofocus")
+
     let data={
         "exposure_time_ms":exposure_time_ms,
         "analog_gain":analog_gain,
@@ -15,6 +17,8 @@ function snapReflectionAutofocus(){
 
     new XHR(false)
         .onload((xhr)=>{
+            progress_indicator.stop()
+
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
                 console.error("error snapping reflection autofocus",response)
@@ -31,6 +35,8 @@ function snapReflectionAutofocus(){
             img.src="/img/get_by_handle?img_handle="+handle
         })
         .onerror(()=>{
+            progress_indicator.stop()
+            
             console.error("error snapping reflection autofocus")
         })
         .send("/api/action/snap_reflection_autofocus",data,"POST")

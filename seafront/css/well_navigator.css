@@ -24,3 +24,6 @@
 #well-navigator-container > *.selected{
     background-color: lightblue;
 }
+.well-navigator-well-item{
+    cursor:pointer;
+}

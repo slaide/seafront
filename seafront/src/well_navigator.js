@@ -193,9 +193,13 @@ function wellPointerUpdate(event,item){
 function dblclickWell(item){
     if(item.col==0 || item.row==0)return;
 
+    progress_indicator.run("Moving to well "+item.name)
+
     let xhr=null
     xhr=new XHR(true)
         .onload(function(xhr){
+            progress_indicator.stop()
+            
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
                 console.error("failed to move to well",item)
@@ -203,6 +207,8 @@ function dblclickWell(item){
             }
         })
         .onerror(function(){
+            progress_indicator.stop()
+            
             console.error("failed to move to well",item)
         })
         .send("/api/action/move_to_well",{well_name:item.name},"POST")

@@ -5,7 +5,7 @@
         <script>
             const MAGNIFIER_GLASS="\u{1F50D}"
         </script>
-        <title class="data">{{MAGNIFIER_GLASS}} {{microscope_state.state}} | {{microscope_state.machine_name}}</title>
+        <title class="data">Seafront {{MAGNIFIER_GLASS}}</title>
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
@@ -351,7 +351,7 @@
                                     <div id="site-selection" class="data" p:init="updateGridMask()">
                                         <div id="site-selection-centerer">
                                             <template p:for="cell of microscope_config.grid.mask">
-                                                <div class="{{cell.selected?'blue':''}}"
+                                                <div class="{{cell.selected?'blue':''}} site-selection-item"
                                                     grid-column="{{cell.col+1}}"
                                                     grid-row="{{cell.row+1}}"
                                                     p:on-click="toggleGridItem(cell)"
@@ -408,7 +408,7 @@
                                         p:on-mouseleave="wellPointerCancel()"
                                     >
                                         <template class="data" p:for="well of microscope_config.plate_wells">
-                                            <div class="{{well.selected?'blue':''}} {{well.isHeader?'whiteTextOnBlackBackground':''}} vert-center-container"
+                                            <div class="{{well.selected?'blue':''}} {{well.isHeader?'whiteTextOnBlackBackground':''}} vert-center-container well-navigator-well-item"
                                                 p:on-dblclick="dblclickWell(well)"
                                                 p:on-mousedown="wellPointerDown(event,well)"
                                                 p:on-mouseenter="wellPointerUpdate(event,well)"
@@ -677,6 +677,10 @@
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <div id="main-commandline" class="data">
+                connected to: {{microscope_state.machine_name}} | frontend status: <b>{{progress_indicator.statusText}}</b> | server status: {{microscope_state.state}}
             </div>
         </div>
     </body>
