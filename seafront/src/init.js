@@ -62,7 +62,7 @@ let microscope_config=_p.manage({
     },
     
     // some [arbitrary] default
-    wellplate_type:"fa384",
+    wellplate_type:"revvity-phenoplate-384",
 
     /** @type{WellIndex[]} */
     plate_wells:[],
@@ -239,96 +239,49 @@ const limits={
     }
 }
 
+/**
+ * technical specification of a micro well plate type
+ */
 class WellplateType{
     /**
-     * 
-     * @param {string} handle 
-     * @param {string} name 
+     * data pulled straight from the database
+     * @param {object&{
+     *     Manufacturer: string,
+     *     Model_name: string,
+     *     Model_id: string,
+     *     Num_wells_y: number,
+     *     Num_wells_x: number,
+     *     Length_mm: number,
+     *     Width_mm: number,
+     *     Well_size_x_mm: number,
+     *     Well_size_y_mm: number,
+     *     Offset_A1_x_mm: number,
+     *     Offset_A1_y_mm: number,
+     *     Well_distance_x_mm: number,
+     *     Well_distance_y_mm: number,
+     *     Offset_bottom_mm: number
+     * }} spec json object with several properties
      */
-    constructor(handle,name){
-        this.handle=handle
-        this.name=name
+    constructor(spec){
+        this.Manufacturer = spec.Manufacturer
+        this.Model_name = spec.Model_name
+        this.Model_id = spec.Model_id
+        this.Num_wells_y = spec.Num_wells_y
+        this.Num_wells_x = spec.Num_wells_x
+        this.Length_mm = spec.Length_mm
+        this.Width_mm = spec.Width_mm
+        this.Well_size_x_mm = spec.Well_size_x_mm
+        this.Well_size_y_mm = spec.Well_size_y_mm
+        this.Offset_A1_x_mm = spec.Offset_A1_x_mm
+        this.Offset_A1_y_mm = spec.Offset_A1_y_mm
+        this.Well_distance_x_mm = spec.Well_distance_x_mm
+        this.Well_distance_y_mm = spec.Well_distance_y_mm
+        this.Offset_bottom_mm = spec.Offset_bottom_mm
     }
 
-    /*
-        on the server (in python), we have the following info about each plate type:
 
-        Manufacturer="perkin elmer",
-        Model_name="384 well plate",
-        Model_id_manufacturer="pe-384",
-        Model_id="",
-        Offset_A1_x_mm=12.1,
-        Offset_A1_y_mm=9.0,
-        Offset_bottom_mm=14.35-10.4,
-        Well_distance_x_mm=4.5,
-        Well_distance_y_mm=4.5,
-        Well_size_x_mm=3.65,
-        Well_size_y_mm=3.65,
-        Num_wells_x=24,
-        Num_wells_y=16,
-    */
-
-    get length_mm(){
-        return 127.76
-    }
-    get width_mm(){
-        return 85.48
-    }
-    get a1_y_offset_mm(){
-        return 9.0
-    }
-    get a1_x_offset_mm(){
-        return 12.1
-    }
-    get well_distance_mm(){
-        if(this.handle.endsWith("96")){
-            return 9.0
-        }else if(this.handle.endsWith("384")){
-            return 4.5
-        }else if(this.handle.endsWith("1536")){
-            return 2.25
-        }else{throw new Error("unknown plate type "+this.handle+" for well navigator")}
-    }
-    get well_width_mm(){
-        if(this.handle.endsWith("96")){
-            return 6.0
-        }else if(this.handle.endsWith("384")){
-            return 3.0
-        }else if(this.handle.endsWith("1536")){
-            return 1.5
-        }else{throw new Error("unknown plate type "+this.handle+" for well navigator")}
-    }
-    get well_length_mm(){
-        if(this.handle.endsWith("96")){
-            return 6.0
-        }else if(this.handle.endsWith("384")){
-            return 3.0
-        }else if(this.handle.endsWith("1536")){
-            return 1.5
-        }else{throw new Error("unknown plate type "+this.handle+" for well navigator")}
-    }
-
-    get num_cols(){
-        if(this.handle.endsWith("96")){
-            return 12
-        }else if(this.handle.endsWith("384")){
-            return 24
-        }else if(this.handle.endsWith("1536")){
-            return 48
-        }else{
-            throw new Error("unknown plate type "+this.handle+" for well navigator")
-        }
-    }
-    get num_rows(){
-        if(this.handle.endsWith("96")){
-            return 8
-        }else if(this.handle.endsWith("384")){
-            return 16
-        }else if(this.handle.endsWith("1536")){
-            return 32
-        }else{
-            throw new Error("unknown plate type "+this.handle+" for well navigator")
-        }
+    get num_wells(){
+        return this.Num_wells_x*this.Num_wells_y
     }
 
     static get all(){
@@ -340,22 +293,22 @@ class WellplateType{
 
         /** @type {{name:string,num_wells:number,entries:WellplateType[]}[]} */
         let ret=[]
-        for(let plate_type of plate_types){
-            let num_wells=plate_type.num_cols*plate_type.num_rows
+        for(let plate_type_spec of plate_types){
+            const new_plate_type=new WellplateType(plate_type_spec)
             
             /** @type {WellplateType[]?} */
             let entries=null
             for(let e of ret){
-                if(e.num_wells==num_wells){
+                if(e.num_wells==new_plate_type.num_wells){
                     entries=e.entries
                     break
                 }
             }
             if(entries==null){
                 entries=[]
-                ret.push({name:num_wells+" Well Plates",num_wells:num_wells,entries:entries})
+                ret.push({name:new_plate_type.Model_name,num_wells:new_plate_type.num_wells,entries:entries})
             }
-            entries.push(new WellplateType(plate_type.handle,plate_type.name))
+            entries.push(new_plate_type)
         }
         return ret
     }
@@ -368,7 +321,7 @@ class WellplateType{
     static fromHandle(handle){
         for(let entry of this.all){
             for(let type of entry.entries){
-                if(type.handle==handle){
+                if(type.Model_id==handle){
                     return type
                 }
             }

@@ -14,19 +14,36 @@ class WellIndex{
     get isHeader(){
         return this.row==0 || this.col==0
     }
-    get name(){
-        let row_name=String.fromCharCode(64+this.row)
-        let col_name=this.col
-        return row_name+col_name
+    get row_name(){
+        let row_name=String.fromCharCode("A".charCodeAt(0)+this.row-1)
+        if(this.row>=27){
+            row_name=String.fromCharCode("a".charCodeAt(0)+this.row-27)
+        }
+        return row_name
     }
+    get col_name(){
+        let col_name=""+this.col
+        return col_name
+    }
+    /**
+     * get name of the well, e.g. A01, B12
+     * @returns {string}
+     */
+    get name(){
+        return this.row_name+this.col_name
+    }
+    /**
+     * get the name of the well, only if it is a header (otherwise returns empty string)
+     * @returns {string}
+     */
     get label(){
         // if row is zero, then it is a column header
         if(this.row==0 && this.col>0){
-            return this.col
+            return this.col_name
         }
         // if column is zero, then the cell is a row header
         if(this.col==0 && this.row>0){
-            return String.fromCharCode(64+this.row)
+            return this.row_name
         }
         // if row and column are both zero, then it is the top left corner, which is empty
         if(this.row==0 && this.col==0){
@@ -46,8 +63,8 @@ function initwellnavigator(){
     let plate_type=WellplateType.fromHandle(microscope_config.wellplate_type)
     if(!plate_type){console.error("wellplate type not found");return}
     
-    let num_cols=plate_type.num_cols
-    let num_rows=plate_type.num_rows
+    let num_cols=plate_type.Num_wells_x
+    let num_rows=plate_type.Num_wells_y
 
     // add 1 for headers
     num_cols+=1
@@ -195,6 +212,11 @@ function dblclickWell(item){
 
     progress_indicator.run("Moving to well "+item.name)
 
+    const data={
+        plate_type: microscope_config.wellplate_type,
+        well_name: item.name,
+    }
+
     let xhr=null
     xhr=new XHR(true)
         .onload(function(xhr){
@@ -211,5 +233,5 @@ function dblclickWell(item){
             
             console.error("failed to move to well",item)
         })
-        .send("/api/action/move_to_well",{well_name:item.name},"POST")
+        .send("/api/action/move_to_well",data,"POST")
 }

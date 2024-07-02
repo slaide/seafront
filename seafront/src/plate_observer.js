@@ -24,16 +24,20 @@ function generateWellOverviewWells(){
     setTimeout(()=>{
         /** @type{PhysicalWellItemInformation[]} */
         let ret=[]
-        for(let c of range(plate.num_cols)){
-            for(let r of range(plate.num_rows)){
+        for(let c of range(plate.Num_wells_x)){
+            for(let r of range(plate.Num_wells_y)){
+                // add 1 to row and column to account for headers
+                const index=new WellIndex(r+1,c+1)
+
+                const well_text=index.name
                 ret.push({
                     r: r,
                     c: c,
-                    text: String.fromCharCode(65 + r) + String(c + 1),
-                    w: plate.well_width_mm,
-                    h: plate.well_length_mm,
-                    pxm: plate.a1_x_offset_mm + c * plate.well_distance_mm,
-                    pym: plate.a1_y_offset_mm + r * plate.well_distance_mm
+                    text: well_text,
+                    w: plate.Well_size_x_mm,
+                    h: plate.Well_size_y_mm,
+                    pxm: plate.Offset_A1_x_mm + c * plate.Well_distance_x_mm,
+                    pym: plate.Offset_A1_y_mm + r * plate.Well_distance_y_mm
                 })
             }
         }

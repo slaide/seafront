@@ -379,7 +379,7 @@
                                             <template class="data" p:for="plate_type of WellplateType.all">
                                                 <optgroup label="{{plate_type.name}}">
                                                     <template class="data" p:for="type of plate_type.entries">
-                                                        <option value="{{type.handle}}">{{type.name}}</option>
+                                                        <option value="{{type.Model_id}}">{{type.Model_name}}</option>
                                                     </template>
                                                 </optgroup>
                                             </template>
@@ -469,8 +469,8 @@
                                     >
                                         <!-- plate (outline) -->
                                         <div class='plateclass data'
-                                            width='{{WellplateType.fromHandle(microscope_config.wellplate_type).length_mm.toFixed(2)}}'
-                                            height='{{WellplateType.fromHandle(microscope_config.wellplate_type).width_mm.toFixed(2)}}'
+                                            width='{{WellplateType.fromHandle(microscope_config.wellplate_type).Length_mm.toFixed(2)}}'
+                                            height='{{WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm.toFixed(2)}}'
                                         ></div>
 
                                         <!-- wells -->

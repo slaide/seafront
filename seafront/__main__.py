@@ -97,10 +97,24 @@ def get_hardware_capabilities():
 
     wellplate_types=[
         {
-            "name":plate.Model_name,
-            "handle":plate.Model_id,
-            "num_rows":plate.Num_wells_y,
-            "num_cols":plate.Num_wells_x,
+            "Manufacturer":plate.Manufacturer,
+            "Model_name":plate.Model_name,
+            "Model_id":plate.Model_id,
+
+            "Num_wells_y":plate.Num_wells_y,
+            "Num_wells_x":plate.Num_wells_x,
+            
+            "Length_mm":plate.Length_mm,
+            "Width_mm":plate.Width_mm,
+            "Well_size_x_mm":plate.Well_size_x_mm,
+            "Well_size_y_mm":plate.Well_size_y_mm,
+
+            "Offset_A1_x_mm":plate.Offset_A1_x_mm,
+            "Offset_A1_y_mm":plate.Offset_A1_y_mm,
+            "Well_distance_x_mm":plate.Well_distance_x_mm,
+            "Well_distance_y_mm":plate.Well_distance_y_mm,
+
+            "Offset_bottom_mm":plate.Offset_bottom_mm,
         }
         for plate
         in sc.Plates
@@ -193,24 +207,6 @@ def get_machine_defaults():
     items_json=GlobalConfigHandler.get(as_dict=True)
 
     return json.dumps(items_json)
-
-plate=sc.Wellplate(
-    Manufacturer="perkin elmer",
-    Model_name="384 well plate",
-    Model_id_manufacturer="pe-384",
-    Model_id="",
-    Offset_A1_x_mm=12.1,
-    Offset_A1_y_mm=9.0,
-    Offset_bottom_mm=14.35-10.4,
-    Well_distance_x_mm=4.5,
-    Well_distance_y_mm=4.5,
-    Well_size_x_mm=3.65,
-    Well_size_y_mm=3.65,
-    Num_wells_x=24,
-    Num_wells_y=16,
-    Length_mm=127.76,
-    Width_mm=85.48,
-)
 
 # indicate if this is the first boot of the server (this only triggers when the flask is in debug mode)
 is_first_start=os.environ.get("WERKZEUG_RUN_MAIN") != "true"
@@ -544,14 +540,23 @@ class MoveTo(CoreCommand):
         return json.dumps({"status":"success","message":"moved to x={self.x_mm:.2f} y={self.y_mm:.2f}mm"})
 
 class MoveToWell(CoreCommand):
-    def __init__(self,well_name:str):
+    def __init__(self,plate_type:str,well_name:str):
         super()
+        self.plate_type=plate_type
         self.well_name=well_name
 
     def run(self,core:"Core")->str:
         # fov offset, because the microcontroller does not move the center of the FOV to the target position
         FOV_OFFSET_X_MM=0.3
         FOV_OFFSET_Y_MM=0.3
+
+        plates=[p for p in sc.Plates if p.Model_id==self.plate_type]
+        if len(plates)==0:
+            return json.dumps({"status":"error","message":"plate type not found"})
+
+        assert len(plates)==1, f"found multiple plates with id {self.plate_type}"
+
+        plate=plates[0]
 
         x_mm=plate.get_well_offset_x(self.well_name)+plate.Well_size_x_mm/2-FOV_OFFSET_X_MM
         y_mm=plate.get_well_offset_y(self.well_name)+plate.Well_size_y_mm/2-FOV_OFFSET_Y_MM
@@ -1053,6 +1058,9 @@ class Core:
             set current xy position as top left corner of B2, which is used as reference to calculate all other positions on a plate
         """
 
+        # TODO this needs a better solution where the plate type can be configured
+        plate=[p for p in sc.Plates if p.Model_id=="revvity-phenoplate-384"][0]
+
         current_pos=self.mc.get_last_position()
 
         # real/should position = measured/is position + calibrated offset
@@ -1449,6 +1457,13 @@ class Core:
 
         print(f"acquiring '{acquisition_id}':")
 
+        plates=[p for p in sc.Plates if p.Model_id==config.wellplate_type]
+        if len(plates)==0:
+            return json.dumps({"status":"error","message":"unknown wellplate type"})
+        assert len(plates)==1, f"multiple wellplate types with id {config.wellplate_type}"
+
+        plate=plates[0]
+
         well_sites=config.grid.mask
         # the grid is centered around the center of the well
         site_topleft_x_mm=plate.Well_size_x_mm / 2 - (config.grid.num_x * config.grid.delta_x_mm) / 2
@@ -1507,6 +1522,7 @@ class Core:
                 "status":"error",
                 "message":"project name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes"
             })
+        
         plate_name_is_acceptable=len(config.plate_name)>0 and name_validity_regex.match(config.plate_name)
         if not plate_name_is_acceptable:
             return json.dumps({
@@ -1543,11 +1559,9 @@ class Core:
 
                 # run acquisition:
 
-                # 3) for well in wells:
                 for well in config.plate_wells:
-                # 4)for site in well:
                     for site in well_sites:
-                # 5)    go to site
+                        # go to site
                         site_x_mm=plate.get_well_offset_x(well.well_name)+site_topleft_x_mm+site.col*config.grid.delta_x_mm
                         site_y_mm=plate.get_well_offset_y(well.well_name)+site_topleft_y_mm+site.row*config.grid.delta_y_mm
 
@@ -1557,7 +1571,7 @@ class Core:
                             q_out.put({"status":"error","message":f"failed to move to site {site} in well {well} because {res['message']}"})
                             return
 
-                # 6)    run autofocus
+                        # run autofocus
                         if config.autofocus_enabled:
                             for num_autofocus_attempts in range(3):
                                 current_displacement_res=AutofocusMeasureDisplacement().run(self)
@@ -1578,16 +1592,15 @@ class Core:
                             
                             reference_z_mm=self.mc.get_last_position().z_pos_mm
                         
-                # 7)    for channel in channels:
                         for channel in channels:
-                # 8)        move to channel offset
+                            # move to channel offset
                             current_z_mm=self.mc.get_last_position().z_pos_mm
                             channel_z_mm=channel.z_offset_um*1e-3+reference_z_mm
                             distance_z_to_move_mm=channel_z_mm-current_z_mm
                             if np.abs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_UM:
                                 res_str=MoveTo(None,None,channel_z_mm).run(self)
 
-                # 9)        snap image
+                            # snap image
                             res_str=_ChannelAcquisitionControl("snap",channel.to_dict()).run(self)
                             res=json.loads(res_str)
                             if res["status"]!="success":
@@ -1601,7 +1614,7 @@ class Core:
                             
                             img=self.images[img_handle].img
                             
-                # 10)       store image
+                            # store image
                             image_storage_path=f"{str(project_output_path)}/{well.well_name}_1_{site.col+1}_{site.row+1}_{site.plane+1}_{channel.handle}.tiff"
                             # add metadata to the file, based on tags from https://exiftool.org/TagNames/EXIF.html
                             PIXEL_SIZE_UM=900/2500 # 2500px wide fov covers 0.9mm
@@ -1612,12 +1625,12 @@ class Core:
                                 light_source_type=2 # Fluorescent
 
 
-                            # store img as .tif file
+                            # store img as .tiff file
                             tifffile.imwrite(
                                 str(image_storage_path),
                                 img,
 
-                                compression='LZW', # LZW or zlib (are lossless formats)
+                                compression='LZW', # LZW or zlib (lossless formats)
                                 compressionargs={},# for zlib: {'level': 8},
                                 maxworkers=3,
 
@@ -1628,14 +1641,13 @@ class Core:
                                     "BitsPerPixel":self.images[img_handle].bit_depth,
                                     "BitPaddingInfo":"lower bits are padding with 0s",
 
-                                    # non-standard tag
                                     "LightSourceName":channel.name,
 
                                     "ExposureTimeMS":f"{channel.exposure_time_ms:.2f}",
                                     "AnalogGainDB":f"{channel.analog_gain:.2f}",
                                 },
 
-                                photometric="minisblack",
+                                photometric="minisblack", # zero means black
                                 resolutionunit=3, # 3 = cm
                                 resolution=(1/(PIXEL_SIZE_UM*1e-6),1/(PIXEL_SIZE_UM*1e-6)),
                                 extratags=[
