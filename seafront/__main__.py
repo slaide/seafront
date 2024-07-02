@@ -15,7 +15,7 @@ from pathlib import Path
 import tifffile
 import re
 
-from seaconfig import *
+import  seaconfig as sc
 from .config.basics import ConfigItem, GlobalConfigHandler
 from .hardware.camera import Camera, gxiapi
 from .hardware.microcontroller import Microcontroller, Command, ILLUMINATION_CODE
@@ -95,48 +95,22 @@ def get_hardware_capabilities():
     these are the high-level configuration options that the user can select from
     """
 
+    wellplate_types=[
+        {
+            "name":plate.Model_name,
+            "handle":plate.Model_id,
+            "num_rows":plate.Num_wells_y,
+            "num_cols":plate.Num_wells_x,
+        }
+        for plate
+        in sc.Plates
+    ]
+
     ret={
-        # these are mocked values (should actually originate from seafront-config)
-        "wellplate_types":[
-            {
-                "name":"Perkin Elmer 96",
-                "handle":"pe96",
-                "num_rows":8,
-                "num_cols":12,
-            },
-            {
-                "name":"Falcon 96",
-                "handle":"fa96",
-                "num_rows":8,
-                "num_cols":12,
-            },
-            {
-                "name":"Perkin Elmer 384",
-                "handle":"pe384",
-                "num_rows":16,
-                "num_cols":24,
-            },
-            {
-                "name":"Falcon 384",
-                "handle":"fa384",
-                "num_rows":16,
-                "num_cols":24,
-            },
-            {
-                "name":"Thermo Fischer 384",
-                "handle":"tf384",
-                "num_rows":16,
-                "num_cols":24,
-            },
-            {
-                "name":"Thermo Fischer 1536",
-                "handle":"tf1536",
-                "num_rows":32,
-                "num_cols":48,
-            }
-        ],
+        "wellplate_types":wellplate_types,
+
         "main_camera_imaging_channels":[c.to_dict() for c in [
-            AcquisitionChannelConfig(
+            sc.AcquisitionChannelConfig(
                 name="Fluo 405 nm Ex",
                 handle="fluo405",
                 illum_perc=100,
@@ -144,7 +118,7 @@ def get_hardware_capabilities():
                 analog_gain=0,
                 z_offset_um=0
             ),
-            AcquisitionChannelConfig(
+            sc.AcquisitionChannelConfig(
                 name="Fluo 488 nm Ex",
                 handle="fluo488",
                 illum_perc=100,
@@ -152,7 +126,7 @@ def get_hardware_capabilities():
                 analog_gain=0,
                 z_offset_um=0
             ),
-            AcquisitionChannelConfig(
+            sc.AcquisitionChannelConfig(
                 name="Fluo 561 nm Ex",
                 handle="fluo561",
                 illum_perc=100,
@@ -160,7 +134,7 @@ def get_hardware_capabilities():
                 analog_gain=0,
                 z_offset_um=0
             ),
-            AcquisitionChannelConfig(
+            sc.AcquisitionChannelConfig(
                 name="Fluo 638 nm Ex",
                 handle="fluo638",
                 illum_perc=100,
@@ -168,7 +142,7 @@ def get_hardware_capabilities():
                 analog_gain=0,
                 z_offset_um=0
             ),
-            AcquisitionChannelConfig(
+            sc.AcquisitionChannelConfig(
                 name="Fluo 730 nm Ex",
                 handle="fluo730",
                 illum_perc=100,
@@ -176,7 +150,7 @@ def get_hardware_capabilities():
                 analog_gain=0,
                 z_offset_um=0
             ),
-            AcquisitionChannelConfig(
+            sc.AcquisitionChannelConfig(
                 name="BF LED Full",
                 handle="bfledfull",
                 illum_perc=20,
@@ -184,7 +158,7 @@ def get_hardware_capabilities():
                 analog_gain=0,
                 z_offset_um=0
             ),
-            AcquisitionChannelConfig(
+            sc.AcquisitionChannelConfig(
                 name="BF LED Right Half",
                 handle="bfledright",
                 illum_perc=20,
@@ -192,7 +166,7 @@ def get_hardware_capabilities():
                 analog_gain=0,
                 z_offset_um=0
             ),
-            AcquisitionChannelConfig(
+            sc.AcquisitionChannelConfig(
                 name="BF LED Left Half",
                 handle="bfledleft",
                 illum_perc=20,
@@ -220,7 +194,7 @@ def get_machine_defaults():
 
     return json.dumps(items_json)
 
-plate=Wellplate(
+plate=sc.Wellplate(
     Manufacturer="perkin elmer",
     Model_name="384 well plate",
     Model_id_manufacturer="pe-384",
@@ -315,7 +289,7 @@ class CoreStreamHandler:
 
         i.e. image acquisition is running in streaming mode
     """
-    def __init__(self,core:"Core",channel_config:AcquisitionChannelConfig):
+    def __init__(self,core:"Core",channel_config:sc.AcquisitionChannelConfig):
         self.core=core
         self.should_stop=False
         self.channel_config=channel_config
@@ -437,7 +411,7 @@ class _ChannelAcquisitionControl(CoreCommand):
     def run(self,core:"Core")->str:
         cam=core.main_cam
         
-        channel_config=AcquisitionChannelConfig(**self.channel)
+        channel_config=sc.AcquisitionChannelConfig(**self.channel)
 
         try:
             illum_code=ILLUMINATION_CODE.from_handle(channel_config.handle)
@@ -631,7 +605,12 @@ class AutofocusSnap(CoreCommand):
         returns json-like string
     """
 
-    def __init__(self,exposure_time_ms:float=5,analog_gain:float=10,turn_laser_on:bool=True,turn_laser_off:bool=True):
+    def __init__(self,
+        exposure_time_ms:float=5,
+        analog_gain:float=10,
+        turn_laser_on:bool=True,
+        turn_laser_off:bool=True
+    ):
         super()
         self.exposure_time_ms=exposure_time_ms
         self.analog_gain=analog_gain
@@ -642,21 +621,21 @@ class AutofocusSnap(CoreCommand):
         if self.turn_laser_on:
             core.mc.send_cmd(Command.af_laser_illum_begin())
         
-        channel_config=AcquisitionChannelConfig(
-            name="laser autofocus acquisition",
+        channel_config=sc.AcquisitionChannelConfig(
+            name="laser autofocus acquisition", # unused
             handle="__invalid_laser_autofocus_channel__", # unused
-            illum_perc=100, # this is not actually used
+            illum_perc=100, # unused
             exposure_time_ms=self.exposure_time_ms,
             analog_gain=self.analog_gain,
-            z_offset_um=0 # just for clarity in code (not used)
+            z_offset_um=0 # unused
         )
-        print(f"acquiring laser autofocus image with config {channel_config}")
 
         img=core.focus_cam.acquire_with_config(channel_config)
         if img is None:
             self.state=CoreState.Idle
             return json.dumps({"status":"error","message":"failed to acquire image"})
         
+        print(f"acquiring laser autofocus image with config {channel_config}, stats: min={np.min(img)} max={np.max(img)} mean={np.mean(img)}")
         img_handle=core._store_new_laseraf_image(img,channel_config)
 
         if self.turn_laser_off:
@@ -759,7 +738,7 @@ class ImageStoreEntry:
     """ utility class to store camera images with some metadata """
     img:np.ndarray
     timestamp:float
-    channel_config:AcquisitionChannelConfig
+    channel_config:sc.AcquisitionChannelConfig
     bit_depth:int
 
 class Core:
@@ -1250,7 +1229,7 @@ class Core:
 
         return ret
 
-    def _store_new_laseraf_image(self,img:np.ndarray,channel_config:AcquisitionChannelConfig)->str:
+    def _store_new_laseraf_image(self,img:np.ndarray,channel_config:sc.AcquisitionChannelConfig)->str:
         """
             store a new laser autofocus image, return the handle
         """
@@ -1278,7 +1257,7 @@ class Core:
 
         return self.laser_af_image_handle
 
-    def _store_new_image(self,img:np.ndarray,channel_config:AcquisitionChannelConfig)->str:
+    def _store_new_image(self,img:np.ndarray,channel_config:sc.AcquisitionChannelConfig)->str:
         """
             store a new image, return the handle
         """
@@ -1455,7 +1434,7 @@ class Core:
         if "config_file" not in json_data:
             return json.dumps({"status": "error", "message": "no config_file in json data"})
         
-        config = AcquisitionConfig.from_json(json_data["config_file"])
+        config = sc.AcquisitionConfig.from_json(json_data["config_file"])
 
         print("starting acquisition with config:",config)
 
@@ -1538,12 +1517,18 @@ class Core:
         project_output_path=base_storage_path/config.project_name/config.plate_name/acquisition_id
         project_output_path.mkdir(parents=True)
 
-        channels:tp.List[AcquisitionChannelConfig]=[]
+        channels:tp.List[sc.AcquisitionChannelConfig]=[]
         for channel in config.channels:
             if channel.enabled:
                 channels.append(channel)
 
         def run_acquisition(q_in:q.Queue,q_out:q.Queue):
+            """
+            acquisition execution
+
+            may be run in another thread
+            """
+
             try:
                 # counters on acquisition progress
                 start_time=time.time()
