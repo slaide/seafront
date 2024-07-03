@@ -169,6 +169,17 @@ class Plot{
     })
 
     /**
+     * central element containing references to all container update functions to have a single interval updater
+     * @type{function[]}
+     * */
+    static containerUpdateFuncs=[]
+    static intervalUpdater=setInterval(function(){
+        for(let f of Plot.containerUpdateFuncs){
+            f()
+        }
+    },1e3/30) // 1e3/x -> check x times per second if the plot needs updating
+
+    /**
      * callback to resize plot when element size changes
      * @param {HTMLElement} plot
      */
@@ -344,14 +355,14 @@ class Plot{
         Plot.resizeObserver.observe(plot)
 
         let plotHasChanged=false
-        setInterval(function(){
+        Plot.containerUpdateFuncs.push(function(){
             if(plotHasChanged){
                 plotHasChanged=false
                 const plot_data=PlotData.getFor(plot)
 
                 plot_data.update()
             }
-        },1e3/30)// 1e3/x -> check x times per second if the plot needs updating
+        })
 
         // set callback for attribute change on child to update corresponding data and update the plot
         const attribute_change_observer = new MutationObserver((mutationsList, observer) => {
