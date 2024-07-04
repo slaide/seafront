@@ -340,12 +340,15 @@ class WellplateType{
         return this.Num_wells_x*this.Num_wells_y
     }
 
-    static get all(){
-        let plate_types=new XHR(false)
+    /** get all plate specs from the server, and cache the result */
+    static all_raw_plates=new XHR(false)
             .onload(function(xhr){
                 return JSON.parse(xhr.responseText).wellplate_types
             })
             .send("/api/get_features/hardware_capabilities")
+
+    static get all(){
+        let plate_types=WellplateType.all_raw_plates
 
         /** @type {{name:string,num_wells:number,entries:WellplateType[]}[]} */
         let ret=[]
