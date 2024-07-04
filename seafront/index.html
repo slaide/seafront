@@ -538,10 +538,10 @@
                                     <label><!-- channel enabled checkbox --></label>
                                     <label><!-- channel name --></label>
                                     <label><!-- snap button column --></label>
-                                    <label>Exposure time (ms)</label>
-                                    <label>Analog Gain</label>
-                                    <label>Z Offset (um)</label>
-                                    <label class="data" p:tooltip="hello there">Illumination (%)</label>
+                                    <label>Exposure time [ms]</label>
+                                    <label>Analog Gain [dB]</label>
+                                    <label>Z Offset [um]</label>
+                                    <label class="data" p:tooltip="hello there">Illumination [%]</label>
 
                                     <template class="data" p:for="channel of microscope_config.channels">
                                         <input id="acquisition-channel-enabled-checkbox-{{channel.handle}}" type="checkbox" p:bind="channel.enabled">
