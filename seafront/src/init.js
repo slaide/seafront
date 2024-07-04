@@ -336,7 +336,6 @@ class WellplateType{
         this.Offset_bottom_mm = spec.Offset_bottom_mm
     }
 
-
     get num_wells(){
         return this.Num_wells_x*this.Num_wells_y
     }
@@ -363,7 +362,7 @@ class WellplateType{
             }
             if(entries==null){
                 entries=[]
-                ret.push({name:new_plate_type.Model_name,num_wells:new_plate_type.num_wells,entries:entries})
+                ret.push({name:new_plate_type.num_wells+" well plates",num_wells:new_plate_type.num_wells,entries:entries})
             }
             entries.push(new_plate_type)
         }
@@ -373,7 +372,7 @@ class WellplateType{
     /**
      * 
      * @param {string} handle 
-     * @returns {null|WellplateType}
+     * @returns {WellplateType?}
      */
     static fromHandle(handle){
         for(let entry of this.all){

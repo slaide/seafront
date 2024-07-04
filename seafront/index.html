@@ -379,7 +379,7 @@
                                             <template class="data" p:for="plate_type of WellplateType.all">
                                                 <optgroup label="{{plate_type.name}}">
                                                     <template class="data" p:for="type of plate_type.entries">
-                                                        <option value="{{type.Model_id}}">{{type.Model_name}}</option>
+                                                        <option value="{{type.Model_id}}"><b>{{type.Model_name}}</b> ({{type.Manufacturer}})</option>
                                                     </template>
                                                 </optgroup>
                                             </template>
