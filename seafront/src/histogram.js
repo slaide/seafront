@@ -34,7 +34,7 @@ const layout={
     showlegend: true,
 
     yaxis: {
-        title:"relative frequency (log)",
+        title:"relative frequency ( Log )",
         type: 'log',
         autorange: true,
         fixedrange:true,

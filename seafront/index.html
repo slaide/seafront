@@ -9,7 +9,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@e35ab0da8b8bc1822d9c5422be2d6229d8b890be/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@7d0efc03c087378fbd03ca1191731ade1871a567/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/init.js"></script>
@@ -297,7 +297,7 @@
                                         <option>TIFF</option>
                                     </select-->
 
-                                    <label class="data" p:tooltip="whatever">Plate Name</label>
+                                    <label class="data" p:tooltip="Name of the plate, e.g. barcode or some other ID">Plate Name</label>
                                     <input class="col-span-2 data" type="text" placeholder="plate name" p:bind="microscope_config.plate_name">
 
                                     <label>Cell Line</label>
@@ -315,24 +315,24 @@
                                 <div id="grid-config" class="section">
                                     <p class="section-header col-span-5">Imaging Site Configuration (within Well) <a class="data" href="{{docLinks.siteConfig}}" target="_blank">Help</a></p>
 
-                                    <label>num x</label>
+                                    <label class="data" p:tooltip="number of x coordinates">num x</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_x" p:on-input="updateGridMask()">
-                                    <label>delta x</label>
+                                    <label class="data" p:tooltip="distance between x coordinates">delta x</label>
                                     <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_x_mm">
 
-                                    <label>num y</label>
+                                    <label class="data" p:tooltip="number of y coordinates">num y</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_y" p:on-input="updateGridMask()">
-                                    <label>delta y</label>
+                                    <label class="data" p:tooltip="distance between y coordinates">delta y</label>
                                     <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_y_mm">
 
-                                    <label>num z</label>
+                                    <label class="data" p:tooltip="number of z coordinates">num z</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_z">
-                                    <label>delta z</label>
+                                    <label class="data" p:tooltip="distance between z coordinates">delta z</label>
                                     <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_z_um">
 
-                                    <label>num t</label>
+                                    <label class="data" p:tooltip="number of timepoints at which to image the plate">num t</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_t">
-                                    <label>delta t</label>
+                                    <label class="data" p:tooltip="time between acquisitions (if the actual acquisition is longer than this delta time, the new acquisition still start right after the previous one ends)">delta t</label>
                                     <style>
                                         #acqusition-config-delta-t-container{
                                             display:flex;
@@ -340,7 +340,7 @@
                                         }
                                     </style>
                                     <p id="acqusition-config-delta-t-container">
-                                        <input type="number" min="0" max="23" value="3" step="1" class="data" p:bind="microscope_config.grid.delta_t.h">
+                                        <input type="number" min="0" max="999" value="3" step="1" class="data" p:bind="microscope_config.grid.delta_t.h">
                                         <label>h</label>
                                         <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="microscope_config.grid.delta_t.m">
                                         <label>m</label>
@@ -371,7 +371,7 @@
                                         }
                                     </style>
                                     <div id="well-navigator-header">
-                                        <label class="data" p:tooltip="the type of plate currently on the plate">Plate Type</label>
+                                        <label class="data" p:tooltip="The type of well plate currently present on the microscope. This reflects the exact well layout, which even differs between e.g. 384 well plates from different manufacturers.">Plate Type</label>
                                         <select class="data"
                                             p:bind="microscope_config.wellplate_type"
                                             p:on-input="initwellnavigator()"
@@ -413,6 +413,7 @@
                                                 p:on-mousedown="wellPointerDown(event,well)"
                                                 p:on-mouseenter="wellPointerUpdate(event,well)"
                                                 p:on-mouseup="wellPointerUp(event,well)"
+                                                p:tooltip="{{well.name}}"
                                             >
                                                 {{well.label}}
                                             </div>
@@ -512,7 +513,7 @@
                                     #all-channel-container{
                                         --width:100%;
                                         display:grid;
-                                        grid-template-columns: repeat(7,auto);
+                                        grid-template-columns: fit-content 1fr repeat(5,auto);
                                         grid-template-rows: repeat(100,min-content);
                                     }
                                     #all-channel-container > *{
@@ -538,10 +539,10 @@
                                     <label><!-- channel enabled checkbox --></label>
                                     <label><!-- channel name --></label>
                                     <label><!-- snap button column --></label>
-                                    <label>Exposure time [ms]</label>
-                                    <label>Analog Gain [dB]</label>
-                                    <label>Z Offset [um]</label>
-                                    <label class="data" p:tooltip="hello there">Illumination [%]</label>
+                                    <label class="data" p:tooltip="Exposure time in milliseconds">Exp. [ms]</label>
+                                    <label class="data" p:tooltip="Analog Signal Gain in decibels">Gain [dB]</label>
+                                    <label class="data" p:tooltip="Offset from the autofocus target coordinate in Z, in micrometersmicrometers micrometers micrometers micrometers micrometers micrometers micrometers micrometers micrometers micrometers micrometers">Off. [um]</label>
+                                    <label class="data" p:tooltip="Light source illumination strength in % of maximum strength"><!--Ill. is not readable, hence Pow instead-->Pow. [%]</label>
 
                                     <template class="data" p:for="channel of microscope_config.channels">
                                         <input id="acquisition-channel-enabled-checkbox-{{channel.handle}}" type="checkbox" p:bind="channel.enabled">

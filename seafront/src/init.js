@@ -216,9 +216,9 @@ function updateMicroscopePosition(){
 
                                 const trace_data={
                                     x:range(hist_data.length),
-                                    // transform scale to be able to display 0 values on log scale
+                                    // @ts-ignore transform scale to be able to display 0 values on log scale
                                     y:hist_data.map(v=>v+1),
-                                    // display original value (i.e. zero to whatever)
+                                    // @ts-ignore display original value (i.e. zero to whatever)
                                     text:hist_data.map(v=>"count: "+v),
                                     type:"scatter",
                                     //orientation:"horizontal",
