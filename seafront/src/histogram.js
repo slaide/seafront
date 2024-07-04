@@ -27,65 +27,57 @@ function nrand(n,min_v,max_v){
     }
     return out
 }
-const data = [{
-    x: [0, 50, 100, 150, 200, 255],
-    y: nrand(6,0,100),
-    type: 'line',
-    name: "Fluo 405 nm Ex"
-},{
-    x: [0, 50, 100, 150, 200, 255],
-    y: nrand(6,0,100),
-    type: 'line',
-    name: "Fluo 730 nm Ex"
-},{
-    x: [0, 50, 100, 150, 200, 255],
-    y: nrand(6,10,200),
-    type: 'line',
-    name: "Fluo 688 nm Ex"
-}]
 
 const layout={
     autosize:true,
 
     showlegend: true,
-    legend: {
-        //orientation: 'h',
-    },
 
     yaxis: {
-        title:"relative frequency",
+        title:"relative frequency (log)",
         type: 'log',
         autorange: true,
+        fixedrange:true,
         // disable ticks
         showticklabels: false,
     },
     xaxis:{
         title: "relative intensity",
+        autorange:true,
+        fixedrange:true,
         tickvals: [0,50,100,150,200,255],
         ticktext: ["0","50","100","150","200","255"]
     },
 
     margin: {
         t:20, // top margin for pan/zoom buttons
-        l:0, // reduced y axis margin
+        l:30, // reduced y axis margin
         b:40, // bottom margin for x-axis title
     },
 }
 
 const config={
     responsive: true,
-    modeBarButtonsToRemove:['sendDataToCloud'],
+    modeBarButtonsToRemove:[
+        'sendDataToCloud',
+        "zoom2d","pan2d","select2d","lasso2d",
+        "zoomIn2d","zoomOut2d",
+        "autoScale2d","resetScale2d"
+    ],
     showLink:false,
     displaylogo:false,
 }
 
-let child = document.getElementById('histogram-panel');
-if(!child){throw new Error("child is null")}
+const histogram_plot_element_id='histogram-panel'
+const histogram_plot_element = document.getElementById(histogram_plot_element_id);
+if(!histogram_plot_element){throw new Error("child is null")}
 
 new ResizeObserver(function(){
     // @ts-ignore
-    Plotly.relayout('histogram-panel', {autosize: true});
-}).observe(child)
+    Plotly.relayout(histogram_plot_element_id, {autosize: true});
+}).observe(histogram_plot_element)
 
+/** number of traces in the plot */
+let plt_num_traces=0
 /// @ts-ignore
-Plotly.newPlot('histogram-panel', data, layout, config);
+Plotly.newPlot(histogram_plot_element_id, [], layout, config)

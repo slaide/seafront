@@ -738,6 +738,16 @@ class AutofocusApproachTargetDisplacement(CoreCommand):
 
         return json.dumps({"status":"success"})
 
+class SendImageHistogram(CoreCommand):
+    def __init__(self,img_handle:str):
+        super()
+        self.img_handle=img_handle
+
+    def run(self,core:"Core")->str:
+        res=core.get_image_histogram(self.img_handle)
+
+        return res
+
 @dataclass
 class ImageStoreEntry:
     """ utility class to store camera images with some metadata """
@@ -988,6 +998,11 @@ class Core:
         app.add_url_rule(
             f"/img/get_by_handle_preview", f"send_image_by_handle_preview",
             lambda:self.send_image_by_handle(quick_preview=True),methods=["GET"])
+        
+        # send image histogram self.get_image_histogram
+        app.add_url_rule(
+            f"/api/action/get_histogram_by_handle", f"send_image_histogram_by_handle",
+            lambda:wrap_command(SendImageHistogram),methods=["POST"])
 
         # loading position enter/leave
         self.is_in_loading_position=False
@@ -1382,6 +1397,26 @@ class Core:
         img_io.seek(0)
 
         return send_file(img_io, mimetype=mimetype)
+
+    def get_image_histogram(self,handle:str)->str:
+        """
+        return 256 value bucket of image histogram from handle
+
+        returns json-like string
+        """
+
+        img_info=self.images.get(handle)
+        if img_info is None:
+            return json.dumps({"status":"error","message":"image not found"})
+        
+        img=img_info.img
+
+        if img.dtype==np.uint16:
+            hist,edges=np.histogram((img[::2,::2]>>(16-img_info.bit_depth)).astype(np.uint8),bins=256,range=(0,255))
+        else:
+            hist,edges=np.histogram(img[::2,::2],bins=256,range=(0,255))
+
+        return json.dumps({"status":"success","channel_name":img_info.channel_config.name,"hist_values":hist.tolist()})
 
     def get_current_state(self):
         last_stage_position=self.mc.get_last_position()

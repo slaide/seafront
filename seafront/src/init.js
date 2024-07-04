@@ -170,8 +170,9 @@ function updateMicroscopePosition(){
                 const new_src=src_api_action+"?img_handle="+data.latest_img.handle
                 
                 // if the src is a new one
-                if(view_latest_image.src!==new_src){
-                    // indicate that loading has not yet finished, init load (by setting .src)
+                const new_src_url=new URL(new_src,window.location.origin)
+                if(view_latest_image.src!==new_src_url.toString()){
+                    // init load (by setting .src), and indicate that loading has not yet finished
                     element_load_state.loaded=false
                     view_latest_image.src=new_src
 
@@ -179,6 +180,8 @@ function updateMicroscopePosition(){
                         view_latest_image.setAttribute("width",data.latest_img.width_px)
                     if(data.latest_img.height_px!=null && data.latest_img.height_px!=view_latest_image.getAttribute("height"))
                         view_latest_image.setAttribute("height",data.latest_img.height_px)
+
+                    let histogram_update_in_progress=false
 
                     // set callback on load finish
                     const f=function(){
@@ -195,6 +198,60 @@ function updateMicroscopePosition(){
                     // consider image loaded either on actual load, or on error
                     view_latest_image.addEventListener("load",f,{once:true})
                     view_latest_image.addEventListener("error",f,{once:true})
+                    //update histogram (async)
+                    const histogram_query_data={
+                        img_handle:data.latest_img.handle
+                    }
+                    if(!histogram_update_in_progress){
+                        histogram_update_in_progress=true
+                        new XHR(true)
+                            .onload(function(xhr){
+                                let data=JSON.parse(xhr.responseText)
+                                if(data.status!="success"){
+                                    console.error("error getting histogram",data)
+                                    histogram_update_in_progress=false
+                                    return
+                                }
+                                let hist_data=data.hist_values
+
+                                const trace_data={
+                                    x:range(hist_data.length),
+                                    // transform scale to be able to display 0 values on log scale
+                                    y:hist_data.map(v=>v+1),
+                                    // display original value (i.e. zero to whatever)
+                                    text:hist_data.map(v=>"count: "+v),
+                                    type:"scatter",
+                                    //orientation:"horizontal",
+                                    name:data.channel_name
+                                }
+
+                                // @ts-ignore
+                                //console.log(Plotly.validate([trace_data]),trace_data)
+                                if(plt_num_traces==0){
+                                    // @ts-ignore
+                                    Plotly.addTraces(histogram_plot_element_id,trace_data,plt_num_traces)
+
+                                    plt_num_traces+=1
+                                }else{
+                                    // trace update must have a _list_ of x and y values
+                                    const trace_update={
+                                        x:[trace_data.x],
+                                        y:[trace_data.y],
+                                        text:[trace_data.text],
+                                        name:[trace_data.name]
+                                    }
+                                    // @ts-ignore
+                                    Plotly.restyle(histogram_plot_element_id,trace_update,[0])
+                                }
+
+                                histogram_update_in_progress=false
+                            })
+                            .onerror(function(){
+                                console.error("error getting histogram")
+                                histogram_update_in_progress=false
+                            })
+                            .send("/api/action/get_histogram_by_handle",histogram_query_data,"POST")
+                    }
                     // if the image is not done loading after 3 seconds, assume it failed
                     loadTimer=setTimeout(f,3e3)
 
