@@ -25,7 +25,7 @@ function start_acquisition(){
         // remove those that are not selected (also removes the headers)
         .filter(well=>well.selected)
         // adjust row and well to be 0-indexed (0 index in frontend is used to denote headers, on the server 0 is used to denote the first row/col)
-        .map(well=>(new WellIndex(well.row,well.col,well.selected)))
+        .map(well=>(new WellIndex(well.row-1,well.col-1,well.selected)))
 
     data.config_file.channels=data.config_file.channels
         .filter(channel=>channel.enabled)

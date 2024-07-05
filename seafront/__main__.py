@@ -546,10 +546,6 @@ class MoveToWell(CoreCommand):
         self.well_name=well_name
 
     def run(self,core:"Core")->str:
-        # fov offset, because the microcontroller does not move the center of the FOV to the target position
-        FOV_OFFSET_X_MM=0.3
-        FOV_OFFSET_Y_MM=0.3
-
         plates=[p for p in sc.Plates if p.Model_id==self.plate_type]
         if len(plates)==0:
             return json.dumps({"status":"error","message":"plate type not found"})
@@ -558,8 +554,8 @@ class MoveToWell(CoreCommand):
 
         plate=plates[0]
 
-        x_mm=plate.get_well_offset_x(self.well_name)+plate.Well_size_x_mm/2-FOV_OFFSET_X_MM
-        y_mm=plate.get_well_offset_y(self.well_name)+plate.Well_size_y_mm/2-FOV_OFFSET_Y_MM
+        x_mm=plate.get_well_offset_x(self.well_name) + plate.Well_size_x_mm/2
+        y_mm=plate.get_well_offset_y(self.well_name) + plate.Well_size_y_mm/2
 
         res_str=MoveTo(x_mm,y_mm).run(core)
         res=json.loads(res_str)
@@ -1501,9 +1497,9 @@ class Core:
 
         well_sites=config.grid.mask
         # the grid is centered around the center of the well
-        site_topleft_x_mm=plate.Well_size_x_mm / 2 - (config.grid.num_x * config.grid.delta_x_mm) / 2
+        site_topleft_x_mm=plate.Well_size_x_mm / 2 - ((config.grid.num_x-1) * config.grid.delta_x_mm) / 2
         "offset of top left site from top left corner of the well, in x, in mm"
-        site_topleft_y_mm=plate.Well_size_y_mm / 2 - (config.grid.num_y * config.grid.delta_y_mm) / 2
+        site_topleft_y_mm=plate.Well_size_y_mm / 2 - ((config.grid.num_y-1) * config.grid.delta_y_mm) / 2
         "offset of top left site from top left corner of the well, in y, in mm"
 
         num_wells=len(config.plate_wells)
@@ -1600,8 +1596,8 @@ class Core:
                             continue
 
                         # go to site
-                        site_x_mm=plate.get_well_offset_x(well.well_name)+site_topleft_x_mm+site.col*config.grid.delta_x_mm
-                        site_y_mm=plate.get_well_offset_y(well.well_name)+site_topleft_y_mm+site.row*config.grid.delta_y_mm
+                        site_x_mm=plate.get_well_offset_x(well.well_name) + site_topleft_x_mm + site.col * config.grid.delta_x_mm
+                        site_y_mm=plate.get_well_offset_y(well.well_name) + site_topleft_y_mm + site.row * config.grid.delta_y_mm
 
                         res_str=MoveTo(site_x_mm,site_y_mm).run(self)
                         res=json.loads(res_str)
@@ -1831,7 +1827,7 @@ class Core:
 
         if msg["status"]!="success":
             if self.acquisition_thread is not None:
-                print("waiting for acquisition thread to terminate")
+                print(f"acquisiiton failed with {msg}, waiting for acquisition thread to terminate")
                 self.acquisition_thread.join()
                 print("acquisition thread terminated")
                 self.acquisition_thread=None
