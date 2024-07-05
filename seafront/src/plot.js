@@ -284,6 +284,11 @@ class Plot{
      * @param {MouseEvent} event 
      */
     static plot_drag_start(event){
+        // only start dragging on left click (0 is left click, according to mdn)
+        if(event.button!=0)return
+        // prevent default, which may e.g. browser initiated image drag
+        event.preventDefault()
+
         if(!(event.currentTarget instanceof HTMLElement)){throw new Error("plot is not an html element")}
         Plot.plotDragInfo.set(event.currentTarget,{in_progress:true,x_start:event.clientX,y_start:event.clientY})
     }
