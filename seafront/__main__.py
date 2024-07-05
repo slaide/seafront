@@ -1272,8 +1272,6 @@ class Core:
 
         self.laser_af_image=ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
 
-        print(f"saved image of shape {img.shape} and dtype {img.dtype} with handle {self.laser_af_image_handle}")
-
         return self.laser_af_image_handle
 
     def _store_new_image(self,img:np.ndarray,channel_config:sc.AcquisitionChannelConfig)->str:
