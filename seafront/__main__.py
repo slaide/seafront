@@ -1057,10 +1057,25 @@ class Core:
             "/api/action/turn_off_all_illumination", "turn_off_all_illumination", 
             lambda:wrap_command(IlluminationEndAll),methods=["POST"])
 
-        # store last few images acquired with main imaging camera
-        # TODO store these per channel, up to e.g. 3 images per channel (for a total max of 3*num_channels)
-        self.latest_image_handle:tp.Optional[str]=None
+        self.image_index={
+            channel["handle"]:0
+            for channel
+            in json.loads(get_hardware_capabilities())["main_camera_imaging_channels"]
+        }
+        self.latest_image_handle:tp.Dict[str,str]={
+            channel["handle"]:""
+            for channel
+            in json.loads(get_hardware_capabilities())["main_camera_imaging_channels"]
+        }
+        """
+        store last image acquired with main imaging camera.
+        key is channel handle, value is actual handle
+        """
         self.images:tp.Dict[str,"ImageStoreEntry"]={}
+        """
+        contain the actual image data for each handle.
+        the image handle code is responsible for cleaning up old images
+        """
 
         # only store the latest laser af image
         self.laser_af_image_handle:tp.Optional[str]=None
@@ -1285,11 +1300,17 @@ class Core:
             store a new image, return the handle
         """
 
-        # TODO better image buffer handle generation
-        if self.latest_image_handle is None:
-            self.latest_image_handle=f"{0}"
-        else:
-            self.latest_image_handle=f"{int(self.latest_image_handle)+1}"
+        # remove last image in channel from self.images
+        last_image_handle=channel_config.handle+str(self.image_index[channel_config.handle])
+        if last_image_handle in self.images:
+            del self.images[last_image_handle].img
+            del self.images[last_image_handle]
+            gc.collect()        
+
+        # generate new handle
+        self.image_index[channel_config.handle]+=1
+        new_image_handle=channel_config.handle+str(self.image_index[channel_config.handle])
+        self.latest_image_handle[channel_config.handle]=new_image_handle
 
         pxfmt_int,pxfmt_str=self.main_cam.handle.PixelFormat.get() # type: ignore
         match pxfmt_int:
@@ -1302,7 +1323,7 @@ class Core:
             case _unknown:
                 raise ValueError(f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
             
-        self.images[self.latest_image_handle]=ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
+        self.images[new_image_handle]=ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
 
         # remove oldest images to keep buffer length capped (at 8)
         while len(self.images)>8:
@@ -1311,7 +1332,7 @@ class Core:
             del self.images[oldest_key]
             gc.collect() # force gc collection because these images really take up a lot of storage
 
-        return self.latest_image_handle
+        return new_image_handle
 
     def send_image_by_handle(self,quick_preview:bool=False):
         """
@@ -1421,15 +1442,17 @@ class Core:
     def get_current_state(self):
         last_stage_position=self.mc.get_last_position()
 
-        img_handle=self.latest_image_handle
-        latest_img_info=None
-        if img_handle is not None and img_handle in self.images:
-            latest_img_info={
+        latest_img_info={
+            channel_handle:{
                 "handle":img_handle,
                 "channel":self.images[img_handle].channel_config.to_dict(),
                 "width_px":self.images[img_handle].img.shape[1],
                 "height_px":self.images[img_handle].img.shape[0],
+                "timestamp":self.images[img_handle].timestamp,
             }
+            for channel_handle,img_handle in self.latest_image_handle.items()
+            if img_handle in self.images
+        }
 
         # supposed=real-calib
         x_pos_mm=self.pos_x_measured_to_real(last_stage_position.x_pos_mm)
@@ -1443,7 +1466,7 @@ class Core:
                 "y_pos_mm":y_pos_mm,
                 "z_pos_mm":last_stage_position.z_pos_mm,
             },
-            "latest_img":latest_img_info
+            "latest_imgs":latest_img_info
         })
 
     def start_acquisition(self):

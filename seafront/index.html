@@ -40,14 +40,6 @@
         <link rel="stylesheet" href="css/site_selection.css">
         <script src="src/site_selection.js"></script>
 
-        <!--
-            <div class="data hidden">
-                <template name="tooltip">
-                    <div class="tooltip-container data" p:init="bare_init_tooltip" p:init-vis="init_tooltip"></div>
-                </template>
-            </div>
-        -->
-
         <!-- plot component -->
         <link rel="stylesheet" href="css/plot.css">
         <script src="src/plot.js"></script>
@@ -71,7 +63,7 @@
                             p:init="Plot.plot_init(element)"
                             p:init-vis="Plot.plot_fit(element)"
                         >
-                            <img id="view_latest_image" src="" width=2500 height=2500/>
+                            <img id="view_latest_image" src="" width=2500 height=2500 loading="lazy"/>
                         </div>
 
                         <div id="live-view-x-axis-container">
@@ -127,18 +119,17 @@
                             <template class="data" p:for="channel of microscope_config.channels">
                                 <div id="live-view-{{channel.handle}}">
                                     <div>{{channel.name}}</div>
-                                    <div class="data plot-display"
+                                    <div class="data plot-display channel-plot-display"
                                         p:init="Plot.plot_init(element)"
                                         p:init-vis="Plot.plot_fit(element)"
                                     >
-                                        <img src="" width=600 height=600/>
-                                        <img src="" width=600 height=600 plot-x-min="200" plot-y-min="200"/>
+                                        <img class="data" src="{{(channel.handle in microscope_state.latest_channel_images)?('/img/get_by_handle?img_handle='+microscope_state.latest_channel_images[channel.handle].handle):''}}" width=600 height=600 loading="lazy"/>
                                     </div>
                                 </div>
                             </template>
                         </div>
                         <label>num columns:</label>
-                        <input type="number" min="2" max="4" value="2" class="data" p:init="setGridViewCols({target:element})" p:on-input="setGridViewCols(event)">
+                        <input type="number" min="1" max="4" value="3" class="data" p:init="setGridViewCols({target:element})" p:on-input="setGridViewCols(event)">
                     </div>
                     <div id="af-debug-panel" class="data">
                         <script src="src/autofocus_debug.js"></script>
@@ -170,7 +161,7 @@
                                 p:init="Plot.plot_init(element)"
                                 p:init-vis="Plot.plot_fit(element)"
                             >
-                                <img id="view_af_image" width=3000 height=2000 />
+                                <img id="view_af_image" width=3000 height=2000 loading="lazy"/>
                             </div>
                         </div>
                     </div>

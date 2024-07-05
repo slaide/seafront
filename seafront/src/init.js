@@ -232,6 +232,7 @@ let microscope_state=_p.manage({
         y_mm:0.9,
     },
     last_image_channel_name:"No image acquired yet",
+    latest_channel_images:{}
 })
 
 let last_update_successful=true
@@ -273,7 +274,22 @@ function updateMicroscopePosition(){
         microscope_state.state=data.state
 
         let view_latest_image=document.getElementById("view_latest_image")
-        if((view_latest_image instanceof HTMLImageElement) && data.latest_img!=null){
+        if((view_latest_image instanceof HTMLImageElement) && data.latest_imgs!=null && Object.keys(data.latest_imgs).length>0){
+            const img_list=Object.keys(data.latest_imgs).map(k=>data.latest_imgs[k])
+            let latest_timestamp=img_list.filter(d=>d!=null).map(d=>d.timestamp).reduce((a,b)=>Math.max(a,b),0)
+            let latest_image=img_list.find(d=>d.timestamp==latest_timestamp)
+
+            for(let channel of microscope_config.channels){
+                let latest_channel_info=data.latest_imgs[channel.handle]
+                if(latest_channel_info==null)continue
+
+                // update async to avoid blocking main thread on image update
+                setTimeout(function(){
+                    // @ts-ignore
+                    microscope_state.latest_channel_images[channel.handle]=latest_channel_info
+                },0)
+            }
+
             if(!element_image_load_state.has(view_latest_image)){
                 // indicate that the current state has finished loading on initilization
                 element_image_load_state.set(view_latest_image,{loaded:true})
@@ -293,7 +309,7 @@ function updateMicroscopePosition(){
                 }else{
                     src_api_action="/img/get_by_handle"
                 }
-                const new_src=src_api_action+"?img_handle="+data.latest_img.handle
+                const new_src=src_api_action+"?img_handle="+latest_image.handle
                 
                 // if the src is a new one
                 const new_src_url=new URL(new_src,window.location.origin)
@@ -302,10 +318,10 @@ function updateMicroscopePosition(){
                     element_load_state.loaded=false
                     view_latest_image.src=new_src
 
-                    if(data.latest_img.width_px!=null && data.latest_img.width_px!=view_latest_image.getAttribute("width"))
-                        view_latest_image.setAttribute("width",data.latest_img.width_px)
-                    if(data.latest_img.height_px!=null && data.latest_img.height_px!=view_latest_image.getAttribute("height"))
-                        view_latest_image.setAttribute("height",data.latest_img.height_px)
+                    if(latest_image.width_px!=null && latest_image.width_px!=view_latest_image.getAttribute("width"))
+                        view_latest_image.setAttribute("width",latest_image.width_px)
+                    if(latest_image.height_px!=null && latest_image.height_px!=view_latest_image.getAttribute("height"))
+                        view_latest_image.setAttribute("height",latest_image.height_px)
 
                     let histogram_update_in_progress=false
 
@@ -326,7 +342,7 @@ function updateMicroscopePosition(){
                     view_latest_image.addEventListener("error",f,{once:true})
                     //update histogram (async)
                     const histogram_query_data={
-                        img_handle:data.latest_img.handle
+                        img_handle:latest_image.handle
                     }
                     if(!histogram_update_in_progress){
                         histogram_update_in_progress=true
@@ -387,7 +403,7 @@ function updateMicroscopePosition(){
                     }
                 }
             }
-            microscope_state.last_image_channel_name=data.latest_img.channel.name
+            microscope_state.last_image_channel_name=latest_image.channel.name
         }
     
         updateInProgress=false
