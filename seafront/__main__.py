@@ -636,7 +636,6 @@ class AutofocusSnap(CoreCommand):
             self.state=CoreState.Idle
             return json.dumps({"status":"error","message":"failed to acquire image"})
         
-        # print(f"acquiring laser autofocus image with config {channel_config}, stats: min={np.min(img)} max={np.max(img)} mean={np.mean(img)}")
         img_handle=core._store_new_laseraf_image(img,channel_config)
 
         if self.turn_laser_off:
@@ -839,9 +838,32 @@ class Core:
         if abort_startup:
             raise RuntimeError("did not find microscope hardware")
         
-        self.mc=self.microcontrollers[0]
+        defaults=GlobalConfigHandler.get_dict()
+        main_camera_model_name=defaults["main_camera_model"].value
+        focus_camera_model_name=defaults["laser_autofocus_camera_model"].value
 
-        print(f"found {len(self.microcontrollers)} microcontrollers")
+        found_main_cam=False
+        found_focus_cam=False
+        for cam in self.cams:
+            if cam.model_name==main_camera_model_name:
+                device_type="main"
+                found_main_cam=True
+            elif cam.model_name==focus_camera_model_name:
+                device_type="autofocus"
+                found_focus_cam=True
+            else:
+                # skip other cameras
+                continue
+            
+            cam.open(device_type=device_type)
+
+        if not found_main_cam:
+            raise RuntimeError(f"error - did not find main camera with model name {main_camera_model_name}")
+        if not found_focus_cam:
+            raise RuntimeError(f"error - did not find autofocus camera with model name {focus_camera_model_name}")
+        
+        self.mc=self.microcontrollers[0]
+        
         for mc in self.microcontrollers:
             mc.open()
 
@@ -905,24 +927,8 @@ class Core:
 
                 print("done initializing microscope")
 
-        defaults=GlobalConfigHandler.get_dict()
-        main_camera_model_name=defaults["main_camera_model"].value
-        focus_camera_model_name=defaults["laser_autofocus_camera_model"].value
-
-        print(f"found {len(self.cams)} cameras")
-        for cam in self.cams:
-            if cam.model_name==main_camera_model_name:
-                device_type="main"
-            elif cam.model_name==focus_camera_model_name:
-                device_type="autofocus"
-            else:
-                raise RuntimeError(f"unknown camera model name {cam.model_name} is neither main nor autofocus camera")
-            
-            cam.open(device_type=device_type)
-
         if _DEBUG_P2JS:
             def sendp2():
-                print("sending p2.js",list(glob.glob("../../web-pjs/p2.js")))
                 return send_file("../../web-pjs/p2.js")
 
             app.add_url_rule(f"/p2.js", f"returnp2fromparentprojdir", sendp2,methods=["GET","POST"])

@@ -207,7 +207,6 @@ class MicrocontrollerStatusPackage:
         s=", ".join(
             [f"{field.name}={getattr(self,field.name)!r}" for field in dataclasses.fields(self)]
             +[f"x_pos_mm={self.pos.x_pos_mm}", f"y_pos_mm={self.pos.y_pos_mm}", f"z_pos_mm={self.pos.z_pos_mm}"])
-        print(s)
         return f"{type(self).__name__}({s})"
 
 class CommandName(int,Enum):
@@ -814,7 +813,6 @@ class Microcontroller:
             # get rid of old data
             num_bytes_in_rx_buffer = serial_in_waiting_status
             if num_bytes_in_rx_buffer > FirmwareDefinitions.READ_PACKET_LENGTH:
-                # print('getting rid of old data')
                 for i in range(num_bytes_in_rx_buffer-FirmwareDefinitions.READ_PACKET_LENGTH):
                     self.handle.read()
 
@@ -908,7 +906,7 @@ class Microcontroller:
             elif p.manufacturer=="Teensyduino":
                 device_info=p
             else:
-                # print(f"unknown device: {p.description = } {p.device = } {p.manufacturer = } {p=}")
+                # we dont care about other devices
                 continue
 
             ret.append(Microcontroller(device_info))
