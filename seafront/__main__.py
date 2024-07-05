@@ -640,7 +640,7 @@ class AutofocusSnap(CoreCommand):
             self.state=CoreState.Idle
             return json.dumps({"status":"error","message":"failed to acquire image"})
         
-        print(f"acquiring laser autofocus image with config {channel_config}, stats: min={np.min(img)} max={np.max(img)} mean={np.mean(img)}")
+        # print(f"acquiring laser autofocus image with config {channel_config}, stats: min={np.min(img)} max={np.max(img)} mean={np.mean(img)}")
         img_handle=core._store_new_laseraf_image(img,channel_config)
 
         if self.turn_laser_off:
@@ -1596,6 +1596,9 @@ class Core:
 
                 for well in config.plate_wells:
                     for site in well_sites:
+                        if not site.selected:
+                            continue
+
                         # go to site
                         site_x_mm=plate.get_well_offset_x(well.well_name)+site_topleft_x_mm+site.col*config.grid.delta_x_mm
                         site_y_mm=plate.get_well_offset_y(well.well_name)+site_topleft_y_mm+site.row*config.grid.delta_y_mm
@@ -1608,7 +1611,7 @@ class Core:
 
                         # run autofocus
                         if config.autofocus_enabled:
-                            for num_autofocus_attempts in range(3):
+                            for autofocus_attempt_num in range(3):
                                 current_displacement_res=AutofocusMeasureDisplacement().run(self)
                                 current_displacement=json.loads(current_displacement_res)
                                 if current_displacement["status"]!="success":
@@ -1616,7 +1619,8 @@ class Core:
                                     return
                                 
                                 current_displacement_um=current_displacement["displacement_um"]
-                                if current_displacement_um<DISPLACEMENT_THRESHOLD_UM:
+                                # print(f"measured offset of {current_displacement_um:.2f}um on attempt {autofocus_attempt_num}")
+                                if np.abs(current_displacement_um)<DISPLACEMENT_THRESHOLD_UM:
                                     break
                                 
                                 res_str=AutofocusApproachTargetDisplacement(0).run(self)
@@ -1625,6 +1629,7 @@ class Core:
                                     q_out.put({"status":"error","message":f"failed to autofocus at site {site} in well {well} because {res['message']}"})
                                     return
                             
+                            # reference for channel z offsets
                             reference_z_mm=self.mc.get_last_position().z_pos_mm
                         
                         for channel in channels:
