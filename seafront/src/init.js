@@ -31,68 +31,193 @@ class ImagingChannel{
         this.enabled=enabled
     }
 }
-
-let microscope_config=_p.manage({
-    project_name:"",
-    plate_name:"",
-    cell_line:"",
-
-    // TODO make this configurable somewhere in the GUI
-    autofocus_enabled:true,
-
-    grid:{
-        num_x:2,
-        delta_x_mm:0.9,
-
-        num_y:2,
-        delta_y_mm:0.9,
-
-        num_z:1,
-        delta_z_um:5,
-
-        num_t:1,
-        delta_t:{
-            h:2,
-            m:1,
-            s:4,
-        },
-
-        /** @type {SiteSelectionCell[]} */
-        mask:[]
-    },
+function microscopeConfigGetDefault(){
+    return {
+        project_name:"",
+        plate_name:"",
+        cell_line:"",
     
-    // some [arbitrary] default
-    wellplate_type:"revvity-phenoplate-384",
+        // TODO make this configurable somewhere in the GUI
+        autofocus_enabled:true,
+    
+        grid:{
+            num_x:2,
+            delta_x_mm:0.9,
+    
+            num_y:2,
+            delta_y_mm:0.9,
+    
+            num_z:1,
+            delta_z_um:5,
+    
+            num_t:1,
+            delta_t:{
+                h:2,
+                m:1,
+                s:4,
+            },
+    
+            /** @type {SiteSelectionCell[]} */
+            mask:[]
+        },
+        
+        // some [arbitrary] default
+        wellplate_type:"revvity-phenoplate-384",
+    
+        /** @type{WellIndex[]} */
+        plate_wells:[],
+    
+        /** @type{ImagingChannel[]} */
+        channels:new XHR(false)
+            .onload(function(xhr){
+                let data=JSON.parse(xhr.responseText)
+                let channels=data.main_camera_imaging_channels.map(
+                    /** @ts-ignore */
+                    function(channel){
+                        return new ImagingChannel(
+                            channel.name,
+                            channel.handle,
+                            channel.illum_perc,
+                            channel.exposure_time_ms,
+                            channel.analog_gain,
+                            channel.z_offset_um
+                        )
+                    }
+                )
+                return channels
+            })
+            .onerror(()=>{
+                console.error("error getting channels")
+            })
+            .send("/api/get_features/hardware_capabilities"),
+    }
+}
+const microscope_config=_p.manage(microscopeConfigGetDefault())
+// @ts-ignore
+function microscopeConfigOverride(new_config){
+    // basic fields
+    microscope_config.project_name = new_config.project_name
+    microscope_config.plate_name = new_config.plate_name
+    microscope_config.cell_line = new_config.cell_line
 
-    /** @type{WellIndex[]} */
-    plate_wells:[],
+    // grid
+    microscope_config.grid.num_x = parseInt(new_config.grid.num_x)
+    microscope_config.grid.delta_x_mm = new_config.grid.delta_x_mm
+    microscope_config.grid.num_y = parseInt(new_config.grid.num_y)
+    microscope_config.grid.delta_y_mm = new_config.grid.delta_y_mm
+    microscope_config.grid.num_z = parseInt(new_config.grid.num_z)
+    microscope_config.grid.delta_z_um = new_config.grid.delta_z_um
+    microscope_config.grid.num_t = parseInt(new_config.grid.num_t)
+    microscope_config.grid.delta_t = new_config.grid.delta_t
+    microscope_config.grid.mask.length=0
+    if(new_config.grid.mask.length>0){
+        // @ts-ignore
+        microscope_config.grid.mask.splice(0,0,...new_config.grid.mask.map((cell)=>{
+            return new SiteSelectionCell(cell.row,cell.col,cell.plane,cell.selected)
+        }))
+    }
 
-    /** @type{ImagingChannel[]} */
-    channels:new XHR(false)
-        .onload(function(xhr){
-            let data=JSON.parse(xhr.responseText)
-            let channels=data.main_camera_imaging_channels.map(
-                /** @ts-ignore */
-                function(channel){
-                    return new ImagingChannel(
-                        channel.name,
-                        channel.handle,
-                        channel.illum_perc,
-                        channel.exposure_time_ms,
-                        channel.analog_gain,
-                        channel.z_offset_um
-                    )
-                }
-            )
-            return channels
-        })
-        .onerror(()=>{
-            console.error("error getting channels")
-        })
-        .send("/api/get_features/hardware_capabilities"),
-})
+    // wellplate type
+    microscope_config.wellplate_type = new_config.wellplate_type
 
-// 
+    let interval_id=0    
+    interval_id=setInterval(function(){
+        if(interval_id==-1){
+            console.error("interval cleared twice")
+            return
+        }
+
+        // if well list has not updated to be of expected length, wait longer for update
+        if(microscope_config.plate_wells.length!=new_config.plate_wells.length){
+            return
+        }
+
+        const currentPlateType=WellplateType.fromHandle(microscope_config.wellplate_type)
+        if(!currentPlateType) throw new Error("could not find wellplate type "+microscope_config.wellplate_type)
+
+        /**
+         * calculate well index hash
+         * @param {number} row 
+         * @param {number} col 
+         * @returns {number}
+         */
+        function getIndexFromRowCol(row,col){
+            if(!currentPlateType) throw new Error("unreachable")
+            return row*(currentPlateType.num_wells+3)+col
+        }
+
+        /** @type{Map<number,WellIndex>} */
+        const currentWellLookup=new Map()
+        for(let well of microscope_config.plate_wells){
+            const index=getIndexFromRowCol(well.row,well.col)
+            if(currentWellLookup.has(index)){
+                console.error("duplicate well index",index)
+                continue
+            }
+            currentWellLookup.set(index,well)
+        }
+
+        for(let configWell of new_config.plate_wells){
+            let currentWell=currentWellLookup.get(getIndexFromRowCol(configWell.row,configWell.col))
+            // this should not happen, but if it does, wait longer for update
+            if(currentWell==null){
+                return
+            }
+            
+            currentWell.selected=configWell.selected
+        }
+
+        clearInterval(interval_id)
+        interval_id=-1
+    },0.01e3)
+    // catch performance issue where well selection from cache has not finished in reasonable time
+    // (if it takes too long, might as well not bother because the user will be very confused)
+    setTimeout(function(){
+        if(interval_id!=-1){
+            console.error("loading selected wells took too long. skipping well selection load from cache.")
+            clearInterval(interval_id)
+        }
+    },1e3)
+    
+    // channels.. to avoid sync issues, go through each channel and update the values instead of fully replacing the entry
+    for(let new_channel of new_config.channels){
+        for(let channel of microscope_config.channels){
+            if(new_channel.handle==channel.handle){
+                channel.illum_perc=new_channel.illum_perc
+                channel.exposure_time_ms=new_channel.exposure_time_ms
+                channel.analog_gain=new_channel.analog_gain
+                channel.z_offset_um=new_channel.z_offset_um
+                channel.enabled=new_channel.enabled
+                break
+            }
+        }
+    }
+
+}
+function microscopeConfigReset(){
+    microscopeConfigOverride(microscopeConfigGetDefault())
+}
+
+setTimeout(function(){
+    let existing_config_item=localStorage.getItem("microscope_config")
+    if(!existing_config_item)return
+
+    let existing_config=JSON.parse(existing_config_item)
+
+    try{
+        microscopeConfigOverride(existing_config)
+    }catch(e){
+        console.error("error loading microscope config from local storage. resetting.",e)
+        microscopeConfigReset()
+    }
+},0)
+
+setInterval(function(){
+    // store microscope_config in local storage to reload on page refresh
+    localStorage.setItem("microscope_config",JSON.stringify(_p.getUnmanaged(microscope_config)))
+},1e3) // only every once in a while
+
+// keep track of information sent from the microscope to indicate what status it is in
 let microscope_state=_p.manage({
     machine_name:"",
     state:"idle",
@@ -108,6 +233,7 @@ let microscope_state=_p.manage({
     },
     last_image_channel_name:"No image acquired yet",
 })
+
 let last_update_successful=true
 let updateInProgress=false
 /** @type{number?} */
@@ -342,10 +468,10 @@ class WellplateType{
 
     /** get all plate specs from the server, and cache the result */
     static all_raw_plates=new XHR(false)
-            .onload(function(xhr){
-                return JSON.parse(xhr.responseText).wellplate_types
-            })
-            .send("/api/get_features/hardware_capabilities")
+        .onload(function(xhr){
+            return JSON.parse(xhr.responseText).wellplate_types
+        })
+        .send("/api/get_features/hardware_capabilities")
 
     static get all(){
         let plate_types=WellplateType.all_raw_plates

@@ -9,10 +9,10 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@7d0efc03c087378fbd03ca1191731ade1871a567/p2.js" charset="utf-8"></script>
+        <script ssrc="https://cdn.jsdelivr.net/gh/slaide/web-pjs@7d0efc03c087378fbd03ca1191731ade1871a567/p2.js" charset="utf-8"></script>
+        <script src="/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
-        <script src="src/init.js"></script>
         <script src="src/docLinks.js"></script>
 
         <script src="src/modal.js"></script>
@@ -52,6 +52,8 @@
         <link rel="stylesheet" href="css/plot.css">
         <script src="src/plot.js"></script>
 
+        <!-- init logic. run last to ensure all other components are imported first -->
+        <script src="src/init.js"></script>
     </head>
     <body>
         <div id="main">
@@ -348,7 +350,7 @@
                                         <label>s</label>
                                     </p>
 
-                                    <div id="site-selection" class="data" p:init="updateGridMask()">
+                                    <div id="site-selection" class="data" p:init="initGridMask()" style="--num-cols: {{microscope_config.grid.num_x}}; --num-rows: {{microscope_config.grid.num_y}}; --item-size: {{grid_mask_width/Math.max(microscope_config.grid.num_x,microscope_config.grid.num_y)-2}}px;">
                                         <div id="site-selection-centerer">
                                             <template p:for="cell of microscope_config.grid.mask">
                                                 <div class="{{cell.selected?'blue':''}} site-selection-item"

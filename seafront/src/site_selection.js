@@ -13,7 +13,16 @@ class SiteSelectionCell{
     }
 }
 
-const updateGridMask=function(){
+let grid_mask_width=0
+function initGridMask(){
+    let element=document.getElementById("site-selection-centerer")
+    if(!element){console.error("element not found");return}
+    if(!(element.parentElement)){console.error("element has no parent");return}
+
+    if(grid_mask_width==0)
+        grid_mask_width=element.parentElement.clientWidth
+}
+function updateGridMask(){
     let element=document.getElementById("site-selection-centerer")
     if(!element){console.error("element not found");return}
     if(!(element.parentElement)){console.error("element has no parent");return}
@@ -33,12 +42,6 @@ const updateGridMask=function(){
                 microscope_config.grid.mask.push(new_cell)
             }
         }
-
-        let max_num_items=Math.max(num_rows,num_cols)
-        element.style.setProperty("--item-size",element.parentElement.clientWidth/max_num_items-2+"px")
-
-        element.style.setProperty("--num-cols",num_cols+"")
-        element.style.setProperty("--num-rows",num_rows+"")
     },0)
 }
 /**
