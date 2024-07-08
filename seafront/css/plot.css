@@ -3,7 +3,7 @@
 .plot-display{
     position:relative;
 
-    background: lightblue;
+    background: var(--plot-background);
     overflow:hidden;
     border:1px solid grey;
 }
@@ -11,6 +11,8 @@
     user-select: none;
 
     position: absolute;
+
+    border:1px solid var(--plot-item-border);
 
     left:var(--left);
     bottom:var(--bottom);

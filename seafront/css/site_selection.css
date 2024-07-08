@@ -12,7 +12,7 @@
     align-items:center;
 }
 #site-selection *{
-    border:1px solid black;
+    border:1px solid var(--text-color);
 
     height:var(--item-size);
     width:var(--item-size);
@@ -26,7 +26,10 @@
     grid-template-columns: repeat(var(--num-cols),var(--item-size));
     grid-template-rows: repeat(var(--num-rows),var(--item-size));
 }
-.blue{
+#site-selection :not(.selected){
+    background:var(--background-color)
+}
+.selected{
     background:lightblue;
 }
 .site-selection-item{

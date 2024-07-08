@@ -1,6 +1,6 @@
 
 .section{
-    border:1px solid black;
+    border:1px solid var(--text-color);
     border-radius:0.4em;
     height:min-content;
     width:auto;
@@ -13,7 +13,7 @@
     font-family: monospace;
     font-size: 1em;
     text-align: center;
-    background-color: lightblue;
+    background-color: var(--highlight-background-color);
 }
 .section > *:not(.section-header){
     margin:0.3em;

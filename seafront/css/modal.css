@@ -23,7 +23,7 @@
     grid-template-rows: min-content 1fr min-content;
 
     background: lightpink;
-    border:1px solid black;
+    border:1px solid var(--text-color);
 }
 .modal-content > div{
     grid-column: span 2;

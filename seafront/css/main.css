@@ -33,5 +33,5 @@
 }
 #main-commandline{
     grid-column: span 3;
-    border-top:1px solid black;
+    border-top:1px solid var(--text-color);
 }

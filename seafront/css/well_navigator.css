@@ -9,7 +9,7 @@
     grid-template-columns: repeat( var( --num-cols ), 1fr );
 }
 #well-navigator-container > *{
-    border:1px solid black;
+    border:1px solid var(--text-color);
     overflow:hidden;
     aspect-ratio: 1/1;
 

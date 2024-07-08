@@ -7,6 +7,43 @@
         </script>
         <title class="data">Seafront {{MAGNIFIER_GLASS}}</title>
 
+        <style>
+            body{
+                background:var(--background-color);
+                color:var(--text-color);
+            }
+            body.light-theme{
+                --highlight-background-color:lightblue;
+
+                --background-color:white;
+                --text-color:black;
+
+                --plot-background: lightgrey;
+                --plot-item-border: black;
+            }
+            body.dark-theme{
+                --highlight-background-color:rgb(33, 33, 199);
+
+                --background-color:black;
+                --text-color:white;
+
+                --plot-background: black;
+                --plot-item-border: white;
+            }
+        </style>
+        <script>
+            function setThemeLight(){
+                document.body.classList.remove("dark-theme")
+                document.body.classList.add("light-theme")
+            }
+            function setThemeDark(){
+                document.body.classList.remove("light-theme")
+                document.body.classList.add("dark-theme")
+            }
+            // default theme is dark
+            document.addEventListener("DOMContentLoaded",setThemeDark)
+        </script>
+
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
         <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@5397b65475669448830a198ddb4a04b9a5e8ef6a/p2.js" charset="utf-8"></script>
@@ -46,7 +83,7 @@
         <!-- init logic. run last to ensure all other components are imported first -->
         <script src="src/init.js"></script>
     </head>
-    <body>
+    <body class="dark-theme">
         <div id="main">
             <div id="main-view">
                 <div id="view-select" class="tab-header-container data" p:init="init_tab_header(element)">
@@ -350,7 +387,7 @@
                                     <div id="site-selection" class="data" p:init="initGridMask()" style="--num-cols: {{microscope_config.grid.num_x}}; --num-rows: {{microscope_config.grid.num_y}}; --item-size: {{grid_mask_width/Math.max(microscope_config.grid.num_x,microscope_config.grid.num_y)-2}}px;">
                                         <div id="site-selection-centerer">
                                             <template p:for="cell of microscope_config.grid.mask">
-                                                <div class="{{cell.selected?'blue':''}} site-selection-item"
+                                                <div class="{{cell.selected?'selected':''}} site-selection-item"
                                                     grid-column="{{cell.col+1}}"
                                                     grid-row="{{cell.row+1}}"
                                                     p:on-click="toggleGridItem(cell)"
@@ -392,14 +429,14 @@
                                             justify-content: center; /* Align horizontal */
                                             align-items: center; /* Align vertical */
                                         }
-                                        .whiteTextOnBlackBackground{
-                                            background:black;
-                                            color:white;
+                                        .well-header{
+                                            background:darkgrey;
+                                            color:black;
                                             font-weight:bold;
                                             font-family: sans-serif;
                                         }
                                         .forbidden{
-                                            background:gray;
+                                            background:darkred;
                                         }
                                     </style>
 
@@ -410,7 +447,7 @@
                                         p:on-mouseleave="wellPointerCancel()"
                                     >
                                         <template class="data" p:for="well of microscope_config.plate_wells">
-                                            <div class="{{well.selected?'blue':''}} {{well.isHeader?'whiteTextOnBlackBackground':''}} {{well.forbidden?'forbidden':''}} vert-center-container well-navigator-well-item"
+                                            <div class="{{well.selected?'selected':''}} {{well.isHeader?'well-header':''}} {{well.forbidden?'forbidden':''}} vert-center-container well-navigator-well-item"
                                                 p:on-dblclick="dblclickWell(well)"
                                                 p:on-mousedown="wellPointerDown(event,well)"
                                                 p:on-mouseenter="wellPointerUpdate(event,well)"
@@ -530,7 +567,8 @@
                                     #all-channel-container > :not(button):nth-child(14n+23),
                                     #all-channel-container > :not(button):nth-child(14n+24)
                                     {
-                                        background-color:rgb(230, 230, 230);
+                                        background-color:rgb(182, 182, 182);
+                                        color:black;
                                     }
                                 </style>
                                 <div id="all-channel-container" class="section">
@@ -543,7 +581,7 @@
                                     <label><!-- snap button column --></label>
                                     <label class="data" p:tooltip="Exposure time in milliseconds">Exp. [ms]</label>
                                     <label class="data" p:tooltip="Analog Signal Gain in decibels">Gain [dB]</label>
-                                    <label class="data" p:tooltip="Offset from the autofocus target coordinate in Z, in micrometersmicrometers micrometers micrometers micrometers micrometers micrometers micrometers micrometers micrometers micrometers micrometers">Off. [um]</label>
+                                    <label class="data" p:tooltip="Offset from the autofocus target coordinate in Z, in micrometers">Off. [um]</label>
                                     <label class="data" p:tooltip="Light source illumination strength in % of maximum strength"><!--Ill. is not readable, hence Pow instead-->Pow. [%]</label>
 
                                     <template class="data" p:for="channel of microscope_config.channels">

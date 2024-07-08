@@ -1,17 +1,25 @@
 
-.tooltip:not(.processed){
-    display:none;
+/* class to be applied to a tooltip popup element (the tooltip element, not the element that spawns the tooltip) */
+.p-tooltip{
+    position: absolute;
+
+    top: var(--top-offset);
+    left: var(--left-offset);
+    /* transform to make origin the bottom center of this element */
+    transform: translateY(-100%) translateX(-50%);
+    z-index: 5;
+
+    /* make as wide as sensible, but cap at brief line length */
+    width: max-content;
+    max-width: 30em;
+
+    padding: 0.5em 1em 0.5em 1em;
+    border: 1px solid var(--text-color);
+
+    background: var(--background-color);
 }
-.tooltip-container{
-    width:max-content;
-    max-width:30em;
-
-    position:absolute;
-    z-index:100;
-    background:white;
-    border:1px solid black;
-
-    transform:translateY(-100%) translateX(-50%);
-    padding:0.3em;
-    background-color:lightyellow;
+[p\:tooltip]:hover{
+    cursor:help;
+    /* underline in addition to cursor change to clearly indicate the source of the tooltip popup */
+    text-decoration: underline;
 }
