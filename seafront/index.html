@@ -309,22 +309,29 @@
 
                                     <label class="data" p:tooltip="number of x coordinates">num x</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_x" p:on-input="updateGridMask()">
-                                    <label class="data" p:tooltip="distance between x coordinates">delta x</label>
+                                    <label class="data" p:tooltip="distance between x coordinates">delta x [mm]</label>
                                     <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_x_mm">
 
                                     <label class="data" p:tooltip="number of y coordinates">num y</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_y" p:on-input="updateGridMask()">
-                                    <label class="data" p:tooltip="distance between y coordinates">delta y</label>
+                                    <label class="data" p:tooltip="distance between y coordinates">delta y [mm]</label>
                                     <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_y_mm">
 
                                     <label class="data" p:tooltip="number of z coordinates">num z</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_z">
-                                    <label class="data" p:tooltip="distance between z coordinates">delta z</label>
+                                    <label class="data" p:tooltip="distance between z coordinates">delta z [um]</label>
                                     <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_z_um">
 
                                     <label class="data" p:tooltip="number of timepoints at which to image the plate">num t</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_t">
-                                    <label class="data" p:tooltip="time between acquisitions (if the actual acquisition is longer than this delta time, the new acquisition still start right after the previous one ends)">delta t</label>
+                                    <label class="data" p:tooltip="
+                                        time between acquisitions.
+
+                                        the total time between acquisition is the sum of the hour, minute and second components.
+                                            
+                                        (if the actual acquisition takes longer than this delta time, the new acquisition still start right after the previous one ends)
+                                        ">delta t</label
+                                    >
                                     <style>
                                         #acqusition-config-delta-t-container{
                                             display:flex;
@@ -333,11 +340,11 @@
                                     </style>
                                     <p id="acqusition-config-delta-t-container">
                                         <input type="number" min="0" max="999" value="3" step="1" class="data" p:bind="microscope_config.grid.delta_t.h">
-                                        <label>h</label>
+                                        <label class="data" p:tooltip="hours">h.</label>
                                         <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="microscope_config.grid.delta_t.m">
-                                        <label>m</label>
+                                        <label class="data" p:tooltip="minutes">m.</label>
                                         <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="microscope_config.grid.delta_t.s">
-                                        <label>s</label>
+                                        <label class="data" p:tooltip="seconds">s.</label>
                                     </p>
 
                                     <div id="site-selection" class="data" p:init="initGridMask()" style="--num-cols: {{microscope_config.grid.num_x}}; --num-rows: {{microscope_config.grid.num_y}}; --item-size: {{grid_mask_width/Math.max(microscope_config.grid.num_x,microscope_config.grid.num_y)-2}}px;">
