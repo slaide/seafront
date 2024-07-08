@@ -22,7 +22,11 @@ class WellIndex{
         return row_name
     }
     get col_name(){
-        let col_name=""+this.col
+        let col_name=this.col.toString()
+        if(col_name.length<2){
+            col_name="0"+col_name
+        }
+
         return col_name
     }
     /**
