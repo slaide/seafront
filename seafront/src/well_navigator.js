@@ -105,7 +105,9 @@ function initwellnavigator(){
         for(let j=0;j<num_cols;j++){
             let new_well = new WellIndex(i,j,false)
             
-            new_plate_wells.push(new_well)
+            // there is a bug in p2.js that introduces an undefined element into the container
+            // if these items are not managed
+            new_plate_wells.push(_p.manage(new_well))
 
             if(plate_type_forbidden_wells.has(new_well.name)){
                 WellIndex.forbidden_wells.add(new_well)
