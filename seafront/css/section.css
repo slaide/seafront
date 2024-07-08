@@ -1,11 +1,13 @@
 
 .section{
-    border:1px solid var(--text-color);
-    border-radius:0.4em;
     height:min-content;
     width:auto;
+
     overflow-y:hidden;
     overflow-x:visible;
+
+    border:3px solid var(--section-border-color);
+    border-radius:0.4em;
 }
 .section-header{
     padding: 0.1em;
@@ -13,7 +15,8 @@
     font-family: monospace;
     font-size: 1em;
     text-align: center;
-    background-color: var(--highlight-background-color);
+    background-color: var(--section-header-background-color);
+    color: var(--section-header-text-color);
 }
 .section > *:not(.section-header){
     margin:0.3em;

@@ -1,11 +1,7 @@
 button{
     padding:0.2em;
-    background-color: lightgray;
-    border:1px solid black;
+    border:1px solid var(--button-border-color);
     border-radius: 0.4em;
-}
-button:hover{
-    background-color: rgb(172, 172, 172);
 }
 label{
     height:min-content;

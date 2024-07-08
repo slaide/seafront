@@ -11,24 +11,68 @@
             body{
                 background:var(--background-color);
                 color:var(--text-color);
+
+                --theme-color:rgb(110, 172, 192);
             }
             body.light-theme{
-                --highlight-background-color:lightblue;
+                --section-header-background-color:var(--theme-color);
+                --section-header-text-color:black;
+                --section-border-color:var(--section-header-background-color);
+
+                --disabled-background-color:var(--background-color);
+                --disabled-text-color:var(--placeholder-text-color);
 
                 --background-color:white;
                 --text-color:black;
+                --placeholder-text-color:rgb(110, 110, 110);
+
+                --button-text-color:black;
+                --button-background-color:rgb(205, 205, 205);
+                --button-background-hover-color:rgb(176, 176, 176);
+                --button-border-color:rgb(167, 167, 167);
 
                 --plot-background: lightgrey;
                 --plot-item-border: black;
             }
             body.dark-theme{
-                --highlight-background-color:rgb(33, 33, 199);
+                --section-header-background-color:var(--theme-color);
+                --section-header-text-color:black;
+                --section-border-color:var(--section-header-background-color);
+
+                --disabled-background-color:var(--background-color);
+                --disabled-text-color:var(--placeholder-text-color);
 
                 --background-color:black;
                 --text-color:white;
+                --placeholder-text-color:rgb(174, 174, 174);
+
+                --button-text-color:white;
+                --button-background-color:rgb(86, 86, 86);
+                --button-background-hover-color:rgb(128, 128, 128);
+                --button-border-color:rgb(125, 125, 125);
 
                 --plot-background: black;
                 --plot-item-border: white;
+            }
+
+            button{
+                background:var(--button-background-color);
+                color:var(--button-text-color);
+            }
+            button:hover{
+                background:var(--button-background-hover-color);
+            }
+            input[disabled],select[disabled]{
+                background-color:var(--disabled-background-color);
+                color:var(--disabled-text-color);
+            }
+            input[type="number"]:not([disabled]),input[type="text"]:not([disabled]),select:not([disabled]){
+                background-color:var(--background-color);
+                color:var(--text-color);
+            }
+            /* input */::placeholder{
+                color:var(--placeholder-text-color);
+                font-style: italic;
             }
         </style>
         <script>
@@ -229,6 +273,7 @@
                                         <option value="{{option.handle}}">{{option.name}}</option>
                                     </template>
                                 </select>
+
                                 <button p:if="itemIsAction(item)" p:on-click="executeActionItem(item)">Execute</button>
 
                                 <label class="data">{{item.name}}</label>

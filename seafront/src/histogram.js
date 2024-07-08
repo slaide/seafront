@@ -54,6 +54,8 @@ const layout={
         l:30, // reduced y axis margin
         b:40, // bottom margin for x-axis title
     },
+    plot_bgcolor:"lightgrey",
+    paper_bgcolor:"lightgrey"
 }
 
 const config={

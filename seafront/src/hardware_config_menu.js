@@ -1,7 +1,7 @@
 /**
  * 
  * @param {HardwareConfigItem} item 
- * @returns 
+ * @returns {"number"|"text"}
  */
 function getInputType(item){
     if(item.value_kind=="number"){
