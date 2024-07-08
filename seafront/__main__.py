@@ -554,6 +554,9 @@ class MoveToWell(CoreCommand):
 
         plate=plates[0]
 
+        if wellIsForbidden(self.well_name,plate):
+            return json.dumps({"status":"error","message":"well is forbidden"})
+
         x_mm=plate.get_well_offset_x(self.well_name) + plate.Well_size_x_mm/2
         y_mm=plate.get_well_offset_y(self.well_name) + plate.Well_size_y_mm/2
 
@@ -750,6 +753,26 @@ class ImageStoreEntry:
     timestamp:float
     channel_config:sc.AcquisitionChannelConfig
     bit_depth:int
+
+def wellIsForbidden(well_name:str,plate_type:sc.Wellplate)->bool:
+    g_config=GlobalConfigHandler.get_dict()
+    forbidden_wells_entry=g_config["forbidden_wells"]
+    if forbidden_wells_entry is None:
+        raise RuntimeError("forbidden_wells entry not found in global config")
+    
+    forbidden_wells_str=forbidden_wells_entry.value
+    if not isinstance(forbidden_wells_str,str):
+        raise RuntimeError("forbidden_wells entry is not a string")
+
+    for s in forbidden_wells_str.split(";"):
+        num_wells,well_names=s.split(":")
+        if plate_type.Num_total_wells==int(num_wells):
+            for well in well_names.split(","):
+                if well==well_name:
+                    return True
+                
+    return False
+
 
 class Core:
     @property
@@ -1521,6 +1544,10 @@ class Core:
         assert len(plates)==1, f"multiple wellplate types with id {config.wellplate_type}"
 
         plate=plates[0]
+
+        for well in config.plate_wells:
+            if wellIsForbidden(well.well_name,plate):
+                return json.dumps({"status":"error","message":f"well {well.well_name} is not allowed on this plate"})
 
         if config.autofocus_enabled:
             if core.laser_af_calibration_data is None:

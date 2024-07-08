@@ -55,6 +55,13 @@ class WellIndex{
         }
         return ""
     }
+
+    /** @type{Set<WellIndex>} */
+    static forbidden_wells=new Set()
+
+    get forbidden(){
+        return WellIndex.forbidden_wells.has(this)
+    }
 }
 
 /**
@@ -78,6 +85,19 @@ function initwellnavigator(){
     element.style.setProperty("--num-rows",num_rows+"");
 
     microscope_config.plate_wells.length=0
+    WellIndex.forbidden_wells.clear()
+
+    const plate_type_forbidden_wells=new Set()
+
+    const forbidden_wells_str=machine_defaults.find(v=>v.handle=="forbidden_wells")
+    if(!forbidden_wells_str){
+        console.error("forbidden_wells not found")
+    }else{
+        const plate_type_forbidden_wells_str=forbidden_wells_str.value.toString().split(";").filter(s=>s.length>0).map(s=>s.split(":")).find(v=>parseInt(v[0])==plate_type.num_wells)
+        if(!plate_type_forbidden_wells_str)throw new Error("forbidden_wells not found for plate type "+plate_type.num_wells)
+
+        plate_type_forbidden_wells_str[1].split(",").forEach(w_str=>plate_type_forbidden_wells.add(w_str))
+    }
 
     let new_plate_wells=[]
     
@@ -85,10 +105,11 @@ function initwellnavigator(){
         for(let j=0;j<num_cols;j++){
             let new_well = new WellIndex(i,j,false)
             
-            // bug in p2.js: if the object is not managed, the container will
-            //      trigger change updates on every member access, and receive
-            //      an additional element that is undefined
-            new_plate_wells.push(_p.manage(new_well))
+            new_plate_wells.push(new_well)
+
+            if(plate_type_forbidden_wells.has(new_well.name)){
+                WellIndex.forbidden_wells.add(new_well)
+            }
         }
     }
 
@@ -213,6 +234,7 @@ function wellPointerUpdate(event,item){
  */
 function dblclickWell(item){
     if(item.col==0 || item.row==0)return;
+    //if(item.forbidden)return;
 
     progress_indicator.run("Moving to well "+item.name)
 
@@ -228,7 +250,7 @@ function dblclickWell(item){
             
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
-                console.error("failed to move to well",item)
+                console.error("failed to move to well",response,item)
                 return
             }
         })

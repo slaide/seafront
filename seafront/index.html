@@ -391,6 +391,9 @@
                                             font-weight:bold;
                                             font-family: sans-serif;
                                         }
+                                        .forbidden{
+                                            background:gray;
+                                        }
                                     </style>
 
                                     <link href="css/well_navigator.css" rel="stylesheet">
@@ -400,7 +403,7 @@
                                         p:on-mouseleave="wellPointerCancel()"
                                     >
                                         <template class="data" p:for="well of microscope_config.plate_wells">
-                                            <div class="{{well.selected?'blue':''}} {{well.isHeader?'whiteTextOnBlackBackground':''}} vert-center-container well-navigator-well-item"
+                                            <div class="{{well.selected?'blue':''}} {{well.isHeader?'whiteTextOnBlackBackground':''}} {{well.forbidden?'forbidden':''}} vert-center-container well-navigator-well-item"
                                                 p:on-dblclick="dblclickWell(well)"
                                                 p:on-mousedown="wellPointerDown(event,well)"
                                                 p:on-mouseenter="wellPointerUpdate(event,well)"

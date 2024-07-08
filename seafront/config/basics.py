@@ -82,6 +82,7 @@ class GlobalConfigHandler:
             "calibration_offset_x_mm":0.0,
             "calibration_offset_y_mm":0.0,
             "calibration_offset_z_mm":0.0,
+            "forbidden_wells":"96:;384:A01,A24,P01,P24;1536:",
         }
 
     @staticmethod
@@ -371,6 +372,13 @@ class GlobalConfigHandler:
                         handle="png",
                     ),
                 ]
+            ),
+
+            ConfigItem(
+                name="forbidden wells",
+                handle="forbidden_wells",
+                value_kind="text",
+                value=critical_machine_config["forbidden_wells"]
             ),
 
             laser_autofocus_system_available_attribute,
