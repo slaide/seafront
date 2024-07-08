@@ -1522,6 +1522,10 @@ class Core:
 
         plate=plates[0]
 
+        if config.autofocus_enabled:
+            if core.laser_af_calibration_data is None:
+                return json.dumps({"status":"error","message":"laser autofocus is enabled, but not calibrated"})
+
         well_sites=config.grid.mask
         # the grid is centered around the center of the well
         site_topleft_x_mm=plate.Well_size_x_mm / 2 - ((config.grid.num_x-1) * config.grid.delta_x_mm) / 2
