@@ -503,7 +503,7 @@ class Plot{
  */
 function linkPlots(element){
     let plots=element.querySelectorAll(".channel-plot-display")
-    if(plots.length==0)throw new Error("no channel-plot-display elements found")
+    if(plots.length==0)return
 
     // @ts-ignore
     let plot_data=PlotData.getFor(plots[0])

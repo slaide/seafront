@@ -196,7 +196,7 @@
                             }
                         </style>
                         <div id="grid-view-container" class="data" p:init-vis="linkPlots(element)">
-                            <template class="data" p:for="channel of microscope_config.channels">
+                            <template class="data" p:for="channel of selected_channels">
                                 <div id="live-view-{{channel.handle}}">
                                     <div>{{channel.name}}</div>
                                     <div class="data plot-display channel-plot-display"
@@ -590,7 +590,7 @@
                                 <div id="snap-selection-container" class="section">
                                     <p class="section-header">Snap Selection Control <a class="data" href="{{docLinks.snapSelectionControl}}" target="_blank">Help</a></p>
 
-                                    <button>snap selection</button>
+                                    <button class="data" p:on-click="snap_selection()">snap selection</button>
                                 </div>
 
                                 <style>
@@ -690,7 +690,7 @@
 
                                         <label>channel</label>
                                         <select id="streaming-channel-select">
-                                            <template id="whatever" class="data" p:for="channel of microscope_config.channels">
+                                            <template id="whatever" class="data" p:for="channel of selected_channels">
                                                 <option value="{{channel.handle}}">{{channel.name}}</option>
                                             </template>
                                         </select>

@@ -217,6 +217,30 @@ setInterval(function(){
     localStorage.setItem("microscope_config",JSON.stringify(_p.getUnmanaged(microscope_config)))
 },1e3) // only every once in a while
 
+/**
+ * list that only contains selected channels (to simplify GUI)
+ * @type {ImagingChannel[]}
+ */
+let selected_channels=_p.manage([])
+function initSelectedChannels(){
+    for(let channel of microscope_config.channels){
+        channel=_p.ensureManagedObject(channel)
+
+        if(channel.enabled){
+            // @ts-ignore
+            selected_channels.push(channel)
+        }
+
+        _p._onPropertyChange(channel,"enabled",function(_channel,_prop_name,_channel_is_now_enabled){
+            // regenerate list as easy solution to ensure order of channels is consistent
+            // (this has bad performance when multiple elements change in quick succession, but the list is small enough that it doesn't matter)
+            selected_channels.length=0
+            selected_channels.splice(0,0,...microscope_config.channels.filter(c=>c.enabled))
+        })
+    }
+}
+initSelectedChannels()
+
 // keep track of information sent from the microscope to indicate what status it is in
 let microscope_state=_p.manage({
     machine_name:"",
