@@ -279,6 +279,8 @@ class LaserAutofocusCalibrationData:
     um_per_px:float
     x_reference:float
 
+    calibration_position:tp.Dict[str,float]
+
 class CoreStreamHandler:
     """
         class used to control a streaming microscope
@@ -1246,7 +1248,8 @@ class Core:
             # calculate the conversion factor, based on lowest and highest measured position
             um_per_px=z_mm_movement_range_mm*1e3/(x2-x0),
             # set reference position
-            x_reference=x1
+            x_reference=x1,
+            calibration_position=json.loads(self.get_current_state())["stage_position"]
         )
 
         return json.dumps({"status":"success"})
@@ -1462,7 +1465,29 @@ class Core:
 
         return json.dumps({"status":"success","channel_name":img_info.channel_config.name,"hist_values":hist.tolist()})
 
-    def get_current_state(self):
+    def get_current_state(self)->str:
+        """
+        return json-like string with fields:
+            "status":"success"|"error",
+            "state":str,
+            "autofocus_system_calibration_data":tp.Any,
+            "stage_position":{
+                "x_pos_mm":float,
+                "y_pos_mm":float,
+                "z_pos_mm":float,
+            },
+            "latest_imgs":tp.Dict[str,
+                {
+                    "handle":str,
+                    "channel":dict,
+                    "width_px":int,
+                    "height_px":int,
+                    "timestamp":float,
+                }
+            ]
+
+        """
+
         last_stage_position=self.mc.get_last_position()
 
         latest_img_info={
@@ -1484,6 +1509,7 @@ class Core:
         return json.dumps({
             "status":"success",
             "state":self.state.value,
+            "autofocus_system_calibration_data":self.laser_af_calibration_data.__dict__ if self.laser_af_calibration_data is not None else None,
             "stage_position":{
                 "x_pos_mm":x_pos_mm,
                 "y_pos_mm":y_pos_mm,

@@ -90,7 +90,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@5397b65475669448830a198ddb4a04b9a5e8ef6a/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@884363ae2c9f183b486532f89696408b8c70b517/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/docLinks.js"></script>
@@ -747,7 +747,10 @@
                                     <script src="src/laser_autofocus.js"></script>
 
                                     <button class="data col-span-2" p:on-click="setLaserAutofocusReference()">Calibrate Laser Autofocus now</button>
-                                    <button>Go to last calibrated Z</button>
+                                    <div>
+                                        <input id="autofocus-enabled-checkbox" type=checkbox class=data p:bind="microscope_config.autofocus_enabled">
+                                        <label for="autofocus-enabled-checkbox">Use Autofocus</label>
+                                    </div>
                                     <label>measured offset (um)</label>
                                     <p class="data">{{laserautofocusdata.currentOffset.toFixed(2)}}</p>
                                     <button class="data" p:on-click="measureLaserAutofocusOffset()">Measure current Z offset</button>

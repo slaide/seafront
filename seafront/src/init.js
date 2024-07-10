@@ -246,6 +246,7 @@ let microscope_state=_p.manage({
     machine_name:"",
     state:"idle",
     streaming:false,
+    autofocus_system_calibration_data:null,
     pos:{
         x_mm:12.123,
         y_mm:23.123,
@@ -284,6 +285,26 @@ function updateMicroscopePosition(){
         
         if(!data.stage_position){
             return onerror()
+        }
+
+        const autofocus_was_already_calibrated=microscope_state.autofocus_system_calibration_data!=null
+        microscope_state.autofocus_system_calibration_data=data.autofocus_system_calibration_data
+        const autofocus_enabled_checkbox_element=document.getElementById("autofocus-enabled-checkbox")
+        if(autofocus_enabled_checkbox_element instanceof HTMLInputElement){
+            const autofocus_system_is_calibrated=microscope_state.autofocus_system_calibration_data!=null
+
+            // disable autofocus if uncalibrated
+            if(!autofocus_system_is_calibrated){
+                microscope_config.autofocus_enabled=false
+            }
+
+            // set ability to enable/disable autofocus
+            autofocus_enabled_checkbox_element.disabled=!autofocus_system_is_calibrated
+
+            // enable use of autofocus upon calibration
+            if(!autofocus_was_already_calibrated && autofocus_system_is_calibrated){
+                microscope_config.autofocus_enabled=true
+            }
         }
 
         if(!last_update_successful){
