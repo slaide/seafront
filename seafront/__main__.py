@@ -72,18 +72,23 @@ def send_img_from_remote_storage():
 
     return send_from_directory(remote_image_path_map[image_path]["dir"], remote_image_path_map[image_path]["filename"])
 
-somemap:dict={}
+class AcquistionCommand(str,Enum):
+    CANCEL="cancel"
+
+@dataclass
+class AcquisitionStatus:
+    acquisition_id:str
+    queue_in:q.Queue[AcquistionCommand]
+    """queue to send messages to the thread"""
+    queue_out:q.Queue[dict]
+    """queue to receive messages from the thread"""
+    last_status:tp.Optional[dict]
+    thread_is_running:bool
+
+
+acquisition_map:tp.Dict[str,AcquisitionStatus]={}
 """
-actual type is:
-tp.Dict[str,{
-    "acquisition_id":str,
-    "queue_in":q.Queue,
-        "queue to send messages to the thread"
-    "queue_out":q.Queue,
-        "queue to receive messages from the thread"
-    "last_status":tp.Optional[dict],
-    "thread_is_running":boolean,
-}]
+map containing information on past and current acquisitions
 """
 
 # get objectives
@@ -1008,7 +1013,9 @@ class Core:
         app.add_url_rule(
             f"/api/acquisition/start", f"start_acquisition",
             self.start_acquisition,methods=["POST"])
-        # for get_acquisition_status
+        app.add_url_rule(
+            f"/api/acquisition/cancel", f"cancel_acquisition",
+            self.cancel_acquisition, methods=["POST"])
         app.add_url_rule(
             f"/api/acquisition/status", f"get_acquisition_status",
             self.get_acquisition_status,methods=["GET","POST"])
@@ -1518,6 +1525,42 @@ class Core:
             "latest_imgs":latest_img_info
         })
 
+    def cancel_acquisition(self)->str:
+        """
+        cancel the ongoing acquisition
+        """
+
+        json_data=None
+        try:
+            json_data=request.get_json()
+        except Exception as e:
+            pass
+
+        if json_data is None:
+            return json.dumps({"status": "error", "message": "no json data"})
+        
+        acquisition_id=json_data["acquisition_id"]
+        if acquisition_id is None:
+            return json.dumps({"status": "error", "message": "no acquisition_id provided"})
+        
+        if acquisition_id not in acquisition_map:
+            return json.dumps({"status": "error", "message": "acquisition_id not found"})
+        
+        acq=acquisition_map[acquisition_id]
+
+        if acq.thread_is_running:
+            if self.acquisition_thread is None:
+                acq.thread_is_running=False    
+            else:
+                acq.thread_is_running=self.acquisition_thread.is_alive()
+
+        if not acq.thread_is_running:
+            return json.dumps({"status":"error","message":f"acquisition with id {acquisition_id} is not running"})
+
+        acq.queue_in.put(AcquistionCommand.CANCEL)
+
+        return json.dumps({"status":"success","message":f"cancelled acquisiton with id {acquisition_id}"})
+
     def start_acquisition(self):
         """
         start an acquisition with the given configuration
@@ -1676,6 +1719,16 @@ class Core:
 
                 for well in config.plate_wells:
                     for site in well_sites:
+                        # if there is something in q_in, fetch it
+                        try:
+                            q_in_item=q_in.get_nowait()
+                            if q_in_item==AcquistionCommand.CANCEL:
+                                q_out.put({"status":"error","message":"acquisition cancelled"})
+                                return
+                            print(f"warning - command unhandled: {q_in_item}")
+                        except q.Empty:
+                            pass
+
                         if not site.selected:
                             continue
 
@@ -1864,13 +1917,13 @@ class Core:
         self.acquisition_thread=th.Thread(target=run_acquisition,args=(queue_in,queue_out))
         self.acquisition_thread.start()
 
-        somemap[acquisition_id]={
-            "acquisition_id":acquisition_id,
-            "queue_in":queue_in,
-            "queue_out":queue_out,
-            "last_status":None,
-            "thread_is_running":True,
-        }
+        acquisition_map[acquisition_id]=AcquisitionStatus(
+            acquisition_id=acquisition_id,
+            queue_in=queue_in,
+            queue_out=queue_out,
+            last_status=None,
+            thread_is_running=True,
+        )
 
         return json.dumps({"status": "success","acquisition_id":acquisition_id})
 
@@ -1888,26 +1941,26 @@ class Core:
         if acquisition_id is None:
             return json.dumps({"status":"error","message":"no acquisition_id provided"})
 
-        if acquisition_id not in somemap:
+        if acquisition_id not in acquisition_map:
             return json.dumps({"status":"error","message":"acquisition_id is invalid"})
 
-        acq_res=somemap[acquisition_id]
+        acq_res=acquisition_map[acquisition_id]
 
         # actual code to check if acquisition is running
         msg=None
         while True:
             try:
-                msg=acq_res["queue_out"].get_nowait()
+                msg=acq_res.queue_out.get_nowait()
             except q.Empty:
                 break
 
         if msg is not None:
-            acq_res["last_status"]=msg
+            acq_res.last_status=msg
         else:
-            msg=acq_res["last_status"]
+            msg=acq_res.last_status
 
         if msg is None:
-            return json.dumps({"status":"error","message":"no status available"})
+            return json.dumps({"status":"success","message":"no status available"})
 
         if msg["status"]!="success":
             if self.acquisition_thread is not None:

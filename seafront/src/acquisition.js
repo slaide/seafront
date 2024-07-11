@@ -1,14 +1,7 @@
-/**@type{HTMLElement?} */
-let progress_element=null
-
-/**
- * 
- * @param {HTMLElement} element 
- */
-function removecontainerelement(element){
-    progress_element=element
-    element.parentElement?.removeChild(element)
-}
+let acquisition_progress=_p.manage({
+    text:"no acquisition started",
+    acquisition_id:null
+})
 
 function start_acquisition(){
     let data={
@@ -17,6 +10,9 @@ function start_acquisition(){
         // acquisition config
         "config_file":_p.getUnmanaged(microscope_config)
     }
+    
+    let progress_element=document.getElementById("acquisition-progress-bar")
+    if(!progress_element)throw new Error("progress_element is null")
 
     // make a raw copy of data to avoid modifying the original data
     data=JSON.parse(JSON.stringify(data))
@@ -38,58 +34,75 @@ function start_acquisition(){
                 return
             }
 
-            let acquisition_id=data.acquisition_id
-            console.log("acquisition started with id",acquisition_id,"response text:",xhr.responseText)
+            acquisition_progress.acquisition_id=data.acquisition_id
+            console.log("acquisition started with id",acquisition_progress.acquisition_id,"response text:",xhr.responseText)
             
             /** @type{XHR?} */
             let last_request=null
 
+            const send_data={"acquisition_id":acquisition_progress.acquisition_id}
+
             if(!progress_element)throw new Error("progress_element is null")
-            spawnModal("Acquisition Progress",progress_element,{
-                oninit:function(){
-                    const updateIntervalHandle=setInterval(function(){
-                        last_request=new XHR()
-                            .onload((xhr)=>{
-                                if(last_request!=null && last_request.xhr!=xhr)
-                                    return;
+            const updateIntervalHandle=setInterval(function(){
+                last_request=new XHR()
+                    .onload((xhr)=>{
+                        if(last_request!=null && last_request.xhr!=xhr)
+                            return;
 
-                                if(!progress_element)throw new Error("progress_element is null")
-                                    if(progress_element.children.length<2)throw new Error("progress_element has no children")
-                                    if(!(progress_element.children[1] instanceof HTMLElement))throw new Error("progress_element.children[1] is not an HTMLElement")
+                        if(!progress_element)throw new Error("progress_element is null")
 
-                                let progress=JSON.parse(xhr.responseText)
-                                if(progress.status!="success"){
-                                    progress_element.children[1].innerText="Acquisition status unknown"
-                                    console.warn("no acquisition progress available because",progress.message)
-                                    return
-                                }
+                        let progress=JSON.parse(xhr.responseText)
+                        if(progress.status!="success"){
+                            acquisition_progress.text="error - "+progress.message
+                            console.error("no acquisition progress available because",progress.message)
+                            clearInterval(updateIntervalHandle)
+                            return
+                        }
+                        if(progress.acquisition_progress==null || progress.acquisition_meta_information==null){
+                            acquisition_progress.text="running"
+                            return
+                        }
 
-                                progress_element.children[1].innerText=progress.message
-                                progress_element.children[1].style.setProperty(
-                                    "--percent-done",
-                                    (
-                                        progress.acquisition_progress.current_num_images
-                                        / progress.acquisition_meta_information.total_num_images
-                                        * 100
-                                    ) + "%"
-                                )
+                        acquisition_progress.text="running - "+progress.message
+                        progress_element.style.setProperty(
+                            "--percent-done",
+                            (
+                                progress.acquisition_progress.current_num_images
+                                / progress.acquisition_meta_information.total_num_images
+                                * 100
+                            ) + "%"
+                        )
 
-                                // stop polling when acquisition is done
-                                if(progress.acquisition_progress.current_num_images==progress.acquisition_meta_information.total_num_images){
-                                    clearInterval(updateIntervalHandle)
-                                    progress_element.children[1].innerText="Acquisition is done"
-                                }
-                            })
-                            .onerror(()=>{
-                                console.error("error getting acquisition progress")
-                            })
-                            .send("/api/acquisition/status",{"acquisition_id":acquisition_id},"POST")
-                    },1e3/15)
-                }
-            })
+                        // stop polling when acquisition is done
+                        if(progress.acquisition_progress.current_num_images==progress.acquisition_meta_information.total_num_images){
+                            clearInterval(updateIntervalHandle)
+                            acquisition_progress.text="done"
+                        }
+                    })
+                    .onerror(()=>{
+                        console.error("error getting acquisition progress")
+                    })
+                    .send("/api/acquisition/status",send_data,"POST")
+            },1e3/5)
         })
         .onerror(()=>{
             console.error("error starting acquisition")
         })
         .send("/api/acquisition/start",data,"POST")
+}
+function cancel_acquisition(){
+    const send_data={acquisition_id:acquisition_progress.acquisition_id}
+
+    new XHR()
+        .onload((xhr)=>{
+            const data=JSON.parse(xhr.responseText)
+            if(data.status!="success"){
+                console.error("acquisition cancel failed because:",data.message)
+                return
+            }
+        })
+        .onerror(()=>{
+            console.error("error cancelling acquisition")
+        })
+        .send("/api/acquisition/cancel",send_data,"POST")
 }

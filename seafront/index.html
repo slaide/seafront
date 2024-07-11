@@ -59,7 +59,7 @@
                 background:var(--button-background-color);
                 color:var(--button-text-color);
             }
-            button:hover{
+            button:hover:not([disabled]){
                 background:var(--button-background-hover-color);
             }
             input[disabled],select[disabled]{
@@ -300,29 +300,6 @@
                             display:grid;
                         }
                     </style>
-                    <div id="start-acquisition-container" class="section">
-                        <p class="section-header">Start Acquisition <a class="data" href="{{docLinks.mainCameraTriggerAndPixelFormat}}" target="_blank">Help</a></p>
-
-                        <style>
-                            #acquisition-progress-bar2{
-                                width:100%;
-
-                                border:1px solid black;
-                                border-radius:0.3em;
-                                padding:0.3em;
-
-                                --percent-done:50%;
-                                background:linear-gradient(to right, #adf8c1 var(--percent-done), white var(--percent-done));
-                            }
-                        </style>
-
-                        <script src="src/acquisition.js"></script>
-                        <div class="data" p:init="removecontainerelement(element)" id="acquisitionprogresscontainer">
-                            <div>acquisition progress:</div>
-                            <div id="acquisition-progress-bar2"></div>
-                        </div>
-                        <button id="start-acquisition-button" class="data" p:on-click="start_acquisition()">start acquisition</button>
-                    </div>
 
                     <style>
                         #config-file-io{
@@ -764,8 +741,31 @@
                 </div>
             </div>
 
-            <div id="main-commandline" class="data">
-                connected to: {{microscope_state.machine_name}} | frontend status: <b>{{progress_indicator.statusText}}</b> | server status: {{microscope_state.state}}
+            <div id="main-commandline" class="data" style="display:grid;grid-template-columns:1fr repeat(5, auto)">
+                <div>
+                    connected to: {{microscope_state.machine_name}} | frontend status: <b>{{progress_indicator.statusText}}</b> | server status: {{microscope_state.state}}
+                </div>
+
+
+                <script src="src/acquisition.js"></script>
+                <style>
+                    #acquisition-progress-bar{
+                        width:10em;
+
+                        border:1px solid var(--text-color);
+                        border-radius:0.3em;
+                        padding:0.3em;
+
+                        --percent-done:00%;
+                        background:linear-gradient(to right, #20c94d var(--percent-done), var(--background-color) var(--percent-done));
+                    }
+                </style>
+
+                <p>| <b>Acquisition:</b></p>
+                <p class="data">{{acquisition_progress.text}}</p>
+                <div id="acquisition-progress-bar"></div>
+                <button class="data" p:tooltip="Start an acquisition with the settings as configured above." p:on-click="start_acquisition()">start</button>
+                <button class="data" p:tooltip="Cancel the currently ongoing acquisition." p:on-click="cancel_acquisition()">cancel</button>
             </div>
         </div>
     </body>
