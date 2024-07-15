@@ -534,13 +534,25 @@ class WellplateType{
         })
         .send("/api/get_features/hardware_capabilities")
 
+    /** @type{{name:string,num_wells:number,entries:WellplateType[]}[]?} */
+    static _all=null
+
+    static _handleToType=new Map()
+
+    /** @type{{name:string,num_wells:number,entries:WellplateType[]}[]} */
     static get all(){
+        if(WellplateType._all!=null){
+            return WellplateType._all
+        }
+
         let plate_types=WellplateType.all_raw_plates
 
         /** @type {{name:string,num_wells:number,entries:WellplateType[]}[]} */
         let ret=[]
         for(let plate_type_spec of plate_types){
             const new_plate_type=new WellplateType(plate_type_spec)
+
+            WellplateType._handleToType.set(new_plate_type.Model_id,new_plate_type)
             
             /** @type {WellplateType[]?} */
             let entries=null
@@ -556,6 +568,9 @@ class WellplateType{
             }
             entries.push(new_plate_type)
         }
+        
+        WellplateType._all=ret
+
         return ret
     }
 
@@ -565,14 +580,7 @@ class WellplateType{
      * @returns {WellplateType?}
      */
     static fromHandle(handle){
-        for(let entry of this.all){
-            for(let type of entry.entries){
-                if(type.Model_id==handle){
-                    return type
-                }
-            }
-        }
-        return null
+        return WellplateType._handleToType.get(handle)
     }
 }
 /**

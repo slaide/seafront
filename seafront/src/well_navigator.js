@@ -83,6 +83,8 @@ function initwellnavigator(){
 
     element.style.setProperty("--num-cols",num_cols+"");
     element.style.setProperty("--num-rows",num_rows+"");
+    let plate_type_font_size="--plate-"+plate_type.num_wells+"-font-size"
+    element.style.setProperty("font-size","var( "+plate_type_font_size+" )")
 
     microscope_config.plate_wells.length=0
     WellIndex.forbidden_wells.clear()

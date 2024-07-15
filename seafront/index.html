@@ -474,7 +474,7 @@
                                                 p:on-mousedown="wellPointerDown(event,well)"
                                                 p:on-mouseenter="wellPointerUpdate(event,well)"
                                                 p:on-mouseup="wellPointerUp(event,well)"
-                                                p:tooltip="{{well.name}} {{well.forbidden?'(disabled due to physical constraints)':''}}"
+                                                p:tooltip="{{well.isHeader?well.label:(well.name+' '+(well.forbidden?'(disabled due to physical constraints)':''))}}"
                                             >
                                                 {{well.label}}
                                             </div>
@@ -484,53 +484,15 @@
 
                                 <div class="section" id="objective-position-on-plate-container">
                                     <p class="section-header col-span-1">Objective position overview</p>
-                                    <style>
-                                        .plateclass{
-                                            position:absolute;
-
-                                            z-index:0;
-                                            border:1px solid green;
-                                        }
-                                        .cellclass{
-                                            position:absolute;
-
-                                            z-index:1;
-
-                                            border:1px solid black;
-                                            font-size: calc( 0.08em * var(--scale-y));
-                                            text-align: center;
-                                        }
-
-                                        #objective-position-on-plate-container{
-                                            display:grid;
-                                            grid-template-columns: repeat(1,1fr);
-                                        }
-                                        #objective-position-on-plate{
-                                            position:relative;
-
-                                            /* set height and width to maintain 12/8 aspect ratio */
-                                            aspect-ratio:12/8;
-                                            border:1px solid black;
-                                        }
-                                        .objectiveclass{
-                                            background:darkred;
-                                            opacity: 0.9;
-                                            z-index:2;
-                                        }
-                                        .whiteTextOnGreyBackground{
-                                            background:grey;
-                                            color:white;
-                                            font-family: sans-serif;
-                                            font-weight: bold;
-                                        }
-                                    </style>
+                                    <link rel="stylesheet" href="css/plate_observer.css">
                                     <script src="src/plate_observer.js"></script>
                                     <div id="objective-position-on-plate" class="data plot-display"
+                                        style="--plate-well-font-size: var( --plate-{{WellplateType.fromHandle(microscope_config.wellplate_type).num_wells}}-font-size );"
                                         p:init="Plot.plot_init(element)"
                                         p:init-vis="Plot.plot_fit(element)"
                                     >
                                         <!-- plate (outline) -->
-                                        <div class='plateclass data'
+                                        <div class='data'
                                             width='{{WellplateType.fromHandle(microscope_config.wellplate_type).Length_mm.toFixed(2)}}'
                                             height='{{WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm.toFixed(2)}}'
                                         ></div>

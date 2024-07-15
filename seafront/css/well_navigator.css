@@ -1,9 +1,12 @@
-
 #well-navigator-container{
     display:grid;
 
     --num-rows: 1;
     --num-cols: 1;
+
+    --plate-96-font-size: 1.6em;
+    --plate-384-font-size: 1.0em;
+    --plate-1536-font-size: 0.6em;
 
     grid-template-rows: repeat( var( --num-rows ), 1fr );
     grid-template-columns: repeat( var( --num-cols ), 1fr );
@@ -14,9 +17,6 @@
     aspect-ratio: 1/1;
 
     text-align: center;
-}
-#well-navigator-container > *[row="0"][col="0"]{
-    font-size: 0.5em;
 }
 #well-navigator-container > *[row="0"],#well-navigator-container *[col="0"]{
     border:1px solid transparent;

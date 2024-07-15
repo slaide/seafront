@@ -1,0 +1,46 @@
+.plateclass{
+    position:absolute;
+
+    z-index:0;
+    border:1px solid green;
+}
+.cellclass{
+    position:absolute;
+
+    z-index:1;
+
+    font-size:calc( var(--plate-well-font-size) * var(--scale-y) );
+
+    border:1px solid black;
+    text-align: center;
+}
+
+#objective-position-on-plate-container{
+    display:grid;
+    grid-template-columns: repeat(1,1fr);
+}
+#objective-position-on-plate{
+    position:relative;
+
+    /* set height and width to maintain 12/8 aspect ratio */
+    aspect-ratio:12/8;
+    border:1px solid black;
+
+    --font-size-scale: 0.08;
+    --plate-96-font-size: calc( 35px * var(--font-size-scale) );
+    --plate-384-font-size: calc( 17px * var(--font-size-scale) );
+    --plate-1536-font-size: calc( 9px * var(--font-size-scale) );
+
+    --plate-well-font-size:var(--plate-96-font-size);
+}
+.objectiveclass{
+    background:darkred;
+    opacity: 0.9;
+    z-index:2;
+}
+.whiteTextOnGreyBackground{
+    background:grey;
+    color:white;
+    font-family: sans-serif;
+    font-weight: bold;
+}
