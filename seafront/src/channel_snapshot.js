@@ -29,6 +29,34 @@ function snapChannel(channel){
 }
 
 /**
+ * take a snapshot of all selected channels
+ */
+function snap_selection(){
+    progress_indicator.run("Snapping selected channels")
+
+    const data={
+        "config_file":_p.getUnmanaged(microscope_config),
+        "machine_config":getConfigState()
+    }
+    
+    new XHR(true)
+        .onload((xhr)=>{
+            const data=JSON.parse(xhr.responseText)
+            if(data.status!="success"){
+                console.log("error during snap selected channels:",data)
+            }
+
+            progress_indicator.stop()
+        })
+        .onerror(()=>{
+            console.log("failed")
+
+            progress_indicator.stop()
+        })
+        .send("/api/action/snap_selected_channels",data,"POST")
+}
+
+/**
  * 
  * @param {HTMLInputElement} input_element 
  * @param {number} default_num_digits

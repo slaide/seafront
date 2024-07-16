@@ -1052,6 +1052,10 @@ class Core:
             "/api/action/snap_channel", "snap_channel", 
             lambda:wrap_command(ChannelSnapshot),methods=["POST"])
 
+        app.add_url_rule(
+            "/api/action/snap_selected_channels","snap_selected_channels",
+            self.snap_selected_channels,methods=["POST"])
+
         # start streaming (i.e. acquire x images per sec, until stopped)
         self.is_streaming=False
         self.stream_handler:tp.Optional[CoreStreamHandler]=None
@@ -1116,6 +1120,78 @@ class Core:
         self.state=CoreState.Idle
 
         self.acquisition_thread=None
+
+    def snap_selected_channels(self)->str:
+        """
+        take a snapshot of all selected channels, and store them into the image buffer (i.e. NOT to disk)
+
+        if autofocus is calibrated, this will automatically run the autofocus and take channel z offsets into account
+
+        return json-like string, with fields:
+            - status:"success"|"error"
+            - message?:string : error message
+        """
+
+        # parse request json data into dict 
+        json_data=None
+        try:
+            json_data=request.get_json()
+        except Exception as e:
+            pass
+
+        if json_data is None:
+            return json.dumps({"status":"error","message":"no json data received"})
+
+        # get machine config
+        if "machine_config" not in json_data:
+            return json.dumps({"status": "error", "message": "no machine_config in json data"})
+        
+        GlobalConfigHandler.override(json_data["machine_config"])
+        
+        # get acquisition config
+        if "config_file" not in json_data:
+            return json.dumps({"status": "error", "message": "no config_file in json data"})
+        
+        config = sc.AcquisitionConfig.from_json(json_data["config_file"])
+
+        # get channels from that, filter for selected/enabled channels
+        channels=[c for c in config.channels if c.enabled]
+
+        # then:
+        # if autofocus is available, measure and approach 0 in a loop up to 5 times
+        reference_z_mm=json.loads(self.get_current_state())["stage_position"]["z_pos_mm"]
+        if self.laser_af_calibration_data is not None:
+            for i in range(5):
+                displacement_measure_res=AutofocusMeasureDisplacement().run(self)
+                displacement_measure_data=json.loads(displacement_measure_res)
+                if displacement_measure_data["status"]!="success":
+                    return json.dumps({"status":"error","message":"failed to measure displacement for reference z"})
+
+                current_displacement_um=displacement_measure_data["displacement_um"]
+                if np.abs(current_displacement_um)<0.5:
+                    break
+
+                move_res=MoveBy(axis="z",distance_mm=-1e-3*current_displacement_um).run(self)
+                move_data=json.loads(move_res)
+                if move_data["status"]!="success":
+                    return json.dumps({"status":"error","message":"failed to move into focus"})
+
+            # then store current z coordinate as reference z
+            reference_z_mm=json.loads(self.get_current_state())["stage_position"]["z_pos_mm"]
+
+        # then go through list of channels, and approach each channel with offset relative to reference z 
+        for channel in channels:
+            move_to_res=MoveTo(None,None,z_mm=reference_z_mm+channel.z_offset_um*1e-3).run(self)
+            move_to_data=json.loads(move_to_res)
+            if move_to_data["status"]!="success":
+                return json.dumps({"status":"error","message":"failed to move to channel offset"})
+
+            channel_snap_res=ChannelSnapshot(channel=channel.to_dict()).run(self)
+            channel_snap_data=json.loads(channel_snap_res)
+            if channel_snap_data["status"]!="success":
+                return json.dumps({"status":"error","message":"failed to take channel snapshot"})
+
+        return json.dumps({"status":"success"})
 
     def calibrate_stage_xy_here(self)->str:
         """
