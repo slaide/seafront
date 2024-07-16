@@ -1,0 +1,26 @@
+{
+	"folders":
+	[
+		{
+			"path": ".",
+		},
+		{
+			"path": "../seafront-config",
+		},
+		{
+			"path": "../web-pjs",
+		},
+	],
+   "settings": {
+      "LSP": {
+         "LSP-pyright": {
+            "settings": {
+				"python.pythonPath": "python_env/python-3.10.14/bin/python3",
+				"python.analysis.extraPaths":[
+					"../seafront-config"
+				]
+            }
+         }
+      }
+   }
+}
