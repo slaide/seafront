@@ -15,7 +15,7 @@ from pathlib import Path
 import tifffile
 import re
 
-import  seaconfig as sc
+import seaconfig as sc
 from .config.basics import ConfigItem, GlobalConfigHandler
 from .hardware.camera import Camera, gxiapi
 from .hardware.microcontroller import Microcontroller, Command, ILLUMINATION_CODE
@@ -1477,6 +1477,7 @@ class Core:
         return json-like string with fields:
             "status":"success"|"error",
             "state":str,
+            "is_in_loading_position":bool,
             "autofocus_system_calibration_data":tp.Any,
             "stage_position":{
                 "x_pos_mm":float,
@@ -1516,6 +1517,7 @@ class Core:
         return json.dumps({
             "status":"success",
             "state":self.state.value,
+            "is_in_loading_position":self.is_in_loading_position,
             "autofocus_system_calibration_data":self.laser_af_calibration_data.__dict__ if self.laser_af_calibration_data is not None else None,
             "stage_position":{
                 "x_pos_mm":x_pos_mm,

@@ -1,6 +1,9 @@
 
 class WellIndex{
     /**
+     * row and column index for a well in the GUI element
+     * 
+     * i.e. not every index is a valid well on a plate, some are row/col headers. indices for valid wells start at 1 (on both axes)
      * 
      * @param {number} row
      * @param {number} col
@@ -11,23 +14,32 @@ class WellIndex{
         this.col=col
         this.selected=selected
     }
+    /**
+     * indicate if this element element is a row or column header
+     * @returns {boolean}
+     */
     get isHeader(){
         return this.row==0 || this.col==0
     }
+    /**
+     * row name, A-Z (uppercase) for cols 1-27, then a-f (lowercase) for 28-(28+5)
+     * @returns {string}
+     */
     get row_name(){
-        let row_name=String.fromCharCode("A".charCodeAt(0)+this.row-1)
         if(this.row>=27){
-            row_name=String.fromCharCode("a".charCodeAt(0)+this.row-27)
+            return String.fromCharCode("a".charCodeAt(0)+this.row-27)
         }
-        return row_name
+        return String.fromCharCode("A".charCodeAt(0)+this.row-1)
     }
+    /**
+     * return col name, front-padded with a zero to length=2
+     * @returns {string}
+     */
     get col_name(){
-        let col_name=this.col.toString()
-        if(col_name.length<2){
-            col_name="0"+col_name
+        if(this.col<10){
+            return "0"+this.col.toString()
         }
-
-        return col_name
+        return this.col.toString()
     }
     /**
      * get name of the well, e.g. A01, B12
@@ -56,7 +68,13 @@ class WellIndex{
         return ""
     }
 
-    /** @type{Set<WellIndex>} */
+    /**
+     * list of wells that are forbidden, as indicated by the server (set on plate type change)
+     * 
+     * forbidden means not allowed to move to, either on immediate move or during acquisition
+     * 
+     * @type{Set<WellIndex>}
+     */
     static forbidden_wells=new Set()
 
     get forbidden(){

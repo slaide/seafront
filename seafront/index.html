@@ -90,7 +90,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@884363ae2c9f183b486532f89696408b8c70b517/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@2ff8bb2f2b16c5d7ae880383e639fd0231cb87ba/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/docLinks.js"></script>
@@ -260,15 +260,9 @@
                             <input type="text" class="data" p:bind="machine_value_filter.value" p:on-input="filter_results()" p:init-vis="filter_results()"/>
 
                             <template class="data" p:for="item of filtered_machine_defaults">
-                                <input p:if="!item.frozen && itemIsRawInput(item)" type="{{getInputType(item)}}" p:bind="item.value"/>
-                                <input p:if="item.frozen && itemIsRawInput(item)" type="{{getInputType(item)}}" p:bind="item.value" disabled/>
+                                <input p:if="itemIsRawInput(item)" type="{{getInputType(item)}}" p:bind="item.value" p:attributes='{"disabled":{"if":"item.frozen","value":""}}'/>
 
-                                <select p:if="!item.frozen && itemIsOptionInput(item)" value="{{item.value}}" p:bind="item.value">
-                                    <template p:for="option of item.options">
-                                        <option value="{{option.handle}}">{{option.name}}</option>
-                                    </template>
-                                </select>
-                                <select p:if="item.frozen && itemIsOptionInput(item)" value="{{item.value}}" p:bind="item.value" disabled>
+                                <select p:if="itemIsOptionInput(item)" value="{{item.value}}" p:bind="item.value" p:attributes='{"disabled":{"if":"item.frozen","value":""}}'>
                                     <template p:for="option of item.options">
                                         <option value="{{option.handle}}">{{option.name}}</option>
                                     </template>
@@ -670,8 +664,8 @@
 
                                     <button>Zero Z</button>
                                     <script src="src/loading_position.js"></script>
-                                    <button class="col-span-2 data" p:on-click="enterLoadingPosition()">enter loading position</button>
-                                    <button class="col-span-2 data" p:on-click="leaveLoadingPosition()">leave loading position</button>
+                                    <button class="col-span-2 data" p:on-click="enterLoadingPosition()" p:attributes='{"disabled":{"if":"microscope_state.is_in_loading_position","value":""}}'>enter loading position</button>
+                                    <button class="col-span-2 data" p:on-click="leaveLoadingPosition()" p:attributes='{"disabled":{"if":"!microscope_state.is_in_loading_position","value":""}}'>leave loading position</button>
                                 </div>
 
                                 <style>

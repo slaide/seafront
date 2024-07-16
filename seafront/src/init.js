@@ -133,7 +133,10 @@ function microscopeConfigOverride(new_config){
         }
 
         const currentPlateType=WellplateType.fromHandle(microscope_config.wellplate_type)
-        if(!currentPlateType) throw new Error("could not find wellplate type "+microscope_config.wellplate_type)
+        if(!currentPlateType){
+            console.error("could not find wellplate type "+microscope_config.wellplate_type)
+            return
+        }
 
         /**
          * calculate well index hash
@@ -231,12 +234,12 @@ function initSelectedChannels(){
             selected_channels.push(channel)
         }
 
-        _p._onPropertyChange(channel,"enabled",function(_channel,_prop_name,_channel_is_now_enabled){
+        _p.onValueChangeCallback(()=>channel.enabled,function(_channel_is_now_enabled){
             // regenerate list as easy solution to ensure order of channels is consistent
             // (this has bad performance when multiple elements change in quick succession, but the list is small enough that it doesn't matter)
             selected_channels.length=0
             selected_channels.splice(0,0,...microscope_config.channels.filter(c=>c.enabled))
-        })
+        },{cache:true})
     }
 }
 initSelectedChannels()
@@ -245,6 +248,7 @@ initSelectedChannels()
 let microscope_state=_p.manage({
     machine_name:"",
     state:"idle",
+    is_in_loading_position:false,
     streaming:false,
     autofocus_system_calibration_data:null,
     pos:{
@@ -317,6 +321,7 @@ function updateMicroscopePosition(){
         microscope_state.pos.z_um=data.stage_position.z_pos_mm*1e3
 
         microscope_state.state=data.state
+        microscope_state.is_in_loading_position=data.is_in_loading_position
 
         let view_latest_image=document.getElementById("view_latest_image")
         if((view_latest_image instanceof HTMLImageElement) && data.latest_imgs!=null && Object.keys(data.latest_imgs).length>0){
