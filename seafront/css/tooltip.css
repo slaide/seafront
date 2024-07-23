@@ -18,7 +18,7 @@
 
     background: var(--background-color);
 }
-[p\:tooltip]:hover{
+:not(button)[p\:tooltip]:hover{
     cursor:help;
     /* underline in addition to cursor change to clearly indicate the source of the tooltip popup */
     text-decoration: underline;

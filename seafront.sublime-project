@@ -1,4 +1,12 @@
 {
+	/* recommended plugins:
+
+		LSP
+		LSP-html
+		LSP-pyright
+		LSP-typescript
+
+	*/
 	"folders":
 	[
 		{
@@ -15,10 +23,10 @@
       "LSP": {
          "LSP-pyright": {
             "settings": {
-				"python.pythonPath": "python_env/python-3.10.14/bin/python3",
-				"python.analysis.extraPaths":[
-					"../seafront-config"
-				]
+					"python.pythonPath": "python_env/python-3.10.14/bin/python3",
+					"python.analysis.extraPaths":[
+						"../seafront-config"
+					]
             }
          }
       }

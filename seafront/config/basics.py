@@ -4,80 +4,96 @@ import dataclasses as dc
 import os
 from pathlib import Path
 import json
-
-@dataclass
-class ConfigItemOption:
-    name:str
-    handle:str
-    info:tp.Optional[tp.Any]=None
-
-    def to_dict(self)->dict:
-        return dc.asdict(self)
-    
-    @staticmethod
-    def get_bool_options()->tp.List["ConfigItemOption"]:
-        return [
-            ConfigItemOption(
-                name="Yes",
-                handle="yes",
-            ),
-            ConfigItemOption(
-                name="No",
-                handle="no",
-            ),
-        ]
-
-@dataclass
-class ConfigItem:
-    name:str
-    handle:str
-    value_kind:tp.Literal["number","text","option","action"]
-    value:tp.Union[int,float,str]
-    frozen:bool=False
-    options:tp.Optional[tp.List[ConfigItemOption]]=None
-
-    @property
-    def intvalue(self)->int:
-        assert isinstance(self.value,int), f"{self.value = } ; {type(self.value) = }"
-        return self.value
-    
-    @property
-    def boolvalue(self)->bool:
-        # from ConfigItemOption.get_bool_options()
-        assert isinstance(self.value,str), f"{self.value = } ; {type(self.value) = }"
-        return self.value=="yes"
-
-    def override(self,other:"ConfigItem"):
-        """
-            update value from other item
-        """
-        assert self.handle==other.handle, f"{self.handle = } ; {other.handle = }"
-        match self.value_kind:
-            case "number":
-                if isinstance(self.value,int):
-                    self.value=int(other.value)
-                else:
-                    self.value=float(other.value)
-            case _:
-                self.value=other.value
-
-    def to_dict(self)->dict:
-        ret=dc.asdict(self)
-        if self.options is not None:
-            ret['options']=[o.to_dict() for o in self.options]
-        return ret
+from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
 class GlobalConfigHandler:
-    seafront_home:tp.Optional[Path]=None
+    _seafront_home:tp.Optional[Path]=None
+
+    _config_list:tp.Optional[tp.List[ConfigItem]]=None
+
+    @staticmethod
+    def home()->Path:
+        " get path to seafront home directory (fills the directory with default data if it does not exist) "
+
+        if GlobalConfigHandler._seafront_home is not None:
+            SEAFRONT_HOME=GlobalConfigHandler._seafront_home
+        else:
+            # construct SEAFRONT_HOME, from $SEAFRONT_HOME or $HOME/seafront
+            env_seafront_home=os.getenv("SEAFRONT_HOME")
+            if env_seafront_home is not None:
+                SEAFRONT_HOME=Path(env_seafront_home)
+
+            else:
+                # get home dir of user
+                home_dir=os.environ.get("HOME")
+                if home_dir is None:
+                    raise ValueError("could not find home directory")
+                
+                SEAFRONT_HOME=Path(home_dir)/"seafront"
+
+            GlobalConfigHandler._seafront_home=SEAFRONT_HOME
+
+        # ensure defaults paths exist
+        if not SEAFRONT_HOME.exists():
+            SEAFRONT_HOME.mkdir(parents=True)
+
+        DEFAULT_IMAGE_STORAGE_DIR=SEAFRONT_HOME/"images"
+        if not DEFAULT_IMAGE_STORAGE_DIR.exists():
+            DEFAULT_IMAGE_STORAGE_DIR.mkdir(parents=True)
+
+        _=GlobalConfigHandler.home_acquisition_config_dir()
+        _=GlobalConfigHandler.home_config()
+
+        return SEAFRONT_HOME
+
+    @staticmethod
+    def home_config()->Path:
+        " get path to [default] machine config. create it if it does not exist. "
+
+        CONFIG_FILE_PATH=GlobalConfigHandler._seafront_home/"config.json" # type: ignore
+        if not CONFIG_FILE_PATH.exists():
+            # create config file
+            with CONFIG_FILE_PATH.open("w") as f:
+                json.dump(GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS(),f,indent=4)
+
+        return CONFIG_FILE_PATH
+
+    @staticmethod
+    def get_config_list()->tp.List[Path]:
+        ret=[]
+        for config_file in GlobalConfigHandler.home_acquisition_config_dir().glob("*.json"):
+            ret.append(config_file)
+
+        return ret
+
+    @staticmethod
+    def add_config(config:AcquisitionConfig,filename:str,overwrite_on_conflict:bool=False):
+        filepath=(GlobalConfigHandler.home_acquisition_config_dir()/filename).with_suffix(".json")
+        
+        file_already_exists=filepath in GlobalConfigHandler.get_config_list()
+        if (not overwrite_on_conflict) and file_already_exists:
+            raise RuntimeError(f"error - saving config with filename {str(filepath)}, which already exists")
+
+        with filepath.open("w+") as f:
+            json.dump(config.to_dict(),f,indent=4)
+
+    @staticmethod
+    def home_acquisition_config_dir()->Path:
+        " get path to directory containing [user-defined] acquisition configurations "
+
+        DEFAULT_CONFIG_STORAGE_DIR=GlobalConfigHandler._seafront_home/"acquisition_configs" # type: ignore
+        if not DEFAULT_CONFIG_STORAGE_DIR.exists():
+            DEFAULT_CONFIG_STORAGE_DIR.mkdir(parents=True)
+
+        return DEFAULT_CONFIG_STORAGE_DIR
 
     @staticmethod
     def CRITICAL_MACHINE_DEFAULTS():
-        assert GlobalConfigHandler.seafront_home is not None
         return {
             "main_camera_model":"MER2-1220-32U3M",
             "laser_autofocus_camera_model":"MER2-630-60U3M",
             "microscope_name":"unnamed HCS SQUID",
-            "base_image_output_dir":str(GlobalConfigHandler.seafront_home/"images"),
+            "base_image_output_dir":str(GlobalConfigHandler.home()/"images"),
             "laser_autofocus_available":"yes",
             "calibration_offset_x_mm":0.0,
             "calibration_offset_y_mm":0.0,
@@ -94,38 +110,10 @@ class GlobalConfigHandler:
         (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
         """
 
-        if GlobalConfigHandler.seafront_home is not None:
-            SEAFRONT_HOME=GlobalConfigHandler.seafront_home
-        else:
-            # construct SEAFRONT_HOME, from $SEAFRONT_HOME or $HOME/seafront
-            env_seafront_home=os.getenv("SEAFRONT_HOME")
-            if env_seafront_home is not None:
-                SEAFRONT_HOME=Path(env_seafront_home)
-
-            else:
-                # get home dir of user
-                home_dir=os.environ.get("HOME")
-                if home_dir is None:
-                    raise ValueError("could not find home directory")
-                
-                SEAFRONT_HOME=Path(home_dir)/"seafront"
-
-            GlobalConfigHandler.seafront_home=SEAFRONT_HOME
-
-        if not SEAFRONT_HOME.exists():
-            SEAFRONT_HOME.mkdir(parents=True)
-        DEFAULT_IMAGE_STORAGE_DIR=SEAFRONT_HOME/"images"
-        if not DEFAULT_IMAGE_STORAGE_DIR.exists():
-            DEFAULT_IMAGE_STORAGE_DIR.mkdir(parents=True)
-        
-        CONFIG_FILE_PATH=SEAFRONT_HOME/"config.json"
-        if not CONFIG_FILE_PATH.exists():
-            # create config file
-            with open(CONFIG_FILE_PATH,"w") as f:
-                json.dump(GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS(),f,indent=4)
+        SEAFRONT_HOME=GlobalConfigHandler.home()
     
         # load config file
-        with open(CONFIG_FILE_PATH,"r") as f:
+        with GlobalConfigHandler.home_config().open("r") as f:
             critical_machine_config=json.load(f)
 
         main_camera_attributes=[
@@ -389,8 +377,6 @@ class GlobalConfigHandler:
 
         return ret
 
-    _config_list:tp.Optional[tp.List[ConfigItem]]=None
-
     @staticmethod
     def get(as_dict:bool=False)->tp.Union[tp.List[ConfigItem],tp.List[dict]]:
         """
@@ -443,6 +429,7 @@ class GlobalConfigHandler:
                 index=get_index(handle)
                 assert index is not None
                 GlobalConfigHandler._config_list[index].override(item)
+
         elif isinstance(new_config_items,list):
             for item in new_config_items:
                 if not isinstance(item,ConfigItem):
@@ -453,15 +440,18 @@ class GlobalConfigHandler:
                 assert index is not None
                 GlobalConfigHandler._config_list[index].override(item)
 
+        else:
+            raise ValueError(f"BUG {type(new_config_items)=} {new_config_items=}")
+
     @staticmethod
     def store():
         """
         write current config to disk
         """
 
-        assert GlobalConfigHandler.seafront_home is not None
-        SEAFRONT_HOME=GlobalConfigHandler.seafront_home
-        CONFIG_FILE_PATH=SEAFRONT_HOME/"config.json"
+        SEAFRONT_HOME=GlobalConfigHandler.home()
+        CONFIG_FILE_PATH=GlobalConfigHandler.home_config()
+
         assert GlobalConfigHandler._config_list is not None
         critical_machine_config=GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS()
 
@@ -472,7 +462,7 @@ class GlobalConfigHandler:
             if key in current_config:
                 store_dict[key]=current_config[key].value
 
-        with open(CONFIG_FILE_PATH,"w") as f:
+        with CONFIG_FILE_PATH.open("w") as f:
             json.dump(store_dict,f,indent=4)
 
     @staticmethod

@@ -44,34 +44,6 @@ def send_css(path):
 def send_js(path):
     return send_from_directory('src', path)
 
-# dummy data
-remote_image_path_map:dict[str,dict]={
-    "/server/data/acquisition/a65914/D05_2_3_1_1_fluo405.tiff":{
-        "dir":"img",
-        "filename":"cells.webp"
-    },
-    "/server/data/acquisition/a65914/D05_3_5_1_1_fluo405.tiff":{
-        "dir":"img",
-        "filename":"cells2.webp"
-    },
-}
-
-@app.route("/api/img_remote")
-def send_img_from_remote_storage():
-    """
-    send an image from remote storage
-    """
-
-    # get query parameters
-    image_path=request.args.get("image_path",type=str)
-    if image_path is None:
-        return json.dumps({"status":"error","message":"no image_path provided"})
-
-    if image_path not in remote_image_path_map:
-        return json.dumps({"status":"error","message":"image_path not found"})
-
-    return send_from_directory(remote_image_path_map[image_path]["dir"], remote_image_path_map[image_path]["filename"])
-
 class AcquistionCommand(str,Enum):
     CANCEL="cancel"
 
@@ -1020,6 +992,66 @@ class Core:
             f"/api/acquisition/status", f"get_acquisition_status",
             self.get_acquisition_status,methods=["GET","POST"])
 
+        # retrieve config list
+        def config_list()->str:
+            config_list_str=[
+                {
+                    "filename":c.name,
+                    "comment":json.load(c.open("r"))["comment"] or "none",
+                }
+                for c
+                in GlobalConfigHandler.get_config_list()
+            ]
+
+            ret={
+                "status":"success",
+                "configs":config_list_str,
+            }
+
+            return json.dumps(ret)
+
+        app.add_url_rule(
+            "/api/acquisition/config_list", "get_acquisition_configs",
+            config_list,methods=["POST"])
+
+        # save/load config
+        def config_store()->str:
+            # parse request json data into dict 
+            json_data=None
+            try:
+                json_data=request.get_json()
+            except Exception as e:
+                pass
+
+            if json_data is None:
+                return json.dumps({"status":"error","message":"no json data received"})
+            
+            # get acquisition config
+            if "config_file" not in json_data:
+                return json.dumps({"status": "error", "message": "no config_file in json data"})
+            
+            config = sc.AcquisitionConfig.from_json(json_data["config_file"])
+
+            # get machine config
+            if config.machine_config is not None:
+                GlobalConfigHandler.override(json_data["machine_config"])
+
+            if "filename" not in json_data:
+                return json.dumps({"status":"error","message":"no filename provided"})
+
+            filename=json_data["filename"]
+
+            try:
+                GlobalConfigHandler.add_config(config,filename,overwrite_on_conflict=False)
+            except Exception as e:
+                return json.dumps({"status":"error","msg":f"failed storing config to file because {e}"})
+
+            return json.dumps({"status":"success"})
+
+        app.add_url_rule(
+            "/api/acquisition/config_store", "store_acquisition_configs",
+            config_store,methods=["POST"])
+
         # for move_to_well
         app.add_url_rule(
             f"/api/action/move_to_well", f"move_to_well",
@@ -1084,6 +1116,7 @@ class Core:
             "/api/action/laser_af_warm_up_laser", "laser_af_warm_up_laser",
             lambda:wrap_command(AutofocusLaserWarmup),methods=["POST"])
 
+        # calibrate stage position
         app.add_url_rule(
             "/api/action/calibrate_stage_xy_here", "calibrate_stage_xy_here", 
             self.calibrate_stage_xy_here,methods=["POST"])
@@ -1120,6 +1153,13 @@ class Core:
         self.state=CoreState.Idle
 
         self.acquisition_thread=None
+
+    def get_config_files(self)->str:
+        """
+        returns json-like string
+        """
+
+        raise RuntimeError("unimplemented") # TODO
 
     def snap_selected_channels(self)->str:
         """
@@ -1658,13 +1698,7 @@ class Core:
             if self.acquisition_thread.is_alive():
                 return json.dumps({"status": "error", "message": "acquisition already running"})
             else:
-                self.acquisition_thread=None
-        
-        # get machine config
-        if "machine_config" not in json_data:
-            return json.dumps({"status": "error", "message": "no machine_config in json data"})
-        
-        GlobalConfigHandler.override(json_data["machine_config"])
+                self.acquisition_thread=None        
         
         # get acquisition config
         if "config_file" not in json_data:
@@ -1672,7 +1706,11 @@ class Core:
         
         config = sc.AcquisitionConfig.from_json(json_data["config_file"])
 
-        print("starting acquisition with config:",config)
+        # print("starting acquisition with config:",config)
+
+        # get machine config
+        if config.machine_config is not None:
+            GlobalConfigHandler.override(config.machine_config)
 
         # TODO generate some unique acqisition id to identify this acquisition by
         # must be robust against server restarts, and async requests
@@ -1711,7 +1749,6 @@ class Core:
         num_sites=len(well_sites)
         num_channels=len(config.channels)
         num_images_total=num_wells*num_sites*num_channels
-        print(f"acquiring {num_wells} wells, {num_sites} sites, {num_channels} channels, i.e. {num_images_total} images")
 
         if num_images_total==0:
             return json.dumps({"status":"error","message":"no images to acquire"})
@@ -1738,10 +1775,9 @@ class Core:
                 raise ValueError(f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}")
             
         image_size_bytes=target_width*target_height*bytes_per_pixel
-        max_storage_size_images_GB=num_images_total*image_size_bytes
+        max_storage_size_images_GB=num_images_total*image_size_bytes/1024**3
 
-        # 1) sort wells
-        # 2) sort channels (by z order)
+        # print(f"acquiring {num_wells} wells, {num_sites} sites, {num_channels} channels, i.e. {num_images_total} images, taking up to {max_storage_size_images_GB}GB")
 
         DISPLACEMENT_THRESHOLD_UM=0.5
         "z movement below this threshold is not performed"
@@ -1774,11 +1810,24 @@ class Core:
             if channel.enabled:
                 channels.append(channel)
 
-        def run_acquisition(q_in:q.Queue,q_out:q.Queue):
+        def run_acquisition(
+            q_in:q.Queue,
+            q_out:q.Queue,
+
+            img_compression_algorithm:tp.Literal["LZW","zlib"]="LZW",
+        ):
             """
             acquisition execution
 
             may be run in another thread
+
+            arguments:
+                - q_in:q.Queue send messages into the acquisition logic, mainly for cancellation message
+                - q_out:q.Queue acquisition status updates are posted at regular logic intervals. The
+                    queue length is capped to a low number, so long times without reading an update to not
+                    consume large amounts of memory. The oldest messages are evicted first.
+                - img_compression_algorithm:tp.Literal["LZW","zlib"] lossless compression algorithms only
+
             """
 
             try:
@@ -1881,7 +1930,7 @@ class Core:
                                 str(image_storage_path),
                                 img,
 
-                                compression='LZW', # LZW or zlib (lossless formats)
+                                compression=img_compression_algorithm,
                                 compressionargs={},# for zlib: {'level': 8},
                                 maxworkers=3,
 

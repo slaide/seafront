@@ -128,6 +128,23 @@
         <script src="src/init.js"></script>
     </head>
     <body class="dark-theme">
+        <div id="reference-modal" class="modal data" p:init="set_reference_modal(element)" style="display:none;">
+            <div class="modal-content">
+                <h2>{{modal_data.title}}</h2>
+
+                <div id="modal-body">
+                    <!-- content -->
+                </div>
+
+                <div> <!-- footer -->
+                    <template class="data" p:for="button of modal_data.extra_buttons">
+                        <button p:on-click=button.onclick()>{{button.title}}</button>
+                    </template>
+                    <button p:on-click="document.body.removeChild(modal_element)">close</button>
+                </div>
+            </div>
+        </div>
+
         <div id="main">
             <div id="main-view">
                 <div id="view-select" class="tab-header-container data" p:init="init_tab_header(element)">
@@ -304,8 +321,100 @@
                     <div id="config-file-io" class="section">
                         <p class="section-header col-span-2">Save/Load configuration file</p>
 
-                        <button>Save Configuration</button>
-                        <button>Load Configuration</button>
+                        <script>
+                            let files=_p.manage([])
+                        </script>
+                        <div id="config-load-modal" style="display:none;">
+                            <div style="display:grid;grid-template-columns:auto auto auto;">
+                                <p>filename</p>
+                                <p>comment</p>
+                                <p><!--empty--></p>
+
+                                <template class="data" p:for="file of files">
+                                    <p>{{file.filename}}</p>
+                                    <p>{{file.comment}}</p>
+                                    <button>load</button>
+                                </template>
+                            </div>
+                        </div>
+                        <div id="config-store-modal" style="display:none;">
+                            <label>filename:</label>
+                            <input type="text" id="config-store-modal-filename" placeholder="config filename">
+                        </div>
+
+                        <script>
+                            let config_load_modal_element=null
+                            let config_store_modal_element=null
+
+                            function config_store(){
+                                if(config_store_modal_element==null){
+                                    config_store_modal_element=document.getElementById("config-store-modal")
+                                    config_store_modal_element.parentElement.removeChild(config_store_modal_element)
+                                    config_store_modal_element.removeAttribute("style")
+                                }
+
+                                spawnModal(
+                                    "save config file",
+                                    config_store_modal_element,
+                                    {
+                                        buttons:
+                                        [
+                                            {
+                                                title: "save",
+                                                onclick:()=>{
+                                                    let filename=document.getElementById("config-store-modal-filename").value
+
+                                                    const data={
+                                                        "config_file":_p.getUnmanaged(microscope_config),
+                                                        "filename":filename,
+                                                    }
+                                                    new XHR(false)
+                                                        .onload((xhr)=>{
+                                                            const response=JSON.parse(xhr.responseText)
+                                                            if (response.status!="success"){
+                                                                console.error("storing config failed:",response)
+                                                                return
+                                                            }
+                                                        })
+                                                        .onerror(()=>{
+                                                            console.error("failed to store config")
+                                                        })
+                                                        .send("/api/acquisition/config_store",data,"POST")
+                                                }
+                                            }
+                                        ]
+                                    }
+                                )
+                            }
+                            function config_list(){
+                                const data={}
+                                new XHR(false)
+                                    .onload((xhr)=>{
+                                        const response=JSON.parse(xhr.responseText)
+                                        if (response.status!="success"){
+                                            console.error("storing config failed:",response)
+                                            return
+                                        }
+
+                                        files.length=0
+                                        files.splice(0,0,...response.configs)
+
+                                        if(config_load_modal_element==null){
+                                            config_load_modal_element=document.getElementById("config-load-modal")
+                                            config_load_modal_element.parentElement.removeChild(config_load_modal_element)
+                                            config_load_modal_element.removeAttribute("style")
+                                        }
+                                        spawnModal("load config file",config_load_modal_element)
+                                    })
+                                    .onerror(()=>{
+                                        console.error("failed to retrieve config list")
+                                    })
+                                    .send("/api/acquisition/config_list",data,"POST")
+                            }
+                        </script>
+
+                        <button class="data" p:on-click="config_store()" p:tooltip="save config to file. opens a menu where some save data can be configured.">Save Configuration</button>
+                        <button class="data" p:on-click="config_list()" p:tooltip="load config from file. opens a menu where all files that can be loaded are listed.">Load Configuration</button>
                     </div>
                     <div>
                         <div id="control-select" class="tab-header-container data" p:init="init_tab_header(element)">

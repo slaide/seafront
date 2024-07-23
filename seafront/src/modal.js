@@ -1,43 +1,67 @@
+/** @type{HTMLElement?} */
+let modal_element=null
+/** @type{object&{title:string,extra_buttons:(object&{title:string,onclick:()=>void})[]}} */
+let modal_data={
+    title:"",
+    extra_buttons:[]
+}
+
+/** @param body {string|HTMLElement} */
+function modal_set_body(body){
+    if(!modal_element) throw new Error("modal element not found")
+
+    let modal_element_body=modal_element.children[0].children[1]
+    if(!modal_element_body) throw new Error("modal body not found")
+
+    // clear previous body
+    while(modal_element_body.firstChild){modal_element_body.removeChild(modal_element_body.firstChild)}
+
+    if(body instanceof HTMLElement){
+        modal_element_body.appendChild(body)
+    }else{
+        modal_element_body.innerHTML=body
+    }
+}
+/** @param {HTMLElement} element */
+function set_reference_modal(element){
+    modal_data=_p.manage(modal_data)
+
+    // copy element reference to global scope
+    modal_element=element
+    if(!modal_element || !modal_element.parentElement) throw new Error("modal not found or no model parent exists")
+
+    // remove modal element from DOM
+    modal_element.removeAttribute("style")
+    modal_element.parentElement.removeChild(modal_element)
+}
 
 /**
  * 
  * @param {string} title
- * @param {string|HTMLElement} html
- * @param {{oninit?:((modal:HTMLElement)=>void)}?} options
+ * @param {string|HTMLElement} body
+ * @param {{oninit?:()=>void,buttons?:[{title:string,onclick:()=>void}]}?} options
  * @returns {HTMLElement}
  */ 
-function spawnModal(title,html,options=null){
-    let modal=document.createElement("div")
-    modal.classList.add("modal")
+function spawnModal(title,body,options=null){
+    if(!modal_element) throw new Error("modal element not found")
 
-    let modal_content=document.createElement("div")
-    modal_content.classList.add("modal-content")
-    modal.appendChild(modal_content)
+    modal_data.title=title
 
-    let title_container=document.createElement("h2")
-    title_container.innerHTML=title
-    modal_content.appendChild(title_container)
-
-    let close_button=document.createElement("button")
-    close_button.innerText="Close"
-    close_button.onclick=function(){
-        document.body.removeChild(modal)
+    //@ts-ignore
+    modal_data.extra_buttons.length=0
+    if(options!=null && options.buttons!=null){
+        //@ts-ignore
+        modal_data.extra_buttons.splice(0,0,...options.buttons)
     }
-    modal_content.appendChild(close_button)
 
-    let html_body=document.createElement("div")
-    if(html instanceof HTMLElement){
-        html_body.appendChild(html)
-    }else{
-        html_body.innerHTML=html
-    }
-    modal_content.appendChild(html_body)
+    //@ts-ignore
+    modal_set_body(body)
 
     if(options!=null){
         if(options.oninit!=null){
-            options.oninit(modal_content)
+            options.oninit()
         }
     }
 
-    return document.body.appendChild(modal)
+    return document.body.appendChild(modal_element)
 }

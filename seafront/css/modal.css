@@ -15,18 +15,21 @@
     left:50%;
     top:50%;
     transform:translate(-50%,-50%);
-    width:300px;
-    height:300px;
+    width:auto;
+    max-width:30em;
+    height:auto;
 
     display:grid;
     grid-template-columns: 1fr auto;
     grid-template-rows: min-content 1fr min-content;
 
-    background: lightpink;
+    background: var(--background-color);
     border:1px solid var(--text-color);
+    padding:0.5em;
 }
 .modal-content > div{
     grid-column: span 2;
-    overflow-y:scroll;
+
+    overflow-y:auto;
     overflow-x:auto;
 }
