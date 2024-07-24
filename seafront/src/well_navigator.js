@@ -109,7 +109,7 @@ function initwellnavigator(){
 
     const plate_type_forbidden_wells=new Set()
 
-    const forbidden_wells_str=machine_defaults.find(v=>v.handle=="forbidden_wells")
+    const forbidden_wells_str=microscope_config.machine_config.find(v=>v.handle=="forbidden_wells")
     if(!forbidden_wells_str){
         console.error("forbidden_wells not found")
     }else{

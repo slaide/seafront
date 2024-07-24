@@ -16,6 +16,7 @@ import tifffile
 import re
 
 import seaconfig as sc
+from seaconfig.acquisition import AcquisitionConfig
 from .config.basics import ConfigItem, GlobalConfigHandler
 from .hardware.camera import Camera, gxiapi
 from .hardware.microcontroller import Microcontroller, Command, ILLUMINATION_CODE
@@ -181,7 +182,7 @@ def get_machine_defaults():
     (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
     """
 
-    items_json=GlobalConfigHandler.get(as_dict=True)
+    items_json=[it.to_dict() for it in GlobalConfigHandler.get(as_dict=False) if isinstance(it,ConfigItem)]
 
     return json.dumps(items_json)
 
@@ -993,64 +994,18 @@ class Core:
             self.get_acquisition_status,methods=["GET","POST"])
 
         # retrieve config list
-        def config_list()->str:
-            config_list_str=[
-                {
-                    "filename":c.name,
-                    "comment":json.load(c.open("r"))["comment"] or "none",
-                }
-                for c
-                in GlobalConfigHandler.get_config_list()
-            ]
-
-            ret={
-                "status":"success",
-                "configs":config_list_str,
-            }
-
-            return json.dumps(ret)
-
         app.add_url_rule(
             "/api/acquisition/config_list", "get_acquisition_configs",
-            config_list,methods=["POST"])
-
-        # save/load config
-        def config_store()->str:
-            # parse request json data into dict 
-            json_data=None
-            try:
-                json_data=request.get_json()
-            except Exception as e:
-                pass
-
-            if json_data is None:
-                return json.dumps({"status":"error","message":"no json data received"})
-            
-            # get acquisition config
-            if "config_file" not in json_data:
-                return json.dumps({"status": "error", "message": "no config_file in json data"})
-            
-            config = sc.AcquisitionConfig.from_json(json_data["config_file"])
-
-            # get machine config
-            if config.machine_config is not None:
-                GlobalConfigHandler.override(json_data["machine_config"])
-
-            if "filename" not in json_data:
-                return json.dumps({"status":"error","message":"no filename provided"})
-
-            filename=json_data["filename"]
-
-            try:
-                GlobalConfigHandler.add_config(config,filename,overwrite_on_conflict=False)
-            except Exception as e:
-                return json.dumps({"status":"error","msg":f"failed storing config to file because {e}"})
-
-            return json.dumps({"status":"success"})
+            self.get_config_list,methods=["POST"])
 
         app.add_url_rule(
+            "/api/acquisition/config_fetch", "fetch_acquisition_config",
+            self.config_fetch,methods=["POST"])
+
+        # save/load config
+        app.add_url_rule(
             "/api/acquisition/config_store", "store_acquisition_configs",
-            config_store,methods=["POST"])
+            self.config_store,methods=["POST"])
 
         # for move_to_well
         app.add_url_rule(
@@ -1154,12 +1109,119 @@ class Core:
 
         self.acquisition_thread=None
 
-    def get_config_files(self)->str:
+    def get_config_list(self)->str:
         """
         returns json-like string
         """
 
-        raise RuntimeError("unimplemented") # TODO
+        def map_filepath_to_info(c:Path)->dict:
+            filename=c.name
+            timestamp=None
+            comment=None
+
+            with c.open("r") as f:
+                contents=json.load(f)
+                config=AcquisitionConfig(**contents)
+
+                if config.timestamp is not None:
+                    timestamp=config.timestamp.isoformat(timespec="seconds")
+                comment=config.comment
+
+            return {
+                "filename":filename,
+                "timestamp":timestamp,
+                "comment":comment,
+            }
+
+        config_list_str=[
+            map_filepath_to_info(c)
+            for c
+            in GlobalConfigHandler.get_config_list()
+        ]
+
+        ret={
+            "status":"success",
+            "configs":config_list_str,
+        }
+
+        return json.dumps(ret)
+
+    def config_fetch(self)->str:
+        """
+        returns json-like string
+        """
+
+        # parse request json data into dict 
+        json_data=None
+        try:
+            json_data=request.get_json()
+        except Exception as e:
+            pass
+
+        if json_data is None:
+            return json.dumps({"status":"error","message":"no json data received"})
+        
+        # get acquisition config
+        if "config_file" not in json_data:
+            return json.dumps({"status": "error", "message": "no config_file in json data"})
+
+        filename=json_data["config_file"]
+
+        filepath=None
+        for c_path in GlobalConfigHandler.get_config_list():
+            if c_path.name==filename:
+                filepath=c_path
+
+        if filepath is None:
+            return json.dumps({"status":"error","message":f"config file with name {filename} not found"})
+
+        with filepath.open("r") as f:
+            config_json=json.load(f)
+
+        config=sc.AcquisitionConfig.from_json(config_json)
+
+        return json.dumps({"status":"success","file":config.to_dict()})
+
+    def config_store(self)->str:
+        """
+        returns json-like string
+        """
+
+        # parse request json data into dict 
+        json_data=None
+        try:
+            json_data=request.get_json()
+        except Exception as e:
+            pass
+
+        if json_data is None:
+            return json.dumps({"status":"error","message":"no json data received"})
+        
+        # get acquisition config
+        if "config_file" not in json_data:
+            return json.dumps({"status": "error", "message": "no config_file in json data"})
+        
+        config = sc.AcquisitionConfig.from_json(json_data["config_file"])
+        config.timestamp=dt.datetime.now(dt.timezone.utc)
+
+        # get machine config
+        if config.machine_config is not None:
+            GlobalConfigHandler.override(config.machine_config)
+
+        if "filename" not in json_data:
+            return json.dumps({"status":"error","message":"no filename provided"})
+
+        filename=json_data["filename"]
+
+        if "comment" in json_data:
+            config.comment=json_data["comment"]
+
+        try:
+            GlobalConfigHandler.add_config(config,filename,overwrite_on_conflict=False)
+        except Exception as e:
+            return json.dumps({"status":"error","msg":f"failed storing config to file because {e}"})
+
+        return json.dumps({"status":"success"})
 
     def snap_selected_channels(self)->str:
         """

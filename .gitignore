@@ -169,3 +169,4 @@ cython_debug/
 /python_env/xz*
 
 *.code-workspace
+*.sublime-workspace

@@ -92,5 +92,5 @@ let filtered_machine_defaults=_p.manage([])
  */
 function filter_results(){
     filtered_machine_defaults.length=0
-    filtered_machine_defaults.splice(0,0,...machine_defaults.filter((item)=>match_name(item.name)))
+    filtered_machine_defaults.splice(0,0,...microscope_config.machine_config.filter((item)=>match_name(item.name)))
 }

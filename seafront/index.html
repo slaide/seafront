@@ -323,23 +323,46 @@
 
                         <script>
                             let files=_p.manage([])
+
+                            function load_remote_config(file_data){
+                                let data={config_file:file_data.filename}
+
+                                new XHR(false)
+                                    .onload((xhr)=>{
+                                        const response=JSON.parse(xhr.responseText)
+                                        if(response.status!="success"){
+                                            console.error("failed to load config because",response)
+                                            return
+                                        }
+
+                                        microscopeConfigOverride(response.file)
+                                    })
+                                    .onerror(()=>{
+                                        console.error("failed to load config")
+                                    })
+                                    .send("/api/acquisition/config_fetch",data,"POST")
+                            }
                         </script>
                         <div id="config-load-modal" style="display:none;">
-                            <div style="display:grid;grid-template-columns:auto auto auto;">
+                            <div style="display:grid;grid-template-columns:auto auto auto auto;">
                                 <p>filename</p>
                                 <p>comment</p>
+                                <p>timestamp</p>
                                 <p><!--empty--></p>
 
                                 <template class="data" p:for="file of files">
                                     <p>{{file.filename}}</p>
-                                    <p>{{file.comment}}</p>
-                                    <button>load</button>
+                                    <p>{{file.comment||''}}</p>
+                                    <p>{{file.timestamp||''}}</p>
+                                    <button class="data" p:on-click=load_remote_config(file)>load</button>
                                 </template>
                             </div>
                         </div>
                         <div id="config-store-modal" style="display:none;">
                             <label>filename:</label>
                             <input type="text" id="config-store-modal-filename" placeholder="config filename">
+                            <label>comment:</label>
+                            <input type="text" id="config-store-modal-comment" placeholder="config comment">
                         </div>
 
                         <script>
@@ -363,10 +386,12 @@
                                                 title: "save",
                                                 onclick:()=>{
                                                     let filename=document.getElementById("config-store-modal-filename").value
+                                                    let comment=document.getElementById("config-store-modal-comment").value
 
                                                     const data={
                                                         "config_file":_p.getUnmanaged(microscope_config),
                                                         "filename":filename,
+                                                        "comment":comment,
                                                     }
                                                     new XHR(false)
                                                         .onload((xhr)=>{
@@ -444,12 +469,6 @@
 
                                     <label>Project Name</label>
                                     <input class="col-span-2 data" type="text" placeholder="project name" p:bind="microscope_config.project_name">
-
-                                    <!--label>Image Format</label>
-                                    <select>
-                                        <option>TIFF (compr.)</option>
-                                        <option>TIFF</option>
-                                    </select-->
 
                                     <label class="data" p:tooltip="Name of the plate, e.g. barcode or some other ID">Plate Name</label>
                                     <input class="col-span-2 data" type="text" placeholder="plate name" p:bind="microscope_config.plate_name">
