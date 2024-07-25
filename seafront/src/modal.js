@@ -35,6 +35,12 @@ function set_reference_modal(element){
     modal_element.parentElement.removeChild(modal_element)
 }
 
+/** close modal */
+function modal_close(){
+    if(!modal_element?.parentElement)return
+    document.body.removeChild(modal_element)
+}
+
 /**
  * 
  * @param {string} title

@@ -66,7 +66,7 @@
                 background-color:var(--disabled-background-color);
                 color:var(--disabled-text-color);
             }
-            input[type="number"]:not([disabled]),input[type="text"]:not([disabled]),select:not([disabled]){
+            input[type="number"]:not([disabled]),textarea:not([disabled]),input[type="text"]:not([disabled]),select:not([disabled]){
                 background-color:var(--background-color);
                 color:var(--text-color);
             }
@@ -140,7 +140,7 @@
                     <template class="data" p:for="button of modal_data.extra_buttons">
                         <button p:on-click=button.onclick()>{{button.title}}</button>
                     </template>
-                    <button p:on-click="document.body.removeChild(modal_element)">close</button>
+                    <button p:on-click="modal_close()">close</button>
                 </div>
             </div>
         </div>
@@ -344,25 +344,39 @@
                             }
                         </script>
                         <div id="config-load-modal" style="display:none;">
-                            <div style="display:grid;grid-template-columns:auto auto auto auto;">
-                                <p>filename</p>
-                                <p>comment</p>
-                                <p>timestamp</p>
+                            <div style="display:grid; grid-template-columns:repeat(6, auto); grid-row-gap:1em; grid-column-gap: 1em;">
+                                <p>FILENAME</p>
+                                <p>COMMENT</p>
+                                <p>TIMESTAMP</p>
+                                <p>CELL LINE</p>
+                                <p>PLATE TYPE</p>
                                 <p><!--empty--></p>
 
                                 <template class="data" p:for="file of files">
                                     <p>{{file.filename}}</p>
                                     <p>{{file.comment||''}}</p>
                                     <p>{{file.timestamp||''}}</p>
+                                    <p>{{file.cell_line}}</p>
+                                    <p>{{file.plate_type}}</p>
                                     <button class="data" p:on-click=load_remote_config(file)>load</button>
                                 </template>
                             </div>
                         </div>
-                        <div id="config-store-modal" style="display:none;">
-                            <label>filename:</label>
-                            <input type="text" id="config-store-modal-filename" placeholder="config filename">
-                            <label>comment:</label>
-                            <input type="text" id="config-store-modal-comment" placeholder="config comment">
+                        <style>
+                            .hidden{
+                                display:none;
+                            }
+                            #config-store-modal:not(.hidden){
+                                display:grid;
+                                grid-template-columns: fit-content 1fr;
+                                grid-template-rows: repeat(2,min-content) 1fr;
+                            }
+                        </style>
+                        <div id="config-store-modal" class="hidden">
+                            <label class="data" p:tooltip="name of the file. (must NOT contain forward slashes /  ) may contain spaces. does not have to end in '.json' )">filename:</label>
+                            <input type="text" id="config-store-modal-filename" placeholder="config filename" autocomplete="off">
+                            <label class="data" p:tooltip="arbitrary comment that is embedded in the config file. it should describe what the intended use of the config file is, e.g. for a specific experiment, or for a specific purpose like 48h live imaging. may contain the name of the author.">comment:</label>
+                            <textarea id="config-store-modal-comment" placeholder="config comment" style="grid-row: span 2" rows=2></textarea>
                         </div>
 
                         <script>
@@ -373,7 +387,7 @@
                                 if(config_store_modal_element==null){
                                     config_store_modal_element=document.getElementById("config-store-modal")
                                     config_store_modal_element.parentElement.removeChild(config_store_modal_element)
-                                    config_store_modal_element.removeAttribute("style")
+                                    config_store_modal_element.classList.remove("hidden")
                                 }
 
                                 spawnModal(
@@ -385,24 +399,35 @@
                                             {
                                                 title: "save",
                                                 onclick:()=>{
-                                                    let filename=document.getElementById("config-store-modal-filename").value
-                                                    let comment=document.getElementById("config-store-modal-comment").value
+                                                    const config_store_modal_filename_element=document.getElementById("config-store-modal-filename")
+                                                    const config_store_modal_comment_element=document.getElementById("config-store-modal-comment")
+
+                                                    const filename=config_store_modal_filename_element.value
+                                                    const comment=config_store_modal_comment_element.value
 
                                                     const data={
                                                         "config_file":_p.getUnmanaged(microscope_config),
                                                         "filename":filename,
                                                         "comment":comment,
                                                     }
+
                                                     new XHR(false)
                                                         .onload((xhr)=>{
                                                             const response=JSON.parse(xhr.responseText)
                                                             if (response.status!="success"){
                                                                 console.error("storing config failed:",response)
+                                                                window.alert("failed to store config. see console for more info.")
                                                                 return
                                                             }
+
+                                                            config_store_modal_filename_element.value=""
+                                                            config_store_modal_comment_element.value=""
+
+                                                            modal_close()
                                                         })
                                                         .onerror(()=>{
                                                             console.error("failed to store config")
+                                                            window.alert("failed to store config")
                                                         })
                                                         .send("/api/acquisition/config_store",data,"POST")
                                                 }

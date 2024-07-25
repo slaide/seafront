@@ -1114,7 +1114,7 @@ class Core:
         returns json-like string
         """
 
-        def map_filepath_to_info(c:Path)->dict:
+        def map_filepath_to_info(c:Path)->dict|None:
             filename=c.name
             timestamp=None
             comment=None
@@ -1127,10 +1127,23 @@ class Core:
                     timestamp=config.timestamp.isoformat(timespec="seconds")
                 comment=config.comment
 
+                cell_line=config.cell_line
+                
+                plate_type=None
+                for plate in sc.Plates:
+                    if plate.Model_id==config.wellplate_type:
+                        plate_type=f"{plate.Manufacturer} {plate.Model_name}"
+
+                if plate_type is None:
+                    print(f"error - plate type {config.wellplate_type} in config file {c.name} not found in seaconfig plate list")
+                    return None
+
             return {
                 "filename":filename,
                 "timestamp":timestamp,
                 "comment":comment,
+                "cell_line":cell_line,
+                "plate_type":plate_type,
             }
 
         config_list_str=[
@@ -1138,6 +1151,8 @@ class Core:
             for c
             in GlobalConfigHandler.get_config_list()
         ]
+
+        config_list_str=[c for c in config_list_str if c is not None]
 
         ret={
             "status":"success",

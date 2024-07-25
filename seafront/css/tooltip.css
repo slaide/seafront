@@ -7,7 +7,7 @@
     left: var(--left-offset);
     /* transform to make origin the bottom center of this element */
     transform: translateY(-100%) translateX(-50%);
-    z-index: 5;
+    z-index: 100;
 
     /* make as wide as sensible, but cap at brief line length */
     width: max-content;

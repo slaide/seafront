@@ -412,6 +412,12 @@ class GlobalConfigHandler:
         g_list=GlobalConfigHandler.get()
 
         def get_index(handle:str)->tp.Optional[int]:
+            """
+            get index of the item in the existing configs with input handle as handle
+
+            returns None of no such item exists
+            """
+
             for i,item in enumerate(g_list):
                 assert isinstance(item,ConfigItem)
 
@@ -421,14 +427,19 @@ class GlobalConfigHandler:
             return None
 
         assert GlobalConfigHandler._config_list is not None
+
         if isinstance(new_config_items,dict):
             for handle,item in new_config_items.items():
                 if not isinstance(item,ConfigItem):
                     assert isinstance(item,dict), f"{type(item) = } ; {item = }"
                     item=ConfigItem(**item)
+
                 index=get_index(handle)
-                assert index is not None
-                GlobalConfigHandler._config_list[index].override(item)
+
+                if index is None:
+                    GlobalConfigHandler._config_list.append(item)
+                else:
+                    GlobalConfigHandler._config_list[index].override(item)
 
         elif isinstance(new_config_items,list):
             for item in new_config_items:
@@ -436,9 +447,13 @@ class GlobalConfigHandler:
                     assert isinstance(item,dict), f"{type(item) = } ; {item = }"
                     item=ConfigItem(**item)
                 handle=item.handle
+
                 index=get_index(handle)
-                assert index is not None
-                GlobalConfigHandler._config_list[index].override(item)
+                
+                if index is None:
+                    GlobalConfigHandler._config_list.append(item)
+                else:
+                    GlobalConfigHandler._config_list[index].override(item)
 
         else:
             raise ValueError(f"BUG {type(new_config_items)=} {new_config_items=}")
