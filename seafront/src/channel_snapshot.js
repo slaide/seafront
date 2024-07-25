@@ -36,7 +36,6 @@ function snap_selection(){
 
     const data={
         "config_file":_p.getUnmanaged(microscope_config),
-        "machine_config":getConfigState()
     }
     
     new XHR(true)

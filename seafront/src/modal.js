@@ -1,6 +1,6 @@
 /** @type{HTMLElement?} */
 let modal_element=null
-/** @type{object&{title:string,extra_buttons:(object&{title:string,onclick:()=>void})[]}} */
+/** @type{{title:string,extra_buttons:{title:string,onclick:()=>void}[]}} */
 let modal_data={
     title:"",
     extra_buttons:[]

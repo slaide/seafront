@@ -347,7 +347,7 @@ class Plot{
     /**
      * init element as plot display
      * @param {HTMLElement} plot 
-     * @param {(object&{preserveAspectRatio:boolean})?} options
+     * @param {{preserveAspectRatio:boolean}?} options
      */
     static plot_init(plot,options=null){
         plot.addEventListener("wheel",Plot.plot_zoom)

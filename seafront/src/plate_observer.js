@@ -1,5 +1,5 @@
 /**
- * @typedef {(object&{
+ * @typedef {{
  *      r: number,
  *      c: number,
  *      text: string,
@@ -7,7 +7,7 @@
  *      h: number,
  *      pxm: number,
  *      pym: number
- * })} PhysicalWellItemInformation
+ * }} PhysicalWellItemInformation
  */
 /** @type{PhysicalWellItemInformation[]} */
 let well_list=_p.manage([])

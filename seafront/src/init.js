@@ -35,7 +35,7 @@ let last_update_successful=true
 let updateInProgress=false
 /** @type{number?} */
 let loadTimer=null
-/** @type{Map<HTMLImageElement,object&{loaded:boolean}>} */
+/** @type{Map<HTMLImageElement,{loaded:boolean}>} */
 const element_image_load_state=new Map()
 function updateMicroscopePosition(){
     if(updateInProgress)return;
@@ -255,7 +255,7 @@ class ImagingChannel{
 }
 
 /**
- * @typedef {object&{value_kind:string,name:string,handle:string,value:string|number}} HardwareConfigItem
+ * @typedef {{value_kind:string,name:string,handle:string,value:string|number}} HardwareConfigItem
  */
 
 /**
@@ -562,7 +562,7 @@ const limits={
 class WellplateType{
     /**
      * data pulled straight from the database
-     * @param {object&{
+     * @param {{
      *     Manufacturer: string,
      *     Model_name: string,
      *     Model_id: string,

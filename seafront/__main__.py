@@ -1243,18 +1243,16 @@ class Core:
 
         if json_data is None:
             return json.dumps({"status":"error","message":"no json data received"})
-
-        # get machine config
-        if "machine_config" not in json_data:
-            return json.dumps({"status": "error", "message": "no machine_config in json data"})
-        
-        GlobalConfigHandler.override(json_data["machine_config"])
         
         # get acquisition config
         if "config_file" not in json_data:
             return json.dumps({"status": "error", "message": "no config_file in json data"})
         
         config = sc.AcquisitionConfig.from_json(json_data["config_file"])
+
+        # get machine config
+        if config.machine_config is not None:
+            GlobalConfigHandler.override(config.machine_config)
 
         # get channels from that, filter for selected/enabled channels
         channels=[c for c in config.channels if c.enabled]
@@ -1459,8 +1457,11 @@ class Core:
         current_height=img.shape[0]
         current_width=img.shape[1]
 
-        assert target_width<=current_width, f"{target_width = } ; {current_width = }"
-        assert target_height<=current_height, f"{target_height = } ; {current_height = }"
+        assert target_height>0, f"target height must be positive"
+        assert target_width>0, f"target width must be positive"
+
+        assert target_height<=current_height, f"target height {target_height} is larger than max {current_height}"
+        assert target_width<=current_width, f"target width {target_width} is larger than max {current_width}"
 
         x_offset=(current_width-target_width)//2
         y_offset=(current_height-target_height)//2

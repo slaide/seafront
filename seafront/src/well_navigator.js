@@ -138,7 +138,7 @@ function initwellnavigator(){
     microscope_config.plate_wells.push(...new_plate_wells)
 }
 
-/** @type{object&{
+/** @type{{
  *      start: WellIndex?,
  *      end: WellIndex?,
  *      prev_state: Map< WellIndex, boolean>?

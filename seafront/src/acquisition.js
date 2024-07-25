@@ -4,14 +4,10 @@ let acquisition_progress=_p.manage({
 })
 
 function start_acquisition(){
-    /** @type{object&{config_file:(typeof microscope_config)&{machine_config?:HardwareConfigItem[]}}} */
     let data={
         // acquisition config
         "config_file":_p.getUnmanaged(microscope_config)
     }
-
-    // machine config
-    data.config_file.machine_config=getConfigState()
     
     let progress_element=document.getElementById("acquisition-progress-bar")
     if(!progress_element)throw new Error("progress_element is null")
