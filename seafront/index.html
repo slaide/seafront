@@ -799,19 +799,19 @@
 
                                     <label>x (mm)</label>
                                     <p class="data">{{microscope_state.pos.x_mm.toFixed(2)}}</p>
-                                    <input id="x_move_distance_mm" type="number" min="0.01" max="100" step="0.01" value="1">
+                                    <input id="x_move_distance_mm" type="number" class="data" p:on-blur="ensureInputLimits(element)" min="0.01" max="100" step="0.01" value="1">
                                     <button class="data" p:on-click="forward_x()">Forward</button>
                                     <button class="data" p:on-click="backward_x()">Backward</button>
 
                                     <label>y (mm)</label>
                                     <p class="data">{{microscope_state.pos.y_mm.toFixed(2)}}</p>
-                                    <input id="y_move_distance_mm" type="number" min="0.01" max="100" step="0.01" value="1">
+                                    <input id="y_move_distance_mm" type="number" class="data" p:on-blur="ensureInputLimits(element)" min="0.01" max="100" step="0.01" value="1">
                                     <button class="data" p:on-click="forward_y()">Forward</button>
                                     <button class="data" p:on-click="backward_y()">Backward</button>
 
                                     <label>z (um)</label>
                                     <p class="data">{{microscope_state.pos.z_um.toFixed(2)}}</p>
-                                    <input id="z_move_distance_um" type="number" min="0.01" max="100" step="0.01" value="1">
+                                    <input id="z_move_distance_um" type="number" class="data" p:on-blur="ensureInputLimits(element)" min="0.01" max="100" step="0.01" value="1">
                                     <button class="data" p:on-click="forward_z()">Forward</button>
                                     <button class="data" p:on-click="backward_z()">Backward</button>
 
@@ -857,7 +857,7 @@
                                     <p class="data">{{laserautofocusdata.currentOffset.toFixed(2)}}</p>
                                     <button class="data" p:on-click="measureLaserAutofocusOffset()">Measure current Z offset</button>
                                     <label>Target Z offset (um)</label>
-                                    <input id="laser-autofocus-target-offset-um" type="number" min="-100" max="100" value="0" step="0.1">
+                                    <input id="laser-autofocus-target-offset-um" type="number" class="data" p:on-blur="ensureInputLimits(element)" min="-100" max="100" value="0" step="0.1">
                                     <button class="data" p:on-click="laserAutofocusMoveToTargetOffset()">Move to target offset</button>
                                 </div>
                             </div>
