@@ -832,10 +832,26 @@
 
                                     <script src="src/laser_autofocus.js"></script>
 
-                                    <button class="data col-span-2" p:on-click="setLaserAutofocusReference()">Calibrate Laser Autofocus now</button>
+                                    <button class="data col-span-2" p:on-click="setLaserAutofocusReference()">Calibrate Laser Autofocus</button>
                                     <div>
-                                        <input id="autofocus-enabled-checkbox" type=checkbox class=data p:bind="microscope_config.autofocus_enabled">
-                                        <label for="autofocus-enabled-checkbox">Use Autofocus</label>
+                                        <script>
+                                            function initcheckbox(element){
+                                                _p.onValueChangeCallback(()=>{
+                                                    return getMachineConfig("laser_autofocus_is_calibrated").value=="yes"
+                                                },(calibration_present)=>{
+                                                    if(calibration_present){
+                                                        element.removeAttribute("disabled")
+                                                    }else{
+                                                        element.setAttribute("disabled","")
+                                                        microscope_config.autofocus_enabled=false
+                                                    }
+                                                })
+                                            }
+                                        </script>
+                                        <input id="autofocus-enabled-checkbox" type=checkbox
+                                            class=data p:bind="microscope_config.autofocus_enabled"
+                                            p:init="initcheckbox(element)">
+                                        <label for="autofocus-enabled-checkbox" class="data" p:tooltip="use autofocus in acquisition">Use Autofocus</label>
                                     </div>
                                     <label>measured offset (um)</label>
                                     <p class="data">{{laserautofocusdata.currentOffset.toFixed(2)}}</p>

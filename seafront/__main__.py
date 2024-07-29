@@ -3,6 +3,7 @@ from flask import Flask, send_from_directory, request, send_file
 import numpy as np
 from PIL import Image
 import typing as tp
+import dataclasses as dc
 from dataclasses import dataclass
 from enum import Enum
 import scipy
@@ -258,6 +259,9 @@ class LaserAutofocusCalibrationData:
     x_reference:float
 
     calibration_position:tp.Dict[str,float]
+
+    def to_dict(self)->dict:
+        return dc.asdict(self)
 
 class CoreStreamHandler:
     """
@@ -557,12 +561,22 @@ class AutofocusMeasureDisplacement(CoreCommand):
         returns json-like string
     """
 
-    def __init__(self,override_num_images:tp.Optional[int]=None):
+    def __init__(self,config_file:dict,override_num_images:tp.Optional[int]=None):
         super()
+        self.config_file_dict=config_file
+        self.config_file=sc.AcquisitionConfig(**config_file)
         self.override_num_images=override_num_images
         
     def run(self,core:"Core")->str:
-        if core.laser_af_calibration_data is None:
+        if self.config_file.machine_config is not None:
+            GlobalConfigHandler.override(self.config_file.machine_config)
+
+        g_config=GlobalConfigHandler.get_dict()
+
+        conf_af_if_calibrated=g_config["laser_autofocus_is_calibrated"]
+        conf_af_calib_x=g_config["laser_autofocus_calibration_x"]
+        conf_af_calib_umpx=g_config["laser_autofocus_calibration_umpx"]
+        if conf_af_if_calibrated is None or conf_af_calib_x is None or conf_af_calib_umpx is None or not conf_af_if_calibrated.boolvalue:
             return json.dumps({"status":"error","message":"laser autofocus not calibrated"})
 
         # get laser spot location
@@ -570,15 +584,15 @@ class AutofocusMeasureDisplacement(CoreCommand):
         try:
             res=json.loads(AutofocusSnap().run(core))
             if res["status"]!="success":
-                return json.dumps({"status":"error","message":"failed to snap autofocus image"})
+                return json.dumps({"status":"error","message":"failed to snap autofocus image","error":res})
             if core.laser_af_image is None:
                 return json.dumps({"status":"error","message":"no laser autofocus image found"})
             x,y=core._get_peak_coords(core.laser_af_image.img)
 
             # calculate displacement
-            displacement_um = (x - core.laser_af_calibration_data.x_reference)*core.laser_af_calibration_data.um_per_px
-        except:
-            return json.dumps({"status":"error","message":"failed to measure displacement (got no signal)"})
+            displacement_um = (x - conf_af_calib_x.floatvalue) * conf_af_calib_umpx.floatvalue
+        except Exception as e:
+            return json.dumps({"status":"error","message":"failed to measure displacement (got no signal)","error":str(e)})
 
         return json.dumps({"status":"success","displacement_um":displacement_um})
 
@@ -688,31 +702,45 @@ class AutofocusApproachTargetDisplacement(CoreCommand):
             returns json-like string
     """
 
-    def __init__(self,target_offset_um:float):
+    def __init__(self,target_offset_um:float,config_file:dict,max_num_reps:int=3,pre_approach_refz:bool=True):
         super()
         self.target_offset_um=target_offset_um
+        self.config_file_dict=config_file
+        self.max_num_reps=max_num_reps
+        self.pre_approach_refz=pre_approach_refz
 
-    def run(self,core:"Core")->str:
-        if core.laser_af_calibration_data is None:
-            return json.dumps({"status":"error","message":"laser autofocus not calibrated"})
-        
+        self.config_file=sc.AcquisitionConfig(**config_file)
+
+    def run(self,core:"Core")->str:        
         if core.state!=CoreState.Idle:
             return json.dumps({"status":"error","message":"cannot move while in non-idle state"})
-        
-        res=json.loads(AutofocusMeasureDisplacement().run(core))
-        if res["status"]!="success":
-            return json.dumps({"status":"error","message":"failed to measure displacement"})
-        current_displacement_um=res["displacement_um"]
 
-        distance_to_move_to_target_mm=(self.target_offset_um-current_displacement_um)*1e-3
+        if self.pre_approach_refz:
+            g_config=GlobalConfigHandler.get_dict()
+            gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
+            if gconfig_refzmm_item is None:
+                return json.dumps({"status":"error","message":"laser_autofocus_calibration_refzmm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set"})
 
-        old_state=core.state
+            res=json.loads(MoveTo(x_mm=None,y_mm=None,z_mm=gconfig_refzmm_item.floatvalue).run(core))
+            if res["status"]!="success":
+                return json.dumps({"status":"error","message":"failed to approach ref z","error":res})
 
-        core.state=CoreState.Moving
+        for _ in range(self.max_num_reps):
+            res=json.loads(AutofocusMeasureDisplacement(config_file=self.config_file_dict).run(core))
+            if res["status"]!="success":
+                return json.dumps({"status":"error","message":"failed to measure displacement","error":res})
 
-        core.mc.send_cmd(Command.move_by_mm("z",distance_to_move_to_target_mm))
+            current_displacement_um=res["displacement_um"]
 
-        core.state=old_state
+            distance_to_move_to_target_mm=(self.target_offset_um-current_displacement_um)*1e-3
+
+            old_state=core.state
+
+            core.state=CoreState.Moving
+
+            core.mc.send_cmd(Command.move_by_mm("z",distance_to_move_to_target_mm))
+
+            core.state=old_state
 
         return json.dumps({"status":"success"})
 
@@ -1054,7 +1082,6 @@ class Core:
             lambda:wrap_command(ChannelStreamEnd),methods=["POST"])
 
         # laser autofocus system
-        self.laser_af_calibration_data:tp.Optional[LaserAutofocusCalibrationData]=None
         app.add_url_rule(
             "/api/action/snap_reflection_autofocus", "snap_reflection_autofocus", 
             lambda:wrap_command(AutofocusSnap),methods=["POST"])
@@ -1263,11 +1290,16 @@ class Core:
         if "config_file" not in json_data:
             return json.dumps({"status": "error", "message": "no config_file in json data"})
         
-        config = sc.AcquisitionConfig.from_json(json_data["config_file"])
+        config_file_dict=json_data["config_file"]
+        config = sc.AcquisitionConfig.from_json(config_file_dict)
 
         # get machine config
         if config.machine_config is not None:
             GlobalConfigHandler.override(config.machine_config)
+
+        g_config=GlobalConfigHandler.get_dict()
+
+        laf_is_calibrated=g_config["laser_autofocus_is_calibrated"]
 
         # get channels from that, filter for selected/enabled channels
         channels=[c for c in config.channels if c.enabled]
@@ -1275,9 +1307,10 @@ class Core:
         # then:
         # if autofocus is available, measure and approach 0 in a loop up to 5 times
         reference_z_mm=json.loads(self.get_current_state())["stage_position"]["z_pos_mm"]
-        if self.laser_af_calibration_data is not None:
+
+        if laf_is_calibrated is not None and laf_is_calibrated.boolvalue:
             for i in range(5):
-                displacement_measure_res=AutofocusMeasureDisplacement().run(self)
+                displacement_measure_res=AutofocusMeasureDisplacement(config_file_dict).run(self)
                 displacement_measure_data=json.loads(displacement_measure_res)
                 if displacement_measure_data["status"]!="success":
                     return json.dumps({"status":"error","message":"failed to measure displacement for reference z"})
@@ -1442,7 +1475,7 @@ class Core:
         # move to original position
         self.mc.send_cmd(Command.move_by_mm("z",-z_mm_movement_range_mm/2))
 
-        self.laser_af_calibration_data=LaserAutofocusCalibrationData(
+        calibration_data=LaserAutofocusCalibrationData(
             # calculate the conversion factor, based on lowest and highest measured position
             um_per_px=z_mm_movement_range_mm*1e3/(x2-x0),
             # set reference position
@@ -1450,7 +1483,7 @@ class Core:
             calibration_position=json.loads(self.get_current_state())["stage_position"]
         )
 
-        return json.dumps({"status":"success"})
+        return json.dumps({"status":"success","calibration_data":calibration_data.to_dict()})
 
     @staticmethod
     def _process_image(img:np.ndarray)->np.ndarray:
@@ -1712,7 +1745,6 @@ class Core:
             "status":"success",
             "state":self.state.value,
             "is_in_loading_position":self.is_in_loading_position,
-            "autofocus_system_calibration_data":self.laser_af_calibration_data.__dict__ if self.laser_af_calibration_data is not None else None,
             "stage_position":{
                 "x_pos_mm":x_pos_mm,
                 "y_pos_mm":y_pos_mm,
@@ -1782,13 +1814,16 @@ class Core:
         if "config_file" not in json_data:
             return json.dumps({"status": "error", "message": "no config_file in json data"})
         
-        config = sc.AcquisitionConfig.from_json(json_data["config_file"])
+        config_file_dict=json_data["config_file"]
+        config = sc.AcquisitionConfig.from_json(config_file_dict)
 
         # print("starting acquisition with config:",config)
 
         # get machine config
         if config.machine_config is not None:
             GlobalConfigHandler.override(config.machine_config)
+
+        g_config=GlobalConfigHandler.get_dict()
 
         # TODO generate some unique acqisition id to identify this acquisition by
         # must be robust against server restarts, and async requests
@@ -1813,7 +1848,11 @@ class Core:
                 return json.dumps({"status":"error","message":f"well {well.well_name} is not allowed on this plate"})
 
         if config.autofocus_enabled:
-            if core.laser_af_calibration_data is None:
+            laser_autofocus_is_calibrated_item=g_config["laser_autofocus_is_calibrated"]
+
+            laser_autofocus_is_calibrated=laser_autofocus_is_calibrated_item is not None and laser_autofocus_is_calibrated_item.boolvalue
+
+            if not laser_autofocus_is_calibrated:
                 return json.dumps({"status":"error","message":"laser autofocus is enabled, but not calibrated"})
 
         well_sites=config.grid.mask
@@ -1829,10 +1868,9 @@ class Core:
         num_images_total=num_wells*num_sites*num_channels
 
         if num_images_total==0:
-            return json.dumps({"status":"error","message":"no images to acquire"})
+            return json.dumps({"status":"error","message":f"no images to acquire ({num_wells = },{num_sites = },{num_channels = })"})
 
         # calculate meta information about acquisition
-        g_config=GlobalConfigHandler.get_dict()
         cam_img_width=g_config['main_camera_image_width_px']
         assert cam_img_width is not None
         target_width:int=cam_img_width.intvalue
@@ -1917,8 +1955,20 @@ class Core:
                 num_images_acquired=0
                 storage_usage_bytes=0
 
+                g_config=GlobalConfigHandler.get_dict()
+
                 # get current z coordinate as z reference
                 reference_z_mm=self.mc.get_last_position().z_pos_mm
+
+                # if laser autofocus is enabled, use autofocus z reference as initial z reference
+                gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
+                if config.autofocus_enabled and gconfig_refzmm_item is not None:
+                    reference_z_mm=gconfig_refzmm_item.floatvalue
+
+                    res=json.loads(MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm).run(self))
+                    if res["status"]!="success":
+                        q_out.put({"status":"error","message":f"failed to move to laser autofocus ref z because {res['message']}"})
+                        return
 
                 # run acquisition:
 
@@ -1950,7 +2000,7 @@ class Core:
                         # run autofocus
                         if config.autofocus_enabled:
                             for autofocus_attempt_num in range(3):
-                                current_displacement_res=AutofocusMeasureDisplacement().run(self)
+                                current_displacement_res=AutofocusMeasureDisplacement(config_file_dict).run(self)
                                 current_displacement=json.loads(current_displacement_res)
                                 if current_displacement["status"]!="success":
                                     q_out.put({"status":"error","message":f"failed to measure autofocus displacement at site {site} in well {well} because {current_displacement['message']}"})
@@ -1961,7 +2011,7 @@ class Core:
                                 if np.abs(current_displacement_um)<DISPLACEMENT_THRESHOLD_UM:
                                     break
                                 
-                                res_str=AutofocusApproachTargetDisplacement(0).run(self)
+                                res_str=AutofocusApproachTargetDisplacement(0,config_file_dict,pre_approach_refz=False).run(self)
                                 res=json.loads(res_str)
                                 if res["status"]!="success":
                                     q_out.put({"status":"error","message":f"failed to autofocus at site {site} in well {well} because {res['message']}"})

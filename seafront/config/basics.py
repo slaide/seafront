@@ -116,6 +116,8 @@ class GlobalConfigHandler:
         with GlobalConfigHandler.home_config().open("r") as f:
             critical_machine_config=json.load(f)
 
+
+
         main_camera_attributes=[
             ConfigItem(
                 name="main camera model",
@@ -266,6 +268,36 @@ class GlobalConfigHandler:
                     handle="laser_af_warm_up_laser",
                     value_kind="action",
                     value="/api/action/laser_af_warm_up_laser",
+                ),
+
+                # is calibrated flag
+                ConfigItem(
+                    name="laser autofocus is calibrated",
+                    handle="laser_autofocus_is_calibrated",
+                    value_kind="option",
+                    value="no",
+                    options=ConfigItemOption.get_bool_options()
+                ),
+                # calibrated x on sensor
+                ConfigItem(
+                    name="laser autofocus calibration: x peak pos",
+                    handle="laser_autofocus_calibration_x",
+                    value_kind="number",
+                    value=0,
+                ),
+                # calibrated um/px on sensor
+                ConfigItem(
+                    name="laser autofocus calibration: um per px",
+                    handle="laser_autofocus_calibration_umpx",
+                    value_kind="number",
+                    value=0,
+                ),
+                # z coordinate at time of calibration
+                ConfigItem(
+                    name="laser autofocus calibration: ref z in mm",
+                    handle="laser_autofocus_calibration_refzmm",
+                    value_kind="number",
+                    value=0,
                 ),
             ]
         else:

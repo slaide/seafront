@@ -17,7 +17,6 @@ let microscope_state=_p.manage({
     state:"idle",
     is_in_loading_position:false,
     streaming:false,
-    autofocus_system_calibration_data:null,
     pos:{
         x_mm:12.123,
         y_mm:23.123,
@@ -56,26 +55,6 @@ function updateMicroscopePosition(){
         
         if(!data.stage_position){
             return onerror()
-        }
-
-        const autofocus_was_already_calibrated=microscope_state.autofocus_system_calibration_data!=null
-        microscope_state.autofocus_system_calibration_data=data.autofocus_system_calibration_data
-        const autofocus_enabled_checkbox_element=document.getElementById("autofocus-enabled-checkbox")
-        if(autofocus_enabled_checkbox_element instanceof HTMLInputElement){
-            const autofocus_system_is_calibrated=microscope_state.autofocus_system_calibration_data!=null
-
-            // disable autofocus if uncalibrated
-            if(!autofocus_system_is_calibrated){
-                microscope_config.autofocus_enabled=false
-            }
-
-            // set ability to enable/disable autofocus
-            autofocus_enabled_checkbox_element.disabled=!autofocus_system_is_calibrated
-
-            // enable use of autofocus upon calibration
-            if(!autofocus_was_already_calibrated && autofocus_system_is_calibrated){
-                microscope_config.autofocus_enabled=true
-            }
         }
 
         if(!last_update_successful){
@@ -295,7 +274,7 @@ function getConfigState(){
 
 function microscopeConfigGetDefault(){
     // TODO fetch this from the server
-    return {
+    let ret={
         project_name:"",
         plate_name:"",
         cell_line:"",
@@ -355,8 +334,23 @@ function microscopeConfigGetDefault(){
 
         machine_config:getMachineDefaults(),
     }
+
+    return ret
 }
 const microscope_config=_p.manage(microscopeConfigGetDefault())
+
+/**
+ * @param{string} handle
+ * @returns{HardwareConfigItem|null}
+ * */
+function getMachineConfig(handle){
+    for(let c of microscope_config.machine_config){
+        if(c.handle==handle){
+            return c
+        }
+    }
+    return null
+}
 
 // @ts-ignore
 function microscopeConfigOverride(new_config){
@@ -408,6 +402,7 @@ function microscopeConfigOverride(new_config){
     if(new_config.wellplate_type!=null)
         microscope_config.wellplate_type = new_config.wellplate_type
 
+    // selected wells
     let interval_id=0    
     interval_id=setInterval(function(){
         if(interval_id==-1){
@@ -485,6 +480,10 @@ function microscopeConfigOverride(new_config){
             }
         }
     }
+
+    // autofocus enabled
+    if(new_config.autofocus_enabled!=null)
+        microscope_config.autofocus_enabled=new_config.autofocus_enabled
 }
 function microscopeConfigReset(){
     microscopeConfigOverride(microscopeConfigGetDefault())
