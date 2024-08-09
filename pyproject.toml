@@ -15,6 +15,8 @@ dependencies = [
     "numpy", # for signal processing and various math
     "tifffile", # for tiff image format
     "imagecodecs", # for image compression
+    "ome-types", # for ome info in image files
+    "opencv-python",
 ]
 
 [build-system]

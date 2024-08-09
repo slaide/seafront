@@ -248,6 +248,13 @@ class GlobalConfigHandler:
                     value=0,
                 ),
                 ConfigItem(
+                    name="laser autofocus use glass top",
+                    handle="laser_autofocus_use_glass_top",
+                    value_kind="option",
+                    value="no",
+                    options=ConfigItemOption.get_bool_options()
+                ),
+                ConfigItem(
                     name="laser autofocus camera pixel format",
                     handle="laser_autofocus_pixel_format",
                     value_kind="option",

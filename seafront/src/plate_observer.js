@@ -24,6 +24,7 @@ function generateWellOverviewWells(){
     setTimeout(()=>{
         /** @type{PhysicalWellItemInformation[]} */
         let ret=[]
+        
         for(let c of range(plate.Num_wells_x)){
             for(let r of range(plate.Num_wells_y)){
                 // add 1 to row and column to account for headers

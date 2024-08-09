@@ -1,4 +1,4 @@
-import json, time, os, io, sys
+import json, time, os, io
 from flask import Flask, send_from_directory, request, send_file
 import numpy as np
 from PIL import Image
@@ -7,7 +7,6 @@ import dataclasses as dc
 from dataclasses import dataclass
 from enum import Enum
 import scipy
-import glob
 import gc
 import threading as th
 import queue as q
@@ -15,6 +14,7 @@ import datetime as dt
 from pathlib import Path
 import tifffile
 import re
+import cv2
 
 import seaconfig as sc
 from seaconfig.acquisition import AcquisitionConfig
@@ -35,15 +35,15 @@ def index():
     return send_from_directory('.', 'index.html')
 
 @app.route(rule='/img/<path:path>')
-def send_img_from_local_path(path):
+def send_img_from_local_path(path:str):
     return send_from_directory('img', path)
 
 @app.route('/css/<path:path>')
-def send_css(path):
+def send_css(path:str):
     return send_from_directory('css', path)
 
 @app.route('/src/<path:path>')
-def send_js(path):
+def send_js(path:str):
     return send_from_directory('src', path)
 
 class AcquistionCommand(str,Enum):
@@ -298,8 +298,9 @@ class CoreStreamHandler:
 
 class CoreCommand:
     """ virtual base class for core commands """
-    def __init__(*args,**kwargs):
+    def __init__(self):
         pass
+
     def run(self,core:"Core")->str:
         raise NotImplementedError("run not implemented for basic CoreCommand")
     
@@ -307,7 +308,7 @@ CoreCommandDerived=tp.TypeVar("CoreCommandDerived",bound=CoreCommand)
 
 class MoveBy(CoreCommand):
     def __init__(self,axis:tp.Literal["x","y","z"],distance_mm:float):
-        super()
+        super().__init__()
         self.axis:tp.Literal["x","y","z"]=axis
         self.distance_mm=distance_mm
 
@@ -322,7 +323,8 @@ class MoveBy(CoreCommand):
 
 class LoadingPositionEnter(CoreCommand):
     def __init__(self):
-        super()
+        super().__init__()
+
     def run(self,core:"Core")->str:
         if core.is_in_loading_position:
             return json.dumps({"status":"error","message":"already in loading position"})
@@ -349,7 +351,8 @@ class LoadingPositionEnter(CoreCommand):
 
 class LoadingPositionLeave(CoreCommand):
     def __init__(self):
-        super()
+        super().__init__()
+
     def run(self,core:"Core")->str:
         if not core.is_in_loading_position:
             return json.dumps({"status":"error","message":"not in loading position"})
@@ -378,11 +381,11 @@ class _ChannelAcquisitionControl(CoreCommand):
     def __init__(
         self,
         mode:tp.Literal['snap','stream_begin','stream_end'],
-        channel:dict,
-        machine_config:tp.Optional[list]=None,
-        framerate_hz:tp.Optional[float]=None
+        channel:dict[str,tp.Any],
+        machine_config:list[tp.Any]|None=None,
+        framerate_hz:float|None=None
     ):
-        super()
+        super().__init__()
         self.mode=mode
         self.channel=channel
         self.machine_config=machine_config
@@ -480,8 +483,8 @@ class MoveTo(CoreCommand):
 
     these coordinates are internally adjusted to take the calibration into account
     """
-    def __init__(self,x_mm:tp.Optional[float],y_mm:tp.Optional[float],z_mm:tp.Optional[float]=None):
-        super()
+    def __init__(self,x_mm:float|None,y_mm:float|None,z_mm:float|None=None):
+        super().__init__()
 
         self.x_mm=x_mm
         self.y_mm=y_mm
@@ -525,7 +528,7 @@ class MoveTo(CoreCommand):
 
 class MoveToWell(CoreCommand):
     def __init__(self,plate_type:str,well_name:str):
-        super()
+        super().__init__()
         self.plate_type=plate_type
         self.well_name=well_name
 
@@ -561,8 +564,8 @@ class AutofocusMeasureDisplacement(CoreCommand):
         returns json-like string
     """
 
-    def __init__(self,config_file:dict,override_num_images:tp.Optional[int]=None):
-        super()
+    def __init__(self,config_file:dict[str,tp.Any],override_num_images:int|None=None):
+        super().__init__()
         self.config_file_dict=config_file
         self.config_file=sc.AcquisitionConfig(**config_file)
         self.override_num_images=override_num_images
@@ -609,7 +612,7 @@ class AutofocusSnap(CoreCommand):
         turn_laser_on:bool=True,
         turn_laser_off:bool=True
     ):
-        super()
+        super().__init__()
         self.exposure_time_ms=exposure_time_ms
         self.analog_gain=analog_gain
         self.turn_laser_on=turn_laser_on
@@ -654,7 +657,7 @@ class AutofocusLaserWarmup(CoreCommand):
     """
 
     def __init__(self,warmup_time_s:float=0.5):
-        super()
+        super().__init__()
         self.warmup_time_s=warmup_time_s
 
     def run(self,core:"Core")->str:
@@ -678,7 +681,7 @@ class IlluminationEndAll(CoreCommand):
     """
 
     def __init__(self):
-        super()
+        super().__init__()
 
     def run(self,core:"Core")->str:
         # make sure all illumination is off
@@ -702,8 +705,8 @@ class AutofocusApproachTargetDisplacement(CoreCommand):
             returns json-like string
     """
 
-    def __init__(self,target_offset_um:float,config_file:dict,max_num_reps:int=3,pre_approach_refz:bool=True):
-        super()
+    def __init__(self,target_offset_um:float,config_file:dict[str,tp.Any],max_num_reps:int=3,pre_approach_refz:bool=True):
+        super().__init__()
         self.target_offset_um=target_offset_um
         self.config_file_dict=config_file
         self.max_num_reps=max_num_reps
@@ -746,7 +749,7 @@ class AutofocusApproachTargetDisplacement(CoreCommand):
 
 class SendImageHistogram(CoreCommand):
     def __init__(self,img_handle:str):
-        super()
+        super().__init__()
         self.img_handle=img_handle
 
     def run(self,core:"Core")->str:
@@ -1384,28 +1387,43 @@ class Core:
         """
 
         I = img
+
         # get the y position of the spots
         tmp = np.sum(I,axis=1)
         y0 = np.argmax(tmp)
         # crop along the y axis
         I = I[y0-96:y0+96,:]
-        # signal along x
+        # signal along x (sum to avoid issues with improper rotational alignment)
         tmp = np.sum(I,axis=0)
         # find peaks
         peak_locations,_ = scipy.signal.find_peaks(tmp,distance=100)
 
-        idx = np.argsort(tmp[peak_locations])
+        if len(peak_locations)==0:
+            raise Exception("did not find any peaks in Laser Reflection Autofocus signal. this is a major problem.")
+
+        # get two tallest peaks, sort into left and right peak
+        NUM_PEAKS=2
+
+        peak_heights=tmp[peak_locations]
+
+        tallest_peaks_indices=np.argsort(peak_heights)[-NUM_PEAKS:]
+
+        tallest_peak_locations=peak_locations[tallest_peaks_indices]
+        tallest_peak_heights=tmp[tallest_peak_locations]
+
+        peak_info=[(tallest_peak_locations[i],tallest_peak_heights[i]) for i in range(NUM_PEAKS)]
+
+        peak_info=list(sorted(peak_info,key=lambda v:v[0]))
+        "list of peaks in signal in pairs of (index,height), sorted in descending peak height"
+
         peak_0_location=None
         peak_1_location=None
-        if len(idx)==0:
-            raise Exception("did not find any peaks in Laser Reflection Autofocus signal. this is a major problem.")
         
         if use_glass_top:
-            assert len(idx)>1, "only found a single peak in the Laser Reflection Autofocus signal, but trying to use the second one."
-            peak_1_location = peak_locations[idx[-2]]
+            peak_1_location,_peak1height = peak_info[1]
             x1 = peak_1_location
         else:
-            peak_0_location = peak_locations[idx[-1]]
+            peak_0_location,_peak0height = peak_info[0]
             x1 = peak_0_location
 
         # find centroid
@@ -1436,6 +1454,12 @@ class Core:
             returns json-like string
         """
 
+        g_config=GlobalConfigHandler.get_dict()
+
+        glass_top_flag=g_config['laser_autofocus_use_glass_top']
+        assert glass_top_flag is not None
+        use_glass_top:int=glass_top_flag.boolvalue
+
         # move down by half z range
         if z_mm_backlash_counter:
             self.mc.send_cmd(Command.move_by_mm("z",-(z_mm_movement_range_mm/2+z_mm_backlash_counter)))
@@ -1449,7 +1473,7 @@ class Core:
             return json.dumps({"status":"error","message":"failed to snap autofocus image [1]"})
         if self.laser_af_image is None:
             return json.dumps({"status":"error","message":"no laser autofocus image found [1]"})
-        x0,y0 = self._get_peak_coords(self.laser_af_image.img)
+        x0,y0 = self._get_peak_coords(self.laser_af_image.img,use_glass_top=use_glass_top)
 
         # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
         self.mc.send_cmd(Command.move_by_mm("z",z_mm_movement_range_mm/2))
@@ -1459,7 +1483,7 @@ class Core:
             return json.dumps({"status":"error","message":"failed to snap autofocus image [2]"})
         if self.laser_af_image is None:
             return json.dumps({"status":"error","message":"no laser autofocus image found [2]"})
-        x1,y1 = self._get_peak_coords(self.laser_af_image.img)
+        x1,y1 = self._get_peak_coords(self.laser_af_image.img,use_glass_top=use_glass_top)
 
         # move up by half range again
         self.mc.send_cmd(Command.move_by_mm("z",z_mm_movement_range_mm/2))
@@ -1470,7 +1494,7 @@ class Core:
             return json.dumps({"status":"error","message":"failed to snap autofocus image [3]"})
         if self.laser_af_image is None:
             return json.dumps({"status":"error","message":"no laser autofocus image found [3]"})
-        x2,y2 = self._get_peak_coords(self.laser_af_image.img)
+        x2,y2 = self._get_peak_coords(self.laser_af_image.img,use_glass_top=use_glass_top)
 
         # move to original position
         self.mc.send_cmd(Command.move_by_mm("z",-z_mm_movement_range_mm/2))
@@ -1533,6 +1557,9 @@ class Core:
         """
             store a new laser autofocus image, return the handle
         """
+
+        # apply a bit of blur to solve some noise related issues
+        img = cv2.GaussianBlur(img,(9,9),cv2.BORDER_DEFAULT)
 
         # TODO better image buffer handle generation
         if self.laser_af_image_handle is None:

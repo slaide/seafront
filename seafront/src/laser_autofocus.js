@@ -1,14 +1,21 @@
 
 let laserautofocusdata=_p.manage({currentOffset:0.0})
 
-function measureLaserAutofocusOffset(){
+/**
+ * measure autofocus offset
+ * 
+ * if return_immediate is true, this call is sync and returns the offset in um
+ */
+function measureLaserAutofocusOffset(return_immediate=false){
     let data={
         config_file:_p.getUnmanaged(microscope_config),
     }
 
     progress_indicator.run("Measuring laser autofocus offset")
 
-    new XHR(true)
+    let immediate_return_value=null
+
+    new XHR(!return_immediate)
         .onload((xhr)=>{
             progress_indicator.stop()
 
@@ -18,6 +25,10 @@ function measureLaserAutofocusOffset(){
                 return
             }
             laserautofocusdata.currentOffset=response.displacement_um
+
+            if(return_immediate){
+                immediate_return_value=response.displacement_um
+            }
         })
         .onerror(()=>{
             progress_indicator.stop()
@@ -25,6 +36,8 @@ function measureLaserAutofocusOffset(){
             console.error("error measuring laser autofocus offset")
         })
         .send("/api/action/measure_displacement",data,"POST")
+
+    return immediate_return_value
 }
 
 function setLaserAutofocusReference(){
