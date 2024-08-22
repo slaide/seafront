@@ -725,7 +725,7 @@
                                                 width='{{w.w}}'
                                                 height='{{w.h}}'
                                                 plot-x-min="{{w.pxm}}"
-                                                plot-y-min="{{w.pym}}"
+                                                plot-y-min="{{ /* adjust y coordinate since plot origin is at bottom left and plate origin at top left (y axis is width of plate) */ WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm - w.pym - w.w }}"
                                             >
                                                 {{w.text}}
                                             </div>
@@ -736,7 +736,7 @@
                                             width='{{microscope_state.fov_size.x_mm}}'
                                             height='{{microscope_state.fov_size.y_mm}}'
                                             plot-x-min="{{microscope_state.pos.x_mm - (microscope_state.fov_size.x_mm)/2 }}"
-                                            plot-y-min="{{microscope_state.pos.y_mm - (microscope_state.fov_size.y_mm)/2 }}"
+                                            plot-y-min="{{/* adjust y coordinate since plot origin is at bottom left and plate origin at top left (y axis is width of plate) */ WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm - (microscope_state.pos.y_mm - (microscope_state.fov_size.y_mm)/2) - (microscope_state.fov_size.y_mm)}}"
                                         ></div>
                                     </div>
                                 </div>

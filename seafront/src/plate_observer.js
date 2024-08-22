@@ -1,4 +1,10 @@
 /**
+ * r: row index
+ * c: col index
+ * w: well width (x size) in mm
+ * h: well height (y size) in mm
+ * pxm: x coordinate on plate in mm
+ * pym: y coordinate on plate in mm
  * @typedef {{
  *      r: number,
  *      c: number,
