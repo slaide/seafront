@@ -183,12 +183,7 @@
                         }
                     </style>
                     <div id="grid-view">
-                        <script>
-                            function setGridViewCols(event){
-                                let num_cols=parseInt(event.target.value)
-                                document.getElementById("grid-view-container").style.setProperty("--num-cols",num_cols)
-                            }
-                        </script>
+                        <script src="src/grid_view.js"></script>
                         <style>
                             #grid-view-container{
                                 display:grid;
@@ -214,7 +209,7 @@
                         </style>
                         <div id="grid-view-container" class="data" p:init-vis="linkPlots(element)">
                             <template class="data" p:for="channel of selected_channels">
-                                <div id="live-view-{{channel.handle}}">
+                                <div id="live-view-{{channel.handle}}" p:init="/*quick solution to ensure plots are linked*/ linkPlots(element.parentElement.parentElement)">
                                     <div>{{channel.name}}</div>
                                     <div class="data plot-display channel-plot-display"
                                         p:init="Plot.plot_init(element)"
