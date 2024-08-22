@@ -16,7 +16,7 @@
     top:50%;
     transform:translate(-50%,-50%);
     width:auto;
-    max-width:50em;
+    max-width:65vw;
     height:auto;
 
     display:grid;
