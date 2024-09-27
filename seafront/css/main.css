@@ -17,12 +17,12 @@
     padding:0.3em;
 }
 #main-view{
-    overflow-y: hidden;
+    overflow-y:auto;
     max-height:100%;
 }
 #main-control{
     height:100%;
-    overflow: hidden;
+    overflow-y:auto;
 }
 #main-control>*{
     min-height:min-content;
