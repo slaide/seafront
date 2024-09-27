@@ -278,8 +278,6 @@
                                     }
                                     const current_offset=measureLaserAutofocusOffset(true)
                                     trace2.y[i]=current_offset
-
-                                    console.log("measured offset",current_offset,"with expected",trace2.x[i])
                                 }
                                 immediate_move(1,"z",bottom_move_dist_um*1e-3,false)
                                 console.log("done with autofocus debug measurements")

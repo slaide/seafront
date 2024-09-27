@@ -15,6 +15,7 @@ from pathlib import Path
 import tifffile
 import re
 import cv2
+import random
 
 import seaconfig as sc
 from seaconfig.acquisition import AcquisitionConfig
@@ -282,9 +283,6 @@ class CoreStreamHandler:
                 raise RuntimeError("incomplete frame")
             case gxiapi.GxFrameStatusList.SUCCESS:
                 pass
-
-        if img is None:
-            raise RuntimeError("no image received")
         
         img_np=img.get_numpy_array()
         assert img_np is not None
@@ -588,9 +586,12 @@ class AutofocusMeasureDisplacement(CoreCommand):
             res=json.loads(AutofocusSnap().run(core))
             if res["status"]!="success":
                 return json.dumps({"status":"error","message":"failed to snap autofocus image","error":res})
-            if core.laser_af_image is None:
+
+            latest_laser_af_image=core.laser_af_images.get(core.laser_af_image_latest_handle)
+            if latest_laser_af_image is None:
                 return json.dumps({"status":"error","message":"no laser autofocus image found"})
-            x,y=core._get_peak_coords(core.laser_af_image.img)
+
+            x,y=core._get_peak_coords(latest_laser_af_image.img)
 
             # calculate displacement
             displacement_um = (x - conf_af_calib_x.floatvalue) * conf_af_calib_umpx.floatvalue
@@ -1218,29 +1219,29 @@ class Core:
 
         # init some self.fields
 
-        self.image_index={
-            channel["handle"]:0
-            for channel
-            in json.loads(get_hardware_capabilities())["main_camera_imaging_channels"]
-        }
-        self.latest_image_handle:tp.Dict[str,str]={
+        main_camera_imaging_channels=json.loads(get_hardware_capabilities())["main_camera_imaging_channels"]
+        self.latest_image_handle:dict[str,str]={
             channel["handle"]:""
             for channel
-            in json.loads(get_hardware_capabilities())["main_camera_imaging_channels"]
+            in main_camera_imaging_channels
         }
         """
         store last image acquired with main imaging camera.
         key is channel handle, value is actual handle
         """
-        self.images:tp.Dict[str,"ImageStoreEntry"]={}
+        self.images:dict[str,dict[str,"ImageStoreEntry"]]={
+            channel["handle"]:{}
+            for channel
+            in main_camera_imaging_channels
+        }
         """
         contain the actual image data for each handle.
         the image handle code is responsible for cleaning up old images
         """
 
         # only store the latest laser af image
-        self.laser_af_image_handle:tp.Optional[str]=None
-        self.laser_af_image:tp.Optional["ImageStoreEntry"]=None
+        self.laser_af_image_latest_handle:str=""
+        self.laser_af_images:dict[str,"ImageStoreEntry"]={}
 
         self.state=CoreState.Idle
 
@@ -1373,7 +1374,7 @@ class Core:
 
         if laf_is_calibrated is not None and laf_is_calibrated.boolvalue:
             for i in range(5):
-                displacement_measure_res=AutofocusMeasureDisplacement(config_file_dict).run(self)
+                displacement_measure_res=AutofocusMeasureDisplacement(config_file.to_dict()).run(self)
                 displacement_measure_data=json.loads(displacement_measure_res)
                 if displacement_measure_data["status"]!="success":
                     return json.dumps({"status":"error","message":"failed to measure displacement for reference z"})
@@ -1531,9 +1532,13 @@ class Core:
         res=json.loads(AutofocusSnap().run(self))
         if res["status"]!="success":
             return json.dumps({"status":"error","message":"failed to snap autofocus image [1]"})
-        if self.laser_af_image is None:
+
+        assert self.laser_af_image_latest_handle is not None
+        latest_laser_af_image=self.laser_af_images.get(self.laser_af_image_latest_handle)
+        if latest_laser_af_image is None:
             return json.dumps({"status":"error","message":"no laser autofocus image found [1]"})
-        x0,y0 = self._get_peak_coords(self.laser_af_image.img,use_glass_top=use_glass_top)
+
+        x0,y0 = self._get_peak_coords(latest_laser_af_image.img,use_glass_top=use_glass_top)
 
         # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
         self.mc.send_cmd(Command.move_by_mm("z",z_mm_movement_range_mm/2))
@@ -1541,9 +1546,13 @@ class Core:
         res=json.loads(AutofocusSnap().run(self))
         if res["status"]!="success":
             return json.dumps({"status":"error","message":"failed to snap autofocus image [2]"})
-        if self.laser_af_image is None:
+
+        assert self.laser_af_image_latest_handle is not None
+        latest_laser_af_image=self.laser_af_images.get(self.laser_af_image_latest_handle)
+        if latest_laser_af_image is None:
             return json.dumps({"status":"error","message":"no laser autofocus image found [2]"})
-        x1,y1 = self._get_peak_coords(self.laser_af_image.img,use_glass_top=use_glass_top)
+
+        x1,y1 = self._get_peak_coords(latest_laser_af_image.img,use_glass_top=use_glass_top)
 
         # move up by half range again
         self.mc.send_cmd(Command.move_by_mm("z",z_mm_movement_range_mm/2))
@@ -1552,9 +1561,13 @@ class Core:
         res=json.loads(AutofocusSnap().run(self))
         if res["status"]!="success":
             return json.dumps({"status":"error","message":"failed to snap autofocus image [3]"})
-        if self.laser_af_image is None:
+
+        assert self.laser_af_image_latest_handle is not None
+        latest_laser_af_image=self.laser_af_images.get(self.laser_af_image_latest_handle)
+        if latest_laser_af_image is None:
             return json.dumps({"status":"error","message":"no laser autofocus image found [3]"})
-        x2,y2 = self._get_peak_coords(self.laser_af_image.img,use_glass_top=use_glass_top)
+
+        x2,y2 = self._get_peak_coords(latest_laser_af_image.img,use_glass_top=use_glass_top)
 
         # move to original position
         self.mc.send_cmd(Command.move_by_mm("z",-z_mm_movement_range_mm/2))
@@ -1622,10 +1635,10 @@ class Core:
         img = cv2.GaussianBlur(img,(9,9),cv2.BORDER_DEFAULT)
 
         # TODO better image buffer handle generation
-        if self.laser_af_image_handle is None:
-            self.laser_af_image_handle=f"laseraf_{0}"
+        if self.laser_af_image_latest_handle is None:
+            self.laser_af_image_latest_handle=f"laseraf_{0}"
         else:
-            self.laser_af_image_handle=f"laseraf_{int(self.laser_af_image_handle.split('_')[1])+1}"
+            self.laser_af_image_latest_handle=f"laseraf_{int(self.laser_af_image_latest_handle.split('_')[1])+1}"
             
         pxfmt_int,pxfmt_str=self.focus_cam.handle.PixelFormat.get() # type: ignore
         match pxfmt_int:
@@ -1638,9 +1651,9 @@ class Core:
             case _unknown:
                 raise ValueError(f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
 
-        self.laser_af_image=ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
+        self.laser_af_images[self.laser_af_image_latest_handle]=ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
 
-        return self.laser_af_image_handle
+        return self.laser_af_image_latest_handle
 
     def _store_new_image(self,img:np.ndarray,channel_config:sc.AcquisitionChannelConfig)->str:
         """
@@ -1648,15 +1661,20 @@ class Core:
         """
 
         # remove last image in channel from self.images
-        last_image_handle=channel_config.handle+str(self.image_index[channel_config.handle])
-        if last_image_handle in self.images:
-            del self.images[last_image_handle].img
-            del self.images[last_image_handle]
-            gc.collect()        
+
+        channel_images=self.images[channel_config.handle]
+
+        image_timestamps=sorted([(k,v) for (k,v) in channel_images.items()],key=lambda i:i[1].timestamp)
+        # only keep last N-1 (then add new one for a total of N)
+        MAX_NUM_IMAGES_PER_CHANNEL=8
+        for image_handle,image in image_timestamps[:-(MAX_NUM_IMAGES_PER_CHANNEL-1)]:
+            del image.img # specifically delete this to free memory
+            del channel_images[image_handle]
+
+        gc.collect() # flush deleted image memory
 
         # generate new handle
-        self.image_index[channel_config.handle]+=1
-        new_image_handle=channel_config.handle+str(self.image_index[channel_config.handle])
+        new_image_handle=channel_config.handle+f"{(int(random.random()*999999998)+1):09}"
         self.latest_image_handle[channel_config.handle]=new_image_handle
 
         pxfmt_int,pxfmt_str=self.main_cam.handle.PixelFormat.get() # type: ignore
@@ -1670,37 +1688,29 @@ class Core:
             case _unknown:
                 raise ValueError(f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
             
-        self.images[new_image_handle]=ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
-
-        # remove oldest images to keep buffer length capped (at 8)
-        while len(self.images)>8:
-            oldest_key=min(self.images,key=lambda k:self.images[k].timestamp)
-            del self.images[oldest_key].img # delete this explicitely to free ndarray memory
-            del self.images[oldest_key]
-            gc.collect() # force gc collection because these images really take up a lot of storage
+        channel_images[new_image_handle]=ImageStoreEntry(img,time.time(),channel_config,pixel_depth)
 
         return new_image_handle
+
+    def _get_imageinfo_by_handle(self,img_handle:str)->ImageStoreEntry|None:
+        "get image story entry for image handle, regardless of channel (only images though, not laser af)"
+        img_container=None
+        for channel_images in self.images.values():
+            img_container=channel_images.get(img_handle)
+            if img_container is not None:
+                break
+            
+        return img_container
 
     def send_image_by_handle(self,img_handle:str,quick_preview:bool=False):
         """
             send image by handle, as get request to allow using this a img src
         """
 
-        img_container=None
-        if img_handle==self.laser_af_image_handle:
-            img_container=self.laser_af_image
-
-        else:
-            if img_handle is None:
-                return json.dumps({"status":"error","message":"no img_handle provided"})
+        img_container=self._get_imageinfo_by_handle(img_handle)
             
-            if img_handle not in self.images:
-                return json.dumps({"status":"error","message":f"img_handle {img_handle} not found"})
-
-            img_container=self.images[img_handle]
-
         if img_container is None:
-            return json.dumps({"status":"error","message":"no image found"})
+            return json.dumps({"status":"error","message":f"img_handle {img_handle} not found"})
 
         img_raw=img_container.img
 
@@ -1767,7 +1777,8 @@ class Core:
         returns json-like string
         """
 
-        img_info=self.images.get(handle)
+        img_info=self._get_imageinfo_by_handle(handle)
+
         if img_info is None:
             return json.dumps({"status":"error","message":"image not found"})
         
@@ -1809,13 +1820,18 @@ class Core:
         latest_img_info={
             channel_handle:{
                 "handle":img_handle,
-                "channel":self.images[img_handle].channel_config.to_dict(),
-                "width_px":self.images[img_handle].img.shape[1],
-                "height_px":self.images[img_handle].img.shape[0],
-                "timestamp":self.images[img_handle].timestamp,
+                "channel":img_info.channel_config.to_dict(),
+                "width_px":img_info.img.shape[1],
+                "height_px":img_info.img.shape[0],
+                "timestamp":img_info.timestamp,
             }
-            for channel_handle,img_handle in self.latest_image_handle.items()
-            if img_handle in self.images
+            for (channel_handle,img_handle,img_info)
+            in (
+                (channel_handle,img_handle,self.images[channel_handle][img_handle])
+                for (channel_handle,img_handle)
+                in self.latest_image_handle.items()
+                if img_handle in self.images[channel_handle]
+            )
         }
 
         # supposed=real-calib
@@ -2093,11 +2109,12 @@ class Core:
                                 return                           
 
                             img_handle=res["img_handle"]
-                            if not img_handle in self.images:
+                            latest_channel_image=self._get_imageinfo_by_handle(img_handle)
+                            if latest_channel_image is None:
                                 q_out.put({"status":"error","message":f"image handle {img_handle} not found in image buffer"})
                                 return
-                            
-                            img=self.images[img_handle].img
+
+                            img=latest_channel_image.img
                             
                             # store image
                             image_storage_path=f"{str(project_output_path)}/{well.well_name}_1_{site.col+1}_{site.row+1}_{site.plane+1}_{channel.handle}.tiff"
@@ -2123,7 +2140,7 @@ class Core:
                                 metadata={
                                     # non-standard tag, because the standard bitsperpixel has a real meaning in the image image data, but
                                     # values that are not multiple of 8 cannot be used with compression
-                                    "BitsPerPixel":self.images[img_handle].bit_depth,
+                                    "BitsPerPixel":latest_channel_image.bit_depth,
                                     "BitPaddingInfo":"lower bits are padding with 0s",
 
                                     "LightSourceName":channel.name,

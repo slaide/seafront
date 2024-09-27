@@ -109,94 +109,127 @@ function updateMicroscopePosition(){
                 
                 // if the src is a new one
                 const new_src_url=new URL(new_src,window.location.origin)
+
                 if(view_latest_image.src!==new_src_url.toString()){
-                    // init load (by setting .src), and indicate that loading has not yet finished
-                    element_load_state.loaded=false
-                    view_latest_image.src=new_src
+                    var image_loading_in_progress=false
+                    /**
+                     * @param{string} src
+                     * @return{Promise<boolean>}
+                     */
+                    function validate_image(src){
+                        return new Promise(resolve=>{
+                            if(image_loading_in_progress)return resolve(false)
 
-                    if(latest_image.width_px!=null && latest_image.width_px!=view_latest_image.getAttribute("width"))
-                        view_latest_image.setAttribute("width",latest_image.width_px)
-                    if(latest_image.height_px!=null && latest_image.height_px!=view_latest_image.getAttribute("height"))
-                        view_latest_image.setAttribute("height",latest_image.height_px)
+                            image_loading_in_progress=true
+                            var img_loaded=false
+                            var img_valid=undefined
 
-                    let histogram_update_in_progress=false
+                            var img = new Image()
+                            img.addEventListener('load', () => {
+                                image_loading_in_progress=false
+                                resolve(true)
+                            })
+                            img.addEventListener('error', (e) => {
+                                console.error("image handle "+latest_image.handle+" is not valid:",e);
+                                image_loading_in_progress=false
+                                resolve(false)
+                            })
+                            img.src = src
+                        })
+                    }
 
-                    // set callback on load finish
-                    const f=function(){
-                        // remove the callback
-                        if(loadTimer!=null){
-                            clearTimeout(loadTimer)
-                            loadTimer=null
+                    // ensure that the image is only loaded if it exists
+                    validate_image(new_src).then((img_is_valid)=>{
+                        if(!img_is_valid)return;
+
+                        // init load (by setting .src), and indicate that loading has not yet finished
+                        element_load_state.loaded=false
+                        view_latest_image.src=new_src
+
+                        if(latest_image.width_px!=null && latest_image.width_px!=view_latest_image.getAttribute("width"))
+                            view_latest_image.setAttribute("width",latest_image.width_px)
+                        if(latest_image.height_px!=null && latest_image.height_px!=view_latest_image.getAttribute("height"))
+                            view_latest_image.setAttribute("height",latest_image.height_px)
+
+                        let histogram_update_in_progress=false
+
+                        // set callback on load finish
+                        const f=function(){
+                            // remove the callback
+                            if(loadTimer!=null){
+                                clearTimeout(loadTimer)
+                                loadTimer=null
+                            }
+                            view_latest_image.removeEventListener("load",f)
+                            view_latest_image.removeEventListener("error",f)
+
+                            element_load_state.loaded=true
                         }
-                        view_latest_image.removeEventListener("load",f)
-                        view_latest_image.removeEventListener("error",f)
-
-                        element_load_state.loaded=true
-                    }
-                    // consider image loaded either on actual load, or on error
-                    view_latest_image.addEventListener("load",f,{once:true})
-                    view_latest_image.addEventListener("error",f,{once:true})
-                    //update histogram (async)
-                    const histogram_query_data={
-                        img_handle:latest_image.handle
-                    }
-                    if(!histogram_update_in_progress){
-                        histogram_update_in_progress=true
-                        new XHR(true)
-                            .onload(function(xhr){
-                                let data=JSON.parse(xhr.responseText)
-                                if(data.status!="success"){
-                                    console.error("error getting histogram",data)
-                                    histogram_update_in_progress=false
-                                    return
-                                }
-                                let hist_data=data.hist_values
-
-                                const trace_data={
-                                    x:range(hist_data.length),
-                                    // @ts-ignore transform scale to be able to display 0 values on log scale
-                                    y:hist_data.map(v=>v+1),
-                                    // @ts-ignore display original value (i.e. zero to whatever)
-                                    text:hist_data.map(v=>"count: "+v),
-                                    type:"scatter",
-                                    //orientation:"horizontal",
-                                    name:data.channel_name
-                                }
-
-                                // @ts-ignore
-                                //console.log(Plotly.validate([trace_data]),trace_data)
-                                if(plt_num_traces==0){
-                                    // @ts-ignore
-                                    Plotly.addTraces(histogram_plot_element_id,trace_data,plt_num_traces)
-
-                                    plt_num_traces+=1
-                                }else{
-                                    // trace update must have a _list_ of x and y values
-                                    const trace_update={
-                                        x:[trace_data.x],
-                                        y:[trace_data.y],
-                                        text:[trace_data.text],
-                                        name:[trace_data.name]
+                        // consider image loaded either on actual load, or on error
+                        view_latest_image.addEventListener("load",f,{once:true})
+                        view_latest_image.addEventListener("error",f,{once:true})
+                        //update histogram (async)
+                        const histogram_query_data={
+                            img_handle:latest_image.handle
+                        }
+                        if(!histogram_update_in_progress){
+                            histogram_update_in_progress=true
+                            new XHR(true)
+                                .onload(function(xhr){
+                                    let data=JSON.parse(xhr.responseText)
+                                    if(data.status!="success"){
+                                        console.error("error getting histogram",data)
+                                        histogram_update_in_progress=false
+                                        return
                                     }
+                                    let hist_data=data.hist_values
+
+                                    const trace_data={
+                                        x:range(hist_data.length),
+                                        // @ts-ignore transform scale to be able to display 0 values on log scale
+                                        y:hist_data.map(v=>v+1),
+                                        // @ts-ignore display original value (i.e. zero to whatever)
+                                        text:hist_data.map(v=>"count: "+v),
+                                        type:"scatter",
+                                        //orientation:"horizontal",
+                                        name:data.channel_name
+                                    }
+
                                     // @ts-ignore
-                                    Plotly.restyle(histogram_plot_element_id,trace_update,[0])
-                                }
+                                    //console.log(Plotly.validate([trace_data]),trace_data)
+                                    if(plt_num_traces==0){
+                                        // @ts-ignore
+                                        Plotly.addTraces(histogram_plot_element_id,trace_data,plt_num_traces)
 
-                                histogram_update_in_progress=false
-                            })
-                            .onerror(function(){
-                                console.error("error getting histogram")
-                                histogram_update_in_progress=false
-                            })
-                            .send("/api/action/get_histogram_by_handle",histogram_query_data,"POST")
-                    }
-                    // if the image is not done loading after 3 seconds, assume it failed
-                    loadTimer=setTimeout(f,3e3)
+                                        plt_num_traces+=1
+                                    }else{
+                                        // trace update must have a _list_ of x and y values
+                                        const trace_update={
+                                            x:[trace_data.x],
+                                            y:[trace_data.y],
+                                            text:[trace_data.text],
+                                            name:[trace_data.name]
+                                        }
+                                        // @ts-ignore
+                                        Plotly.restyle(histogram_plot_element_id,trace_update,[0])
+                                    }
 
-                    // if image is already loaded, call the function immediately
-                    if(view_latest_image.complete){
-                        f()
-                    }
+                                    histogram_update_in_progress=false
+                                })
+                                .onerror(function(){
+                                    console.error("error getting histogram")
+                                    histogram_update_in_progress=false
+                                })
+                                .send("/api/action/get_histogram_by_handle",histogram_query_data,"POST")
+                        }
+                        // if the image is not done loading after 3 seconds, assume it failed
+                        loadTimer=setTimeout(f,3e3)
+
+                        // if image is already loaded, call the function immediately
+                        if(view_latest_image.complete){
+                            f()
+                        }
+                    })
                 }
             }
             microscope_state.last_image_channel_name=latest_image.channel.name
