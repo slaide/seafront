@@ -854,6 +854,76 @@ class Core:
         """
         return z_mm-self.calibrated_stage_position[2]
 
+    def _wrap_command(
+        self,
+        cls: tp.Type[CoreCommandDerived]|"function",
+        allow_while_acquisition_is_running:bool=False,
+
+        map_args:dict[str,"function"]={},
+        GET_args:bool=False,
+    )->str:
+        """
+            wrap a command to be used as flask route
+
+            handles: authentication, request json data presence, command verification
+
+            to run a command:
+                - the request must contain a json object that includes some data
+                - the data mus contain information related to verification of the user to run the command
+                - the data must be valid for the requested command
+
+            args:
+                - GET_args : if False, expects arugments as json object via POST request. if True, get arguments via GET.
+        """
+
+        # get json data
+        arg_dict=None
+        # img_handle=request.args.get("img_handle")
+
+        if GET_args:
+            arg_dict=request.args.to_dict()
+        else:
+            try:
+                arg_dict=request.get_json()
+            except Exception as e:
+                pass
+
+        if arg_dict is None:
+            return json.dumps({"status": "error", "message": "no args"})
+
+        if (not allow_while_acquisition_is_running) and self.acquisition_is_running:
+            return json.dumps({"status":"error","message":"cannot run this command while acquisition is running"})
+
+        args=arg_dict
+        for name,map_func in map_args.items():
+            if not name in args:
+                continue
+
+            args[name]=map_func(args[name]) # type: ignore
+
+        if isinstance(cls,type):
+            ret=None
+            try:
+                ret=cls(**arg_dict) # type: ignore
+            except Exception as e:
+                return json.dumps({"status": "error", "detail":"error constructing command", "message": str(e)})
+
+            if ret is None:
+                return json.dumps({"status": "error", "message": "command construction failed unexpectedly"})
+
+            try:
+                return ret.run(self)
+            except Exception as e:
+                return json.dumps({"status": "error", "detail":"error running command", "message": str(e)})
+
+        else:
+            # cls is a function
+            try:
+                ret=cls(**arg_dict) # type: ignore
+                return ret
+            except Exception as e:
+                return json.dumps({"status": "error", "detail":"error running command", "message": str(e)})
+
     def __init__(self):
         self.lock=CoreLock()
 
@@ -967,149 +1037,186 @@ class Core:
 
             app.add_url_rule(f"/p2.js", f"returnp2fromparentprojdir", sendp2,methods=["GET","POST"])
 
-        def wrap_command(cls: tp.Type[CoreCommandDerived])->str:
-            """
-                wrap a command to be used as flask route
-
-                handles: authentication, request json data presence, command verification
-
-                to run a command:
-                    - the request must contain a json object that includes some data
-                    - the data mus contain information related to verification of the user to run the command
-                    - the data must be valid for the requested command
-            """
-
-            # get json data
-            json_data=None
-            try:
-                json_data=request.get_json()
-            except Exception as e:
-                pass
-
-            if json_data is None:
-                return json.dumps({"status": "error", "message": "no json data"})
-
-            ret=None
-            try:
-                ret=cls(**json_data)
-            except Exception as e:
-                return json.dumps({"status": "error", "detail":"error constructing command", "message": str(e)})
-
-            if ret is None:
-                return json.dumps({"status": "error", "message": "command construction failed unexpectedly"})
-
-            try:
-                return ret.run(self)
-            except Exception as e:
-                return json.dumps({"status": "error", "detail":"error running command", "message": str(e)})
 
         # register url rules requiring machine interaction
         app.add_url_rule(
             f"/api/get_info/current_state", f"get_current_state",
-            self.get_current_state,methods=["GET","POST"])
+            lambda:self._wrap_command(
+                self.get_current_state,
+                allow_while_acquisition_is_running=True
+            ),
+            methods=["GET","POST"]
+        )
 
         # register urls for immediate moves
         app.add_url_rule(
             f"/api/action/move_by", f"action_move_by",
-            lambda:wrap_command(MoveBy),methods=["POST"])
+            lambda:self._wrap_command(MoveBy),methods=["POST"])
 
         # register url for start_acquisition
         app.add_url_rule(
             f"/api/acquisition/start", f"start_acquisition",
-            self.start_acquisition,methods=["POST"])
+            lambda:self._wrap_command(
+                self.start_acquisition,
+                map_args={
+                    "config_file":lambda v:sc.AcquisitionConfig.from_json(v),
+                },
+            ),
+            methods=["POST"]
+        )
         app.add_url_rule(
             f"/api/acquisition/cancel", f"cancel_acquisition",
-            self.cancel_acquisition, methods=["POST"])
+            lambda:self._wrap_command(
+                self.cancel_acquisition,
+                allow_while_acquisition_is_running=True,
+            ), 
+            methods=["POST"]
+        )
         app.add_url_rule(
             f"/api/acquisition/status", f"get_acquisition_status",
-            self.get_acquisition_status,methods=["GET","POST"])
+            lambda:self._wrap_command(
+                self.get_acquisition_status,
+                allow_while_acquisition_is_running=True
+            ),
+            methods=["GET","POST"]
+        )
 
         # retrieve config list
         app.add_url_rule(
             "/api/acquisition/config_list", "get_acquisition_configs",
-            self.get_config_list,methods=["POST"])
+            lambda:self._wrap_command(
+                self.get_config_list
+            ),
+            methods=["POST"]
+        )
 
         app.add_url_rule(
             "/api/acquisition/config_fetch", "fetch_acquisition_config",
-            self.config_fetch,methods=["POST"])
+            lambda:self._wrap_command(
+                self.config_fetch
+            ),
+            methods=["POST"]
+        )
 
         # save/load config
         app.add_url_rule(
             "/api/acquisition/config_store", "store_acquisition_configs",
-            self.config_store,methods=["POST"])
+            lambda:self._wrap_command(
+                self.config_store,
+                map_args={
+                    "config_file":lambda v:sc.AcquisitionConfig.from_json(v),
+                }
+            ),
+            methods=["POST"]
+        )
 
         # for move_to_well
         app.add_url_rule(
             f"/api/action/move_to_well", f"move_to_well",
-            lambda:wrap_command(MoveToWell),methods=["POST"])
+            lambda:self._wrap_command(MoveToWell),methods=["POST"])
 
         # send image by handle
         app.add_url_rule(
             f"/img/get_by_handle", f"send_image_by_handle",
-            lambda:self.send_image_by_handle(quick_preview=False),methods=["GET"])
+            lambda:self._wrap_command(
+                lambda *args,**kwargs:self.send_image_by_handle(*args,**kwargs,quick_preview=False),
+                allow_while_acquisition_is_running=True,
+                GET_args=True,
+            ),
+            methods=["GET"]
+        )
         app.add_url_rule(
             f"/img/get_by_handle_preview", f"send_image_by_handle_preview",
-            lambda:self.send_image_by_handle(quick_preview=True),methods=["GET"])
+            lambda:self._wrap_command(
+                lambda *args,**kwargs:self.send_image_by_handle(*args,**kwargs,quick_preview=True),
+                allow_while_acquisition_is_running=True,
+                GET_args=True,
+            ),
+            methods=["GET"]
+        )
         
         # send image histogram self.get_image_histogram
         app.add_url_rule(
             f"/api/action/get_histogram_by_handle", f"send_image_histogram_by_handle",
-            lambda:wrap_command(SendImageHistogram),methods=["POST"])
+            lambda:self._wrap_command(
+                SendImageHistogram,
+                allow_while_acquisition_is_running=True
+            ),
+            methods=["POST"]
+        )
 
         # loading position enter/leave
         self.is_in_loading_position=False
         app.add_url_rule(
             "/api/action/enter_loading_position", "action_enter_loading_position", 
-            lambda:wrap_command(LoadingPositionEnter),methods=["POST"])
+            lambda:self._wrap_command(LoadingPositionEnter),methods=["POST"])
         app.add_url_rule(
             "/api/action/leave_loading_position", "action_leave_loading_position", 
-            lambda:wrap_command(LoadingPositionLeave),methods=["POST"])
+            lambda:self._wrap_command(LoadingPositionLeave),methods=["POST"])
 
         # snap channel
         app.add_url_rule(
             "/api/action/snap_channel", "snap_channel", 
-            lambda:wrap_command(ChannelSnapshot),methods=["POST"])
+            lambda:self._wrap_command(ChannelSnapshot),methods=["POST"])
 
         app.add_url_rule(
             "/api/action/snap_selected_channels","snap_selected_channels",
-            self.snap_selected_channels,methods=["POST"])
+            lambda:self._wrap_command(
+                self.snap_selected_channels,
+                map_args={
+                    "config_file":lambda v:sc.AcquisitionConfig.from_json(v),
+                }
+            ),
+            methods=["POST"]
+        )
 
         # start streaming (i.e. acquire x images per sec, until stopped)
         self.is_streaming=False
         self.stream_handler:tp.Optional[CoreStreamHandler]=None
         app.add_url_rule(
             "/api/action/stream_channel_begin", "stream_channel_begin", 
-            lambda:wrap_command(ChannelStreamBegin),methods=["POST"])
+            lambda:self._wrap_command(ChannelStreamBegin),methods=["POST"])
         app.add_url_rule(
             "/api/action/stream_channel_end", "stream_channel_end", 
-            lambda:wrap_command(ChannelStreamEnd),methods=["POST"])
+            lambda:self._wrap_command(ChannelStreamEnd),methods=["POST"])
 
         # laser autofocus system
         app.add_url_rule(
             "/api/action/snap_reflection_autofocus", "snap_reflection_autofocus", 
-            lambda:wrap_command(AutofocusSnap),methods=["POST"])
+            lambda:self._wrap_command(AutofocusSnap),methods=["POST"])
         app.add_url_rule(
             "/api/action/measure_displacement", "measure_displacement", 
-            lambda:wrap_command(AutofocusMeasureDisplacement),methods=["POST"])
+            lambda:self._wrap_command(AutofocusMeasureDisplacement),methods=["POST"])
         app.add_url_rule(
             "/api/action/laser_autofocus_move_to_target_offset", "laser_autofocus_move_to_target_offset", 
-            lambda:wrap_command(AutofocusApproachTargetDisplacement),methods=["POST"])
+            lambda:self._wrap_command(AutofocusApproachTargetDisplacement),methods=["POST"])
         app.add_url_rule(
             "/api/action/laser_af_calibrate", "laser_af_calibrate", 
-            self.laser_af_calibrate_here,methods=["POST"])
+            lambda:self._wrap_command(
+                self.laser_af_calibrate_here,
+                map_args={
+                    "z_mm_movement_range_mm":lambda v:float(v),
+                    "z_mm_backlash_counter":lambda v:float(v) if v is not None else None
+                }
+            ),
+            methods=["POST"]
+        )
+
         app.add_url_rule(
             "/api/action/laser_af_warm_up_laser", "laser_af_warm_up_laser",
-            lambda:wrap_command(AutofocusLaserWarmup),methods=["POST"])
+            lambda:self._wrap_command(AutofocusLaserWarmup),methods=["POST"])
 
         # calibrate stage position
         app.add_url_rule(
             "/api/action/calibrate_stage_xy_here", "calibrate_stage_xy_here", 
-            self.calibrate_stage_xy_here,methods=["POST"])
+            lambda:self._wrap_command(self.calibrate_stage_xy_here),methods=["POST"])
 
         # for turn_off_all_illumination
         app.add_url_rule(
             "/api/action/turn_off_all_illumination", "turn_off_all_illumination", 
-            lambda:wrap_command(IlluminationEndAll),methods=["POST"])
+            lambda:self._wrap_command(IlluminationEndAll),methods=["POST"])
+
+        # init some self.fields
 
         self.image_index={
             channel["handle"]:0
@@ -1191,26 +1298,12 @@ class Core:
 
         return json.dumps(ret)
 
-    def config_fetch(self)->str:
+    def config_fetch(self,config_file:str)->str:
         """
         returns json-like string
         """
 
-        # parse request json data into dict 
-        json_data=None
-        try:
-            json_data=request.get_json()
-        except Exception as e:
-            pass
-
-        if json_data is None:
-            return json.dumps({"status":"error","message":"no json data received"})
-        
-        # get acquisition config
-        if "config_file" not in json_data:
-            return json.dumps({"status": "error", "message": "no config_file in json data"})
-
-        filename=json_data["config_file"]
+        filename=config_file
 
         filepath=None
         for c_path in GlobalConfigHandler.get_config_list():
@@ -1227,39 +1320,21 @@ class Core:
 
         return json.dumps({"status":"success","file":config.to_dict()})
 
-    def config_store(self)->str:
+    def config_store(self,config_file:sc.AcquisitionConfig,filename:str,comment:None|str=None)->str:
         """
         returns json-like string
         """
-
-        # parse request json data into dict 
-        json_data=None
-        try:
-            json_data=request.get_json()
-        except Exception as e:
-            pass
-
-        if json_data is None:
-            return json.dumps({"status":"error","message":"no json data received"})
         
-        # get acquisition config
-        if "config_file" not in json_data:
-            return json.dumps({"status": "error", "message": "no config_file in json data"})
-        
-        config = sc.AcquisitionConfig.from_json(json_data["config_file"])
+        config = config_file
+
         config.timestamp=dt.datetime.now(dt.timezone.utc)
 
         # get machine config
         if config.machine_config is not None:
             GlobalConfigHandler.override(config.machine_config)
 
-        if "filename" not in json_data:
-            return json.dumps({"status":"error","message":"no filename provided"})
-
-        filename=json_data["filename"]
-
-        if "comment" in json_data:
-            config.comment=json_data["comment"]
+        if comment is not None:
+            config.comment=comment
 
         try:
             GlobalConfigHandler.add_config(config,filename,overwrite_on_conflict=False)
@@ -1268,7 +1343,7 @@ class Core:
 
         return json.dumps({"status":"success"})
 
-    def snap_selected_channels(self)->str:
+    def snap_selected_channels(self,config_file:sc.AcquisitionConfig)->str:
         """
         take a snapshot of all selected channels, and store them into the image buffer (i.e. NOT to disk)
 
@@ -1279,22 +1354,7 @@ class Core:
             - message?:string : error message
         """
 
-        # parse request json data into dict 
-        json_data=None
-        try:
-            json_data=request.get_json()
-        except Exception as e:
-            pass
-
-        if json_data is None:
-            return json.dumps({"status":"error","message":"no json data received"})
-        
-        # get acquisition config
-        if "config_file" not in json_data:
-            return json.dumps({"status": "error", "message": "no config_file in json data"})
-        
-        config_file_dict=json_data["config_file"]
-        config = sc.AcquisitionConfig.from_json(config_file_dict)
+        config = config_file
 
         # get machine config
         if config.machine_config is not None:
@@ -1621,16 +1681,10 @@ class Core:
 
         return new_image_handle
 
-    def send_image_by_handle(self,quick_preview:bool=False):
+    def send_image_by_handle(self,img_handle:str,quick_preview:bool=False):
         """
             send image by handle, as get request to allow using this a img src
         """
-
-        img_handle:tp.Optional[str]=None
-        try:
-            img_handle=request.args.get("img_handle")
-        except Exception as e:
-            pass
 
         img_container=None
         if img_handle==self.laser_af_image_handle:
@@ -1780,23 +1834,10 @@ class Core:
             "latest_imgs":latest_img_info
         })
 
-    def cancel_acquisition(self)->str:
+    def cancel_acquisition(self,acquisition_id:str)->str:
         """
         cancel the ongoing acquisition
         """
-
-        json_data=None
-        try:
-            json_data=request.get_json()
-        except Exception as e:
-            pass
-
-        if json_data is None:
-            return json.dumps({"status": "error", "message": "no json data"})
-        
-        acquisition_id=json_data["acquisition_id"]
-        if acquisition_id is None:
-            return json.dumps({"status": "error", "message": "no acquisition_id provided"})
         
         if acquisition_id not in acquisition_map:
             return json.dumps({"status": "error", "message": "acquisition_id not found"})
@@ -1816,20 +1857,14 @@ class Core:
 
         return json.dumps({"status":"success","message":f"cancelled acquisiton with id {acquisition_id}"})
 
-    def start_acquisition(self):
+    @property
+    def acquisition_is_running(self)->bool:
+        return (self.acquisition_thread is not None) and (self.acquisition_thread.is_alive())
+
+    def start_acquisition(self,config_file:sc.AcquisitionConfig):
         """
         start an acquisition with the given configuration
         """
-
-        # get post data with key "config_file"
-        json_data=None
-        try:
-            json_data=request.get_json()
-        except Exception as e:
-            pass
-
-        if json_data is None:
-            return json.dumps({"status": "error", "message": "no json data"})
         
         if self.acquisition_thread is not None:
             if self.acquisition_thread.is_alive():
@@ -1837,12 +1872,7 @@ class Core:
             else:
                 self.acquisition_thread=None        
         
-        # get acquisition config
-        if "config_file" not in json_data:
-            return json.dumps({"status": "error", "message": "no config_file in json data"})
-        
-        config_file_dict=json_data["config_file"]
-        config = sc.AcquisitionConfig.from_json(config_file_dict)
+        config = config_file
 
         # print("starting acquisition with config:",config)
 
@@ -2027,7 +2057,7 @@ class Core:
                         # run autofocus
                         if config.autofocus_enabled:
                             for autofocus_attempt_num in range(3):
-                                current_displacement_res=AutofocusMeasureDisplacement(config_file_dict).run(self)
+                                current_displacement_res=AutofocusMeasureDisplacement(config_file.to_dict()).run(self)
                                 current_displacement=json.loads(current_displacement_res)
                                 if current_displacement["status"]!="success":
                                     q_out.put({"status":"error","message":f"failed to measure autofocus displacement at site {site} in well {well} because {current_displacement['message']}"})
@@ -2038,7 +2068,7 @@ class Core:
                                 if np.abs(current_displacement_um)<DISPLACEMENT_THRESHOLD_UM:
                                     break
                                 
-                                res_str=AutofocusApproachTargetDisplacement(0,config_file_dict,pre_approach_refz=False).run(self)
+                                res_str=AutofocusApproachTargetDisplacement(0,config_file.to_dict(),pre_approach_refz=False).run(self)
                                 res=json.loads(res_str)
                                 if res["status"]!="success":
                                     q_out.put({"status":"error","message":f"failed to autofocus at site {site} in well {well} because {res['message']}"})
@@ -2209,24 +2239,14 @@ class Core:
 
         return json.dumps({"status": "success","acquisition_id":acquisition_id})
 
-    def get_acquisition_status(self):
+    def get_acquisition_status(self,acquisition_id:str):
         """
         get status of an acquisition
         """
 
-        acquisition_id=None
-        try:
-            acquisition_id=request.get_json()["acquisition_id"]
-        except Exception as e:
-            pass
-
-        if acquisition_id is None:
-            return json.dumps({"status":"error","message":"no acquisition_id provided"})
-
-        if acquisition_id not in acquisition_map:
+        acq_res=acquisition_map.get(acquisition_id)
+        if acq_res is None:
             return json.dumps({"status":"error","message":"acquisition_id is invalid"})
-
-        acq_res=acquisition_map[acquisition_id]
 
         # actual code to check if acquisition is running
         msg=None

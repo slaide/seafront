@@ -204,10 +204,12 @@ function updateMicroscopePosition(){
     
         updateInProgress=false
     }
+
+    const data={}
     new XHR(true)
         .onload(onload)
         .onerror(onerror)
-        .send("/api/get_info/current_state")
+        .send("/api/get_info/current_state",data,"POST")
 }
 setInterval(updateMicroscopePosition,1e3/15)
 
