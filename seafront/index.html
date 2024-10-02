@@ -961,5 +961,78 @@
                 <button class="data" p:tooltip="Cancel the currently ongoing acquisition." p:on-click="cancel_acquisition()">cancel</button>
             </div>
         </div>
+        <style>
+            #messagebox{
+                position:absolute;
+                bottom:1em;
+                width:30vw;
+
+                left:50%;
+                transform:translateX(-50%);
+            }
+            #messagebox>div{
+                margin-bottom:0.3em;
+                padding:0.5em 0 0.5em 0;
+
+                left:50%;
+                transform:translateX(-50%);
+            }
+
+            .message_single_container{
+                display:grid;
+                grid-template-columns: auto 1fr;
+            }
+            .message_single_text{
+                padding-left:2em;
+                padding-right:1em;
+            }
+            .message_single_closebutton{
+                padding: 0 1em 0 1em;
+                margin-right: 1em;
+            }
+            .message_meta{
+                grid-column: 1;
+                font-size: 0.8em;
+                padding-bottom:0.5em;
+                padding-left:0.5em;
+            }
+            .message_single_text{
+                grid-column: 1;
+            }
+            .message_single_closebutton{
+                grid-column: 2;
+                grid-row:1 / span 2;
+                height:3em;
+                font-weight: bold;
+            }
+
+            .message_level_info{
+                color:black;
+                background: hsl(240, 100%, 85%);
+                border:0.3em solid hsl(240, 100%, 50%);
+            }
+            .message_level_warn{
+                color:black;
+
+                background: hsl(39, 100%, 85%);
+                border:0.3em solid hsl(39, 100%, 50%);
+            }
+            .message_level_error{
+                color:black;
+
+                background: hsl(0, 100%, 85%);
+                border:0.3em solid hsl(0, 100%, 50%);
+            }
+        </style>
+        <script src="src/messagebox.js"></script>
+        <div id="messagebox">
+            <template class="data" p:for="message of messages">
+                <div class="message_single_container data" p:init="message_init(element,message)">
+                    <div class="data message_meta"><b>{{message.level_string.toUpperCase()}}</b> - {{message.timestamp}}</div>
+                    <div class="data message_single_text">{{message.text}}</div>
+                    <button class="data message_single_closebutton" p:tooltip="close message" p:on-click="message_close(message.id)">X</button>
+                </div>
+            </template>
+        </div>
     </body>
 </html>
