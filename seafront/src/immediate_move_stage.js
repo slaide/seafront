@@ -11,7 +11,12 @@ function immediate_move(sign,axis,distance_mm,async=true){
         distance_mm:sign*distance_mm
     }
 
-    progress_indicator.run("moving "+axis)
+    try{
+        progress_indicator.run("moving "+axis)
+    }catch(e){
+        message_open("error","cannot currently move",e)
+        return
+    }
 
     new XHR(async)
         .onload((xhr)=>{
@@ -19,14 +24,14 @@ function immediate_move(sign,axis,distance_mm,async=true){
             
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
-                console.error("error moving "+axis,response)
+                message_open("error","error moving "+axis,response)
                 return
             }
         })
         .onerror(()=>{
             progress_indicator.stop()
             
-            console.error("error moving "+axis)
+            message_open("error","error moving "+axis)
         })
         .send("/api/action/move_by",data,"POST")
 }

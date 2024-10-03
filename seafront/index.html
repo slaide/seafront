@@ -389,28 +389,8 @@
                     <div id="config-file-io" class="section">
                         <p class="section-header col-span-2">Save/Load configuration file</p>
 
-                        <script>
-                            let files=_p.manage([])
+                        <script src="src/configio.js"></script>
 
-                            function load_remote_config(file_data){
-                                let data={config_file:file_data.filename}
-
-                                new XHR(false)
-                                    .onload((xhr)=>{
-                                        const response=JSON.parse(xhr.responseText)
-                                        if(response.status!="success"){
-                                            console.error("failed to load config because",response)
-                                            return
-                                        }
-
-                                        microscopeConfigOverride(response.file)
-                                    })
-                                    .onerror(()=>{
-                                        console.error("failed to load config")
-                                    })
-                                    .send("/api/acquisition/config_fetch",data,"POST")
-                            }
-                        </script>
                         <div id="config-load-modal" style="display:none;">
                             <div style="display:grid; grid-template-columns:repeat(6, auto); grid-row-gap:1em; grid-column-gap: 1em;">
                                 <p>FILENAME</p>
@@ -446,90 +426,6 @@
                             <label class="data" p:tooltip="arbitrary comment that is embedded in the config file. it should describe what the intended use of the config file is, e.g. for a specific experiment, or for a specific purpose like 48h live imaging. may contain the name of the author.">comment:</label>
                             <textarea id="config-store-modal-comment" placeholder="config comment" style="grid-row: span 2" rows=2></textarea>
                         </div>
-
-                        <script>
-                            let config_load_modal_element=null
-                            let config_store_modal_element=null
-
-                            function config_store(){
-                                if(config_store_modal_element==null){
-                                    config_store_modal_element=document.getElementById("config-store-modal")
-                                    config_store_modal_element.parentElement.removeChild(config_store_modal_element)
-                                    config_store_modal_element.classList.remove("hidden")
-                                }
-
-                                spawnModal(
-                                    "save config file",
-                                    config_store_modal_element,
-                                    {
-                                        buttons:
-                                        [
-                                            {
-                                                title: "save",
-                                                onclick:()=>{
-                                                    const config_store_modal_filename_element=document.getElementById("config-store-modal-filename")
-                                                    const config_store_modal_comment_element=document.getElementById("config-store-modal-comment")
-
-                                                    const filename=config_store_modal_filename_element.value
-                                                    const comment=config_store_modal_comment_element.value
-
-                                                    const data={
-                                                        "config_file":_p.getUnmanaged(microscope_config),
-                                                        "filename":filename,
-                                                        "comment":comment,
-                                                    }
-
-                                                    new XHR(false)
-                                                        .onload((xhr)=>{
-                                                            const response=JSON.parse(xhr.responseText)
-                                                            if (response.status!="success"){
-                                                                console.error("storing config failed:",response)
-                                                                window.alert("failed to store config. see console for more info.")
-                                                                return
-                                                            }
-
-                                                            config_store_modal_filename_element.value=""
-                                                            config_store_modal_comment_element.value=""
-
-                                                            modal_close()
-                                                        })
-                                                        .onerror(()=>{
-                                                            console.error("failed to store config")
-                                                            window.alert("failed to store config")
-                                                        })
-                                                        .send("/api/acquisition/config_store",data,"POST")
-                                                }
-                                            }
-                                        ]
-                                    }
-                                )
-                            }
-                            function config_list(){
-                                const data={}
-                                new XHR(false)
-                                    .onload((xhr)=>{
-                                        const response=JSON.parse(xhr.responseText)
-                                        if (response.status!="success"){
-                                            console.error("storing config failed:",response)
-                                            return
-                                        }
-
-                                        files.length=0
-                                        files.splice(0,0,...response.configs)
-
-                                        if(config_load_modal_element==null){
-                                            config_load_modal_element=document.getElementById("config-load-modal")
-                                            config_load_modal_element.parentElement.removeChild(config_load_modal_element)
-                                            config_load_modal_element.removeAttribute("style")
-                                        }
-                                        spawnModal("Load Configuration File",config_load_modal_element)
-                                    })
-                                    .onerror(()=>{
-                                        console.error("failed to retrieve config list")
-                                    })
-                                    .send("/api/acquisition/config_list",data,"POST")
-                            }
-                        </script>
 
                         <button class="data" p:on-click="config_store()" p:tooltip="save config to file. opens a menu where some save data can be configured.">Save Configuration</button>
                         <button class="data" p:on-click="config_list()" p:tooltip="load config from file. opens a menu where all files that can be loaded are listed.">Load Configuration</button>
@@ -902,23 +798,9 @@
 
                                     <button class="data col-span-2" p:on-click="setLaserAutofocusReference()">Calibrate Laser Autofocus</button>
                                     <div>
-                                        <script>
-                                            function initcheckbox(element){
-                                                _p.onValueChangeCallback(()=>{
-                                                    return getMachineConfig("laser_autofocus_is_calibrated").value=="yes"
-                                                },(calibration_present)=>{
-                                                    if(calibration_present){
-                                                        element.removeAttribute("disabled")
-                                                    }else{
-                                                        element.setAttribute("disabled","")
-                                                        microscope_config.autofocus_enabled=false
-                                                    }
-                                                })
-                                            }
-                                        </script>
                                         <input id="autofocus-enabled-checkbox" type=checkbox
                                             class=data p:bind="microscope_config.autofocus_enabled"
-                                            p:init="initcheckbox(element)">
+                                            p:init="laser_autofocus_initcheckbox(element)">
                                         <label for="autofocus-enabled-checkbox" class="data" p:tooltip="use autofocus in acquisition">Use Autofocus</label>
                                     </div>
                                     <label>measured offset (um)</label>

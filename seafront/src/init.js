@@ -43,7 +43,7 @@ function updateMicroscopePosition(){
 
     function onerror(){
         if(last_update_successful){
-            console.error("error updating microscope position")
+            message_open("error","error updating microscope position")
             last_update_successful=false
         }
     
@@ -58,7 +58,7 @@ function updateMicroscopePosition(){
         }
 
         if(!last_update_successful){
-            console.log("recovered microscope position update")
+            message_open("info","recovered microscope position update")
             last_update_successful=true
         }
 
@@ -708,8 +708,9 @@ class CommandProgressIndicator{
      */
     run(command){
         if(this.current_command!=null){
-            throw new Error("command already running")
+            throw new Error("another command is currently running")
         }
+        
         this.current_command=command
         // change cursor to indicate command is running
         document.body.classList.add("command-is-running")

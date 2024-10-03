@@ -1,4 +1,3 @@
-
 let message_last_id=0;
 
 /** @typedef{{text:string,id:number,level:"info"|"warn"|"error",level_string:string,timestamp:string}} Message */
@@ -6,33 +5,52 @@ let message_last_id=0;
 /** @type{Message[]} */
 let messages=_p.manage([])
 /**
- * @param{string} message
  * @param{"warn"|"info"|"error"} level
+ * @param{any} msg
  */
-function message_open(message,level="warn"){
+function message_open(level,...msg){
     const current_time=new Date()
-    const timestamp_string=current_time.toLocaleString(undefined,{
+
+    const timestring=current_time.toLocaleString(undefined,{
           hour:"numeric",
           minute:"numeric",
           second:"numeric"
-        })+" on "+current_time.toLocaleString(undefined,{
+        })
+    const datestring=current_time.toLocaleString(undefined,{
           year: 'numeric',
           month: 'short',
           day: 'numeric',
         })
+    const timestamp_string=timestring+" on "+datestring
 
     let level_string=""
     if(level=="info"){
-        console.log("info at "+timestamp_string+" - "+message)
+        console.log("info at "+timestamp_string+" - ",...msg)
         level_string="info"
     }
     if(level=="warn"){
-        console.warn("warning at "+timestamp_string+" - "+message)
+        console.warn("warning at "+timestamp_string+" - ",...msg)
         level_string="warning"
     }
     if(level=="error"){
-        console.error("error at "+timestamp_string+" - "+message)
+        console.error("error at "+timestamp_string+" - ",...msg)
         level_string="error"
+    }
+
+    let message=""
+    for(let msg_part of msg){
+        if(msg_part instanceof Error){
+            message+="Error( "+msg_part.message+" )"
+        }else if(typeof msg_part === "object" && msg_part != null){
+            try{
+                message+=JSON.stringify(msg_part)
+            }catch(e){
+                message+=msg_part
+            }
+        }else{
+            message+=msg_part
+        }
+        message+=" "
     }
     messages.push({
         text:message,

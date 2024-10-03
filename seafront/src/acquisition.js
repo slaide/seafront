@@ -28,12 +28,12 @@ function start_acquisition(){
         .onload((xhr)=>{
             const data=JSON.parse(xhr.responseText)
             if(data.status!="success"){
-                console.error("acquisition start failed because:",data.message)
+                message_open("error","acquisition start failed because:",data.message)
                 return
             }
 
             acquisition_progress.acquisition_id=data.acquisition_id
-            console.log("acquisition started with id",acquisition_progress.acquisition_id,"response text:",xhr.responseText)
+            message_open("info","acquisition started with id:",acquisition_progress.acquisition_id," ; response text: ",xhr.responseText)
             
             /** @type{XHR?} */
             let last_request=null
@@ -52,7 +52,7 @@ function start_acquisition(){
                         let progress=JSON.parse(xhr.responseText)
                         if(progress.status!="success"){
                             acquisition_progress.text="error - "+progress.message
-                            console.error("no acquisition progress available because",progress.message)
+                            message_open("error","no acquisition progress available because ",progress.message)
                             clearInterval(updateIntervalHandle)
                             return
                         }
@@ -78,13 +78,13 @@ function start_acquisition(){
                         }
                     })
                     .onerror(()=>{
-                        console.error("error getting acquisition progress")
+                        message_open("error","error getting acquisition progress")
                     })
                     .send("/api/acquisition/status",send_data,"POST")
             },1e3/5)
         })
         .onerror(()=>{
-            console.error("error starting acquisition")
+            message_open("error","error starting acquisition")
         })
         .send("/api/acquisition/start",data,"POST")
 }
@@ -95,12 +95,12 @@ function cancel_acquisition(){
         .onload((xhr)=>{
             const data=JSON.parse(xhr.responseText)
             if(data.status!="success"){
-                console.error("acquisition cancel failed because:",data.message)
+                message_open("error","acquisition cancel failed because: ",data.message)
                 return
             }
         })
         .onerror(()=>{
-            console.error("error cancelling acquisition")
+            message_open("error","error cancelling acquisition")
         })
         .send("/api/acquisition/cancel",send_data,"POST")
 }

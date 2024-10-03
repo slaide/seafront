@@ -46,7 +46,12 @@ function executeActionItem(item){
 
     const data={}
 
-    progress_indicator.run("machine action "+item.name)
+    try{
+        progress_indicator.run("machine action "+item.name)
+    }catch(e){
+        message_open("error","cannot currently execute action",e)
+        return
+    }
 
     // send xhr with item.value as url
     new XHR(true)

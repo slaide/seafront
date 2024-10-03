@@ -2,19 +2,24 @@
 function enterLoadingPosition(){
     const data={}
 
-    progress_indicator.run("Entering loading position")
+    try{
+        progress_indicator.run("Entering loading position")
+    }catch(e){
+        message_open("error","cannot currently enter loading position",e)
+        return
+    }
     
     new XHR(true)
         .onload(function(xhr){
             let data=JSON.parse(xhr.responseText)
             if(data.status!="success"){
-                console.error("error entering loading position",data)
+                message_open("error","error entering loading position",data)
             }
 
             progress_indicator.stop()
         })
         .onerror(function(){
-            console.error("error entering loading position")
+            message_open("error","error entering loading position")
 
             progress_indicator.stop()
         })
@@ -23,19 +28,24 @@ function enterLoadingPosition(){
 function leaveLoadingPosition(){
     const data={}
 
-    progress_indicator.run("leaving loading position")
+    try{
+        progress_indicator.run("leaving loading position")
+    }catch(e){
+        message_open("error","cannot currently leave loading position",e)
+        return
+    }
 
     new XHR(true)
         .onload(function(xhr){
             let data=JSON.parse(xhr.responseText)
             if(data.status!="success"){
-                console.error("error leaving loading position",data)
+                message_open("error","error leaving loading position",data)
             }
 
             progress_indicator.stop()
         })
         .onerror(function(){
-            console.error("error leaving loading position")
+            message_open("error","error leaving loading position")
 
             progress_indicator.stop()
         })

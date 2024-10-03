@@ -258,7 +258,12 @@ function dblclickWell(item){
     if(item.col==0 || item.row==0)return;
     //if(item.forbidden)return;
 
-    progress_indicator.run("Moving to well "+item.name)
+    try{
+        progress_indicator.run("Moving to well "+item.name)
+    }catch(e){
+        message_open("error","cannot currently move to well",e)
+        return
+    }
 
     const data={
         plate_type: microscope_config.wellplate_type,
@@ -272,14 +277,14 @@ function dblclickWell(item){
             
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
-                console.error("failed to move to well",response,item)
+                message_open("error","failed to move to well:",response,";item: ",item)
                 return
             }
         })
         .onerror(function(){
             progress_indicator.stop()
             
-            console.error("failed to move to well",item)
+            message_open("error","failed to move to well: ",item)
         })
         .send("/api/action/move_to_well",data,"POST")
 }

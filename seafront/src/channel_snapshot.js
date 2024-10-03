@@ -8,7 +8,12 @@ function snapChannel(channel){
         channel:channel
     }
 
-    progress_indicator.run("Snapping  "+channel.name)
+    try{
+        progress_indicator.run("Snapping  "+channel.name)
+    }catch(e){
+        message_open("error","cannot currently snap channel",e)
+        return
+    }
     
     new XHR()
         .onload((xhr)=>{
@@ -16,14 +21,14 @@ function snapChannel(channel){
             
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
-                console.error("error snapping channel",response)
+                message_open("error","error snapping channel",response)
                 return
             }
         })
         .onerror(()=>{
             progress_indicator.stop()
             
-            console.error("error snapping channel")
+            message_open("error","error snapping channel")
         })
         .send("/api/action/snap_channel",data,"POST")
 }
@@ -32,7 +37,12 @@ function snapChannel(channel){
  * take a snapshot of all selected channels
  */
 function snap_selection(){
-    progress_indicator.run("Snapping selected channels")
+    try{
+        progress_indicator.run("Snapping selected channels")
+    }catch(e){
+        message_open("error","cannot currently snap channels",e)
+        return
+    }
 
     const data={
         "config_file":_p.getUnmanaged(microscope_config),
@@ -42,13 +52,13 @@ function snap_selection(){
         .onload((xhr)=>{
             const data=JSON.parse(xhr.responseText)
             if(data.status!="success"){
-                console.log("error during snap selected channels:",data)
+                message_open("info","error during snap selected channels:",data)
             }
 
             progress_indicator.stop()
         })
         .onerror(()=>{
-            console.log("failed")
+            message_open("info","failed")
 
             progress_indicator.stop()
         })
