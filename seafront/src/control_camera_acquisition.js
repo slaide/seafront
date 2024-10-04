@@ -18,7 +18,7 @@ function start_streaming(){
     }
 
     if(!data.channel){
-        console.error("channel "+streaming_channel_handle+" not found")
+        message_open("error","channel "+streaming_channel_handle+" not found")
         return
     }
 
@@ -32,11 +32,11 @@ function start_streaming(){
         .onload(function(xhr){
             const response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
-                console.error("error starting stream "+xhr.responseText)
+                message_open("error","error starting stream "+xhr.responseText)
             }
         })
         .onerror(function(){
-            console.error("error starting stream")
+            message_open("error","error starting stream")
         })
         .send("api/action/stream_channel_begin",data,"POST")
 }
@@ -56,7 +56,8 @@ function stop_streaming(){
         }
     }
     if(!data.channel){
-        window.alert("channel "+streaming_channel_handle+" not found")
+        message_open("error","channel "+streaming_channel_handle+" not found")
+        return
     }
 
     microscope_state.streaming=false
@@ -65,11 +66,11 @@ function stop_streaming(){
         .onload(function(xhr){
             const response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
-                console.error("error stopping stream "+xhr.responseText)
+                message_open("error","error stopping stream "+xhr.responseText)
             }
         })
         .onerror(function(){
-            console.error("error stopping stream")
+            message_open("error","error stopping stream")
         })
         .send("api/action/stream_channel_end",data,"POST")
 }

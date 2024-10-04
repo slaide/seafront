@@ -26,7 +26,7 @@ function snapReflectionAutofocus(){
 
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
-                console.error("error snapping reflection autofocus",response)
+                message_open("error","error snapping reflection autofocus",response)
                 return
             }
             let handle=response.img_handle
@@ -42,7 +42,7 @@ function snapReflectionAutofocus(){
         .onerror(()=>{
             progress_indicator.stop()
             
-            console.error("error snapping reflection autofocus")
+            message_open("error","error snapping reflection autofocus")
         })
         .send("/api/action/snap_reflection_autofocus",data,"POST")
 }

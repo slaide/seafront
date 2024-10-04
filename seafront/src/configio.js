@@ -15,14 +15,14 @@ function load_remote_config(file_data){
         .onload((xhr)=>{
             const response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
-                console.error("failed to load config because",response)
+                message_open("error","failed to load config because",response)
                 return
             }
 
             microscopeConfigOverride(response.file)
         })
         .onerror(()=>{
-            console.error("failed to load config")
+            message_open("error","failed to load config")
         })
         .send("/api/acquisition/config_fetch",data,"POST")
 }
