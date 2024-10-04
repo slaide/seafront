@@ -1,5 +1,7 @@
 let acquisition_progress=_p.manage({
     text:"no acquisition started",
+    time_since_start_s:"",
+    estimated_time_remaining_msg:"",
     acquisition_id:null
 })
 
@@ -60,6 +62,52 @@ function start_acquisition(){
                             acquisition_progress.text="running"
                             return
                         }
+
+                        acquisition_progress.time_since_start_s=progress.acquisition_progress.time_since_start_s
+
+                        // called estimated_total_time_s but actually contains the _remaining_ time in s
+                        let remaining_time_s_total=parseFloat(progress.acquisition_progress.estimated_total_time_s)
+
+                        let minutes=remaining_time_s_total%3600
+                        let hours=(remaining_time_s_total-minutes)/3600
+                        let seconds=minutes%60
+                        minutes=(minutes-seconds)/60
+
+                        let remaining_time_s=seconds.toFixed(0)
+                        let remaining_time_m=minutes.toFixed(0)
+                        let remaining_time_h=hours.toFixed(0)
+
+                        /**
+                         * @param{string} s
+                         * @return{string}
+                         */
+                        function pad_to_two_digits(s){
+                            if(s.length<2){
+                                return "0"+s
+                            }
+                            return s
+                        }
+
+                        let time_remain_estimate_msg_string=""
+                        if(remaining_time_s_total>0){
+                            time_remain_estimate_msg_string="done in "
+                            if(hours>0){
+                                time_remain_estimate_msg_string+=remaining_time_h+"h:"
+                            }
+                            if(minutes>0){
+                                if(hours>0){
+                                    time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_m)+"m:"
+                                }else{
+                                    time_remain_estimate_msg_string+=remaining_time_m+"m:"
+                                }
+                            }
+                            if(minutes>0){
+                                time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_s)+"s"
+                            }else{
+                                time_remain_estimate_msg_string+=remaining_time_s+"s"
+                            }
+                        }
+                        acquisition_progress.estimated_time_remaining_msg=time_remain_estimate_msg_string
 
                         acquisition_progress.text="running - "+progress.message
                         progress_element.style.setProperty(

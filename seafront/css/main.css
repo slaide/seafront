@@ -8,7 +8,9 @@
     --leftCol:2fr;
     --rightCol:1fr;
     grid-template-columns: var(--leftCol) 20px var(--rightCol);
-    grid-template-rows: calc(100% - 2em) 2em;
+
+    --main-commandline-height:3em;
+    grid-template-rows: calc(100% - var(--main-commandline-height)) var(--main-commandline-height);
 }
 #main > *.separator-vert{
     margin-inline:0.5em;
@@ -34,4 +36,9 @@
 #main-commandline{
     grid-column: span 3;
     border-top:1px solid var(--text-color);
+
+    height:var(--main-commandline-height);
+
+    display:grid;
+    grid-template-columns:1fr auto;
 }

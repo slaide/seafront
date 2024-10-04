@@ -816,11 +816,10 @@
                 </div>
             </div>
 
-            <div id="main-commandline" class="data" style="display:grid;grid-template-columns:1fr repeat(5, auto)">
+            <div id="main-commandline" class="data">
                 <div>
                     connected to: {{microscope_state.machine_name}} | frontend status: <b>{{progress_indicator.statusText}}</b> | server status: {{microscope_state.state}}
                 </div>
-
 
                 <script src="src/acquisition.js"></script>
                 <style>
@@ -834,13 +833,25 @@
                         --percent-done:00%;
                         background:linear-gradient(to right, #20c94d var(--percent-done), var(--background-color) var(--percent-done));
                     }
+
+                    #main-commandline-acquisitionmenu{
+                        display:grid;
+                        grid-template-columns: auto auto auto 7em 7em;
+                        grid-gap:0.4em;
+
+                        button{
+                            font-size:1.2em;
+                        }
+                    }
                 </style>
 
-                <p>| <b>Acquisition:</b></p>
-                <p class="data">{{acquisition_progress.text}}</p>
-                <div id="acquisition-progress-bar"></div>
-                <button class="data" p:tooltip="Start an acquisition with the settings as configured above." p:on-click="start_acquisition()">start</button>
-                <button class="data" p:tooltip="Cancel the currently ongoing acquisition." p:on-click="cancel_acquisition()">cancel</button>
+                <div id="main-commandline-acquisitionmenu">
+                    <p>| <b style="font-size:1.2em;">Acquisition:</b></p>
+                    <p class="data"><!-- acquisition status text-->{{acquisition_progress.text}}</p>
+                    <div id="acquisition-progress-bar" class="data">{{acquisition_progress.estimated_time_remaining_msg}}</div>
+                    <button class="data" p:tooltip="Start an acquisition with the settings as configured above." p:on-click="start_acquisition()">start</button>
+                    <button class="data" p:tooltip="Cancel the currently ongoing acquisition." p:on-click="cancel_acquisition()">cancel</button>
+                </div>
             </div>
         </div>
         <style>
@@ -885,6 +896,7 @@
                 grid-column: 2;
                 grid-row:1 / span 2;
                 height:3em;
+                width:3em;
                 font-weight: bold;
             }
 
