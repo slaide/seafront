@@ -18,24 +18,61 @@ XZ_INSTALL_DIR="$SCRIPT_DIR/xz"
 XZ_SOURCE_DIR="$SCRIPT_DIR/xz-src"
 READLINE_INSTALL_DIR="$SCRIPT_DIR/readline"
 READLINE_SOURCE_DIR="$SCRIPT_DIR/readline-src"
+TCL_INSTALL_DIR="$SCRIPT_DIR/tcl"
+TCL_SOURCE_DIR="$SCRIPT_DIR/tcl-src"
+TK_INSTALL_DIR="$SCRIPT_DIR/tk"
+TK_SOURCE_DIR="$SCRIPT_DIR/tk-src"
+NCURSES_INSTALL_DIR="$SCRIPT_DIR/ncurses"
+NCURSES_SOURCE_DIR="$SCRIPT_DIR/ncurses-src"
 
 # when compiling a new python version, this block does not need to be re-run
 
-if [ ! -e $READLINE_INSTALL_DIR ] ; then
-    # download and compile xz to provide lzma support for python
-    echo downloading readline
-    curl -L -o readline.tar.gz https://git.savannah.gnu.org/cgit/readline.git/snapshot/readline-8.2.tar.gz
-    mkdir -p $READLINE_INSTALL_DIR $READLINE_SOURCE_DIR
-    tar -xzf readline.tar.gz -C $READLINE_SOURCE_DIR --strip-components=1
-    cd $READLINE_SOURCE_DIR
-    ./configure --prefix=$READLINE_INSTALL_DIR
+if [ ! -e $TCL_INSTALL_DIR ] ; then
+    echo "Downloading and installing Tcl"
+    curl -L -o tcl.tar.gz https://prdownloads.sourceforge.net/tcl/tcl8.6.13-src.tar.gz
+    mkdir -p $TCL_INSTALL_DIR $TCL_SOURCE_DIR
+    tar -xzf tcl.tar.gz -C $TCL_SOURCE_DIR --strip-components=1
+    cd $TCL_SOURCE_DIR/unix
+    ./configure --prefix=$TCL_INSTALL_DIR
     make -j
-    make -j install
-
-    # remove readline source code files after installation
+    make install
     cd $SCRIPT_DIR
-    rm -rf $READLINE_SOURCE_DIR $SCRIPT_DIR/readline.tar.gz
-	echo finished installing readline
+    rm -rf $TCL_SOURCE_DIR tcl.tar.gz
+    echo "Finished installing Tcl"
+fi
+
+if [ ! -e $TK_INSTALL_DIR ] ; then
+    echo "Downloading and installing Tk"
+    curl -L -o tk.tar.gz https://prdownloads.sourceforge.net/tcl/tk8.6.13-src.tar.gz
+    mkdir -p $TK_INSTALL_DIR $TK_SOURCE_DIR
+    tar -xzf tk.tar.gz -C $TK_SOURCE_DIR --strip-components=1
+    cd $TK_SOURCE_DIR/unix
+
+    export CFLAGS="-I$TCL_INSTALL_DIR/include"
+    
+    ./configure --prefix=$TK_INSTALL_DIR --with-tcl=$TCL_INSTALL_DIR/lib
+    make -j
+    make install
+
+    unset CFLAGS
+    
+    cd $SCRIPT_DIR
+    rm -rf $TK_SOURCE_DIR tk.tar.gz
+    echo "Finished installing Tk"
+fi
+
+if [ ! -e $NCURSES_INSTALL_DIR ] ; then
+    echo "Downloading and installing ncurses"
+    curl -L -o ncurses.tar.gz https://ftp.gnu.org/gnu/ncurses/ncurses-6.4.tar.gz
+    mkdir -p $NCURSES_INSTALL_DIR $NCURSES_SOURCE_DIR
+    tar -xzf ncurses.tar.gz -C $NCURSES_SOURCE_DIR --strip-components=1
+    cd $NCURSES_SOURCE_DIR
+    ./configure --prefix=$NCURSES_INSTALL_DIR --with-shared --without-debug --enable-widec
+    make -j
+    make install
+    cd $SCRIPT_DIR
+    rm -rf $NCURSES_SOURCE_DIR ncurses.tar.gz
+    echo "Finished installing ncurses"
 fi
     
 if [ ! -e $OPENSSL_INSTALL_DIR ] ; then
@@ -97,7 +134,15 @@ if [ ! -e $PYTHON_INSTALL_DIR ] ; then
 	# + enable ssl support (required by pip for pypi packages) - this requires openssl to be installed on the system!
 	# + also apply several optimizations to improve runtime performance (no --enable-optimizations flag \
 	# because pgo generates wrong raw profile data, version=8 instead of expected 9?!)
-	./configure --with-openssl=$OPENSSL_INSTALL_DIR --with-readline --with-readline-dir=$READLINE_INSTALL_DIR --prefix=$PYTHON_INSTALL_DIR --with-lto --with-computed-gotos --with-ensurepip
+	./configure \
+		--with-openssl=$OPENSSL_INSTALL_DIR \
+		--with-readline --with-readline-dir=$READLINE_INSTALL_DIR \
+		--with-tcltk-includes="-I$TCL_INSTALL_DIR/include -I$TK_INSTALL_DIR/include" \
+		--with-tcltk-libs="-L$TCL_INSTALL_DIR/lib -ltcl8.6 -L$TK_INSTALL_DIR/lib -ltk8.6" \
+		--with-ncurses="$NCURSES_INSTALL_DIR" \
+		--prefix=$PYTHON_INSTALL_DIR \
+		--with-lto --with-computed-gotos \
+		--with-ensurepip 
 	
 	# copy configuration file, e.g. for debugging
 	if true; then
