@@ -5,3 +5,15 @@
     display:grid;
     grid-template-columns: repeat(6,auto);
 }
+
+#live-view-x-axis-container{
+    display:grid;
+    grid-template-columns: repeat(2,1fr);
+}
+/* push first child to the left, second child to the right */
+#live-view-x-axis-container > *:first-child{
+    justify-self:start;
+}
+#live-view-x-axis-container > *:last-child{
+    justify-self:end;
+}
