@@ -168,6 +168,9 @@ cython_debug/
 /python_env/openssl*
 /python_env/xz*
 /python_env/readline*
+/python_env/ncurses*
+/python_env/tcl*
+/python_env/tk*
 
 *.code-workspace
 *.sublime-workspace
