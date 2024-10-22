@@ -57,7 +57,7 @@ function config_store(){
 
                         if(!(config_store_modal_filename_element instanceof HTMLInputElement)){throw new Error("")}
                         const filename=config_store_modal_filename_element.value
-                        if(!(config_store_modal_comment_element instanceof HTMLInputElement)){throw new Error("")}
+                        if(!(config_store_modal_comment_element instanceof HTMLTextAreaElement)){throw new Error("")}
                         const comment=config_store_modal_comment_element.value
 
                         const data={
@@ -95,7 +95,7 @@ function config_list(){
         .onload((xhr)=>{
             const response=JSON.parse(xhr.responseText)
             if (response.status!="success"){
-                message_open("error","storing config failed: ",response)
+                message_open("error","fetching config list failed: ",response)
                 return
             }
 
