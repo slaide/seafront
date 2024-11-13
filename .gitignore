@@ -164,13 +164,10 @@ cython_debug/
 .DS_Store
 
 # python install files
-/python_env/python*
-/python_env/openssl*
-/python_env/xz*
-/python_env/readline*
-/python_env/ncurses*
-/python_env/tcl*
-/python_env/tk*
+/python_env/*
+!/python_env/install.sh
+!/python_env/activate.sh
+!/python_env/deactivate.sh
 
 *.code-workspace
 *.sublime-workspace
