@@ -23,12 +23,20 @@
       "LSP": {
          "LSP-pyright": {
             "settings": {
-					"python.pythonPath": "python_env/python-3.10.14/bin/python3",
+					"python.pythonPath": "python_env/python-3.13.0/bin/python3",
 					"python.analysis.extraPaths":[
 						"../seafront-config"
 					]
             }
-         }
+         },
+         "LSP-basedpyright": {
+            "settings": {
+					"python.pythonPath": "python_env/python-3.13.0/bin/python3",
+					"python.analysis.extraPaths":[
+						"../seafront-config"
+					]
+            }
+         },
       }
    }
 }
