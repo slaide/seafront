@@ -23,6 +23,7 @@ function laser_autofocus_initcheckbox(element){
  * measure autofocus offset
  * 
  * if return_immediate is true, this call is sync and returns the offset in um
+ * @returns {number?}
  */
 function measureLaserAutofocusOffset(return_immediate=false){
     let data={
@@ -33,9 +34,10 @@ function measureLaserAutofocusOffset(return_immediate=false){
         progress_indicator.run("Measuring laser autofocus offset")
     }catch(e){
         message_open("error","cannot currently measure autofocus offset",e)
-        return
+        return null
     }
 
+    /**@type{number?}*/
     let immediate_return_value=null
 
     new XHR(!return_immediate)
@@ -80,7 +82,7 @@ function setLaserAutofocusReference(){
             /**@type{{status:string,calibration_data?:{x_reference:number,um_per_px:number,calibration_position:{x_pos_mm:number,y_pos_mm:number,z_pos_mm:number}}}}*/
             let response=JSON.parse(xhr.responseText)
             if(response.status!="success"){
-                message_open("error","error setting laser autofocus reference: "+response)
+                message_open("error","error setting laser autofocus reference: ",response)
                 return
             }
 

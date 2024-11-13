@@ -50,6 +50,8 @@ class Camera:
 
         self.handle=None
 
+        self.acquisition_ongoing=False
+
     def open(self,device_type:tp.Literal["main","autofocus"]):
         """
             open device for interaction
@@ -61,6 +63,8 @@ class Camera:
             raise RuntimeError(f"failed to open camera {self.device_info}")
         
         self.device_type=device_type
+
+        self.acquisition_ongoing=False
 
         # prints some camera hardware information
         if False:
@@ -257,6 +261,10 @@ class Camera:
 
         assert self.handle is not None
 
+        if self.acquisition_ongoing:
+            print("warning - requested acquisition while one was already ongoing. returning None.")
+            return None
+
         # set pixel format
         g_config=GlobalConfigHandler.get_dict()
         match self.device_type:
@@ -273,28 +281,38 @@ class Camera:
         if not format_is_supported:
             raise RuntimeError(f"unsupported pixel format {pixel_format}")
 
+        print(f"imaging with pixel mode {pixel_format = }")
         # pixel format change is not possible while streaming
         # turning the stream off takes nearly half a second, so we cache the current pixel format
         # and only pause streaming to change it, if necessary
         match pixel_format:
             case "mono8":
                 if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO8:
+                    print("mono 8 stream off")
                     self.handle.stream_off()
                     self.pixel_format=gxiapi.GxPixelFormatEntry.MONO8
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO8)
+                    print("mono 8 stream on")
                     self.handle.stream_on()
+                    print("done")
             case "mono10":
                 if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO10:
+                    print("mono 10 stream off")
                     self.handle.stream_off()
                     self.pixel_format=gxiapi.GxPixelFormatEntry.MONO10
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO10)
+                    print("mono 10 stream on")
                     self.handle.stream_on()
+                    print("done")
             case "mono12":
                 if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO12:
+                    print("mono 12 stream off")
                     self.handle.stream_off()
                     self.pixel_format=gxiapi.GxPixelFormatEntry.MONO12
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO12)
+                    print("mono 12 stream off")
                     self.handle.stream_on()
+                    print("done")
             case _:
                 raise RuntimeError(f"unsupported pixel format {pixel_format}")
 
@@ -302,8 +320,14 @@ class Camera:
         exposure_time_native_unit=self._exposure_time_ms_to_native(config.exposure_time_ms)
         self.handle.ExposureTime.set(exposure_time_native_unit)
 
+        print("set exposure time")
+
         # takes ca 8ms
         self.handle.Gain.set(config.analog_gain)
+
+        print(f"set gain, {mode = }")
+
+        self.acquisition_ongoing=True
 
         match mode:
             case "once":
@@ -315,16 +339,21 @@ class Camera:
                 img:gxiapi.RawImage=self.handle.data_stream[0].get_image()
                 match img.get_status():
                     case gxiapi.GxFrameStatusList.INCOMPLETE:
+                        self.acquisition_ongoing=False
                         raise RuntimeError("incomplete frame")
                     case gxiapi.GxFrameStatusList.SUCCESS: 
                         pass
 
                 if img is None:
+                    self.acquisition_ongoing=False
                     raise RuntimeError("did not receive an image")
 
                 np_img=img.get_numpy_array()
                 assert np_img is not None
                 np_img=np_img.copy()
+
+                self.acquisition_ongoing=False
+
                 return np_img
             
             case "until_stop":
@@ -334,9 +363,14 @@ class Camera:
                 def run_callback(img:gxiapi.RawImage):
                     nonlocal stop_acquisition
                     if stop_acquisition:
+                        if self.acquisition_ongoing:
+                            self.acquisition_ongoing=False
+
+                        print("acq stopped, returning")
                         return
                     
-                    match img.get_status():
+                    img_status=img.get_status()
+                    match img_status:
                         case gxiapi.GxFrameStatusList.INCOMPLETE:
                             raise RuntimeError("incomplete frame")
                         case gxiapi.GxFrameStatusList.SUCCESS: 
@@ -349,10 +383,3 @@ class Camera:
                 s_per_frame=1.0/target_framerate_hz
                 target_framerate_hz=1.0/(s_per_frame-max(20-config.exposure_time_ms,0)*1e-3)
                 self._set_acquisition_mode(AcquisitionMode.CONTINUOUS,with_cb=run_callback,continuous_target_fps=target_framerate_hz)
-
-                while not stop_acquisition:
-                    # sleep for duration of exposure time, but no more than 100ms
-                    time.sleep(min(0.1,config.exposure_time_ms*1e-3))
-
-                self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
-        

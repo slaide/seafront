@@ -75,7 +75,7 @@ class GlobalConfigHandler:
             raise RuntimeError(f"error - saving config with filename {str(filepath)}, which already exists")
 
         with filepath.open("w+") as f:
-            json.dump(config.to_dict(),f,indent=4)
+            json.dump(config.dict(),f,indent=4)
 
     @staticmethod
     def home_acquisition_config_dir()->Path:
@@ -417,7 +417,7 @@ class GlobalConfigHandler:
         return ret
 
     @staticmethod
-    def get(as_dict:bool=False)->tp.Union[tp.List[ConfigItem],tp.List[dict]]:
+    def get()->tp.List[ConfigItem]:
         """
             get list of all global config items
         """
@@ -426,10 +426,6 @@ class GlobalConfigHandler:
             GlobalConfigHandler.reset()
         ret=GlobalConfigHandler._config_list
         assert ret is not None
-
-        if as_dict:
-            items_json=[i.to_dict() for i in ret]
-            return items_json
 
         return ret
     
@@ -444,6 +440,7 @@ class GlobalConfigHandler:
                 raise ValueError("duplicate handle found in config list")
             
             ret[c.handle]=c
+
         return ret
     
     @staticmethod

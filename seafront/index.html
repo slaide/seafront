@@ -107,6 +107,7 @@
         <link rel="stylesheet" href="css/section.css">
 
         <link rel="stylesheet" href="css/live_view.css">
+        <link rel="stylesheet" href="css/grid_view.css">
 
         <!-- tab component -->
         <script src="src/tab.js"></script>
@@ -148,10 +149,10 @@
         <div id="main">
             <div id="main-view">
                 <div id="view-select" class="tab-header-container data" p:init="init_tab_header(element)">
-                    <div target="live-view">Live View</div>
-                    <div target="grid-view">Channel View</div>
-                    <div target="af-debug-panel">Laser Autofocus Debug</div>
-                    <div target="low-level-config-view">Low Level Config</div>
+                    <button target="live-view">Live View</button>
+                    <button target="grid-view">Channel View</button>
+                    <button target="af-debug-panel">Laser Autofocus Debug</button>
+                    <button target="low-level-config-view">Low Level Config</button>
                 </div>
                 <div id="view-show" class="tab-body-container">
                     <div id="live-view">
@@ -339,8 +340,8 @@
                     </div>
                     <div>
                         <div id="control-select" class="tab-header-container data" p:init="init_tab_header(element)">
-                            <div target="acquisition-control">Aquisition Control</div>
-                            <div target="lighting-control">Lighting and Focus</div>
+                            <button target="acquisition-control">Aquisition Control</button>
+                            <button target="lighting-control">Lighting and Focus</button>
                         </div>
                         <div id="control-show" class="tab-body-container">
                             <style>
@@ -375,10 +376,11 @@
 
                                 <style>
                                     #grid-config{
-                                        --grid-mask-size:8em;
+                                        /* 2em * <num grid config rows> */
+                                        --grid-mask-size:5em;
                                         display:grid;
                                         grid-template-columns: repeat(4,auto) min-content;
-                                        grid-template-rows: repeat(4,fit-content);
+                                        grid-template-rows: repeat(3,fit-content);
                                     }
                                 </style>
                                 <div id="grid-config" class="section">
@@ -393,11 +395,6 @@
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_y" p:on-input="updateGridMask()">
                                     <label class="data" p:tooltip="distance between y coordinates">delta y [mm]</label>
                                     <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_y_mm">
-
-                                    <label class="data" p:tooltip="number of z coordinates">num z</label>
-                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_z">
-                                    <label class="data" p:tooltip="distance between z coordinates">delta z [um]</label>
-                                    <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_z_um">
 
                                     <label class="data" p:tooltip="number of timepoints at which to image the plate">num t</label>
                                     <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_t">
@@ -554,27 +551,32 @@
                                     #all-channel-container{
                                         --width:100%;
                                         display:grid;
-                                        grid-template-columns: fit-content 1fr repeat(5,auto);
+                                        grid-template-columns: fit-content 1fr repeat(7,auto);
                                         grid-template-rows: repeat(100,min-content);
                                     }
                                     #all-channel-container > *{
                                         background-origin: padding-box;
                                     }
                                     /* all 7 elements in every second row, starting at the first row*/
-                                    #all-channel-container > :not(button):nth-child(14n+18),
-                                    #all-channel-container > :not(button):nth-child(14n+19),
-                                    #all-channel-container > :not(button):nth-child(14n+20),
-                                    #all-channel-container > :not(button):nth-child(14n+21),
-                                    #all-channel-container > :not(button):nth-child(14n+22),
-                                    #all-channel-container > :not(button):nth-child(14n+23),
-                                    #all-channel-container > :not(button):nth-child(14n+24)
+                                    #all-channel-container > :not(button):nth-child(18n+22),
+                                    #all-channel-container > :not(button):nth-child(18n+23),
+                                    #all-channel-container > :not(button):nth-child(18n+24),
+                                    #all-channel-container > :not(button):nth-child(18n+25),
+                                    #all-channel-container > :not(button):nth-child(18n+26),
+                                    #all-channel-container > :not(button):nth-child(18n+27),
+                                    #all-channel-container > :not(button):nth-child(18n+28),
+                                    #all-channel-container > :not(button):nth-child(18n+29),
+                                    #all-channel-container > :not(button):nth-child(18n+30)
                                     {
                                         background-color:rgb(182, 182, 182);
                                         color:black;
                                     }
                                 </style>
                                 <div id="all-channel-container" class="section">
-                                    <p class="section-header col-span-7">Imaging Channel Configuration <a class="data" href="{{docLinks.imagingChannelConfig}}" target="_blank">Help</a></p>
+                                    <p class="section-header col-span-9">
+                                        Imaging Channel Configuration
+                                        <a class="data" href="{{docLinks.imagingChannelConfig}}" target="_blank">Help</a>
+                                    </p>
 
                                     <script src="src/channel_snapshot.js"></script>
 
@@ -585,6 +587,8 @@
                                     <label class="data" p:tooltip="Analog Signal Gain in decibels">Gain [dB]</label>
                                     <label class="data" p:tooltip="Offset from the autofocus target coordinate in Z, in micrometers">Off. [um]</label>
                                     <label class="data" p:tooltip="Light source illumination strength in % of maximum strength"><!--Ill. is not readable, hence Pow instead-->Pow. [%]</label>
+                                    <label>num z</label>
+                                    <label>delta z [um]</label>
 
                                     <template class="data" p:for="channel of microscope_config.channels">
                                         <input id="acquisition-channel-enabled-checkbox-{{channel.handle}}" type="checkbox" p:bind="channel.enabled">
@@ -616,6 +620,19 @@
                                             value="{{limits.illumination_percent.default}}" step="0.1"
                                             p:on-blur="ensureInputLimits(element)"
                                             class="data" p:bind="channel.illum_perc">
+
+                                        <input type="number"
+                                            min="1"
+                                            max="21"
+                                            value="1" step="2"
+                                            --p:on-blur="undefined"
+                                            class="data" p:bind="channel.num_z_planes">
+                                        <input type="number"
+                                            min="0.1"
+                                            max="100"
+                                            value="3" step="0.1"
+                                            --p:on-blur="undefined"
+                                            class="data" p:bind="channel.delta_z_um">
                                     </template>
                                 </div>
 
@@ -825,6 +842,7 @@
                 border:0.3em solid hsl(0, 100%, 50%);
             }
         </style>
+
         <script src="src/messagebox.js"></script>
         <div id="messagebox">
             <template class="data" p:for="message of messages">

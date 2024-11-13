@@ -1,14 +1,24 @@
 
 function laser_autofocus_debug_measure(){
-    const num_images=document.getElementById("laser-autofocus-debug-num-images").value
-    const total_z_um=document.getElementById("laser-autofocus-debug-total-z-um").value
+    const debug_num_images_element=document.getElementById("laser-autofocus-debug-num-images")
+    const total_z_um_element=document.getElementById("laser-autofocus-debug-total-z-um")
+
+    if(!(debug_num_images_element instanceof HTMLInputElement))throw Error()
+    if(!(total_z_um_element instanceof HTMLInputElement))throw Error()
+
+    const num_images=parseInt(debug_num_images_element.value)
+    const total_z_um=parseFloat(total_z_um_element.value)
+    if(num_images==null)throw Error()
+    if(total_z_um==null)throw Error()
 
     console.log("run autofocus debug with num image",num_images,"total z um",total_z_um)
 
+    /**@type{{x:number[],y:number[],mode:string,name:string}}*/
     const trace1={
         x:[],
         y:[],
-        mode:"lines+markers"
+        mode:"lines+markers",
+        name:"real",
     }
 
     const bottom_move_dist_um=(-total_z_um/2)
@@ -24,12 +34,13 @@ function laser_autofocus_debug_measure(){
     const trace2={
         x:trace1.x,
         y:trace1.y.map(v=>v),
-        mode:"lines+markers"
+        mode:"lines+markers",
+        name:"measured",
     }
 
     console.log("starting autofocus debug measurements")
 
-    const clear_z_backlash_distance_mm=0.04
+    const clear_z_backlash_distance_mm=40*1e-3
     immediate_move(1,"z",bottom_move_dist_um*1e-3,false)
     immediate_move(1,"z",-clear_z_backlash_distance_mm,false)
     immediate_move(1,"z",clear_z_backlash_distance_mm,false)
@@ -37,16 +48,37 @@ function laser_autofocus_debug_measure(){
         if(i>0){
             immediate_move(1,"z",step_size_um*1e-3,false)
         }
-        const current_offset=measureLaserAutofocusOffset(true)
+        var current_offset=measureLaserAutofocusOffset(true)
+        if(current_offset==null)current_offset=NaN;
         trace2.y[i]=current_offset
     }
     immediate_move(1,"z",bottom_move_dist_um*1e-3,false)
     console.log("done with autofocus debug measurements")
 
-    const data=[trace1,trace2]
+
+    const trace3={
+        x:trace1.x,
+        y:trace1.y.map((val1,ind)=>{
+            let val2=trace2.y[ind]
+            return val1-val2
+        }),
+        mode:"lines+markers",
+        name:"error"
+    }
+
+    const data=[trace1,trace2,trace3]
     const layout={
         title:"laser autofocus debug plot",
         autosize:true,
+
+        yaxis: {
+            title:"measured/estimated z",
+            autorange: true,
+        },
+        xaxis:{
+            title: "real z",
+            autorange:true,
+        },
 
         margin: {
             t:30, // top margin for pan/zoom buttons

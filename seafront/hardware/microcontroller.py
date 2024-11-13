@@ -718,9 +718,11 @@ class Command:
     def af_laser_illum_end()->"Command":
         return Command.set_pin_level(pin=MCU_PINS.AF_LASER,level=0)
 
+import asyncio
+
 class Microcontroller:
     @staticmethod
-    def _wait_until_cmd_is_finished(
+    async def _wait_until_cmd_is_finished(
         mc:"Microcontroller",
         cmd:"Command",
         additional_delay:tp.Optional[float]=None
@@ -766,10 +768,10 @@ class Microcontroller:
 
             return cmd_is_completed
         
-        mc._read_packets(read_packet)
+        await mc._read_packets(read_packet)
 
         if additional_delay is not None:
-            time.sleep(additional_delay)
+            await asyncio.sleep(additional_delay)
     
     def __init__(self,device_info:SerialDeviceInfo):
         self.device_info=device_info
@@ -787,7 +789,7 @@ class Microcontroller:
 
         self.last_position=Position(0,0,0)
 
-    def _read_packets(self,until:tp.Callable[[MicrocontrollerStatusPackage],bool]):
+    async def _read_packets(self,until:tp.Callable[[MicrocontrollerStatusPackage],bool]):
         """
             read packets until 'until' returns True
 
@@ -807,7 +809,7 @@ class Microcontroller:
             serial_in_waiting_status=self.handle.in_waiting
 
             if serial_in_waiting_status==0:
-                time.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY)
+                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY)
                 continue
             
             # get rid of old data
@@ -818,7 +820,7 @@ class Microcontroller:
 
             # if data is incomplete, sleep and try again (extremely rare case)
             if serial_in_waiting_status % FirmwareDefinitions.READ_PACKET_LENGTH != 0:
-                time.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY)
+                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY)
                 continue
             
             # read the buffer
@@ -832,7 +834,7 @@ class Microcontroller:
             
             self.terminate_reading_received_packet_thread=until(packet)
 
-    def get_last_position(self)->Position:
+    async def get_last_position(self)->Position:
         """
         get last known position of the stage
 
@@ -844,7 +846,7 @@ class Microcontroller:
                 return True
             
             # internally updates the last known position
-            self._read_packets(read_one_packet)
+            await self._read_packets(read_one_packet)
 
             self.lock.release()
 
@@ -860,7 +862,8 @@ class Microcontroller:
         self._last_command_id=(self._last_command_id+1)%256
         return self._last_command_id
 
-    def send_cmd(self,cmd_in:tp.Union["Command",tp.List["Command"]]):
+    async def send_cmd(self,cmd_in:tp.Union["Command",tp.List["Command"]]):
+        "send command for execution. waits for command to complete if command type requires awaiting."
         if isinstance(cmd_in,list):
             cmds=cmd_in
         else:
@@ -887,18 +890,21 @@ class Microcontroller:
                 assert self.handle is not None
                 self.handle.write(cmd.bytes)
                 if cmd.wait_for_completion:
-                    Microcontroller._wait_until_cmd_is_finished(self,cmd)
+                    await Microcontroller._wait_until_cmd_is_finished(self,cmd)
 
     def open(self):
+        "open connection to device"
         self.handle=serial.Serial(self.device_info.device,2000000)
 
     def close(self):
+        "close connection to device"
         assert self.handle is not None
         self.handle.close()
         self.handle=None
 
     @staticmethod
     def get_all()->tp.List["Microcontroller"]:
+        "get all available devices"
         ret=[]
         for p in serial.tools.list_ports.comports():
             if p.description=="Arduino Due":

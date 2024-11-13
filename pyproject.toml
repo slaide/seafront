@@ -6,8 +6,8 @@ authors=[
 ]
 dependencies = [
     "flask", # for communication with the outside world
-    "gxipy@git+https://github.com/slaide/daheng-imaging-gxipy", # camera apie
-    "seaconfig@git+https://github.com/slaide/seafront-config", # configuration file handling
+    "gxipy@git+https://github.com/slaide/daheng-imaging-gxipy", # camera API
+    "seaconfig@git+https://github.com/slaide/seafront-config@f2e491dbe306cb28122a7819561fa717b73b1808", # configuration file handling
     "pyserial", # for microcontroller communication
     "crc<2", # for basic microcontroller packet communication
     "pillow", # for image format conversion to store to disk/send to client for display
@@ -17,6 +17,10 @@ dependencies = [
     "imagecodecs", # for image compression
     "ome-types", # for ome info in image files
     "opencv-python",
+    "matplotlib", # for debug functionality
+    "uvicorn",
+    "fastapi",
+    "pydantic==2.9.2",
 ]
 
 [build-system]

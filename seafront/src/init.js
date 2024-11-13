@@ -255,15 +255,20 @@ class ImagingChannel{
      * @param {number} exposure_time_ms 
      * @param {number} analog_gain 
      * @param {number} z_offset_um 
+     * @param {number} num_z_planes
+     * @param {number} delta_z_um
      * @param {boolean} enabled
      */
-    constructor(name,handle,illum_perc,exposure_time_ms,analog_gain,z_offset_um,enabled=true){
+    constructor(name,handle,illum_perc,exposure_time_ms,analog_gain,z_offset_um,num_z_planes,delta_z_um,enabled=true){
         this.name=name
         this.handle=handle
         this.illum_perc=illum_perc
         this.exposure_time_ms=exposure_time_ms
         this.analog_gain=analog_gain
         this.z_offset_um=z_offset_um
+        this.num_z_planes=num_z_planes
+        this.delta_z_um=delta_z_um
+
         this.enabled=enabled
     }
 }
@@ -323,9 +328,6 @@ function microscopeConfigGetDefault(){
             num_y:2,
             delta_y_mm:0.9,
     
-            num_z:1,
-            delta_z_um:5,
-    
             num_t:1,
             delta_t:{
                 h:2,
@@ -356,7 +358,9 @@ function microscopeConfigGetDefault(){
                             channel.illum_perc,
                             channel.exposure_time_ms,
                             channel.analog_gain,
-                            channel.z_offset_um
+                            channel.z_offset_um,
+                            1,
+                            3,
                         )
                     }
                 )
@@ -407,10 +411,6 @@ function microscopeConfigOverride(new_config){
             microscope_config.grid.num_y = parseInt(new_config.grid.num_y)
         if(new_config.grid.delta_y_mm!=null)
             microscope_config.grid.delta_y_mm = new_config.grid.delta_y_mm
-        if(new_config.grid.num_z!=null)
-            microscope_config.grid.num_z = parseInt(new_config.grid.num_z)
-        if(new_config.grid.delta_z_um!=null)
-            microscope_config.grid.delta_z_um = new_config.grid.delta_z_um
         if(new_config.grid.num_t!=null)
             microscope_config.grid.num_t = parseInt(new_config.grid.num_t)
         if(new_config.grid.delta_t!=null)
@@ -421,7 +421,7 @@ function microscopeConfigOverride(new_config){
             if(new_config.grid.mask.length>0){
                 // @ts-ignore
                 microscope_config.grid.mask.splice(0,0,...new_config.grid.mask.map((cell)=>{
-                    return new SiteSelectionCell(cell.row,cell.col,cell.plane,cell.selected)
+                    return new SiteSelectionCell(cell.row,cell.col,cell.selected)
                 }))
             }
         }
@@ -509,6 +509,10 @@ function microscopeConfigOverride(new_config){
                     channel.exposure_time_ms=new_channel.exposure_time_ms
                     channel.analog_gain=new_channel.analog_gain
                     channel.z_offset_um=new_channel.z_offset_um
+                    
+                    channel.num_z_planes=new_channel.num_z_planes
+                    channel.delta_z_um=new_channel.delta_z_um
+
                     channel.enabled=new_channel.enabled
                     break
                 }
