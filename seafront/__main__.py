@@ -456,33 +456,6 @@ class CoreCommand(BaseModel):
     
 CoreCommandDerived=tp.TypeVar("CoreCommandDerived",bound=CoreCommand)
 
-class MoveByResult(BaseModel):
-    status:tp.Literal["success"]
-    moved_by_mm:float
-    axis:str
-
-class MoveBy(BaseModel):
-    """
-    move stage by some distance
-
-    moves stage by some distance, relative to its current location. may introduce minor errors if used frequently without intermediate absolute moveto
-    """
-
-    axis:tp.Literal["x","y","z"]
-    distance_mm:float
-
-    async def run(self,core:"Core")->MoveByResult:
-        if core.is_in_loading_position:
-            error_internal(detail="now allowed while in loading position")
-
-        core.state=CoreState.Moving
-
-        await core.mc.send_cmd(Command.move_by_mm(self.axis,self.distance_mm))
-
-        core.state=CoreState.Idle
-
-        return MoveByResult(status= "success",moved_by_mm=self.distance_mm,axis=self.axis)
-
 class LoadingPositionEnter(BaseModel):
     """
     enter loading position
@@ -642,6 +615,33 @@ class ChannelSnapshot(_ChannelAcquisitionControl):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,mode="snap",**kwargs)
 
+class MoveByResult(BaseModel):
+    status:tp.Literal["success"]
+    moved_by_mm:float
+    axis:str
+
+class MoveBy(BaseModel):
+    """
+    move stage by some distance
+
+    moves stage by some distance, relative to its current location. may introduce minor errors if used frequently without intermediate absolute moveto
+    """
+
+    axis:tp.Literal["x","y","z"]
+    distance_mm:float
+
+    async def run(self,core:"Core")->MoveByResult:
+        if core.is_in_loading_position:
+            error_internal(detail="now allowed while in loading position")
+
+        core.state=CoreState.Moving
+
+        await core.mc.send_cmd(Command.move_by_mm(self.axis,self.distance_mm))
+
+        core.state=CoreState.Idle
+
+        return MoveByResult(status= "success",moved_by_mm=self.distance_mm,axis=self.axis)
+
 class MoveTo(BaseModel):
     """
     move to target coordinates
@@ -669,17 +669,53 @@ class MoveTo(BaseModel):
         prev_state=core.state
         core.state=CoreState.Moving
 
-        if self.x_mm is not None:
-            x_mm=core.pos_x_real_to_measured(self.x_mm)
-            if x_mm<0:
-                error_internal(detail=f"calibrated x coordinate out of bounds {x_mm = }")
-            await core.mc.send_cmd(Command.move_to_mm("x",x_mm))
+        approach_x_before_y=True
 
-        if self.y_mm is not None:
-            y_mm=core.pos_y_real_to_measured(self.y_mm)
-            if y_mm<0:
-                error_internal(detail=f"calibrated y coordinate out of bounds {y_mm = }")
-            await core.mc.send_cmd(Command.move_to_mm("y",y_mm))
+        if self.x_mm is not None and self.y_mm is not None:
+            current_state=await core.get_current_state()
+
+            # plate center is (very) rougly at x=61mm, y=40mm
+            # we have: start position, target position, and two possible edges to move across
+
+            center=61.0,40.0
+            start=current_state.stage_position.x_pos_mm,current_state.stage_position.y_pos_mm
+            target=self.x_mm,self.y_mm
+
+            # if edge1 is closer to center, then approach_x_before_y=True, else approach_x_before_y=False
+            edge1=self.x_mm,current_state.stage_position.y_pos_mm
+            edge2=current_state.stage_position.x_pos_mm,self.y_mm
+
+            def dist(p1:tp.Tuple[float,float],p2:tp.Tuple[float,float])->float:
+                return ((p1[0]-p2[0])**2+(p1[1]-p2[1])**2)**0.5
+
+            approach_x_before_y=dist(edge1,center)<dist(edge2,center)
+
+            # we want to choose the edge that is closest to the center, because this avoid moving through the forbidden plate corners
+
+        if approach_x_before_y:
+            if self.x_mm is not None:
+                x_mm=core.pos_x_real_to_measured(self.x_mm)
+                if x_mm<0:
+                    error_internal(detail=f"calibrated x coordinate out of bounds {x_mm = }")
+                await core.mc.send_cmd(Command.move_to_mm("x",x_mm))
+
+            if self.y_mm is not None:
+                y_mm=core.pos_y_real_to_measured(self.y_mm)
+                if y_mm<0:
+                    error_internal(detail=f"calibrated y coordinate out of bounds {y_mm = }")
+                await core.mc.send_cmd(Command.move_to_mm("y",y_mm))
+        else:
+            if self.y_mm is not None:
+                y_mm=core.pos_y_real_to_measured(self.y_mm)
+                if y_mm<0:
+                    error_internal(detail=f"calibrated y coordinate out of bounds {y_mm = }")
+                await core.mc.send_cmd(Command.move_to_mm("y",y_mm))
+
+            if self.x_mm is not None:
+                x_mm=core.pos_x_real_to_measured(self.x_mm)
+                if x_mm<0:
+                    error_internal(detail=f"calibrated x coordinate out of bounds {x_mm = }")
+                await core.mc.send_cmd(Command.move_to_mm("x",x_mm))
 
         if self.z_mm is not None:
             z_mm=core.pos_z_real_to_measured(self.z_mm)
@@ -2671,7 +2707,7 @@ class Core:
                                 light_source_type=2 # Fluorescent
 
                             # store img as .tiff file
-                            def store_image():
+                            async def store_image():
                                 # takes 70-250ms
                                 tifffile.imwrite(
                                     str(image_storage_path),
@@ -2679,7 +2715,7 @@ class Core:
 
                                     compression=img_compression_algorithm,
                                     compressionargs={},# for zlib: {'level': 8},
-                                    maxworkers=3,
+                                    maxworkers=1,#3,
 
                                     # this metadata is just embedded as a comment in the file
                                     metadata={
@@ -2709,13 +2745,12 @@ class Core:
                                     ]
                                 )
 
+                                print(f"stored image to {str(image_storage_path)}")
+
                             # improve system responsiveness while compressing and writing to disk
-                            ongoing_image_store_tasks.append(asyncio.to_thread(store_image))
+                            ongoing_image_store_tasks.append(asyncio.create_task(store_image()))
 
-                            # also update the image buffer
-                            #img_handle=self._store_new_image(img,channel)
-
-                            print_time("stored image")
+                            print_time("scheduled image store")
 
                             num_images_acquired+=1
                             # get storage size from filesystem because tiff compression may reduce size below size in memory
@@ -2795,8 +2830,7 @@ class Core:
 
             finally:
                 # ensure no dangling image store task threads
-                for image_store_thread in ongoing_image_store_tasks:
-                    await image_store_thread
+                await asyncio.gather(*ongoing_image_store_tasks)
 
             # indicate that this thread has stopped running (no matter the cause)
             acquisition_status.thread_is_running=False
