@@ -121,7 +121,7 @@ class Camera:
         # set hardware trigger
         #self.camera.TriggerMode.set(gx.GxSwitchEntry.ON)
         #self.camera.TriggerSource.set(gx.GxTriggerSourceEntry.LINE2)
-        # self.camera.TriggerSource.set(gx.GxTriggerActivationEntry.RISING_EDGE) # this was commented out hongquan, but why?
+        # self.camera.TriggerSource.set(gx.GxTriggerActivationEntry.RISING_EDGE) # this was commented out by hongquan, but why?
 
         # these features seem to have no effect, or I cannot find a way to use them properly
         #   - AcquisitionFrameRateMode
@@ -281,38 +281,31 @@ class Camera:
         if not format_is_supported:
             raise RuntimeError(f"unsupported pixel format {pixel_format}")
 
-        print(f"imaging with pixel mode {pixel_format = }")
         # pixel format change is not possible while streaming
         # turning the stream off takes nearly half a second, so we cache the current pixel format
         # and only pause streaming to change it, if necessary
         match pixel_format:
             case "mono8":
                 if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO8:
-                    print("mono 8 stream off")
+                    print("perf warning - changing pixel format to mono8")
                     self.handle.stream_off()
                     self.pixel_format=gxiapi.GxPixelFormatEntry.MONO8
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO8)
-                    print("mono 8 stream on")
                     self.handle.stream_on()
-                    print("done")
             case "mono10":
                 if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO10:
-                    print("mono 10 stream off")
+                    print("perf warning - changing pixel format to mono10")
                     self.handle.stream_off()
                     self.pixel_format=gxiapi.GxPixelFormatEntry.MONO10
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO10)
-                    print("mono 10 stream on")
                     self.handle.stream_on()
-                    print("done")
             case "mono12":
                 if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO12:
-                    print("mono 12 stream off")
+                    print("perf warning - changing pixel format to mono12")
                     self.handle.stream_off()
                     self.pixel_format=gxiapi.GxPixelFormatEntry.MONO12
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO12)
-                    print("mono 12 stream off")
                     self.handle.stream_on()
-                    print("done")
             case _:
                 raise RuntimeError(f"unsupported pixel format {pixel_format}")
 
@@ -320,12 +313,8 @@ class Camera:
         exposure_time_native_unit=self._exposure_time_ms_to_native(config.exposure_time_ms)
         self.handle.ExposureTime.set(exposure_time_native_unit)
 
-        print("set exposure time")
-
         # takes ca 8ms
         self.handle.Gain.set(config.analog_gain)
-
-        print(f"set gain, {mode = }")
 
         self.acquisition_ongoing=True
 
@@ -366,7 +355,6 @@ class Camera:
                         if self.acquisition_ongoing:
                             self.acquisition_ongoing=False
 
-                        print("acq stopped, returning")
                         return
                     
                     img_status=img.get_status()

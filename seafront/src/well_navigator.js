@@ -15,6 +15,13 @@ class WellIndex{
         this.selected=selected
     }
     /**
+     * @param{AcquisitionWellSiteConfigurationSiteSelectionItem} py_obj
+     * @return{WellIndex}
+     */
+    static from_python(py_obj){
+        return new WellIndex(py_obj.row,py_obj.col,py_obj.selected)
+    }
+    /**
      * indicate if this element element is a row or column header
      * @returns {boolean}
      */
@@ -109,7 +116,7 @@ function initwellnavigator(){
 
     const plate_type_forbidden_wells=new Set()
 
-    const forbidden_wells_str=microscope_config.machine_config.find(v=>v.handle=="forbidden_wells")
+    const forbidden_wells_str=(microscope_config.machine_config||[]).find(v=>v.handle=="forbidden_wells")
     if(!forbidden_wells_str){
         console.error("forbidden_wells not found")
     }else{
@@ -139,9 +146,9 @@ function initwellnavigator(){
 }
 
 /** @type{{
- *      start: WellIndex?,
- *      end: WellIndex?,
- *      prev_state: Map< WellIndex, boolean>?
+ *      start: PlateWellConfig?,
+ *      end: PlateWellConfig?,
+ *      prev_state: Map<PlateWellConfig, boolean>?
  * }} */
 let drag_info={
     start:null,
@@ -169,7 +176,7 @@ function _wellPointer_update(){
         let well=microscope_config.plate_wells[i]
 
         // skip headers
-        if(well.isHeader)continue
+        if(WellIndex.from_python(well).isHeader)continue
 
         if(!drag_info.prev_state.has(well)){
             drag_info.prev_state.set(well,well.selected)
@@ -194,7 +201,7 @@ function wellPointerCancel(){
 
     // restore previous state
     for(let i=0;i<microscope_config.plate_wells.length;i++){
-        let well=microscope_config.plate_wells[i]
+        let well=WellIndex.from_python(microscope_config.plate_wells[i])
 
         let prev_well_state=drag_info.prev_state.get(well)
         if(prev_well_state==undefined)continue

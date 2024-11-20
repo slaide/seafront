@@ -53,7 +53,21 @@ from .config.basics import ConfigItem, GlobalConfigHandler
 from .hardware.camera import Camera, gxiapi
 from .hardware.microcontroller import Microcontroller, Command, ILLUMINATION_CODE
 
-# utility function
+# utility functions
+
+_LAST_TIMESTAMP=time.time()
+def print_time(msg:str):
+    global _LAST_TIMESTAMP
+
+    if 0:
+        new_time=time.time()
+        time_since_last_timestamp=new_time-_LAST_TIMESTAMP
+        _LAST_TIMESTAMP=new_time
+
+        # only print if the time taken is above a threshold
+        TIME_THRESHOLD=1e-3 # 1ms
+        if time_since_last_timestamp>TIME_THRESHOLD:
+            print(f"{(time_since_last_timestamp*1e3):21.1f}ms : {msg}")
 
 def linear_regression(x:list[float]|np.ndarray,y:list[float]|np.ndarray)->tuple[float,float]:
     "returns (slope,intercept)"
@@ -119,6 +133,7 @@ class CoreCurrentState(BaseModel):
     is_in_loading_position:bool
     stage_position:StagePosition
     latest_imgs:tp.Dict[str,ImageStoreInfo]
+    current_acquisition_id:Optional[str]
 
 class BasicSuccessResponse(BaseModel):
     status:tp.Literal["success"]
@@ -201,7 +216,7 @@ class AcquisitionStatusOut(BaseModel):
     status:tp.Literal["success"]
 
     acquisition_id:str
-    acquisition_status:str
+    acquisition_status:tp.Literal["running","cancelled","completed","crashed"]
     acquisition_progress:AcquisitionProgressStatus
 
     # some meta information about the acquisition, derived from configuration file
@@ -223,14 +238,9 @@ class AcquisitionStatus(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-acquisition_map:tp.Dict[str,AcquisitionStatus]={}
-"""
-map containing information on past and current acquisitions
-"""
-
 class HardwareCapabilitiesResponse(BaseModel):
     wellplate_types:list[sc.Wellplate]
-    main_camera_imaging_channels:list[sc.AcquisitionChannelConfig]            
+    main_camera_imaging_channels:list[sc.AcquisitionChannelConfig]
 
 @app.api_route("/api/get_features/hardware_capabilities", methods=["GET"], summary="Get available imaging channels and plate types.")
 def get_hardware_capabilities()->HardwareCapabilitiesResponse:
@@ -539,9 +549,7 @@ class _ChannelAcquisitionControl(BaseModel):
     """
         control imaging in a channel
 
-        return value fields:
-            - img_handle:str (only for snap mode)
-            - channel:dict (only for stream_begin mode)
+        for mode=="snap", calls _store_new_image internally
     """
 
     mode:tp.Literal['snap','stream_begin','stream_end']
@@ -567,16 +575,21 @@ class _ChannelAcquisitionControl(BaseModel):
                 
                 core.state=CoreState.ChannelSnap
 
+                print_time("before illum on")
                 await core.mc.send_cmd(Command.illumination_begin(illum_code,self.channel.illum_perc))
+                print_time("before acq")
                 img=cam.acquire_with_config(self.channel)
+                print_time("after acq")
                 await core.mc.send_cmd(Command.illumination_end(illum_code))
+                print_time("after illum off")
                 if img is None:
                     core.state=CoreState.Idle
-                    error_internal(detail="failed to acquire image")
-                
+                    error_internal(detail="failed to acquire image")                
 
                 img=Core._process_image(img)
+                print_time("after img proc")
                 img_handle=core._store_new_image(img,self.channel)
+                print_time("after img store")
 
                 core.state=CoreState.Idle
 
@@ -737,8 +750,6 @@ class AutofocusMeasureDisplacement(BaseModel):
         conf_af_exp_ag_item=g_config["laser_autofocus_analog_gain"]
         assert conf_af_exp_ag_item is not None
         conf_af_exp_ag=conf_af_exp_ag_item.floatvalue
-
-        print(f"using af exp {conf_af_exp_ms} ag {conf_af_exp_ag}")
 
         conf_af_pix_fmt_item=g_config["laser_autofocus_pixel_format"]
         assert conf_af_pix_fmt_item is not None
@@ -920,7 +931,7 @@ class AutofocusApproachTargetDisplacement(BaseModel):
 
             distance_to_move_to_target_mm=(self.target_offset_um-current_displacement_um)*1e-3
 
-            dot_x=core._approximate_laser_af_z_offset_mm(autofocus_calib,_leftmostxinsteadofestimatedz=True)
+            dot_x=await core._approximate_laser_af_z_offset_mm(autofocus_calib,_leftmostxinsteadofestimatedz=True)
 
             old_state=core.state
             core.state=CoreState.Moving
@@ -1147,6 +1158,11 @@ class Core:
         print("initializing microcontroller")
         self.homing_performed=False
 
+        self.acquisition_map:tp.Dict[str,AcquisitionStatus]={}
+        """
+        map containing information on past and current acquisitions
+        """
+
         # set up routes to member functions
 
         if _DEBUG_P2JS:
@@ -1229,15 +1245,12 @@ class Core:
                 model_name = f"{target_func.__name__.capitalize()}RequestModel"
                 RequestModel=request_models.get(model_name)
                 if RequestModel is None:
-                    print("no reference model found")
                     RequestModel = create_model(
                         model_name,
                         **model_fields,
                         __base__=BaseModel
                     )
                     request_models[model_name]=RequestModel
-                else:
-                    print("reference model found")
 
                 async def handler_logic_post(request_body: RequestModel): # type:ignore
                     # Perform verification
@@ -1288,8 +1301,6 @@ class Core:
                         },
                     )
                 if m == "POST":
-                    print(f"{path=} post args: {model_fields}")
-
                     app.add_api_route(
                         path,
                         handler_logic_post,
@@ -1522,8 +1533,7 @@ class Core:
                 contents=json.load(f)
                 config=AcquisitionConfig(**contents)
 
-                if config.timestamp is not None:
-                    timestamp=config.timestamp.isoformat(timespec="seconds")
+                timestamp=config.timestamp
                 comment=config.comment
 
                 cell_line=config.cell_line
@@ -1599,20 +1609,18 @@ class Core:
         stores the file on the microscope-connected computer for later retrieval.
         the optional comment provided is stored with the config file to quickly identify its purpose/function.
         """
-        
-        config = config_file
 
-        config.timestamp=sc.datetime2str(dt.datetime.now(dt.timezone.utc))
+        config_file.timestamp=sc.datetime2str(dt.datetime.now(dt.timezone.utc))
 
         # get machine config
-        if config.machine_config is not None:
-            GlobalConfigHandler.override(config.machine_config)
+        if config_file.machine_config is not None:
+            GlobalConfigHandler.override(config_file.machine_config)
 
         if comment is not None:
-            config.comment=comment
+            config_file.comment=comment
 
         try:
-            GlobalConfigHandler.add_config(config,filename,overwrite_on_conflict=False)
+            GlobalConfigHandler.add_config(config_file,filename,overwrite_on_conflict=False)
         except Exception as e:
             error_internal(detail=f"failed storing config to file because {e}")
 
@@ -1630,18 +1638,16 @@ class Core:
         if self.is_in_loading_position:
             error_internal(detail="now allowed while in loading position")
 
-        config = config_file
-
         # get machine config
-        if config.machine_config is not None:
-            GlobalConfigHandler.override(config.machine_config)
+        if config_file.machine_config is not None:
+            GlobalConfigHandler.override(config_file.machine_config)
 
         g_config=GlobalConfigHandler.get_dict()
 
         laf_is_calibrated=g_config["laser_autofocus_is_calibrated"]
 
         # get channels from that, filter for selected/enabled channels
-        channels=[c for c in config.channels if c.enabled]
+        channels=[c for c in config_file.channels if c.enabled]
 
         # then:
         # if autofocus is available, measure and approach 0 in a loop up to 5 times
@@ -2088,7 +2094,7 @@ class Core:
         """
 
         # apply a bit of blur to solve some noise related issues
-        img = cv2.GaussianBlur(img,(9,9),cv2.BORDER_DEFAULT)
+        img = cv2.GaussianBlur(img,(3,3),cv2.BORDER_DEFAULT)
 
         # generate new handle
         self.laser_af_image_latest_handle=f"laseraf_{generate_random_number_string()}"
@@ -2131,8 +2137,6 @@ class Core:
         for image_handle,image in image_timestamps[:-(MAX_NUM_IMAGES_PER_CHANNEL-1)]:
             del image.img # specifically delete this to free memory
             del channel_images[image_handle]
-
-        gc.collect() # flush deleted image memory
 
         # generate new handle
         new_image_handle=channel_config.handle+generate_random_number_string()
@@ -2205,10 +2209,6 @@ class Core:
 
             img=img[::preview_resolution_scaling,::preview_resolution_scaling]
 
-        img_pil=Image.fromarray(img,mode="L")
-
-        img_io=io.BytesIO()
-        
         if quick_preview:
             g_config=GlobalConfigHandler.get_dict()
             streaming_format_item=g_config["streaming_preview_format"]
@@ -2235,13 +2235,19 @@ class Core:
                 case _other:
                     raise ValueError(f"unexpected image_display_format format {streaming_format}")
 
-        # compress image async (img.save() does release the GIL)
+        # compress image async
         def compress_image():
+            img_pil=Image.fromarray(img,mode="L")
+
+            img_io=io.BytesIO()
+
             img_pil.save(img_io,**pil_kwargs)
 
-        await asyncio.get_running_loop().run_in_executor(None,compress_image)
+            img_io.seek(0)
 
-        img_io.seek(0)
+            return img_io
+
+        img_io=await asyncio.get_running_loop().run_in_executor(None,compress_image)
 
         headers = {"Content-Disposition": f"inline; filename=image.{streaming_format}"}
 
@@ -2306,6 +2312,14 @@ class Core:
         # supposed=real-calib
         x_pos_mm=self.pos_x_measured_to_real(last_stage_position.x_pos_mm)
         y_pos_mm=self.pos_y_measured_to_real(last_stage_position.y_pos_mm)
+
+        current_acquisition_id=None
+        if self.acquisition_is_running:
+            for acq_id,acquisition_status in self.acquisition_map.items():
+                if acquisition_status.thread_is_running==True:
+                    if current_acquisition_id is not None:
+                        print(f"warning - more than one acquisition is running at a time?! {current_acquisition_id} and {acq_id}")
+                    current_acquisition_id=acq_id
         
         return CoreCurrentState(
             status="success",
@@ -2316,7 +2330,8 @@ class Core:
                 y_pos_mm=y_pos_mm,
                 z_pos_mm=last_stage_position.z_pos_mm,
             ),
-            latest_imgs=latest_img_info
+            latest_imgs=latest_img_info,
+            current_acquisition_id=current_acquisition_id,
         )
 
     async def cancel_acquisition(self,acquisition_id:str)->BasicSuccessResponse:
@@ -2324,10 +2339,10 @@ class Core:
         cancel the ongoing acquisition
         """
         
-        if acquisition_id not in acquisition_map:
+        if acquisition_id not in self.acquisition_map:
             error_internal(detail= "acquisition_id not found")
         
-        acq=acquisition_map[acquisition_id]
+        acq=self.acquisition_map[acquisition_id]
 
         if acq.thread_is_running:
             if self.acquisition_thread is None:
@@ -2344,7 +2359,14 @@ class Core:
 
     @property
     def acquisition_is_running(self)->bool:
-        return (self.acquisition_thread is not None) and (not self.acquisition_thread.done())
+        if self.acquisition_thread is None:
+            return False
+
+        if self.acquisition_thread.done():
+            self.acquisition_thread=None
+            return False
+
+        return True
 
     async def start_acquisition(self,config_file:sc.AcquisitionConfig)->AcquisitionStartResponse:
         """
@@ -2352,8 +2374,6 @@ class Core:
 
         the acquisition is run in the background, i.e. this command returns after acquisition bas begun. see /api/acquisition/status for ongoing status of the acquisition.
         """
-
-        print(f"{type(config_file)=}")
 
         if self.is_in_loading_position:
             error_internal(detail="now allowed while in loading position")
@@ -2445,7 +2465,6 @@ class Core:
         base_storage_path_item=g_config["base_image_output_dir"]
         assert base_storage_path_item is not None
         assert type(base_storage_path_item.value) is str
-        print(f"{base_storage_path_item.value = }")
         base_storage_path=path.Path(base_storage_path_item.value)
         assert base_storage_path.exists(), f"{base_storage_path = } does not exist"
 
@@ -2464,6 +2483,17 @@ class Core:
         for channel in config_file.channels:
             if channel.enabled:
                 channels.append(channel)
+
+        queue_in=asyncio.Queue()
+        queue_out=asyncio.Queue()
+        acquisition_status=AcquisitionStatus(
+            acquisition_id=acquisition_id,
+            queue_in=queue_in,
+            queue_out=queue_out,
+            last_status=None,
+            thread_is_running=True,
+        )
+        self.acquisition_map[acquisition_id]=acquisition_status
 
         async def run_acquisition(
             q_in:asyncio.Queue[AcquisitionCommand],
@@ -2484,6 +2514,17 @@ class Core:
                 - img_compression_algorithm:tp.Literal["LZW","zlib"] lossless compression algorithms only
 
             """
+
+            def handle_q_in():
+                """ if there is something in q_in, fetch it and handle it (e.g. terminae on cancel command) """
+                if not q_in.empty():
+                    q_in_item=q_in.get_nowait()
+                    if q_in_item==AcquisitionCommand.CANCEL:
+                        error_internal(detail="acquisition cancelled")
+
+                    print(f"warning - command unhandled: {q_in_item}")
+
+            ongoing_image_store_tasks:list=[]
 
             try:
                 # counters on acquisition progress
@@ -2513,16 +2554,9 @@ class Core:
 
                 for well in config_file.plate_wells:
                     # these are xy sites
+                    print_time("before next site")
                     for site_index,site in enumerate(well_sites):
-                        # if there is something in q_in, fetch it
-                        try:
-                            q_in_item=q_in.get_nowait()
-                            if q_in_item==AcquisitionCommand.CANCEL:
-                                error_internal(detail="acquisition cancelled")
-
-                            print(f"warning - command unhandled: {q_in_item}")
-                        except asyncio.QueueEmpty:
-                            pass
+                        handle_q_in()
 
                         if not site.selected:
                             continue
@@ -2534,6 +2568,8 @@ class Core:
                         res=await MoveTo(x_mm=site_x_mm,y_mm=site_y_mm).run(self)
                         if res.status!="success":
                             error_internal(detail=f"failed to move to site {site} in well {well} because {res.message}")
+
+                        print_time("moved to site")
 
                         # run autofocus
                         if config_file.autofocus_enabled:
@@ -2555,6 +2591,8 @@ class Core:
                             # reference for channel z offsets
                             last_position=await self.mc.get_last_position()
                             reference_z_mm=last_position.z_pos_mm
+
+                        print_time("af performed")
                         
                         # z stack may be different for each channel, hence:
                         # 1. get list of (channel_z_index,channel,z_relative_to_reference), which may contain each channel more than once
@@ -2588,19 +2626,27 @@ class Core:
                         res=await MoveTo(x_mm=None,y_mm=None,z_mm=image_pos_z_list[0][1]).run(self)
                         if res.status!="success": error_internal(detail=f"failed, because: {res.message}")
 
+                        print_time("moved to init z")
+
                         for plane_index,channel_z_mm,channel in image_pos_z_list:
+                            handle_q_in()
+
                             # move to channel offset
                             last_position=await self.mc.get_last_position()
                             current_z_mm=last_position.z_pos_mm
 
                             distance_z_to_move_mm=channel_z_mm-current_z_mm
                             if np.abs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_UM:
-                                res=MoveTo(x_mm=None,y_mm=None,z_mm=channel_z_mm).run(self)
+                                res=await MoveTo(x_mm=None,y_mm=None,z_mm=channel_z_mm).run(self)
+                                assert res.status=="success"
+
+                            print_time("moved to channel z")
 
                             # snap image
                             res=await _ChannelAcquisitionControl(mode="snap",channel=channel).run(self)
-                            if res.status!="success":
-                                error_internal(detail=f"failed to snap image at site {site} in well {well} because: {res.message}")
+                            assert res.status=="success"
+
+                            print_time("snapped image")
 
                             if not isinstance(res,ImageAcquiredResponse):
                                 error_internal(detail=f"failed to snap image at site {site} in well {well} (invalid result type {type(res)})")
@@ -2625,43 +2671,51 @@ class Core:
                                 light_source_type=2 # Fluorescent
 
                             # store img as .tiff file
-                            tifffile.imwrite(
-                                str(image_storage_path),
-                                img,
+                            def store_image():
+                                # takes 70-250ms
+                                tifffile.imwrite(
+                                    str(image_storage_path),
+                                    img,
 
-                                compression=img_compression_algorithm,
-                                compressionargs={},# for zlib: {'level': 8},
-                                maxworkers=3,
+                                    compression=img_compression_algorithm,
+                                    compressionargs={},# for zlib: {'level': 8},
+                                    maxworkers=3,
 
-                                # this metadata is just embedded as a comment in the file
-                                metadata={
-                                    # non-standard tag, because the standard bitsperpixel has a real meaning in the image image data, but
-                                    # values that are not multiple of 8 cannot be used with compression
-                                    "BitsPerPixel":latest_channel_image.bit_depth,
-                                    "BitPaddingInfo":"lower bits are padding with 0s",
+                                    # this metadata is just embedded as a comment in the file
+                                    metadata={
+                                        # non-standard tag, because the standard bitsperpixel has a real meaning in the image image data, but
+                                        # values that are not multiple of 8 cannot be used with compression
+                                        "BitsPerPixel":latest_channel_image.bit_depth,
+                                        "BitPaddingInfo":"lower bits are padding with 0s",
 
-                                    "LightSourceName":channel.name,
+                                        "LightSourceName":channel.name,
 
-                                    "ExposureTimeMS":f"{channel.exposure_time_ms:.2f}",
-                                    "AnalogGainDB":f"{channel.analog_gain:.2f}",
-                                },
+                                        "ExposureTimeMS":f"{channel.exposure_time_ms:.2f}",
+                                        "AnalogGainDB":f"{channel.analog_gain:.2f}",
+                                    },
 
-                                photometric="minisblack", # zero means black
-                                resolutionunit=3, # 3 = cm
-                                resolution=(1/(PIXEL_SIZE_UM*1e-6),1/(PIXEL_SIZE_UM*1e-6)),
-                                extratags=[
-                                    # tuples as accepted at https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L856
-                                    # tags may be specified as string interpretable by https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L5000
-                                    ("Make", 's', 0, self.main_cam.vendor_name, True),
-                                    ("Model", 's', 0, self.main_cam.model_name, True),
+                                    photometric="minisblack", # zero means black
+                                    resolutionunit=3, # 3 = cm
+                                    resolution=(1/(PIXEL_SIZE_UM*1e-6),1/(PIXEL_SIZE_UM*1e-6)),
+                                    extratags=[
+                                        # tuples as accepted at https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L856
+                                        # tags may be specified as string interpretable by https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L5000
+                                        ("Make", 's', 0, self.main_cam.vendor_name, True),
+                                        ("Model", 's', 0, self.main_cam.model_name, True),
 
-                                    # apparently these are not widely supported
-                                    ("ExposureTime", 'q', 1, int(channel.exposure_time_ms*1e3), True),
-                                    ("LightSource", 'h', 1, light_source_type, True),
-                                ]
-                            )
+                                        # apparently these are not widely supported
+                                        ("ExposureTime", 'q', 1, int(channel.exposure_time_ms*1e3), True),
+                                        ("LightSource", 'h', 1, light_source_type, True),
+                                    ]
+                                )
+
+                            # improve system responsiveness while compressing and writing to disk
+                            ongoing_image_store_tasks.append(asyncio.to_thread(store_image))
+
                             # also update the image buffer
-                            img_handle=self._store_new_image(img,channel)
+                            #img_handle=self._store_new_image(img,channel)
+
+                            print_time("stored image")
 
                             num_images_acquired+=1
                             # get storage size from filesystem because tiff compression may reduce size below size in memory
@@ -2691,7 +2745,7 @@ class Core:
                             else:
                                 estimated_total_time_s=None
 
-                            status=AcquisitionStatusOut(
+                            acquisition_status.last_status=AcquisitionStatusOut(
                                 status="success",
 
                                 acquisition_id=acquisition_id,
@@ -2723,32 +2777,34 @@ class Core:
                                 message=f"Acquisition is {(100*num_images_acquired/num_images_total):.2f}% complete"
                             )
 
-                            # make sure the queue does not exceed empty queue before we put the update
-                            MAX_QUEUE_SIZE_SOFT=8
-                            while q_out.qsize()>MAX_QUEUE_SIZE_SOFT:
-                                try:
-                                    q_out.get_nowait()
-                                except asyncio.QueueEmpty:
-                                    break
-
-                            await q_out.put(status)
+                # finished regularly, set status accordingly (there must have been at least one image, so a status has been set)
+                assert acquisition_status.last_status is not None
+                acquisition_status.last_status.acquisition_status="completed"
 
             except Exception as e:
-                full_error=traceback.format_exc()
-                await q_out.put(InternalErrorModel(detail=f"acquisition thread failed because {str(e)}, more specifically: {full_error}"))
-                return
+                if isinstance(e,HTTPException):
+                    if acquisition_status.last_status is not None:
+                        acquisition_status.last_status.acquisition_status="cancelled"
 
-        queue_in=asyncio.Queue()
-        queue_out=asyncio.Queue()
+                else:
+                    full_error=traceback.format_exc()
+                    await q_out.put(InternalErrorModel(detail=f"acquisition thread failed because {str(e)}, more specifically: {full_error}"))
+
+                    if acquisition_status.last_status is not None:
+                        acquisition_status.last_status.acquisition_status="crashed"
+
+            finally:
+                # ensure no dangling image store task threads
+                for image_store_thread in ongoing_image_store_tasks:
+                    await image_store_thread
+
+            # indicate that this thread has stopped running (no matter the cause)
+            acquisition_status.thread_is_running=False
+
+            print("acquisition thread is done")
+            return
+
         self.acquisition_thread=asyncio.create_task(coro=run_acquisition(queue_in,queue_out))
-
-        acquisition_map[acquisition_id]=AcquisitionStatus(
-            acquisition_id=acquisition_id,
-            queue_in=queue_in,
-            queue_out=queue_out,
-            last_status=None,
-            thread_is_running=True,
-        )
 
         return AcquisitionStartResponse(status="success",acquisition_id=acquisition_id)
 
@@ -2757,37 +2813,14 @@ class Core:
         get status of an acquisition
         """
 
-        acq_res=acquisition_map.get(acquisition_id)
+        acq_res=self.acquisition_map.get(acquisition_id)
         if acq_res is None:
             error_internal(detail="acquisition_id is invalid")
 
-        # actual code to check if acquisition is running
-        msg=None
-        while True:
-            try:
-                msg=acq_res.queue_out.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-
-        if msg is not None:
-            if msg.status!="success":
-                return msg
-
-            acq_res.last_status=msg
-        else:
-            msg=acq_res.last_status
-
-        if msg is None:
+        if acq_res.last_status is None:
             error_internal(detail="no status available")
-
-        if msg.status!="success":
-            if self.acquisition_thread is not None:
-                print(f"acquisiiton failed with {msg}, waiting for acquisition thread to terminate")
-                await self.acquisition_thread
-                print("acquisition thread terminated")
-                self.acquisition_thread=None
-
-        return msg
+        else:
+            return acq_res.last_status
     
     def close(self):
         for mc in self.microcontrollers:

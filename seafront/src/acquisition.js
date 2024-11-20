@@ -36,119 +36,176 @@ function start_acquisition(){
 
             acquisition_progress.acquisition_id=data.acquisition_id
             message_open("info","acquisition started with id:",acquisition_progress.acquisition_id," ; response text: ",xhr.responseText)
-            
-            /** @type{XHR?} */
-            let last_request=null
-
-            const send_data={"acquisition_id":acquisition_progress.acquisition_id}
-
-            if(!progress_element)throw new Error("progress_element is null")
-            const updateIntervalHandle=setInterval(function(){
-                last_request=new XHR()
-                    .onload((xhr)=>{
-                        if(last_request!=null && last_request.xhr!=xhr)
-                            return;
-
-                        if(!progress_element)throw new Error("progress_element is null")
-
-                        let progress=JSON.parse(xhr.responseText)
-                        if(progress.status!="success"){
-                            acquisition_progress.text="error - "+progress.message
-                            message_open("error","no acquisition progress available because ",progress.message)
-                            clearInterval(updateIntervalHandle)
-                            return
-                        }
-                        if(progress.acquisition_progress==null || progress.acquisition_meta_information==null){
-                            acquisition_progress.text="running"
-                            return
-                        }
-
-                        acquisition_progress.time_since_start_s=progress.acquisition_progress.time_since_start_s
-
-                        // called estimated_total_time_s but actually contains the _remaining_ time in s
-                        let remaining_time_s_total=parseFloat(progress.acquisition_progress.estimated_total_time_s)
-
-                        let minutes=remaining_time_s_total%3600
-                        let hours=(remaining_time_s_total-minutes)/3600
-                        let seconds=minutes%60
-                        minutes=(minutes-seconds)/60
-
-                        let remaining_time_s=seconds.toFixed(0)
-                        let remaining_time_m=minutes.toFixed(0)
-                        let remaining_time_h=hours.toFixed(0)
-
-                        /**
-                         * @param{string} s
-                         * @return{string}
-                         */
-                        function pad_to_two_digits(s){
-                            if(s.length<2){
-                                return "0"+s
-                            }
-                            return s
-                        }
-
-                        let time_remain_estimate_msg_string=""
-                        if(remaining_time_s_total>0){
-                            time_remain_estimate_msg_string="done in "
-                            if(hours>0){
-                                time_remain_estimate_msg_string+=remaining_time_h+"h:"
-                            }
-                            if(minutes>0){
-                                if(hours>0){
-                                    time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_m)+"m:"
-                                }else{
-                                    time_remain_estimate_msg_string+=remaining_time_m+"m:"
-                                }
-                            }
-                            if(minutes>0){
-                                time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_s)+"s"
-                            }else{
-                                time_remain_estimate_msg_string+=remaining_time_s+"s"
-                            }
-                        }
-                        acquisition_progress.estimated_time_remaining_msg=time_remain_estimate_msg_string
-
-                        acquisition_progress.text="running - "+progress.message
-                        progress_element.style.setProperty(
-                            "--percent-done",
-                            (
-                                progress.acquisition_progress.current_num_images
-                                / progress.acquisition_meta_information.total_num_images
-                                * 100
-                            ) + "%"
-                        )
-
-                        // stop polling when acquisition is done
-                        if(progress.acquisition_progress.current_num_images==progress.acquisition_meta_information.total_num_images){
-                            clearInterval(updateIntervalHandle)
-                            acquisition_progress.text="done"
-                        }
-                    })
-                    .onerror(()=>{
-                        message_open("error","error getting acquisition progress")
-                    })
-                    .send("/api/acquisition/status",send_data,"POST")
-            },1e3/5)
         })
-        .onerror(()=>{
-            message_open("error","error starting acquisition")
+        .onerror((xhr)=>{
+            message_open("error","error starting acquisition: ",xhr.responseText)
         })
         .send("/api/acquisition/start",data,"POST")
 }
-function cancel_acquisition(){
-    const send_data={acquisition_id:acquisition_progress.acquisition_id}
 
-    new XHR()
+/**
+ * @typedef{{
+    x:number,
+    y:number,
+    z:number,
+    }} WellSite
+* @typedef {{
+    well:string,
+    site:WellSite
+    timepoint:number,
+    channel_name:string,
+    full_path:string,
+    handle:string,
+}} LastImageInformation
+* @typedef {{
+    current_num_images:number,
+    time_since_start_s:number,
+    start_time_iso:string,
+    current_storage_usage_GB:number,
+
+    estimated_total_time_s:number|null,
+
+    last_image:LastImageInformation
+ * }} AcquisitionProgressStatus
+ * @typedef {{
+    total_num_images:number,
+    max_storage_size_images_GB:number,
+ * }} AcquisitionMetaInformation
+ * @typedef {{
+    row:number,
+    col:number,
+    selected:boolean,
+ * }} AcquisitionWellSiteConfigurationSiteSelectionItem
+ * @typedef {{
+    h:number,
+    m:number,
+    s:number,
+ * }} AcquisitionWellSiteConfigurationDeltaTime
+ * @typedef {{
+    num_x:number,
+    delta_x_mm:number,
+    num_y:number,
+    delta_y_mm:number,
+    num_t:number,
+    delta_t:AcquisitionWellSiteConfigurationDeltaTime,
+
+    mask:AcquisitionWellSiteConfigurationSiteSelectionItem[],
+ * }} AcquisitionWellSiteConfiguration
+ * @typedef {{
+    row:number,
+    col:number,
+    selected:boolean,
+ * }} PlateWellConfig
+ * @typedef {{
+    name:string,
+    handle:string,
+    info:*
+    }} ConfigItemOption
+ * @typedef {{
+    name:string,
+    handle:string,
+    value_kind:"number"|"text"|"option"|"action",
+    value:number|string,
+    frozen:boolean,
+    options:(ConfigItemOption[])|null
+ * }} ConfigItem
+ * @typedef {{
+    major:number,
+    minor:number,
+    patch:number,
+ * }} Version
+ * @typedef {{
+    project_name:string,
+    plate_name:string,
+    cell_line:string,
+    
+    grid:AcquisitionWellSiteConfiguration,
+
+    wellplate_type:string,
+    plate_wells:PlateWellConfig[],
+
+    channels:AcquisitionChannelConfig[],
+
+    autofocus_enabled:boolean,
+
+    machine_config:(ConfigItem[])?,
+
+    comment:string|null,
+
+    spec_version:Version,
+
+    timestamp:string|null,
+ * }} AcquisitionConfig
+ * @typedef {{
+    status:"success",
+
+    acquisition_id:string,
+    acquisition_status:"running"|"cancelled"|"completed"|"crashed",
+    acquisition_progress:AcquisitionProgressStatus,
+
+    acquisition_meta_information:AcquisitionMetaInformation,
+
+    acquisition_config:AcquisitionConfig,
+
+    message:string,
+ * }} AcquisitionStatusOut
+ */
+
+/**
+ * @param{string} acq_id
+ * @param{{load:(acq_stat:AcquisitionStatusOut)=>void,error:()=>void}?} cb
+ */
+function get_acquisition_info(acq_id,cb){
+    const send_data={"acquisition_id":acq_id}
+    
+    let acquisition_progress_element=document.getElementById("acquisition-progress-bar")
+    if(!acquisition_progress_element)throw new Error("progress_element is null")
+
+    new XHR(false)
         .onload((xhr)=>{
-            const data=JSON.parse(xhr.responseText)
-            if(data.status!="success"){
-                message_open("error","acquisition cancel failed because: ",data.message)
-                return
+            /** @type{AcquisitionStatusOut} */
+            let progress=JSON.parse(xhr.responseText)
+
+            if(cb&&cb.load){
+                cb.load(progress)
             }
         })
         .onerror(()=>{
-            message_open("error","error cancelling acquisition")
+            if(cb&&cb.error){
+                cb.error()
+            }
         })
-        .send("/api/acquisition/cancel",send_data,"POST")
+        .send("/api/acquisition/status",send_data,"POST")
+}
+
+/**@typedef {{status:"success"}} AcquisitionCancelResponse*/
+
+function cancel_acquisition(){
+    get_current_state({load:(microscope_status)=>{
+        if(!microscope_status.current_acquisition_id){
+            message_open("error","acquisition cancel failed because: no acquisition is currently in progress")
+            return
+        }
+
+        get_acquisition_info(
+            microscope_status.current_acquisition_id,
+            {
+                load:(acq_stat)=>{
+                    const send_data={acquisition_id:microscope_status.current_acquisition_id}
+
+                    new XHR()
+                        .onload((xhr)=>{})
+                        .onerror((xhr)=>{
+                            message_open("error","error cancelling acquisition because ",xhr.responseText)
+                        })
+                        .send("/api/acquisition/cancel",send_data,"POST")
+                },
+                error:()=>{
+                    message_open("error","error cancelling acquisition")
+                }
+            }
+        )
+    },error:()=>{
+        message_open("error","error cancelling acquisition")
+    }})
 }

@@ -10,7 +10,6 @@ function range(n){
     return Array.from({length:n},(v,i)=>i)
 }
 
-
 // keep track of information sent from the microscope to indicate what status it is in
 let microscope_state=_p.manage({
     machine_name:"",
@@ -26,9 +25,73 @@ let microscope_state=_p.manage({
         x_mm:0.9,
         y_mm:0.9,
     },
-    last_image_channel_name:"No image acquired yet",
+    last_image_name:"No image acquired yet",
     latest_channel_images:{}
 })
+
+/**
+ * @typedef {{
+    name:string,
+    handle:string,
+
+    illum_perc:number,
+    exposure_time_ms:number,
+    analog_gain:number,
+
+    z_offset_um:number,
+
+    num_z_planes:number,
+    delta_z_um:number,
+    
+    enabled:boolean,
+ * }} AcquisitionChannelConfig
+ * @typedef {{
+    x_pos_mm:number,
+    y_pos_mm:number,
+    z_pos_mm:number,
+ * }} StagePosition
+ * @typedef {{
+    handle:string,
+    channel:AcquisitionChannelConfig,
+    width_px:number,
+    height_px:number,
+    timestamp:number,
+ * }} ImageStoreInfo
+ * @typedef {{
+    status:"success",
+    state:string,
+    is_in_loading_position:boolean,
+    stage_position:StagePosition,
+    // python dictionary
+    latest_imgs:Record<string,ImageStoreInfo|null>,
+    current_acquisition_id:string|null,
+ * }} CoreCurrentState
+ */
+
+/**
+ * @param{{load:(s:CoreCurrentState)=>void,error:()=>void}?} cb 
+ */
+function get_current_state(cb){
+    function onerror(){
+        if(cb && cb.error){
+            cb.error()
+        }
+    }
+    /** @param {XMLHttpRequest} xhr  */
+    function onload(xhr){
+        /** @type{CoreCurrentState} */
+        let data=JSON.parse(xhr.responseText)
+        if(cb&&cb.load){
+            cb.load(data)
+        }
+    }
+
+    const data={}
+    new XHR(true)
+        .onload(onload)
+        .onerror(onerror)
+        .send("/api/get_info/current_state",data,"POST")
+}
 
 let last_update_successful=true
 let updateInProgress=false
@@ -49,14 +112,9 @@ function updateMicroscopePosition(){
     
         updateInProgress=false
     }
-    /** @param {XMLHttpRequest} xhr  */
-    function onload(xhr){
-        let data=JSON.parse(xhr.responseText)
-        
-        if(!data.stage_position){
-            return onerror()
-        }
 
+    /** @param{CoreCurrentState} data */
+    function onload(data){
         if(!last_update_successful){
             message_open("info","recovered microscope position update")
             last_update_successful=true
@@ -73,7 +131,8 @@ function updateMicroscopePosition(){
         if((view_latest_image instanceof HTMLImageElement) && data.latest_imgs!=null && Object.keys(data.latest_imgs).length>0){
             const img_list=Object.keys(data.latest_imgs).map(k=>data.latest_imgs[k])
             let latest_timestamp=img_list.filter(d=>d!=null).map(d=>d.timestamp).reduce((a,b)=>Math.max(a,b),0)
-            let latest_image=img_list.find(d=>d.timestamp==latest_timestamp)
+            let latest_image=img_list.filter(d=>d!=null).find(d=>d.timestamp==latest_timestamp)
+            if(!latest_image)throw new Error("no image found")
 
             for(let channel of microscope_config.channels){
                 let latest_channel_info=data.latest_imgs[channel.handle]
@@ -121,15 +180,14 @@ function updateMicroscopePosition(){
                             if(image_loading_in_progress)return resolve(false)
 
                             image_loading_in_progress=true
-                            var img_loaded=false
-                            var img_valid=undefined
 
-                            var img = new Image()
+                            let img = new Image()
                             img.addEventListener('load', () => {
                                 image_loading_in_progress=false
                                 resolve(true)
                             })
                             img.addEventListener('error', (e) => {
+                                if(!latest_image)throw new Error("no image found")
                                 console.error("image handle "+latest_image.handle+" is not valid:",e);
                                 image_loading_in_progress=false
                                 resolve(false)
@@ -146,10 +204,11 @@ function updateMicroscopePosition(){
                         element_load_state.loaded=false
                         view_latest_image.src=new_src
 
-                        if(latest_image.width_px!=null && latest_image.width_px!=view_latest_image.getAttribute("width"))
-                            view_latest_image.setAttribute("width",latest_image.width_px)
-                        if(latest_image.height_px!=null && latest_image.height_px!=view_latest_image.getAttribute("height"))
-                            view_latest_image.setAttribute("height",latest_image.height_px)
+                        if(!latest_image)throw new Error("no image found")
+                        if(latest_image.width_px!=null && latest_image.width_px!=parseFloat(view_latest_image.getAttribute("width")||"nan"))
+                            view_latest_image.setAttribute("width",String(latest_image.width_px))
+                        if(latest_image.height_px!=null && latest_image.height_px!=parseFloat(view_latest_image.getAttribute("height")||"nan"))
+                            view_latest_image.setAttribute("height",String(latest_image.height_px))
 
                         let histogram_update_in_progress=false
 
@@ -168,6 +227,7 @@ function updateMicroscopePosition(){
                         // consider image loaded either on actual load, or on error
                         view_latest_image.addEventListener("load",f,{once:true})
                         view_latest_image.addEventListener("error",f,{once:true})
+                        
                         //update histogram (async)
                         const histogram_query_data={
                             img_handle:latest_image.handle
@@ -232,17 +292,106 @@ function updateMicroscopePosition(){
                     })
                 }
             }
-            microscope_state.last_image_channel_name=latest_image.channel.name
+            microscope_state.last_image_name=latest_image.channel.name
+        }
+
+        if(data.current_acquisition_id){            
+            let acquisition_progress_element=document.getElementById("acquisition-progress-bar")
+            if(!acquisition_progress_element)throw new Error("progress_element is null")
+
+            get_acquisition_info(
+                data.current_acquisition_id,
+                {
+                    load:(progress)=>{
+                        if(!acquisition_progress_element)throw new Error("progress_element is null")
+
+                        if(progress.status!="success"){
+                            acquisition_progress.text="error - "+progress.message
+                            message_open("error","no acquisition progress available because ",progress.message)
+                            return
+                        }
+                        if(progress.acquisition_progress==null || progress.acquisition_meta_information==null){
+                            acquisition_progress.text="running"
+                            return
+                        }
+
+                        acquisition_progress.time_since_start_s=""+progress.acquisition_progress.time_since_start_s
+
+                        // called estimated_total_time_s but actually contains the _remaining_ time in s
+                        let remaining_time_s_total=progress.acquisition_progress.estimated_total_time_s
+
+                        if(remaining_time_s_total!=null){
+                            let minutes=remaining_time_s_total%3600
+                            let hours=(remaining_time_s_total-minutes)/3600
+                            let seconds=minutes%60
+                            minutes=(minutes-seconds)/60
+
+                            let remaining_time_s=seconds.toFixed(0)
+                            let remaining_time_m=minutes.toFixed(0)
+                            let remaining_time_h=hours.toFixed(0)
+
+                            /**
+                             * @param{string} s
+                             * @return{string}
+                             */
+                            function pad_to_two_digits(s){
+                                if(s.length<2){
+                                    return "0"+s
+                                }
+                                return s
+                            }
+
+                            let time_remain_estimate_msg_string=""
+                            if(remaining_time_s_total>0){
+                                time_remain_estimate_msg_string="done in "
+                                if(hours>0){
+                                    time_remain_estimate_msg_string+=remaining_time_h+"h:"
+                                }
+                                if(minutes>0){
+                                    if(hours>0){
+                                        time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_m)+"m:"
+                                    }else{
+                                        time_remain_estimate_msg_string+=remaining_time_m+"m:"
+                                    }
+                                }
+                                if(minutes>0){
+                                    time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_s)+"s"
+                                }else{
+                                    time_remain_estimate_msg_string+=remaining_time_s+"s"
+                                }
+                            }
+                            acquisition_progress.estimated_time_remaining_msg=time_remain_estimate_msg_string
+
+                            acquisition_progress.text="running - "+progress.message
+                            acquisition_progress_element.style.setProperty(
+                                "--percent-done",
+                                (
+                                    progress.acquisition_progress.current_num_images
+                                    / progress.acquisition_meta_information.total_num_images
+                                    * 100
+                                ) + "%"
+                            )
+                        }
+
+                        // stop polling when acquisition is done
+                        if(progress.acquisition_progress.current_num_images==progress.acquisition_meta_information.total_num_images){
+                            acquisition_progress.text="done"
+                        }
+                    },
+                    error:()=>{
+                        message_open("error","error getting acquisition progress")
+                    }
+                }
+            )
         }
     
         updateInProgress=false
     }
 
-    const data={}
-    new XHR(true)
-        .onload(onload)
-        .onerror(onerror)
-        .send("/api/get_info/current_state",data,"POST")
+    get_current_state({
+        load:onload,
+        error:onerror
+    })
 }
 setInterval(updateMicroscopePosition,1e3/15)
 
@@ -271,18 +420,31 @@ class ImagingChannel{
 
         this.enabled=enabled
     }
+
+    /**
+     * @param{AcquisitionChannelConfig} py_obj
+     * @return{ImagingChannel}
+     */
+    static from_python(py_obj){
+        return new ImagingChannel(
+            py_obj.name,
+            py_obj.handle,
+            py_obj.illum_perc,
+            py_obj.exposure_time_ms,
+            py_obj.analog_gain,
+            py_obj.z_offset_um,
+            py_obj.num_z_planes,
+            py_obj.delta_z_um,
+        )
+    }
 }
 
 /**
- * @typedef {{value_kind:string,name:string,handle:string,value:string|number}} HardwareConfigItem
- */
-
-/**
  * low level machine control parameters, some of which may be configured/changed for an acquisition
- * @return {HardwareConfigItem[]}
+ * @return {ConfigItem[]}
  */
 function getMachineDefaults(){
-    /** @type {HardwareConfigItem[]}*/
+    /** @type {ConfigItem[]}*/
     let ret=[]
     new XHR(false)
         .onload(function(xhr){
@@ -305,73 +467,105 @@ function getMachineDefaults(){
 /**
  * return current machine config state, including initial state sent from microscope
  * (does not include other properties of the microscope, like stage position)
- * @returns {HardwareConfigItem[]}
+ * @returns {ConfigItem[]}
  */
 function getConfigState(){
     //@ts-ignore
     return _p.getUnmanaged(microscope_config.machine_config)
 }
 
-function microscopeConfigGetDefault(){
-    // TODO fetch this from the server
-    let ret={
-        project_name:"",
-        plate_name:"",
-        cell_line:"",
-    
-        autofocus_enabled:false,
-    
-        grid:{
-            num_x:2,
-            delta_x_mm:0.9,
-    
-            num_y:2,
-            delta_y_mm:0.9,
-    
-            num_t:1,
-            delta_t:{
-                h:2,
-                m:1,
-                s:4,
-            },
-    
-            /** @type {SiteSelectionCell[]} */
-            mask:[]
-        },
-        
-        // some [arbitrary] default
-        wellplate_type:"revvity-phenoplate-384",
-    
-        /** @type{WellIndex[]} */
-        plate_wells:[],
-    
-        /** @type{ImagingChannel[]} */
-        channels:new XHR(false)
-            .onload(function(xhr){
-                let data=JSON.parse(xhr.responseText)
-                let channels=data.main_camera_imaging_channels.map(
-                    /** @ts-ignore */
-                    function(channel){
-                        return new ImagingChannel(
-                            channel.name,
-                            channel.handle,
-                            channel.illum_perc,
-                            channel.exposure_time_ms,
-                            channel.analog_gain,
-                            channel.z_offset_um,
-                            1,
-                            3,
-                        )
-                    }
-                )
-                return channels
-            })
-            .onerror(()=>{
-                console.error("error getting channels")
-            })
-            .send("/api/get_features/hardware_capabilities"),
+/**
+ * @typedef {{
+    Manufacturer:string,
+    Model_name:string,
+    Model_id_manufacturer:string,
 
-        machine_config:getMachineDefaults(),
+    Model_id:string,
+
+    Offset_A1_x_mm:number,
+    Offset_A1_y_mm:number,
+
+    Offset_bottom_mm:number,
+
+    Well_distance_x_mm:number,
+    Well_distance_y_mm:number,
+
+    Well_size_x_mm:number,
+    Well_size_y_mm:number,
+
+    Num_wells_x:number,
+    Num_wells_y:number,
+
+    Length_mm:number,
+    Width_mm:number,
+
+    Well_shape:*
+ * }} Wellplate
+ * @typedef {{
+    wellplate_types:Wellplate[],
+    main_camera_imaging_channels:AcquisitionChannelConfig[],
+ * }} HardwareCapabilitiesResponse
+ */
+
+/**
+ * @return{HardwareCapabilitiesResponse|null}
+ */
+function get_hardware_capabilities(){
+    return new XHR(false)
+        .onload(function (xhr) {
+            /** @type{HardwareCapabilitiesResponse} */
+            let data = JSON.parse(xhr.responseText)
+            return data
+        })
+        .onerror(() => {
+            console.error("error getting hardware_capabilities")
+        })
+        .send("/api/get_features/hardware_capabilities")
+}
+
+function microscopeConfigGetDefault(){
+    // TODO fetch this [default] from the server
+
+    /** @type{AcquisitionConfig} */
+    let ret={
+        project_name: "",
+        plate_name: "",
+        cell_line: "",
+
+        autofocus_enabled: false,
+
+        grid: {
+            num_x: 2,
+            delta_x_mm: 0.9,
+
+            num_y: 2,
+            delta_y_mm: 0.9,
+
+            num_t: 1,
+            delta_t: {
+                h: 2,
+                m: 1,
+                s: 4,
+            },
+
+            mask: []
+        },
+
+        // some [arbitrary] default
+        wellplate_type: "revvity-phenoplate-384",
+
+        plate_wells: [],
+
+        channels: (get_hardware_capabilities()?.main_camera_imaging_channels.map(ImagingChannel.from_python)||[]),
+
+        machine_config: getMachineDefaults(),
+        comment: null,
+        spec_version: {
+            major: 0,
+            minor: 0,
+            patch: 0
+        },
+        timestamp: null
     }
 
     return ret
@@ -380,9 +574,11 @@ const microscope_config=_p.manage(microscopeConfigGetDefault())
 
 /**
  * @param{string} handle
- * @returns{HardwareConfigItem|null}
+ * @returns{ConfigItem|null}
  * */
 function getMachineConfig(handle){
+    if(!microscope_config.machine_config)return null;
+
     for(let c of microscope_config.machine_config){
         if(c.handle==handle){
             return c
@@ -427,7 +623,11 @@ function microscopeConfigOverride(new_config){
         }
 
         if(new_config.machine_config!=null){
-            microscope_config.machine_config.length=0
+            if(microscope_config.machine_config!=null){
+                microscope_config.machine_config.length=0
+            }else{
+                microscope_config.machine_config=[]
+            }
             microscope_config.machine_config.splice(0,0,...new_config.machine_config)
         }
         try{filter_results()}catch(e){}
@@ -475,7 +675,7 @@ function microscopeConfigOverride(new_config){
                 console.error("duplicate well index",index)
                 continue
             }
-            currentWellLookup.set(index,well)
+            currentWellLookup.set(index,WellIndex.from_python(well))
         }
 
         for(let configWell of new_config.plate_wells){
@@ -634,16 +834,20 @@ class WellplateType{
         this.Offset_bottom_mm = spec.Offset_bottom_mm
     }
 
+    /**
+     * @param{Wellplate} py_obj
+     * @return{WellplateType}
+     */
+    static from_python(py_obj){
+        return new WellplateType(py_obj)
+    }
+
     get num_wells(){
         return this.Num_wells_x*this.Num_wells_y
     }
 
     /** get all plate specs from the server, and cache the result */
-    static all_raw_plates=new XHR(false)
-        .onload(function(xhr){
-            return JSON.parse(xhr.responseText).wellplate_types
-        })
-        .send("/api/get_features/hardware_capabilities")
+    static all_raw_plates=(get_hardware_capabilities()?.wellplate_types.map(WellplateType.from_python)||[])
 
     /** @type{{name:string,num_wells:number,entries:WellplateType[]}[]?} */
     static _all=null
@@ -660,9 +864,7 @@ class WellplateType{
 
         /** @type {{name:string,num_wells:number,entries:WellplateType[]}[]} */
         let ret=[]
-        for(let plate_type_spec of plate_types){
-            const new_plate_type=new WellplateType(plate_type_spec)
-
+        for(let new_plate_type of plate_types){
             WellplateType._handleToType.set(new_plate_type.Model_id,new_plate_type)
             
             /** @type {WellplateType[]?} */

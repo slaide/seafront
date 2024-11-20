@@ -1,6 +1,6 @@
 /**
  * 
- * @param {HardwareConfigItem} item 
+ * @param {ConfigItem} item 
  * @returns {"number"|"text"}
  */
 function getInputType(item){
@@ -14,7 +14,7 @@ function getInputType(item){
 }
 /**
  * 
- * @param {HardwareConfigItem} item 
+ * @param {ConfigItem} item 
  * @returns 
  */
 function itemIsRawInput(item){
@@ -22,7 +22,7 @@ function itemIsRawInput(item){
 }
 /**
  * 
- * @param {HardwareConfigItem} item 
+ * @param {ConfigItem} item 
  * @returns 
  */
 function itemIsOptionInput(item){
@@ -30,7 +30,7 @@ function itemIsOptionInput(item){
 }
 /**
  * 
- * @param {HardwareConfigItem} item 
+ * @param {ConfigItem} item 
  * @returns 
  */
 function itemIsAction(item){
@@ -38,7 +38,7 @@ function itemIsAction(item){
 }
 /**
  * 
- * @param {HardwareConfigItem} item 
+ * @param {ConfigItem} item 
  * @returns 
  */
 function executeActionItem(item){
@@ -87,7 +87,7 @@ function match_name(name){
     const ret=lowercasename.includes(lowercasemachine_value_filter)
     return ret
 }
-/** @type{HardwareConfigItem[]} */
+/** @type{ConfigItem[]} */
 let filtered_machine_defaults=_p.manage([])
 
 /**
@@ -97,5 +97,5 @@ let filtered_machine_defaults=_p.manage([])
  */
 function filter_results(){
     filtered_machine_defaults.length=0
-    filtered_machine_defaults.splice(0,0,...microscope_config.machine_config.filter((item)=>match_name(item.name)))
+    filtered_machine_defaults.splice(0,0,...(microscope_config.machine_config||[]).filter((item)=>match_name(item.name)))
 }
