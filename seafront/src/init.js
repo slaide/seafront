@@ -535,10 +535,10 @@ function microscopeConfigGetDefault(){
         autofocus_enabled: false,
 
         grid: {
-            num_x: 2,
+            num_x: 1,
             delta_x_mm: 0.9,
 
-            num_y: 2,
+            num_y: 1,
             delta_y_mm: 0.9,
 
             num_t: 1,
@@ -548,7 +548,7 @@ function microscopeConfigGetDefault(){
                 s: 4,
             },
 
-            mask: []
+            mask: [{row:0,col:0,selected:true}]
         },
 
         // some [arbitrary] default
