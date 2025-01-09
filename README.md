@@ -127,6 +127,17 @@ python3 -m seafront
 source python_env/deactivate.sh
 ```
 
+# what even is a bug?
+
+this software has a broad target audience: from student with no microscopy experience to microscope engineer, the software should support 
+everyone in their work.
+
+accordingly: there should be development and debugging features built into it, to assist an engineer in fast repairs, but the interface 
+should also be clear enough to support someone new to microscopy in their microscopy endeavors.
+this also means that broken functionality is a bug, but unclear or ambiguous functionality is also considered a bug (like missing 
+documentation), since it can stop someone from effectively performing their work with this software.
+layout improvements _may_ be considered a bug, including color choice, depending on their impact on the workflow.
+
 # notes
 
 This software establishes a usb connection to two cameras simultaneously, which may require more usb stack memory than
