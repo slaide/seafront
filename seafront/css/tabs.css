@@ -1,34 +1,46 @@
 
 .tab-header-container{
-    display:flex;
+    display:grid;
+    grid-template-columns: repeat( 4, auto);
+
     border-bottom: 1px solid var(--text-color);
-    --tab-header-height:calc( 1.2em + 2 * 0.2em);
-    height:var(--tab-header-height);
+
+    overflow-y: auto;
 }
 .tab-header-container > *{
-    padding:0.2em;
+    padding:0.6em;
     padding-inline:0.5em;
     margin-inline:0.2em;
+    cursor:pointer;
+
     border:1px solid var(--text-color);
     border-bottom:none;
-    cursor:pointer;
-    background-color: var(--background-color);
-    border-radius: 0.3em 0.3em 0 0;
+
+    border-radius: 0.45em 0.45em 0 0;
 }
 .tab-header-container > *:hover{
     text-decoration: underline;
-    background-color: #f0f0f0;
-    color:black;
+
+    border:1px solid var(--tab-header-hover-bgcolor);
+    border-bottom:none;
+
+    /* these are not applied because tab headers are also buttons, and the button theme has higher precedence (for some reason) */
+    background-color: var(--tab-header-hover-bgcolor);
+    color: var(--tab-header-hover-textcolor);
 }
 .tab-header-container > *:not(.active){
-    background-color: lightgrey;
-    color:black;
+    background-color: var(--tab-header-inactive-bgcolor);
+    color: var(--tab-header-inactive-textcolor);
 }
 .tab-header-container > *.active{
-    height: calc(var(--tab-header-height) + 1px);
+    background-color: var(--tab-header-active-bgcolor);
+    color: var(--tab-header-active-textcolor);
+    
+    font-weight: bold;
 }
 .tab-body-container{
     border: 1px solid var(--text-color);
     border-top: none;
+
     padding:0.3em;
 }
