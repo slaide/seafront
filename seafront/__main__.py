@@ -2579,6 +2579,10 @@ class Core:
         )
         self.acquisition_map[acquisition_id]=acquisition_status
 
+        # write config file to output directory
+        with (project_output_path/"config.json").open("w") as file:
+            file.write(config_file.json())
+
         async def run_acquisition(
             q_in:asyncio.Queue[AcquisitionCommand],
             q_out:asyncio.Queue[InternalErrorModel|AcquisitionStatusOut],
