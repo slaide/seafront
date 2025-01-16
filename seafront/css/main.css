@@ -31,7 +31,7 @@
     max-height:100%;
     overflow-y: auto;
     display:grid;
-    row-gap:0.5em;
+    row-gap:var(--gridgap);
 }
 #main-commandline{
     grid-column: span 3;

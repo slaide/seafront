@@ -4,6 +4,7 @@
 #live-view-control{
     display:grid;
     grid-template-columns: repeat(6,auto);
+    column-gap: var(--gridgap);
 }
 
 #live-view-x-axis-container{

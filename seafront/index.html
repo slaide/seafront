@@ -347,11 +347,11 @@
                             <style>
                                 #acquisition-control:not(.hidden){
                                     display:grid;
-                                    row-gap:0.5em;
+                                    row-gap:var(--gridgap);
                                 }
                                 #lighting-control:not(.hidden){
                                     display:grid;
-                                    row-gap:0.5em;
+                                    row-gap:var(--gridgap);
                                 }
                             </style>
                             <div id="acquisition-control">
@@ -761,7 +761,7 @@
                     #main-commandline-acquisitionmenu{
                         display:grid;
                         grid-template-columns: auto auto auto 7em 7em;
-                        grid-gap:0.4em;
+                        grid-gap:var(--gridgap);
 
                         button{
                             font-size:1.2em;

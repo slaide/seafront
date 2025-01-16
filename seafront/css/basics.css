@@ -48,3 +48,7 @@
 .row-span-6{
     grid-row: span 6;
 }
+
+*{
+    --gridgap:0.5em;
+}
