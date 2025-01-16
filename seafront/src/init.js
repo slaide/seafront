@@ -691,6 +691,7 @@ function microscopeConfigOverride(new_config){
         clearInterval(interval_id)
         interval_id=-1
     },0.01e3)
+    
     // catch performance issue where well selection from cache has not finished in reasonable time
     // (if it takes too long, might as well not bother because the user will be very confused)
     setTimeout(function(){

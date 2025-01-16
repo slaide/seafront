@@ -434,7 +434,7 @@ class CoreStreamHandler(BaseModel):
         
         match img.get_status():
             case gxiapi.GxFrameStatusList.INCOMPLETE:
-                raise RuntimeError("incomplete frame")
+                error_internal(detail="incomplete frame")
             case gxiapi.GxFrameStatusList.SUCCESS:
                 pass
         
@@ -918,6 +918,18 @@ class AutofocusApproachTargetDisplacement(BaseModel):
     max_num_reps:int=3
     pre_approach_refz:bool=True
 
+    async def estimate_offset_mm(self,core:"Core"):
+        res=await AutofocusMeasureDisplacement(config_file=self.config_file).run(core)
+
+        current_displacement_um=res.displacement_um
+        assert current_displacement_um is not None
+
+        return (self.target_offset_um-current_displacement_um)*1e-3
+
+    async def current_z_mm(self,core:"Core"):
+        current_state=await core.get_current_state()
+        return current_state.stage_position.z_pos_mm
+
     async def run(self,core:"Core")->BasicSuccessResponse:
         if core.is_in_loading_position:
             error_internal(detail="now allowed while in loading position")
@@ -947,6 +959,7 @@ class AutofocusApproachTargetDisplacement(BaseModel):
         if current_state.status!="success":
             return current_state
         current_z=current_state.stage_position.z_pos_mm
+        initial_z=current_z
 
         if self.pre_approach_refz:
             gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
@@ -957,21 +970,40 @@ class AutofocusApproachTargetDisplacement(BaseModel):
             if res.status!="success":
                 error_internal(detail=f"failed to approach ref z: {res.dict()}")
 
-        for _ in range(self.max_num_reps):
-            res=await AutofocusMeasureDisplacement(config_file=self.config_file).run(core)
-            if res.status!="success":
-                error_internal(detail=f"failed to measure displacement: {res.message}")
+        old_state=core.state
+        core.state=CoreState.Moving
 
-            current_displacement_um=res.displacement_um
-            assert current_displacement_um is not None
+        try:
+            # TODO : make this better, utilizing these value pairs
+            # (
+            #    physz = (await core.get_current_state()).stage_position.z_pos_mm,
+            #    dotx = await core._approximate_laser_af_z_offset_mm(autofocus_calib,_leftmostxinsteadofestimatedz=True)
+            # )
 
-            distance_to_move_to_target_mm=(self.target_offset_um-current_displacement_um)*1e-3
+            async def get_dotx():
+                return await core._approximate_laser_af_z_offset_mm(autofocus_calib,_leftmostxinsteadofestimatedz=True)
 
-            dot_x=await core._approximate_laser_af_z_offset_mm(autofocus_calib,_leftmostxinsteadofestimatedz=True)
+            last_distance_estimate_mm=await self.estimate_offset_mm(core)
+            MAX_MOVEMENT_RANGE_MM=0.3 # should be derived from the calibration data, but this value works fine in practice
+            if np.abs(last_distance_estimate_mm)>MAX_MOVEMENT_RANGE_MM:
+                error_internal(detail="measured autofocus focal plane offset too large")
 
-            old_state=core.state
-            core.state=CoreState.Moving
-            await core.mc.send_cmd(Command.move_by_mm("z",distance_to_move_to_target_mm))
+            for rep_i in range(self.max_num_reps):
+                distance_estimate_mm=await self.estimate_offset_mm(core)
+
+                # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
+                # (since this indicates that we have moved away from the focal plane, which should not happen)
+                if rep_i>0 and np.abs(last_distance_estimate_mm)<np.abs(distance_estimate_mm):
+                    break
+
+                last_distance_estimate_mm=distance_estimate_mm
+
+                await core.mc.send_cmd(Command.move_by_mm("z",distance_estimate_mm))
+
+        except:
+            # if any interaction failed, attempt to reset z position to known somewhat-good position
+            await core.mc.send_cmd(Command.move_to_mm("z",initial_z))
+        finally:
             core.state=old_state
 
         return BasicSuccessResponse(status="success")
@@ -1006,11 +1038,11 @@ def wellIsForbidden(well_name:str,plate_type:sc.Wellplate)->bool:
     g_config=GlobalConfigHandler.get_dict()
     forbidden_wells_entry=g_config["forbidden_wells"]
     if forbidden_wells_entry is None:
-        raise RuntimeError("forbidden_wells entry not found in global config")
+        error_internal(detail="forbidden_wells entry not found in global config")
     
     forbidden_wells_str=forbidden_wells_entry.value
     if not isinstance(forbidden_wells_str,str):
-        raise RuntimeError("forbidden_wells entry is not a string")
+        error_internal(detail="forbidden_wells entry is not a string")
 
     for s in forbidden_wells_str.split(";"):
         num_wells,well_names=s.split(":")
@@ -1028,7 +1060,7 @@ class Core:
         main_camera_model_name=defaults["main_camera_model"].value
         _main_cameras=[c for c in self.cams if c.model_name==main_camera_model_name]
         if len(_main_cameras)==0:
-            raise RuntimeError(f"no camera with model name {main_camera_model_name} found")
+            error_internal(detail=f"no camera with model name {main_camera_model_name} found")
         main_camera=_main_cameras[0]
         return main_camera
 
@@ -1038,7 +1070,7 @@ class Core:
         focus_camera_model_name=defaults["laser_autofocus_camera_model"].value
         _focus_cameras=[c for c in self.cams if c.model_name==focus_camera_model_name]
         if len(_focus_cameras)==0:
-            raise RuntimeError(f"no camera with model name {focus_camera_model_name} found")
+            error_internal(detail=f"no camera with model name {focus_camera_model_name} found")
         focus_camera=_focus_cameras[0]
         return focus_camera
 
@@ -1773,6 +1805,8 @@ class Core:
         get peaks in laser autofocus signal
 
         used to derive actual location information. by itself not terribly useful.
+
+        returns rightmost_peak_x, distances_between_peaks
         """
 
         # 8 bit signal -> max value 255
@@ -1823,11 +1857,16 @@ class Core:
         if self.is_in_loading_position:
             error_internal(detail="now allowed while in loading position")
 
-        DEBUG_LASER_AF_CALIBRATION=True
+        DEBUG_LASER_AF_CALIBRATION=bool(0)
         DEBUG_LASER_AF_SHOW_REGRESSION_FIT=False
         DEBUG_LASER_AF_SHOW_EVAL_FIT=True
 
-        #_leftmostxinsteadofestimatedz
+        if DEBUG_LASER_AF_CALIBRATION:
+            z_mm_movement_range_mm=0.3
+            NUM_Z_STEPS_CALIBRATE=13
+        else:
+            z_mm_movement_range_mm=0.05
+            NUM_Z_STEPS_CALIBRATE=7
 
         async def get_current_z_mm()->float:
             current_state=await self.get_current_state()
@@ -1861,13 +1900,7 @@ class Core:
             z_mm:float
             p:tuple[float,list[float]]
 
-        peak_info:list[CalibrationData] = []
-
-        for i in range(NUM_Z_STEPS_CALIBRATE):
-            if i>0:
-                # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                await self.mc.send_cmd(Command.move_by_mm("z",z_step_mm))
-
+        async def measure_dot_params():
             # measure pos
             res=await AutofocusSnap(exposure_time_ms=conf_af_exp_ms,analog_gain=conf_af_exp_ag).run(self)
             if res.status!="success":
@@ -1879,6 +1912,16 @@ class Core:
                 error_internal(detail="no laser autofocus image found [1]")
 
             params = self._get_peak_coords(latest_laser_af_image.img)
+            return params
+
+        peak_info:list[CalibrationData] = []
+
+        for i in range(NUM_Z_STEPS_CALIBRATE):
+            if i>0:
+                # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
+                await self.mc.send_cmd(Command.move_by_mm("z",z_step_mm))
+
+            params = await measure_dot_params()
 
             peak_info.append(CalibrationData(z_mm=-half_z_mm+i*z_step_mm,p=params))
 
@@ -1925,6 +1968,8 @@ class Core:
             plt.figure(figsize=(8, 6))
             plt.scatter(distance_x,distances, color='blue',label="all peaks")
 
+        # x is dot x
+        # y is z coordinate
         left_dot_x=[]
         left_dot_y=[]
         right_dot_x=[]
@@ -2014,20 +2059,23 @@ class Core:
             plt.grid(True)
             plt.show()
 
-        slope,intercept=left_dot_regression
-        um_per_px=slope
-        x_reference=intercept
+        um_per_px,_x_reference=left_dot_regression
+        print(f"y = {_x_reference} + x * {um_per_px}")
+        x_reference=(await measure_dot_params())[0]
+        print(f"{_x_reference=} {x_reference=}")
 
         current_state=await self.get_current_state()
         if current_state.status!="success":
             return current_state
 
+        calibration_position=current_state.stage_position
+
         calibration_data=LaserAutofocusCalibrationData(
             # calculate the conversion factor, based on lowest and highest measured position
             um_per_px=um_per_px,
             # set reference position
-            x_reference=intercept,
-            calibration_position=current_state.stage_position
+            x_reference=x_reference,
+            calibration_position=calibration_position
         )
 
         return LaserAutofocusCalibrationResponse(status="success",calibration_data=calibration_data)
@@ -2144,7 +2192,7 @@ class Core:
             case gxiapi.GxPixelFormatEntry.MONO12:
                 pixel_depth=12
             case _unknown:
-                raise ValueError(f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
+                error_internal(detail=f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
 
         # store new image
         self.laser_af_images[self.laser_af_image_latest_handle]=ImageStoreEntry(img=img,timestamp=time.time(),channel_config=channel_config,bit_depth=pixel_depth)
@@ -2187,7 +2235,7 @@ class Core:
             case gxiapi.GxPixelFormatEntry.MONO12:
                 pixel_depth=12
             case _unknown:
-                raise ValueError(f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
+                error_internal(detail=f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
             
         # store new image
         channel_images[new_image_handle]=ImageStoreEntry(img=img,timestamp=time.time(),channel_config=channel_config,bit_depth=pixel_depth)
@@ -2233,12 +2281,12 @@ class Core:
                     case 10:
                         img=(img_raw>>(16-10)).astype(np.uint8)
                     case _:
-                        raise ValueError(f"unexpected bit depth {img_container.bit_depth}")
+                        error_internal(detail=f"unexpected bit depth {img_container.bit_depth}")
             case np.uint8:
                 assert img_container.bit_depth==8, f"unexpected {img_container.bit_depth = }"
                 img=img_raw
             case _:
-                raise ValueError(f"unexpected dtype {img_raw.dtype}")
+                error_internal(detail=f"unexpected dtype {img_raw.dtype}")
 
         if quick_preview:
             preview_resolution_scaling=GlobalConfigHandler.get_dict()["streaming_preview_resolution_scaling"].intvalue
@@ -2256,7 +2304,7 @@ class Core:
                 case "png":
                     pil_kwargs,mimetype={"format":"PNG","compress_level":0},"image/png"
                 case _other:
-                    raise ValueError(f"unexpected streaming_preview_format format {streaming_format}")
+                    error_internal(detail=f"unexpected streaming_preview_format format {streaming_format}")
 
         else:
             g_config=GlobalConfigHandler.get_dict()
@@ -2269,7 +2317,7 @@ class Core:
                 case "png":
                     pil_kwargs,mimetype={"format":"PNG","compress_level":3},"image/png"
                 case _other:
-                    raise ValueError(f"unexpected image_display_format format {streaming_format}")
+                    error_internal(detail=f"unexpected image_display_format format {streaming_format}")
 
         # compress image async
         def compress_image():
@@ -2488,7 +2536,7 @@ class Core:
             case "mono12":
                 bytes_per_pixel=2
             case _unexpected:
-                raise ValueError(f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}")
+                error_internal(detail=f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}")
             
         image_size_bytes=target_width*target_height*bytes_per_pixel
         max_storage_size_images_GB=num_images_total*image_size_bytes/1024**3

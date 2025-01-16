@@ -31,7 +31,7 @@ function updateGridMask(){
     microscope_config.grid.mask.length=0
     
     // async DOM update
-    setTimeout(()=>{
+    //setTimeout(()=>{
         if(!(element.parentElement)){console.error("element has no parent");return}
 
         for(let i=0;i<num_rows;i++){
@@ -40,7 +40,7 @@ function updateGridMask(){
                 microscope_config.grid.mask.push(new_cell)
             }
         }
-    },0)
+    //},0)
 }
 /**
  * 

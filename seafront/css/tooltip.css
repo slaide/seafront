@@ -3,10 +3,11 @@
 .p-tooltip{
     position: absolute;
 
+    --shift-up-by-own-height:1;
     top: var(--top-offset);
     left: var(--left-offset);
     /* transform to make origin the bottom center of this element */
-    transform: translateY(-100%) translateX(-50%);
+    transform: translateY( calc( -100% * var(--shift-up-by-own-height) ) ) translateX(-50%);
     z-index: 100;
 
     /* make as wide as sensible, but cap at brief line length */

@@ -173,11 +173,12 @@ class Plot{
      * @type{function[]}
      * */
     static containerUpdateFuncs=[]
-    static intervalUpdater=setInterval(function(){
+    static intervalUpdateFunction=function(){
         for(let f of Plot.containerUpdateFuncs){
             f()
         }
-    },1e3/30) // 1e3/x -> check x times per second if the plot needs updating
+    }
+    static intervalUpdater=setInterval(Plot.intervalUpdateFunction,1e3/30) // 1e3/x -> check x times per second if the plot needs updating
 
     /**
      * callback to resize plot when element size changes
