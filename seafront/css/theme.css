@@ -2,10 +2,21 @@
 body{
     background:var(--background-color);
     color:var(--text-color);
+    
+    *{
+        scrollbar-color: var(--scrollbar-barcolor-inactive) var(--scrollbar-background-color); /* thumb color, track color */
+    }
+    *:hover{
+        scrollbar-color: var(--scrollbar-barcolor-hovered) var(--scrollbar-background-color); /* thumb color, track color */
+    }
 
     --theme-color:rgb(110, 172, 192);
 }
 body.light-theme{
+    --scrollbar-background-color:var(--button-background-hover-color);
+    --scrollbar-barcolor-inactive:var(--tab-header-active-bgcolor);
+    --scrollbar-barcolor-hovered:var(--tab-header-inactive-bgcolor);
+
     --section-header-background-color:var(--theme-color);
     --section-header-text-color:black;
     --section-border-color:var(--section-header-background-color);
@@ -13,7 +24,7 @@ body.light-theme{
     --disabled-background-color:var(--background-color);
     --disabled-text-color:var(--placeholder-text-color);
 
-    --background-color:#EEEEEE;
+    --background-color:#eeee;
     --text-color:black;
     --placeholder-text-color:rgb(110, 110, 110);
 
@@ -36,6 +47,10 @@ body.light-theme{
     --tab-header-hover-textcolor:white;
 }
 body.dark-theme{
+    --scrollbar-background-color:var(--button-background-hover-color);
+    --scrollbar-barcolor-inactive:var(--tab-header-active-bgcolor);
+    --scrollbar-barcolor-hovered:var(--tab-header-inactive-bgcolor);
+
     --section-header-background-color:var(--theme-color);
     --section-header-text-color:black;
     --section-border-color:var(--section-header-background-color);

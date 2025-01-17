@@ -1,13 +1,10 @@
-
 .separator-vert{
     height:auto;
     width:2px;
-    background:var(--text-color);
 }
 .separator-horz{
     width:auto;
     height:2px;
-    background:var(--text-color);
 }
 #main-sep:hover{
     cursor:ew-resize;
