@@ -674,15 +674,37 @@
             </div>
 
             <div id="main-commandline" class="data">
-                <div>
-                    connected to: {{microscope_state.machine_name}} | frontend status: <b>{{progress_indicator.statusText}}</b> | server status: {{microscope_state.state}}
+                <style>
+                    #connection-status-panel{
+                        display:grid;
+                        grid-template-columns:repeat(3,max-content);
+                        grid-gap:var(--gridgap);
+
+                        grid-template-areas:
+                        "connect-status-head interface-status-head server-status-head"
+                        "connect-status-body interface-status-body server-status-body"
+                        ;
+                    }
+                </style>
+                <div id="connection-status-panel">
+                    <div style="grid-area:connect-status-head;">Connected To:</div>
+                    <div style="grid-area:connect-status-body;">{{microscope_state.machine_name}}</div>
+                    <div style="grid-area:interface-status-head;">Interface Status:</div>
+                    <div style="grid-area:interface-status-body;">{{microscope_state.state}}</div>
+                    <div style="grid-area:server-status-head;">Server Status:</div>
+                    <div style="grid-area:server-status-body;">{{progress_indicator.statusText}}</div>
                 </div>
 
                 <script src="src/acquisition.js"></script>
                 <style>
+                    #acquisition-progress-text,#acquisition-progress-bar{
+                        /*width should be enough to contain message*/
+                        width:30em;
+                        white-space: nowrap;
+                        overflow:hidden;
+                        text-overflow: ellipsis;
+                    }
                     #acquisition-progress-bar{
-                        width:10em;
-
                         border:1px solid var(--text-color);
                         border-radius:0.3em;
                         padding:0.3em;
@@ -693,8 +715,15 @@
 
                     #main-commandline-acquisitionmenu{
                         display:grid;
-                        grid-template-columns: auto auto auto 7em 7em;
+                        grid-template-columns: auto auto 7em 7em;
                         grid-gap:var(--gridgap);
+
+                        grid-template-areas:
+                        "label progress-bar button-start button-cancel"
+                        "label progress-text button-start button-cancel";
+
+                        justify-content: stretch;
+                        align-content: center;
 
                         button{
                             font-size:1.2em;
@@ -703,11 +732,34 @@
                 </style>
 
                 <div id="main-commandline-acquisitionmenu">
-                    <p>| <b style="font-size:1.2em;">Acquisition:</b></p>
-                    <p class="data"><!-- acquisition status text-->{{acquisition_progress.text}}</p>
-                    <div id="acquisition-progress-bar" class="data">{{acquisition_progress.estimated_time_remaining_msg}}</div>
-                    <button class="data" p:tooltip="Start an acquisition with the settings as configured above." p:on-click="start_acquisition()">start</button>
-                    <button class="data" p:tooltip="Cancel the currently ongoing acquisition." p:on-click="cancel_acquisition()">cancel</button>
+                    <p style="grid-area:label; place-self: center stretch; color:var(--theme-color)">
+                        <b style="font-size:1.9em;">Acquisition</b>
+                    </p>
+
+                    <div
+                        id="acquisition-progress-bar"
+                        style="grid-area:progress-bar;"
+                        class="data"
+                    ><!--space to not collapse the height of this element-->&nbsp;{{acquisition_progress.estimated_time_remaining_msg}}</div>
+
+                    <p
+                        id="acquisition-progress-text"
+                        style="grid-area:progress-text;"
+                        class="data"
+                    ><!-- acquisition status text-->Status: {{acquisition_progress.text}}</p>
+
+                    <button
+                        style="grid-area:button-start;"
+                        class="data"
+                        p:tooltip="Start an acquisition with the settings as configured above."
+                        p:on-click="start_acquisition()"
+                    >Start</button>
+                    <button
+                        style="grid-area:button-cancel;"
+                        class="data"
+                        p:tooltip="Cancel the currently ongoing acquisition."
+                        p:on-click="cancel_acquisition()"
+                    >Cancel</button>
                 </div>
             </div>
         </div>

@@ -9,7 +9,7 @@
     --rightCol:1fr;
     grid-template-columns: var(--leftCol) 20px var(--rightCol);
 
-    --main-commandline-height:3em;
+    --main-commandline-height:4em;
     grid-template-rows: calc(100% - var(--main-commandline-height)) var(--main-commandline-height);
 }
 #main > *.separator-vert{
