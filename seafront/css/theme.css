@@ -13,7 +13,7 @@ body.light-theme{
     --disabled-background-color:var(--background-color);
     --disabled-text-color:var(--placeholder-text-color);
 
-    --background-color:white;
+    --background-color:#EEEEEE;
     --text-color:black;
     --placeholder-text-color:rgb(110, 110, 110);
 
@@ -43,7 +43,7 @@ body.dark-theme{
     --disabled-background-color:var(--background-color);
     --disabled-text-color:var(--placeholder-text-color);
 
-    --background-color:black;
+    --background-color:#303030;
     --text-color:white;
     --placeholder-text-color:rgb(174, 174, 174);
 
