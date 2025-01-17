@@ -78,6 +78,7 @@ class PlotData extends PlotItemData{
     constructor(x_min,x_max,y_min,y_max,width,height,elements=[]){
         super(x_min,x_max,y_min,y_max,width,height)
         this.elements=elements
+        this.wasDrawnOnce=false
     }
 
     /**
@@ -177,8 +178,10 @@ class Plot{
         for(let f of Plot.containerUpdateFuncs){
             f()
         }
+
+        requestAnimationFrame(Plot.intervalUpdateFunction)
     }
-    static intervalUpdater=setInterval(Plot.intervalUpdateFunction,1e3/30) // 1e3/x -> check x times per second if the plot needs updating
+    static plotUpdateInitHandle=setTimeout(Plot.intervalUpdateFunction,1e3/30)
 
     /**
      * callback to resize plot when element size changes
@@ -443,11 +446,26 @@ class Plot{
     /**
      * fit plot to display all children
      * @param {Event|HTMLElement} plot 
+     * @param {{init?:boolean,isvisible?:boolean}?} options `init` flag indicates that this is the fit call used to init the plot. `isvisible` indicates if the plot is actually visible (the plot requires being visible for initialization to actually succeed)
      */
-    static plot_fit(plot){
+    static plot_fit(plot,options=null){
         let plot_element=(plot instanceof HTMLElement)?plot:plot.currentTarget
         if(!(plot_element instanceof HTMLElement)){throw new Error("plot element is not an html element")}
         // adjust plot to fit the children
+
+        let plot_data=PlotData.getFor(plot_element)
+        // if 1) this call is used to initialize the plot and 2) the plot is currently visible and 3) the plot was already drawn once -> initialization done, immediate return
+        if(options?.init===true && options?.isvisible===true && plot_data.wasDrawnOnce===true){
+            return
+        }
+        // if 1) the plot is currently visible and 2) it was not already drawn once -> just initialize it now
+        if(options?.isvisible===true && !plot_data.wasDrawnOnce){
+            plot_data.wasDrawnOnce=true
+        }
+
+        // adjust limits to ensure aspect ratio consistent with plot_element size
+        let plot_width=plot_data.width
+        let plot_height=plot_data.height
 
         let x_min=Infinity
         let x_max=-Infinity
@@ -464,12 +482,6 @@ class Plot{
             y_min=Math.min(y_min,child_plot_data.y_min)
             y_max=Math.max(y_max,child_plot_data.y_max)
         }
-
-        let plot_data=PlotData.getFor(plot_element)
-
-        // adjust limits to ensure aspect ratio consistent with plot_element size
-        let plot_width=plot_data.width
-        let plot_height=plot_data.height
 
         // aspect ratio is width/height -> larger aspect ratio -> more x per y
         let plot_native_aspect_ratio=plot_width/plot_height

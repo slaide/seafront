@@ -92,7 +92,7 @@
                         <div class="data">{{microscope_state.last_image_name}}</div>
                         <div id="live-view-display" class="data plot-display"
                             p:init="Plot.plot_init(element)"
-                            p:init-vis="Plot.plot_fit(element)"
+                            p:init-vis="Plot.plot_fit(element,{init:true,isvisible:true})"
                         >
                             <img id="view_latest_image" src="" width=2500 height=2500 loading="lazy"/>
                         </div>
@@ -112,7 +112,7 @@
                                     <div>{{channel.name}}</div>
                                     <div class="data plot-display channel-plot-display"
                                         p:init="Plot.plot_init(element)"
-                                        p:init-vis="Plot.plot_fit(element)"
+                                        p:init-vis="Plot.plot_fit(element,{init:true,isvisible:true})"
                                     >
                                         <img class="data" src="{{(channel.handle in microscope_state.latest_channel_images)?('/img/get_by_handle?img_handle='+microscope_state.latest_channel_images[channel.handle].handle):''}}" width=600 height=600 loading="lazy"/>
                                     </div>
