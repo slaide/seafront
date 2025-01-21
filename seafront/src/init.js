@@ -93,6 +93,7 @@ function get_current_state(cb){
         .send("/api/get_info/current_state",data,"POST")
 }
 
+let last_acquisition_status_successful=true
 let last_update_successful=true
 let updateInProgress=false
 /** @type{number?} */
@@ -310,6 +311,12 @@ function updateMicroscopePosition(){
                             message_open("error","no acquisition progress available because ",progress.message)
                             return
                         }
+
+                        if(!last_acquisition_status_successful){
+                            message_open("info","acquisition status update received")
+                        }
+                        last_acquisition_status_successful=true
+
                         if(progress.acquisition_progress==null || progress.acquisition_meta_information==null){
                             acquisition_progress.text="running"
                             return
@@ -379,7 +386,10 @@ function updateMicroscopePosition(){
                         }
                     },
                     error:()=>{
-                        message_open("error","error getting acquisition progress")
+                        if(last_acquisition_status_successful){
+                            message_open("error","error getting acquisition progress")
+                        }
+                        last_acquisition_status_successful=false
                     }
                 }
             )
