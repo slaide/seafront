@@ -92,10 +92,14 @@ input[disabled],select[disabled]{
     background-color:var(--disabled-background-color);
     color:var(--disabled-text-color);
 }
-input[type="number"]:not([disabled]),textarea:not([disabled]),input[type="text"]:not([disabled]),select:not([disabled]){
+input[type="number"]:not([disabled]),input[type="time"]:not([disabled]),textarea:not([disabled]),input[type="text"]:not([disabled]),select:not([disabled]){
     background-color:var(--background-color);
     color:var(--text-color);
 }
+input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+}
+
 /* input */::placeholder{
     color:var(--placeholder-text-color);
     font-style: italic;

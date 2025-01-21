@@ -337,22 +337,58 @@
                                         the total time between acquisition is the sum of the hour, minute and second components.
                                             
                                         (if the actual acquisition takes longer than this delta time, the new acquisition still start right after the previous one ends)
-                                        ">delta t</label
+                                        ">delta t [hh:mm:ss]</label
                                     >
-                                    <style>
-                                        #acqusition-config-delta-t-container{
-                                            display:flex;
-                                            flex-direction:row;
+                                    <script>
+                                        /**
+                                         * pad string s to at least length l by repeating leading char padchar
+                                         * @param{string} s
+                                         * @param{number} l
+                                         * @param{string} padchar - repeat this char leading s.length-l times
+                                         * @return{string}
+                                         */
+                                        function padtoLength(s,l,padchar){
+                                            let s_string=`${s}`
+                                            let currentlen=s_string.length
+                                            let numcharsleft=l-currentlen
+                                            let ret=s_string
+                                            for(let i=0;i<numcharsleft;i++){
+                                                // concat strings, even if both look like a number
+                                                ret=`${padchar}${ret}`
+                                            }
+                                            return ret
                                         }
-                                    </style>
-                                    <p id="acqusition-config-delta-t-container">
-                                        <input type="number" min="0" max="999" value="3" step="1" class="data" p:bind="microscope_config.grid.delta_t.h">
-                                        <label class="data" p:tooltip="hours">h.</label>
-                                        <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="microscope_config.grid.delta_t.m">
-                                        <label class="data" p:tooltip="minutes">m.</label>
-                                        <input type="number" min="0" max="59" value="0" step="1" class="data" p:bind="microscope_config.grid.delta_t.s">
-                                        <label class="data" p:tooltip="seconds">s.</label>
-                                    </p>
+                                        // on input, set backing values
+                                        function delta_time_oninput(event){
+                                            let [h,m,s]=event.currentTarget.value.split(":")
+                                            if(h==null || m==null || s==null) return
+                                            microscope_config.grid.delta_t.h=parseFloat(h)
+                                            microscope_config.grid.delta_t.m=parseFloat(m)
+                                            microscope_config.grid.delta_t.s=parseFloat(s)
+                                        }
+                                        // on backing value changed, update visible value
+                                        function delta_time_input_init(element){
+                                            _p.onValueChangeCallback(()=>microscope_config.grid.delta_t.h,(newval)=>{
+                                                let [h,m,s]=element.value.split(":")
+                                                if(h==null || m==null || s==null) return
+                                                let new_element_value=padtoLength(newval,2,"0")+":"+padtoLength(m,2,"0")+":"+padtoLength(s,2,"0")
+                                                element.value=new_element_value
+                                            })
+                                            _p.onValueChangeCallback(()=>microscope_config.grid.delta_t.m,(newval)=>{
+                                                let [h,m,s]=element.value.split(":")
+                                                if(h==null || m==null || s==null) return
+                                                let new_element_value=padtoLength(h,2,"0")+":"+padtoLength(newval,2,"0")+":"+padtoLength(s,2,"0")
+                                                element.value=new_element_value
+                                            })
+                                            _p.onValueChangeCallback(()=>microscope_config.grid.delta_t.s,(newval)=>{
+                                                let [h,m,s]=element.value.split(":")
+                                                if(h==null || m==null || s==null) return
+                                                let new_element_value=padtoLength(h,2,"0")+":"+padtoLength(m,2,"0")+":"+padtoLength(newval,2,"0")
+                                                element.value=new_element_value
+                                            })
+                                        }
+                                    </script>
+                                    <input id="delta-time-value" type="time" step="1" value="00:00:00" class="data" p:on-input="delta_time_oninput(event)" p:init="delta_time_input_init(element)">
 
                                     <div id="site-selection" class="data" p:init="initGridMask()" style="--num-cols: {{microscope_config.grid.num_x}}; --num-rows: {{microscope_config.grid.num_y}}; --item-size: {{grid_mask_width/Math.max(microscope_config.grid.num_x,microscope_config.grid.num_y)-2}}px;">
                                         <div id="site-selection-centerer">

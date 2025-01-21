@@ -313,7 +313,7 @@ function updateMicroscopePosition(){
                         }
 
                         if(!last_acquisition_status_successful){
-                            message_open("info","acquisition status update received")
+                            message_open("info","acquisition progress updated")
                         }
                         last_acquisition_status_successful=true
 

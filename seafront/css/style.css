@@ -13,10 +13,10 @@ select{
 select > option{
     padding-inline: 0.3em;
 }
-input[type="number"],input[type="text"],textarea{
+input[type="number"],input[type="text"],input[type="time"],textarea{
     border:1px solid rgb(176, 176, 176);
 }
-input[type="number"],input[type="text"],textarea{
+input[type="number"],input[type="text"],input[type="time"],textarea{
     padding:0.2em;
 }
 /*on firefox the number input spinner buttons are always visible, on chrome they need this fix*/
