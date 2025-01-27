@@ -19,7 +19,7 @@ from functools import wraps
 import inspect
 import asyncio
 
-# math and image deps
+# math and image dependencies
 
 import numpy as np
 from PIL import Image
@@ -36,38 +36,27 @@ from pydantic import create_model, BaseModel, Field, ConfigDict
 import matplotlib.pyplot as plt
 _DEBUG_P2JS=True
 
-# http server deps
+# http server dependencies
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 
 import uvicorn
 
-# microscope deps
+# microscope dependencies
+
+from .server.commands import *
+from .server.commands import _ChannelAcquisitionControl
 
 import seaconfig as sc
 from seaconfig.acquisition import AcquisitionConfig
 from .config.basics import ConfigItem, GlobalConfigHandler
 from .hardware.camera import Camera, gxiapi
-from .hardware.microcontroller import Microcontroller, Command, ILLUMINATION_CODE
+from .hardware import microcontroller as mc
 
 # utility functions
-
-_LAST_TIMESTAMP=time.time()
-def print_time(msg:str):
-    global _LAST_TIMESTAMP
-
-    if 0:
-        new_time=time.time()
-        time_since_last_timestamp=new_time-_LAST_TIMESTAMP
-        _LAST_TIMESTAMP=new_time
-
-        # only print if the time taken is above a threshold
-        TIME_THRESHOLD=1e-3 # 1ms
-        if time_since_last_timestamp>TIME_THRESHOLD:
-            print(f"{(time_since_last_timestamp*1e3):21.1f}ms : {msg}")
 
 def linear_regression(x:list[float]|np.ndarray,y:list[float]|np.ndarray)->tuple[float,float]:
     "returns (slope,intercept)"
@@ -89,74 +78,6 @@ def generate_random_number_string(num_digits:int=9)->str:
     max_val-=2
     return f"{(int(random.random()*max_val)+1):0{num_digits}d}"
 
-# wrap error cases in http response models
-
-class InternalErrorModel(BaseModel):
-    detail: str
-
-def error_internal(detail:str)->tp.NoReturn:
-    """raise an HTTPException with specified detail """
-    raise HTTPException(status_code=500,detail=detail)
-
-# input and output parameter models (for server i/o and internal use)
-
-class StagePosition(BaseModel):
-    x_pos_mm:float
-    y_pos_mm:float
-    z_pos_mm:float
-
-    @staticmethod
-    def zero()->"StagePosition":
-        return StagePosition(x_pos_mm=0,y_pos_mm=0,z_pos_mm=0)
-
-class ImageStoreInfo(BaseModel):
-    handle:str
-    channel:sc.AcquisitionChannelConfig
-    width_px:int
-    height_px:int
-    timestamp:float
-
-class ConfigFileInfo(BaseModel):
-    filename:str
-    timestamp:Optional[str]
-    comment:Optional[str]
-    cell_line:str
-    plate_type:str
-
-class ConfigListResponse(BaseModel):
-    status:tp.Literal["success"]
-    configs:tp.List[ConfigFileInfo]
-
-class CoreCurrentState(BaseModel):
-    status:tp.Literal["success"]
-    state:str
-    is_in_loading_position:bool
-    stage_position:StagePosition
-    latest_imgs:tp.Dict[str,ImageStoreInfo]
-    current_acquisition_id:Optional[str]
-
-class BasicSuccessResponse(BaseModel):
-    status:tp.Literal["success"]
-
-class HistogramResponse(BaseModel):
-    status:tp.Literal["success"]
-    channel_name:str
-    hist_values:tp.List[int]
-
-class ConfigFetchResponse(BaseModel):
-    status:tp.Literal["success"]
-    file:sc.AcquisitionConfig
-
-class LaserAutofocusCalibrationData(BaseModel):
-    um_per_px:float
-    x_reference:float
-
-    calibration_position:StagePosition
-
-class LaserAutofocusCalibrationResponse(BaseModel):
-    status:tp.Literal["success"]
-    calibration_data:LaserAutofocusCalibrationData
-
 app = FastAPI(debug=True)
 app.mount("/src", StaticFiles(directory="src"), name="static")
 
@@ -171,76 +92,6 @@ async def send_css(path: str):
 @app.get("/src/{path:path}")
 async def send_js(path: str):
     return FileResponse(f"src/{path}")
-
-class AcquisitionCommand(str,Enum):
-    CANCEL="cancel"
-
-class AcquisitionStartResponse(BaseModel):
-    status:tp.Literal["success"]
-    acquisition_id:str
-
-class WellSite(BaseModel):
-    x:int
-    y:int
-    z:int
-
-class LastImageInformation(BaseModel):
-    well:str
-    site:WellSite
-    timepoint:int
-    channel_name:str
-    full_path:str
-    handle:str
-
-class AcquisitionProgressStatus(BaseModel):
-    # measureable progress
-    current_num_images:int
-    time_since_start_s:float
-    start_time_iso:str
-    current_storage_usage_GB:float
-
-    # estimated completion time information
-    # estimation may be more complex than linear interpolation, hence done on server side
-    estimated_total_time_s:Optional[float]
-
-    # last image that was acquired
-    last_image:LastImageInformation
-
-class AcquisitionMetaInformation(BaseModel):
-    total_num_images:int
-    max_storage_size_images_GB:float
-
-class AcquisitionStatusOut(BaseModel):
-    """acquisition thread message out"""
-
-    status:tp.Literal["success"]
-
-    acquisition_id:str
-    acquisition_status:tp.Literal["running","cancelled","completed","crashed"]
-    acquisition_progress:AcquisitionProgressStatus
-
-    # some meta information about the acquisition, derived from configuration file
-    # i.e. this is not updated during acquisition
-    acquisition_meta_information:AcquisitionMetaInformation
-
-    acquisition_config:sc.AcquisitionConfig
-
-    message:str
-
-class AcquisitionStatus(BaseModel):
-    acquisition_id:str
-    queue_in:asyncio.Queue[AcquisitionCommand]
-    """queue to send messages to the thread"""
-    queue_out:asyncio.Queue[AcquisitionStatusOut]
-    """queue to receive messages from the thread"""
-    last_status:tp.Optional[AcquisitionStatusOut]
-    thread_is_running:bool
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-class HardwareCapabilitiesResponse(BaseModel):
-    wellplate_types:list[sc.Wellplate]
-    main_camera_imaging_channels:list[sc.AcquisitionChannelConfig]
 
 @app.api_route("/api/get_features/hardware_capabilities", methods=["GET"], summary="Get available imaging channels and plate types.")
 def get_hardware_capabilities()->HardwareCapabilitiesResponse:
@@ -407,623 +258,6 @@ class CoreLock(BaseModel):
         self._last_key_use=time.time()
         return True
 
-class CoreState(str,Enum):
-    Idle="idle"
-    ChannelSnap="channel_snap"
-    ChannelStream="channel_stream"
-    LoadingPosition="loading_position"
-    Moving="moving"
-
-class CoreStreamHandler(BaseModel):
-    """
-        class used to control a streaming microscope
-
-        i.e. image acquisition is running in streaming mode
-    """
-
-    core:"Core"
-    should_stop:bool=False
-    channel_config:sc.AcquisitionChannelConfig
-
-    # allow field of non-basemodel Core
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    def __call__(self,img:gxiapi.RawImage):
-        if self.should_stop:
-            return True
-        
-        match img.get_status():
-            case gxiapi.GxFrameStatusList.INCOMPLETE:
-                error_internal(detail="incomplete frame")
-            case gxiapi.GxFrameStatusList.SUCCESS:
-                pass
-        
-        img_np=img.get_numpy_array()
-        assert img_np is not None
-        img_np=img_np.copy()
-
-        img_np=Core._process_image(img_np)
-        
-        self.core._store_new_image(img_np,self.channel_config)
-
-        return self.should_stop
-
-class CoreCommand(BaseModel):
-    """ virtual base class for core commands """
-
-    async def run(self,core:"Core")->BaseModel:
-        raise NotImplementedError("run not implemented for basic CoreCommand")
-    
-CoreCommandDerived=tp.TypeVar("CoreCommandDerived",bound=CoreCommand)
-
-class LoadingPositionEnter(BaseModel):
-    """
-    enter loading position
-
-    enters the stage loading position, and remains there until leave loading position command is executed.
-    """
-
-    async def run(self,core:"Core")->BasicSuccessResponse:
-        if core.is_in_loading_position:
-            error_internal(detail="already in loading position")
-        
-        core.state=CoreState.Moving
-        
-        # home z
-        await core.mc.send_cmd(Command.home("z"))
-
-        # clear clamp in y first
-        await core.mc.send_cmd(Command.move_to_mm("y",30))
-        # then clear clamp in x
-        await core.mc.send_cmd(Command.move_to_mm("x",30))
-
-        # then home y, x
-        await core.mc.send_cmd(Command.home("y"))
-        await core.mc.send_cmd(Command.home("x"))
-        
-        core.is_in_loading_position=True
-
-        core.state=CoreState.LoadingPosition
-
-        return BasicSuccessResponse(status="success")
-
-class LoadingPositionLeave(BaseModel):
-    """
-    leave loading position
-
-    leaves the stage loading position, and moves to a default position on the plate (this position may not be inside a well, so no cells may be visibile at this time!)
-    """
-
-    async def run(self,core:"Core")->BasicSuccessResponse:
-        if not core.is_in_loading_position:
-            error_internal(detail="not in loading position")
-        
-        core.state=CoreState.Moving
-
-        await core.mc.send_cmd(Command.move_to_mm("x",30))
-        await core.mc.send_cmd(Command.move_to_mm("y",30))
-        await core.mc.send_cmd(Command.move_to_mm("z",1))
-        
-        core.is_in_loading_position=False
-
-        core.state=CoreState.Idle
-
-        return BasicSuccessResponse(status="success")
-
-class ImageAcquiredResponse(BaseModel):
-    status:tp.Literal["success"]
-    img_handle:str
-
-class StreamingStartedResponse(BaseModel):
-    status:tp.Literal["success"]
-    channel:sc.AcquisitionChannelConfig
-
-class _ChannelAcquisitionControl(BaseModel):
-    """
-        control imaging in a channel
-
-        for mode=="snap", calls _store_new_image internally
-    """
-
-    mode:tp.Literal['snap','stream_begin','stream_end']
-    channel:sc.AcquisitionChannelConfig
-    framerate_hz:float=5
-    machine_config:list[sc.ConfigItem]=Field(default_factory=list)
-
-    async def run(self,core:"Core")->BasicSuccessResponse|ImageAcquiredResponse|StreamingStartedResponse:
-        cam=core.main_cam
-
-        try:
-            illum_code=ILLUMINATION_CODE.from_handle(self.channel.handle)
-        except Exception as e:
-            error_internal(detail=f"invalid channel handle: {self.channel.handle}")
-        
-        if self.machine_config is not None:
-            GlobalConfigHandler.override(self.machine_config)
-
-        match self.mode:
-            case "snap":
-                if core.is_streaming or core.stream_handler is not None:
-                    error_internal(detail="already streaming")
-                
-                core.state=CoreState.ChannelSnap
-
-                print_time("before illum on")
-                await core.mc.send_cmd(Command.illumination_begin(illum_code,self.channel.illum_perc))
-                print_time("before acq")
-                img=cam.acquire_with_config(self.channel)
-                print_time("after acq")
-                await core.mc.send_cmd(Command.illumination_end(illum_code))
-                print_time("after illum off")
-                if img is None:
-                    core.state=CoreState.Idle
-                    error_internal(detail="failed to acquire image")                
-
-                img=Core._process_image(img)
-                print_time("after img proc")
-                img_handle=core._store_new_image(img,self.channel)
-                print_time("after img store")
-
-                core.state=CoreState.Idle
-
-                return ImageAcquiredResponse(status="success",img_handle=img_handle)
-            
-            case "stream_begin":
-                if core.is_streaming or core.stream_handler is not None:
-                    error_internal(detail="already streaming")
-
-                if self.framerate_hz is None:
-                    error_internal(detail="no framerate_hz")
-
-                core.state=CoreState.ChannelStream
-                core.is_streaming=True
-
-                core.stream_handler=CoreStreamHandler(core=core,channel_config=self.channel)
-
-                await core.mc.send_cmd(Command.illumination_begin(illum_code,self.channel.illum_perc))
-
-                cam.acquire_with_config(
-                    self.channel,
-                    mode="until_stop",
-                    callback=core.stream_handler,
-                    target_framerate_hz=self.framerate_hz
-                )
-
-                return StreamingStartedResponse(status="success",channel=self.channel)
-            
-            case "stream_end":
-                if (not core.is_streaming or core.stream_handler is None) or (not cam.acquisition_ongoing):
-                    error_internal(detail="not currently streaming")
-                
-                core.stream_handler.should_stop=True
-                await core.mc.send_cmd(Command.illumination_end(illum_code))
-                # cancel ongoing acquisition
-                from seafront.hardware.camera import AcquisitionMode
-                cam.acquisition_ongoing=False
-                cam._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
-
-                core.stream_handler=None
-                core.is_streaming=False
-
-                core.state=CoreState.Idle
-                return BasicSuccessResponse(status="success")
-            
-            case _o:
-                error_internal(detail=f"invalid mode {_o}")
-
-class ChannelSnapshot(_ChannelAcquisitionControl):
-    def __init__(self,*args,**kwargs):
-        super().__init__(*args,mode="snap",**kwargs)
-
-class MoveByResult(BaseModel):
-    status:tp.Literal["success"]
-    moved_by_mm:float
-    axis:str
-
-class MoveBy(BaseModel):
-    """
-    move stage by some distance
-
-    moves stage by some distance, relative to its current location. may introduce minor errors if used frequently without intermediate absolute moveto
-    """
-
-    axis:tp.Literal["x","y","z"]
-    distance_mm:float
-
-    async def run(self,core:"Core")->MoveByResult:
-        if core.is_in_loading_position:
-            error_internal(detail="now allowed while in loading position")
-
-        core.state=CoreState.Moving
-
-        await core.mc.send_cmd(Command.move_by_mm(self.axis,self.distance_mm))
-
-        core.state=CoreState.Idle
-
-        return MoveByResult(status= "success",moved_by_mm=self.distance_mm,axis=self.axis)
-
-class MoveTo(BaseModel):
-    """
-    move to target coordinates
-
-    any of the arguments may be None, in which case the corresponding axis is not moved
-
-    these coordinates are internally adjusted to take the calibration into account
-    """
-
-    x_mm:Optional[float]
-    y_mm:Optional[float]
-    z_mm:Optional[float]=None
-
-    async def run(self,core:"Core")->BasicSuccessResponse:
-        if core.is_in_loading_position:
-            error_internal(detail="now allowed while in loading position")
-
-        if self.x_mm is not None and self.x_mm<0:
-            error_internal(detail=f"x coordinate out of bounds {self.x_mm = }")
-        if self.y_mm is not None and self.y_mm<0:
-            error_internal(detail=f"y coordinate out of bounds {self.y_mm = }")
-        if self.z_mm is not None and self.z_mm<0:
-            error_internal(detail=f"z coordinate out of bounds {self.z_mm = }")
-
-        prev_state=core.state
-        core.state=CoreState.Moving
-
-        approach_x_before_y=True
-
-        if self.x_mm is not None and self.y_mm is not None:
-            current_state=await core.get_current_state()
-
-            # plate center is (very) rougly at x=61mm, y=40mm
-            # we have: start position, target position, and two possible edges to move across
-
-            center=61.0,40.0
-            start=current_state.stage_position.x_pos_mm,current_state.stage_position.y_pos_mm
-            target=self.x_mm,self.y_mm
-
-            # if edge1 is closer to center, then approach_x_before_y=True, else approach_x_before_y=False
-            edge1=self.x_mm,current_state.stage_position.y_pos_mm
-            edge2=current_state.stage_position.x_pos_mm,self.y_mm
-
-            def dist(p1:tp.Tuple[float,float],p2:tp.Tuple[float,float])->float:
-                return ((p1[0]-p2[0])**2+(p1[1]-p2[1])**2)**0.5
-
-            approach_x_before_y=dist(edge1,center)<dist(edge2,center)
-
-            # we want to choose the edge that is closest to the center, because this avoid moving through the forbidden plate corners
-
-        if approach_x_before_y:
-            if self.x_mm is not None:
-                x_mm=core.pos_x_real_to_measured(self.x_mm)
-                if x_mm<0:
-                    error_internal(detail=f"calibrated x coordinate out of bounds {x_mm = }")
-                await core.mc.send_cmd(Command.move_to_mm("x",x_mm))
-
-            if self.y_mm is not None:
-                y_mm=core.pos_y_real_to_measured(self.y_mm)
-                if y_mm<0:
-                    error_internal(detail=f"calibrated y coordinate out of bounds {y_mm = }")
-                await core.mc.send_cmd(Command.move_to_mm("y",y_mm))
-        else:
-            if self.y_mm is not None:
-                y_mm=core.pos_y_real_to_measured(self.y_mm)
-                if y_mm<0:
-                    error_internal(detail=f"calibrated y coordinate out of bounds {y_mm = }")
-                await core.mc.send_cmd(Command.move_to_mm("y",y_mm))
-
-            if self.x_mm is not None:
-                x_mm=core.pos_x_real_to_measured(self.x_mm)
-                if x_mm<0:
-                    error_internal(detail=f"calibrated x coordinate out of bounds {x_mm = }")
-                await core.mc.send_cmd(Command.move_to_mm("x",x_mm))
-
-        if self.z_mm is not None:
-            z_mm=core.pos_z_real_to_measured(self.z_mm)
-            if z_mm<0:
-                error_internal(detail=f"calibrated z coordinate out of bounds {z_mm = }")
-            await core.mc.send_cmd(Command.move_to_mm("z",z_mm))
-
-        core.state=prev_state
-
-        return BasicSuccessResponse(status="success")
-
-class MoveToWell(BaseModel):
-    """
-    move to well
-
-    moves to center of target well (centers field of view). requires specification of plate type because measurements of plate types vary by manufacturer.
-    """
-
-    plate_type:str
-    well_name:str
-
-    async def run(self,core:"Core")->BasicSuccessResponse:
-        if core.is_in_loading_position:
-            error_internal(detail="now allowed while in loading position")
-
-        plates=[p for p in sc.Plates if p.Model_id==self.plate_type]
-        if len(plates)==0:
-            error_internal(detail="plate type not found")
-
-        assert len(plates)==1, f"found multiple plates with id {self.plate_type}"
-
-        plate=plates[0]
-
-        if wellIsForbidden(self.well_name,plate):
-            error_internal(detail="well is forbidden")
-
-        x_mm=plate.get_well_offset_x(self.well_name) + plate.Well_size_x_mm/2
-        y_mm=plate.get_well_offset_y(self.well_name) + plate.Well_size_y_mm/2
-
-        res=await MoveTo(x_mm=x_mm,y_mm=y_mm).run(core)
-        if res.status!="success":
-            return res
-
-        return BasicSuccessResponse(status="success")
-
-class AutofocusMeasureDisplacementResult(BaseModel):
-    status:tp.Literal["success"]
-    displacement_um:float
-
-class AutofocusMeasureDisplacement(BaseModel):
-    """
-        measure current displacement from reference position
-    """
-
-    config_file:sc.AcquisitionConfig
-    override_num_images:Optional[int]=None
-        
-    async def run(self,core:"Core")->AutofocusMeasureDisplacementResult:
-        if self.config_file.machine_config is not None:
-            GlobalConfigHandler.override(self.config_file.machine_config)
-
-        g_config=GlobalConfigHandler.get_dict()
-
-        conf_af_exp_ms_item=g_config["laser_autofocus_exposure_time_ms"]
-        assert conf_af_exp_ms_item is not None
-        conf_af_exp_ms=conf_af_exp_ms_item.floatvalue
-
-        conf_af_exp_ag_item=g_config["laser_autofocus_analog_gain"]
-        assert conf_af_exp_ag_item is not None
-        conf_af_exp_ag=conf_af_exp_ag_item.floatvalue
-
-        conf_af_pix_fmt_item=g_config["laser_autofocus_pixel_format"]
-        assert conf_af_pix_fmt_item is not None
-        # todo also use conf_af_pix_fmt
-
-        conf_af_if_calibrated=g_config["laser_autofocus_is_calibrated"]
-        conf_af_calib_x=g_config["laser_autofocus_calibration_x"]
-        conf_af_calib_umpx=g_config["laser_autofocus_calibration_umpx"]
-        if conf_af_if_calibrated is None or conf_af_calib_x is None or conf_af_calib_umpx is None or not conf_af_if_calibrated.boolvalue:
-            error_internal(detail="laser autofocus not calibrated")
-
-        # get laser spot location
-        # sometimes one of the two expected dots cannot be found in _get_laser_spot_centroid because the plate is so far off the focus plane though, catch that case
-        try:
-            calib_params=LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx.floatvalue,x_reference=conf_af_calib_x.floatvalue,calibration_position=StagePosition.zero())
-            displacement_um=0
-
-            num_images=3 or self.override_num_images
-            for i in range(num_images):
-                latest_esimated_z_offset_mm=await core._approximate_laser_af_z_offset_mm(calib_params)
-                displacement_um+=latest_esimated_z_offset_mm*1e3/num_images
-
-        except Exception as e:
-            error_internal(detail="failed to measure displacement (got no signal): {str(e)}")
-
-        return AutofocusMeasureDisplacementResult(status="success",displacement_um=displacement_um)
-
-class AutofocusSnapResult(BaseModel):
-    status:tp.Literal["success"]
-    img_handle:str
-    width_px:int
-    height_px:int
-
-class AutofocusSnap(BaseModel):
-    """
-        snap a laser autofocus image
-    """
-
-    exposure_time_ms:float=5
-    analog_gain:float=10
-    turn_laser_on:bool=True
-    turn_laser_off:bool=True
-
-    async def run(self,core:"Core")->AutofocusSnapResult:
-        if self.turn_laser_on:
-            await core.mc.send_cmd(Command.af_laser_illum_begin())
-        
-        channel_config=sc.AcquisitionChannelConfig(
-            name="laser autofocus acquisition", # unused
-            handle="__invalid_laser_autofocus_channel__", # unused
-            illum_perc=100, # unused
-            exposure_time_ms=self.exposure_time_ms,
-            analog_gain=self.analog_gain,
-            z_offset_um=0, # unused
-            num_z_planes=0, # unused
-            delta_z_um=0, # unused
-        )
-
-        img=core.focus_cam.acquire_with_config(channel_config)
-        if img is None:
-            core.state=CoreState.Idle
-            error_internal(detail="failed to acquire image")
-        
-        img_handle=core._store_new_laseraf_image(img,channel_config)
-
-        if self.turn_laser_off:
-            await core.mc.send_cmd(Command.af_laser_illum_end())
-
-        return AutofocusSnapResult(
-            status="success",
-            img_handle=img_handle,
-            width_px=img.shape[1],
-            height_px=img.shape[0],
-        )
-
-class AutofocusLaserWarmup(BaseModel):
-    """
-        warm up the laser for autofocus
-
-        sometimes the laser needs to stay on for a little bit before it can be used (the short on-time of ca. 5ms is
-        sometimes not enough to turn the laser on properly without a recent warmup)
-    """
-
-    warmup_time_s:float=0.5
-
-    async def run(self,core:"Core")->BasicSuccessResponse:
-        await core.mc.send_cmd(Command.af_laser_illum_begin())
-
-        # wait for the laser to warm up
-        await asyncio.sleep(self.warmup_time_s)
-
-        await core.mc.send_cmd(Command.af_laser_illum_end())
-
-        return BasicSuccessResponse(status="success")
-
-class IlluminationEndAll(BaseModel):
-    """
-        turn off all illumination sources
-
-        rather, send signal to do so. this function does not check if any are on before sending the signals.
-
-        this function is NOT for regular operation!
-        it does not verify that the microscope is not in any acquisition state
-    """
-
-    async def run(self,core:"Core")->BasicSuccessResponse:
-        # make sure all illumination is off
-        for illum_src in [
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
-
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
-        ]:
-            await core.mc.send_cmd(Command.illumination_end(illum_src))
-
-        return BasicSuccessResponse(status="success")
-
-class AutofocusApproachTargetDisplacement(BaseModel):
-    """
-        move to target offset
-
-        measure current offset from reference position, then moves to target offset (may perform more than one physical move to reach target position)
-    """
-
-    target_offset_um:float
-    config_file:sc.AcquisitionConfig
-    max_num_reps:int=3
-    pre_approach_refz:bool=True
-
-    async def estimate_offset_mm(self,core:"Core"):
-        res=await AutofocusMeasureDisplacement(config_file=self.config_file).run(core)
-
-        current_displacement_um=res.displacement_um
-        assert current_displacement_um is not None
-
-        return (self.target_offset_um-current_displacement_um)*1e-3
-
-    async def current_z_mm(self,core:"Core"):
-        current_state=await core.get_current_state()
-        return current_state.stage_position.z_pos_mm
-
-    async def run(self,core:"Core")->BasicSuccessResponse:
-        if core.is_in_loading_position:
-            error_internal(detail="now allowed while in loading position")
-
-        if core.state!=CoreState.Idle:
-            error_internal(detail="cannot move while in non-idle state")
-
-        g_config=GlobalConfigHandler.get_dict()
-
-        # get autofocus calibration data
-        conf_af_calib_x=g_config["laser_autofocus_calibration_x"].floatvalue
-        conf_af_calib_umpx=g_config["laser_autofocus_calibration_umpx"].floatvalue
-        autofocus_calib=LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx,x_reference=conf_af_calib_x,calibration_position=StagePosition.zero())
-
-        # we are looking for a z coordinate where the measured dot_x is equal to this target_x.
-        # we can estimate the current z offset based on the currently measured dot_x.
-        # then we loop:
-        #   we move by the estimated offset to reduce the difference between target_x and dot_x.
-        #   then we check if we are at target_x.
-        #     if we have not reached it, we move further in that direction, based on another estimate.
-        #     if have overshot (moved past) it, we move back by some estimate.
-        #     terminate when dot_x is within a margin of target_x.
-
-        target_x=conf_af_calib_x
-
-        current_state=await core.get_current_state()
-        if current_state.status!="success":
-            return current_state
-        current_z=current_state.stage_position.z_pos_mm
-        initial_z=current_z
-
-        if self.pre_approach_refz:
-            gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
-            if gconfig_refzmm_item is None:
-                error_internal(detail="laser_autofocus_calibration_refzmm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set")
-
-            res=await MoveTo(x_mm=None,y_mm=None,z_mm=gconfig_refzmm_item.floatvalue).run(core)
-            if res.status!="success":
-                error_internal(detail=f"failed to approach ref z: {res.dict()}")
-
-        old_state=core.state
-        core.state=CoreState.Moving
-
-        try:
-            # TODO : make this better, utilizing these value pairs
-            # (
-            #    physz = (await core.get_current_state()).stage_position.z_pos_mm,
-            #    dotx = await core._approximate_laser_af_z_offset_mm(autofocus_calib,_leftmostxinsteadofestimatedz=True)
-            # )
-
-            async def get_dotx():
-                return await core._approximate_laser_af_z_offset_mm(autofocus_calib,_leftmostxinsteadofestimatedz=True)
-
-            last_distance_estimate_mm=await self.estimate_offset_mm(core)
-            MAX_MOVEMENT_RANGE_MM=0.3 # should be derived from the calibration data, but this value works fine in practice
-            if np.abs(last_distance_estimate_mm)>MAX_MOVEMENT_RANGE_MM:
-                error_internal(detail="measured autofocus focal plane offset too large")
-
-            for rep_i in range(self.max_num_reps):
-                distance_estimate_mm=await self.estimate_offset_mm(core)
-
-                # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
-                # (since this indicates that we have moved away from the focal plane, which should not happen)
-                if rep_i>0 and np.abs(last_distance_estimate_mm)<np.abs(distance_estimate_mm):
-                    break
-
-                last_distance_estimate_mm=distance_estimate_mm
-
-                await core.mc.send_cmd(Command.move_by_mm("z",distance_estimate_mm))
-
-        except:
-            # if any interaction failed, attempt to reset z position to known somewhat-good position
-            await core.mc.send_cmd(Command.move_to_mm("z",initial_z))
-        finally:
-            core.state=old_state
-
-        return BasicSuccessResponse(status="success")
-
-class SendImageHistogram(BaseModel):
-    """
-    calculate histogram for an image
-
-    calculates a 256 bucket histogram, regardless of pixel depth.
-
-    may internally downsample the image to reduce calculation time.
-    """
-
-    img_handle:str
-
-    async def run(self,core:"Core")->HistogramResponse:
-        res=await core.get_image_histogram(self.img_handle)
-
-        return res
-
 class ImageStoreEntry(BaseModel):
     """ utility class to store camera images with some metadata """
 
@@ -1034,24 +268,425 @@ class ImageStoreEntry(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-def wellIsForbidden(well_name:str,plate_type:sc.Wellplate)->bool:
-    g_config=GlobalConfigHandler.get_dict()
-    forbidden_wells_entry=g_config["forbidden_wells"]
-    if forbidden_wells_entry is None:
-        error_internal(detail="forbidden_wells entry not found in global config")
-    
-    forbidden_wells_str=forbidden_wells_entry.value
-    if not isinstance(forbidden_wells_str,str):
-        error_internal(detail="forbidden_wells entry is not a string")
+class MC_getLastPosition(BaseModel):
+    """ command class to retrieve core.mc.get_last_position """
+    async def run(self,core:"Core")->mc.Position:
+        return await core.mc.get_last_position()
 
-    for s in forbidden_wells_str.split(";"):
-        num_wells,well_names=s.split(":")
-        if plate_type.Num_total_wells==int(num_wells):
-            for well in well_names.split(","):
-                if well==well_name:
-                    return True
+class Core_getMainCam(BaseModel):
+    async def run(self,core:"Core")->Camera:
+        return core.main_cam
+
+class Core_getImageByHandle(BaseModel):
+    img_handle:str
+
+    async def run(self,core:"Core")->tp.Union[ImageStoreEntry,None]:
+        return core._get_imageinfo_by_handle(self.img_handle)
+
+# store img as .tiff file
+async def store_image(
+    latest_channel_image:ImageStoreEntry,
+    channel:sc.AcquisitionChannelConfig,
+    core_main_cam:Camera,
+    image_storage_path:str,
+    img_compression_algorithm:str,
+    PIXEL_SIZE_UM:float,
+    light_source_type:int
+):
+    # takes 70-250ms
+    tifffile.imwrite(
+        image_storage_path,
+        latest_channel_image.img,
+
+        compression=img_compression_algorithm,
+        compressionargs={},# for zlib: {'level': 8},
+        maxworkers=1,#3,
+
+        # this metadata is just embedded as a comment in the file
+        metadata={
+            # non-standard tag, because the standard bitsperpixel has a real meaning in the image image data, but
+            # values that are not multiple of 8 cannot be used with compression
+            "BitsPerPixel":latest_channel_image.bit_depth, # type:ignore
+            "BitPaddingInfo":"lower bits are padding with 0s",
+
+            "LightSourceName":channel.name,
+
+            "ExposureTimeMS":f"{channel.exposure_time_ms:.2f}",
+            "AnalogGainDB":f"{channel.analog_gain:.2f}",
+        },
+
+        photometric="minisblack", # zero means black
+        resolutionunit=3, # 3 = cm
+        resolution=(1/(PIXEL_SIZE_UM*1e-6),1/(PIXEL_SIZE_UM*1e-6)),
+        extratags=[
+            # tuples as accepted at https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L856
+            # tags may be specified as string interpretable by https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L5000
+            ("Make", 's', 0, core_main_cam.vendor_name, True),
+            ("Model", 's', 0, core_main_cam.model_name, True),
+
+            # apparently these are not widely supported
+            ("ExposureTime", 'q', 1, int(channel.exposure_time_ms*1e3), True),
+            ("LightSource", 'h', 1, light_source_type, True),
+        ]
+    )
+
+    print(f"stored image to {image_storage_path}")
+
+class ProtocolGenerator(BaseModel):
+    """
+    params:
+        img_compression_algorithm: tp.Literal["LZW","zlib"] - lossless compression algorithms only
+    """
+
+    config_file:sc.AcquisitionConfig
+    handle_q_in:tp.Callable[[],None]
+    plate:sc.Wellplate
+    acquisition_status:AcquisitionStatus
+    acquisition_id:str
+    ongoing_image_store_tasks:list
+
+    img_compression_algorithm:tp.Literal["LZW","zlib"]="LZW"
+
+    # the values below are initialized during post init hook
+    num_wells:int=-1
+    num_sites:int=-1
+    num_channels:int=-1
+    num_channel_z_combinations:int=-1
+    num_images_total:int=-1
+    site_topleft_x_mm:float=-1
+    site_topleft_y_mm:float=-1
+    image_size_bytes:int=-1
+    max_storage_size_images_GB:float=-1
+    project_output_path:path.Path=Field(default_factory=path.Path)
+
+    @property
+    def well_sites(self):
+        "selected sites in the grid mask"
+        return [s for s in self.config_file.grid.mask if s.selected]
+    @property
+    def channels(self):
+        "selected channels"
+        return [c for c in self.config_file.channels if c.enabled]
+
+    # pydantics version of dataclass.__post_init__
+    def model_post_init(self,__context):
+        self.num_wells=len(self.config_file.plate_wells)
+        self.num_sites=len(self.well_sites)
+        self.num_channels=len([c for c in self.config_file.channels if c.enabled])
+        self.num_channel_z_combinations=sum((c.num_z_planes for c in self.config_file.channels))
+        self.num_images_total=self.num_wells*self.num_sites*self.num_channel_z_combinations
+
+        # the grid is centered around the center of the well
+        self.site_topleft_x_mm=self.plate.Well_size_x_mm / 2 - ((self.config_file.grid.num_x-1) * self.config_file.grid.delta_x_mm) / 2
+        "offset of top left site from top left corner of the well, in x, in mm"
+        self.site_topleft_y_mm=self.plate.Well_size_y_mm / 2 - ((self.config_file.grid.num_y-1) * self.config_file.grid.delta_y_mm) / 2
+        "offset of top left site from top left corner of the well, in y, in mm"
+
+        g_config=GlobalConfigHandler.get_dict()
+
+        # calculate meta information about acquisition
+        cam_img_width=g_config['main_camera_image_width_px']
+        assert cam_img_width is not None
+        target_width:int=cam_img_width.intvalue
+        cam_img_height=g_config['main_camera_image_height_px']
+        assert cam_img_height is not None
+        target_height:int=cam_img_height.intvalue
+        # get byte size per pixel from config main camera pixel format
+        main_cam_pix_format=g_config['main_camera_pixel_format']
+        assert main_cam_pix_format is not None
+        match main_cam_pix_format.value:
+            case "mono8":
+                bytes_per_pixel=1
+            case "mono10":
+                bytes_per_pixel=2
+            case "mono12":
+                bytes_per_pixel=2
+            case _unexpected:
+                error_internal(detail=f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}")
+
+        self.image_size_bytes=target_width*target_height*bytes_per_pixel
+        self.max_storage_size_images_GB=self.num_images_total*self.image_size_bytes/1024**3
+
+        base_storage_path_item=g_config["base_image_output_dir"]
+        assert base_storage_path_item is not None
+        assert type(base_storage_path_item.value) is str
+        base_storage_path=path.Path(base_storage_path_item.value)
+        assert base_storage_path.exists(), f"{base_storage_path = } does not exist"
+
+        project_name_is_acceptable=len(self.config_file.project_name) and name_validity_regex.match(self.config_file.project_name)
+        if not project_name_is_acceptable:
+            error_internal(detail="project name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes")
+        
+        plate_name_is_acceptable=len(self.config_file.plate_name)>0 and name_validity_regex.match(self.config_file.plate_name)
+        if not plate_name_is_acceptable:
+            error_internal(detail="plate name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes")
+
+        self.project_output_path=base_storage_path/self.config_file.project_name/self.config_file.plate_name/self.acquisition_id
+        self.project_output_path.mkdir(parents=True)
+
+        # write config file to output directory
+        with (self.project_output_path/"config.json").open("w") as file:
+            file.write(self.config_file.json())
+
+    def generate(self)->tp.Generator[
+        # yielded types: None means done, str is returned on first iter
+        tp.Union[ None, str, MoveTo, AutofocusMeasureDisplacement, AutofocusApproachTargetDisplacement, _ChannelAcquisitionControl, MC_getLastPosition, Core_getMainCam, Core_getImageByHandle],
+        # received types (at runtime must match return type of <yielded type>.run()."resulttype")
+        tp.Union[ None, AutofocusMeasureDisplacementResult, BasicSuccessResponse, ImageAcquiredResponse, StreamingStartedResponse, mc.Position, Camera, ImageStoreEntry]
+        # generator return value
+        ,None
+    ]:
+        # print(f"acquiring {num_wells} wells, {num_sites} sites, {num_channels} channels, i.e. {num_images_total} images, taking up to {max_storage_size_images_GB}GB")
+
+        # 
+        Z_STACK_COUNTER_BACKLASH_MM=40e-3 # 40um
+        PIXEL_SIZE_UM=900/3000 # 3000px wide fov covers 0.9mm
+        # movement below this threshold is not performed
+        DISPLACEMENT_THRESHOLD_UM: float=0.5
+
+        # counters on acquisition progress
+        start_time=time.time()
+        start_time_iso_str=sc.datetime2str(dt.datetime.now(dt.timezone.utc))
+        last_image_information=None
+
+        num_images_acquired=0
+        storage_usage_bytes=0
+
+        g_config=GlobalConfigHandler.get_dict()
+        
+        # first yield indicates that this generator is ready to produce commands
+        # the value from the consumer on the first yield is None
+        # i.e. this MUST be the first yield !!
+        yield "ready"
+
+        # get current z coordinate as z reference
+        last_position=yield MC_getLastPosition()
+        assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
+        reference_z_mm=last_position.z_pos_mm
+
+        # if laser autofocus is enabled, use autofocus z reference as initial z reference
+        gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
+        if self.config_file.autofocus_enabled and gconfig_refzmm_item is not None:
+            reference_z_mm=gconfig_refzmm_item.floatvalue
+
+            res=yield MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm)
+            assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
+            if res.status!="success": error_internal(detail=f"failed to move to laser autofocus ref z because {res.message}")
+
+        # run acquisition:
+
+        # used to store into metadata
+        core_main_cam=yield Core_getMainCam()
+        assert type(core_main_cam)==Camera
+
+        for well in self.config_file.plate_wells:
+            # these are xy sites
+            print_time("before next site")
+            for site_index,site in enumerate(self.well_sites):
+                self.handle_q_in()
+
+                # go to site
+                site_x_mm=self.plate.get_well_offset_x(well.well_name) + self.site_topleft_x_mm + site.col * self.config_file.grid.delta_x_mm
+                site_y_mm=self.plate.get_well_offset_y(well.well_name) + self.site_topleft_y_mm + site.row * self.config_file.grid.delta_y_mm
+
+                res=yield MoveTo(x_mm=site_x_mm,y_mm=site_y_mm)
+                assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
+
+                print_time("moved to site")
+
+                # run autofocus
+                if self.config_file.autofocus_enabled:
+                    for autofocus_attempt_num in range(3):
+                        current_displacement=yield AutofocusMeasureDisplacement(config_file=self.config_file)
+                        assert isinstance(current_displacement,AutofocusMeasureDisplacementResult), f"{type(current_displacement)=}"
+                        if current_displacement.status!="success": error_internal(detail=f"failed to measure autofocus displacement at site {site} in well {well} because {current_displacement.message}")
+                        
+                        current_displacement_um=current_displacement.displacement_um
+                        assert current_displacement_um is not None
+                        # print(f"measured offset of {current_displacement_um:.2f}um on attempt {autofocus_attempt_num}")
+                        if np.abs(current_displacement_um)<DISPLACEMENT_THRESHOLD_UM:
+                            break
+                        
+                        res=yield AutofocusApproachTargetDisplacement(target_offset_um=0,config_file=self.config_file,pre_approach_refz=False)
+                        assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
+                        if res.status!="success": error_internal(detail=f"failed to autofocus at site {site} in well {well} because {res.message}")
+
+                # reference for channel z offsets
+                # (this position may have been adjusted by the autofocus system, but even without autofocus the current position must be the reference)
+                last_position=yield MC_getLastPosition()
+                assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
+                reference_z_mm=last_position.z_pos_mm
+
+                print_time("af performed")
                 
-    return False
+                # z stack may be different for each channel, hence:
+                # 1. get list of (channel_z_index,channel,z_relative_to_reference), which may contain each channel more than once
+                # 2. order by z, in ascending (low to high)
+                # 3. move to lowest, start imaging while moving up
+                # 4. move to reference z again in preparation for next site
+
+                image_pos_z_list:list[tuple[int,float,sc.AcquisitionChannelConfig]]=[]
+                for channel in self.channels:
+                    channel_delta_z_mm=channel.delta_z_um*1e-3
+
+                    # <channel reference> is <site reference>+<channel z offset>
+                    base_z=reference_z_mm+channel.z_offset_um*1e-3
+
+                    # lower z base is <channel reference> adjusted for z stack, where \
+                    # n-1 z movements are performed, half of those below, half above <channel ref>
+                    base_z-=((channel.num_z_planes-1)/2)*channel_delta_z_mm
+
+                    for i in range(channel.num_z_planes):
+                        i_offset_mm=i*channel_delta_z_mm
+                        target_z_mm=base_z+i_offset_mm
+                        image_pos_z_list.append((i,target_z_mm,channel))
+
+                # sort in z
+                image_pos_z_list=sorted(image_pos_z_list,key=lambda v:v[1])
+
+                res=yield MoveTo(x_mm=None,y_mm=None,z_mm=image_pos_z_list[0][1]-Z_STACK_COUNTER_BACKLASH_MM)
+                assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
+                if res.status!="success": error_internal(detail=f"failed, because: {res.message}")
+                res=yield MoveTo(x_mm=None,y_mm=None,z_mm=image_pos_z_list[0][1])
+                assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
+                if res.status!="success": error_internal(detail=f"failed, because: {res.message}")
+
+                print_time("moved to init z")
+
+                for plane_index,channel_z_mm,channel in image_pos_z_list:
+                    self.handle_q_in()
+
+                    # move to channel offset
+                    last_position=yield MC_getLastPosition()
+                    assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
+                    current_z_mm=last_position.z_pos_mm
+
+                    distance_z_to_move_mm=channel_z_mm-current_z_mm
+                    if np.abs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_UM:
+                        res=yield MoveTo(x_mm=None,y_mm=None,z_mm=channel_z_mm)
+                        assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
+                        assert res.status=="success"
+
+                    print_time("moved to channel z")
+
+                    # snap image
+                    res=yield _ChannelAcquisitionControl(mode="snap",channel=channel)
+                    assert isinstance(res,ImageAcquiredResponse), f"{type(res)=}"
+                    assert res.status=="success"
+                    if not isinstance(res,ImageAcquiredResponse):error_internal(detail=f"failed to snap image at site {site} in well {well} (invalid result type {type(res)})")
+
+                    print_time("snapped image")
+
+                    img_handle=res.img_handle
+                    latest_channel_image=None
+                    if img_handle is not None:
+                        latest_channel_image=yield Core_getImageByHandle(img_handle=img_handle)
+                        assert isinstance(latest_channel_image,(ImageStoreEntry,None)), f"{type(latest_channel_image)=}" # type:ignore
+                    if latest_channel_image is None:
+                        error_internal(detail=f"image handle {img_handle} not found in image buffer")
+                    
+                    # store image
+                    image_storage_path=f"{str(self.project_output_path)}/{well.well_name}_s{site_index}_x{site.col+1}_y{site.row+1}_z{plane_index+1}_{channel.handle}.tiff"
+                    # add metadata to the file, based on tags from https://exiftool.org/TagNames/EXIF.html
+
+                    if channel.handle[:3]=="BF ":
+                        light_source_type=4 # Flash (seems like the best fit)
+                    else:
+                        light_source_type=2 # Fluorescent
+
+                    # improve system responsiveness while compressing and writing to disk
+                    self.ongoing_image_store_tasks.append(asyncio.create_task(store_image(
+                        latest_channel_image=latest_channel_image, #type:ignore
+                        channel=channel,
+                        core_main_cam=core_main_cam,
+                        image_storage_path=str(image_storage_path),
+                        img_compression_algorithm=self.img_compression_algorithm,
+                        PIXEL_SIZE_UM=PIXEL_SIZE_UM,
+                        light_source_type=light_source_type
+                    )))
+
+                    # pop finished tasks off queue (in-place, hence pop()+push())
+                    running_tasks=[]
+                    num_done=0
+                    while len(self.ongoing_image_store_tasks)>0:
+                        task=self.ongoing_image_store_tasks.pop()
+                        if task.done():
+                            num_done+=1
+                        else:
+                            running_tasks.append(task)
+                    print_time(f"image store tasks: {len(running_tasks)} running, {num_done} finished")
+                    for task in running_tasks:
+                        self.ongoing_image_store_tasks.append(task)
+
+                    print_time("scheduled image store")
+
+                    num_images_acquired+=1
+                    # get storage size from filesystem because tiff compression may reduce size below size in memory
+                    try:
+                        file_size_on_disk=path.Path(image_storage_path).stat().st_size
+                        storage_usage_bytes+=file_size_on_disk
+                    except:
+                        # ignore any errors here, because this is not an essential feature
+                        pass
+
+                    # status items
+                    last_image_information=LastImageInformation(
+                        well=well.well_name,
+                        site=WellSite(
+                            x=site.col,
+                            y=site.row,
+                            z=plane_index,
+                        ),
+                        timepoint=1,
+                        channel_name=channel.name,
+                        full_path=image_storage_path,
+                        handle=img_handle,
+                    )
+                    time_since_start_s=time.time()-start_time
+                    if num_images_acquired>0:
+                        estimated_total_time_s=time_since_start_s*(self.num_images_total-num_images_acquired)/num_images_acquired
+                    else:
+                        estimated_total_time_s=None
+
+                    print(f"{num_images_acquired}/{self.num_images_total} images acquired")
+                    
+                    self.acquisition_status.last_status=AcquisitionStatusOut(
+                        status="success",
+
+                        acquisition_id=self.acquisition_id,
+                        acquisition_status="running",
+                        acquisition_progress=AcquisitionProgressStatus(
+                            # measureable progress
+                            current_num_images=num_images_acquired,
+                            time_since_start_s=time_since_start_s,
+                            start_time_iso=start_time_iso_str,
+                            current_storage_usage_GB=storage_usage_bytes/(1024**3),
+
+                            # estimated completion time information
+                            # estimation may be more complex than linear interpolation, hence done on server side
+                            estimated_total_time_s=estimated_total_time_s,
+
+                            # last image that was acquired
+                            last_image=last_image_information,
+                        ),
+
+                        # some meta information about the acquisition, derived from configuration file
+                        # i.e. this is not updated during acquisition
+                        acquisition_meta_information=AcquisitionMetaInformation(
+                            total_num_images=self.num_images_total,
+                            max_storage_size_images_GB=self.max_storage_size_images_GB,
+                        ),
+
+                        acquisition_config=self.config_file,
+
+                        message=f"Acquisition is {(100*num_images_acquired/self.num_images_total):.2f}% complete"
+                    )
+
+                    print(f"last message: {self.acquisition_status.last_status.message}")
+
+        # done -> yield None and return
+        print(f"last message before yield: {self.acquisition_status.last_status.message}")
+        yield None
 
 class Core:
     @property
@@ -1081,9 +716,9 @@ class Core:
         """
 
         off_x_mm=GlobalConfigHandler.get_dict()["calibration_offset_x_mm"].value
-        assert type(off_x_mm) is float, f"off_x_mm is {off_x_mm} of type {type(off_x_mm)}"
+        assert isinstance(off_x_mm,float), f"off_x_mm is {off_x_mm} of type {type(off_x_mm)}"
         off_y_mm=GlobalConfigHandler.get_dict()["calibration_offset_y_mm"].value
-        assert type(off_y_mm) is float, f"off_y_mm is {off_y_mm} of type {type(off_y_mm)}"
+        assert isinstance(off_y_mm,float), f"off_y_mm is {off_y_mm} of type {type(off_y_mm)}"
         # TODO this is currently unused
         off_z_mm=0
 
@@ -1125,55 +760,55 @@ class Core:
     async def home(self):
 
         # reset the MCU
-        await self.mc.send_cmd(Command.reset())
+        await self.mc.send_cmd(mc.Command.reset())
 
         # reinitialize motor drivers and DAC
-        await self.mc.send_cmd(Command.initialize())
-        await self.mc.send_cmd(Command.configure_actuators())
+        await self.mc.send_cmd(mc.Command.initialize())
+        await self.mc.send_cmd(mc.Command.configure_actuators())
 
         print("ensuring illumination is off")
         # make sure all illumination is off
         for illum_src in [
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
+            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
+            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
+            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
+            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
+            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
 
-            ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
+            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
         ]:
-            await self.mc.send_cmd(Command.illumination_end(illum_src))
+            await self.mc.send_cmd(mc.Command.illumination_end(illum_src))
 
         print("calibrating xy stage")
 
         # when starting up the microscope, the initial position is considered (0,0,0)
         # even homing considers the limits, so before homing, we need to disable the limits
-        await self.mc.send_cmd(Command.set_limit_mm("z",-10.0,"lower"))
-        await self.mc.send_cmd(Command.set_limit_mm("z",10.0,"upper"))
+        await self.mc.send_cmd(mc.Command.set_limit_mm("z",-10.0,"lower"))
+        await self.mc.send_cmd(mc.Command.set_limit_mm("z",10.0,"upper"))
 
         # move objective out of the way
-        await self.mc.send_cmd(Command.home("z"))
-        await self.mc.send_cmd(Command.set_zero("z"))
+        await self.mc.send_cmd(mc.Command.home("z"))
+        await self.mc.send_cmd(mc.Command.set_zero("z"))
         # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
-        await self.mc.send_cmd(Command.set_limit_mm("z",0.0,"lower"))
-        await self.mc.send_cmd(Command.set_limit_mm("z",6.7,"upper"))
+        await self.mc.send_cmd(mc.Command.set_limit_mm("z",0.0,"lower"))
+        await self.mc.send_cmd(mc.Command.set_limit_mm("z",6.7,"upper"))
         # home x to set x reference
-        await self.mc.send_cmd(Command.home("x"))
-        await self.mc.send_cmd(Command.set_zero("x"))
+        await self.mc.send_cmd(mc.Command.home("x"))
+        await self.mc.send_cmd(mc.Command.set_zero("x"))
         # clear clamp in x
-        await self.mc.send_cmd(Command.move_by_mm("x",30))
+        await self.mc.send_cmd(mc.Command.move_by_mm("x",30))
         # then move in position to properly apply clamp
-        await self.mc.send_cmd(Command.home("y"))
-        await self.mc.send_cmd(Command.set_zero("y"))
+        await self.mc.send_cmd(mc.Command.home("y"))
+        await self.mc.send_cmd(mc.Command.set_zero("y"))
         # home x again to engage clamp
-        await self.mc.send_cmd(Command.home("x"))
+        await self.mc.send_cmd(mc.Command.home("x"))
 
         # move to an arbitrary position to disengage the clamp
-        await self.mc.send_cmd(Command.move_by_mm("x",30))
-        await self.mc.send_cmd(Command.move_by_mm("y",30))
+        await self.mc.send_cmd(mc.Command.move_by_mm("x",30))
+        await self.mc.send_cmd(mc.Command.move_by_mm("y",30))
 
         # and move objective up, slightly
-        await self.mc.send_cmd(Command.move_by_mm("z",1))
+        await self.mc.send_cmd(mc.Command.move_by_mm("z",1))
 
         print("done initializing microscope")
         self.homing_performed=True
@@ -1181,7 +816,7 @@ class Core:
     def __init__(self):
         self.lock=CoreLock()
 
-        self.microcontrollers=Microcontroller.get_all()
+        self.microcontrollers=mc.Microcontroller.get_all()
         self.cams=Camera.get_all()
 
         abort_startup=False
@@ -1890,10 +1525,10 @@ class Core:
 
         # move down by half z range
         if Z_MM_BACKLASH_COUNTER is not None:
-            await self.mc.send_cmd(Command.move_by_mm("z",-(half_z_mm+Z_MM_BACKLASH_COUNTER)))
-            await self.mc.send_cmd(Command.move_by_mm("z",Z_MM_BACKLASH_COUNTER))
+            await self.mc.send_cmd(mc.Command.move_by_mm("z",-(half_z_mm+Z_MM_BACKLASH_COUNTER)))
+            await self.mc.send_cmd(mc.Command.move_by_mm("z",Z_MM_BACKLASH_COUNTER))
         else:
-            await self.mc.send_cmd(Command.move_by_mm("z",-half_z_mm))
+            await self.mc.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
 
         # Display each peak's height and width
         class CalibrationData(BaseModel):
@@ -1919,14 +1554,14 @@ class Core:
         for i in range(NUM_Z_STEPS_CALIBRATE):
             if i>0:
                 # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                await self.mc.send_cmd(Command.move_by_mm("z",z_step_mm))
+                await self.mc.send_cmd(mc.Command.move_by_mm("z",z_step_mm))
 
             params = await measure_dot_params()
 
             peak_info.append(CalibrationData(z_mm=-half_z_mm+i*z_step_mm,p=params))
 
         # move to original position
-        await self.mc.send_cmd(Command.move_by_mm("z",-half_z_mm))
+        await self.mc.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
 
         class DomainInfo(BaseModel):
             lowest_x:float
@@ -2031,23 +1666,23 @@ class Core:
             z_step_mm=z_mm_movement_range_mm/(num_z_steps_eval-1)
 
             if Z_MM_BACKLASH_COUNTER is not None:
-                await self.mc.send_cmd(Command.move_by_mm("z",-(half_z_mm+Z_MM_BACKLASH_COUNTER)))
-                await self.mc.send_cmd(Command.move_by_mm("z",Z_MM_BACKLASH_COUNTER))
+                await self.mc.send_cmd(mc.Command.move_by_mm("z",-(half_z_mm+Z_MM_BACKLASH_COUNTER)))
+                await self.mc.send_cmd(mc.Command.move_by_mm("z",Z_MM_BACKLASH_COUNTER))
             else:
-                await self.mc.send_cmd(Command.move_by_mm("z",-half_z_mm))
+                await self.mc.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
 
             approximated_z:list[tuple[float,float]]=[]
             for i in range(num_z_steps_eval):
                 if i>0:
                     # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                    await self.mc.send_cmd(Command.move_by_mm("z",z_step_mm))
+                    await self.mc.send_cmd(mc.Command.move_by_mm("z",z_step_mm))
 
                 approx=await self._approximate_laser_af_z_offset_mm(LaserAutofocusCalibrationData(um_per_px=left_dot_regression[0],x_reference=left_dot_regression[1],calibration_position=StagePosition.zero()))
                 current_z_mm=await get_current_z_mm()
                 approximated_z.append((current_z_mm-start_z,approx))
 
             # move to original position
-            await self.mc.send_cmd(Command.move_by_mm("z",-half_z_mm))
+            await self.mc.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
 
             plt.figure(figsize=(8, 6))
             plt.scatter([v[0]*1e3 for v in approximated_z],[v[0]*1e3 for v in approximated_z], color='green',label="real/expected", marker='o', linestyle='-')
@@ -2127,50 +1762,6 @@ class Core:
         regression_params=(calib_params.um_per_px,calib_params.x_reference)
 
         return find_x_for_y(leftmost_x,regression_params)
-
-    @staticmethod
-    def _process_image(img:np.ndarray)->np.ndarray:
-        """
-            center crop main camera image to target size
-        """
-
-        g_config=GlobalConfigHandler.get_dict()
-
-        cam_img_width=g_config['main_camera_image_width_px']
-        assert cam_img_width is not None
-        target_width:int=cam_img_width.intvalue
-        assert isinstance(target_width,int), f"{type(target_width) = }"
-        cam_img_height=g_config['main_camera_image_height_px']
-        assert cam_img_height is not None
-        target_height:int=cam_img_height.intvalue
-        assert isinstance(target_height,int), f"{type(target_height) = }"
-        
-        current_height=img.shape[0]
-        current_width=img.shape[1]
-
-        assert target_height>0, f"target height must be positive"
-        assert target_width>0, f"target width must be positive"
-
-        assert target_height<=current_height, f"target height {target_height} is larger than max {current_height}"
-        assert target_width<=current_width, f"target width {target_width} is larger than max {current_width}"
-
-        x_offset=(current_width-target_width)//2
-        y_offset=(current_height-target_height)//2
-
-        # seemingly swap x and y because of numpy's row-major order
-        ret=img[y_offset:y_offset+target_height,x_offset:x_offset+target_width]
-
-        flip_img_horizontal=g_config['main_camera_image_flip_horizontal']
-        assert flip_img_horizontal is not None
-        if flip_img_horizontal.boolvalue:
-            ret=np.flip(ret,axis=1)
-
-        flip_img_vertical=g_config['main_camera_image_flip_vertical']
-        assert flip_img_vertical is not None
-        if flip_img_vertical.boolvalue:
-            ret=np.flip(ret,axis=0)
-
-        return ret
 
     def _store_new_laseraf_image(self,img:np.ndarray,channel_config:sc.AcquisitionChannelConfig)->str:
         """
@@ -2502,72 +2093,6 @@ class Core:
             if not laser_autofocus_is_calibrated:
                 error_internal(detail="laser autofocus is enabled, but not calibrated")
 
-        well_sites=config_file.grid.mask
-        # the grid is centered around the center of the well
-        site_topleft_x_mm=plate.Well_size_x_mm / 2 - ((config_file.grid.num_x-1) * config_file.grid.delta_x_mm) / 2
-        "offset of top left site from top left corner of the well, in x, in mm"
-        site_topleft_y_mm=plate.Well_size_y_mm / 2 - ((config_file.grid.num_y-1) * config_file.grid.delta_y_mm) / 2
-        "offset of top left site from top left corner of the well, in y, in mm"
-
-        num_wells=len(config_file.plate_wells)
-        num_sites=len(well_sites)
-        num_channels=len(config_file.channels)
-        num_channel_z_combinations=sum((c.num_z_planes for c in config_file.channels))
-        num_images_total=num_wells*num_sites*num_channel_z_combinations
-
-        if num_images_total==0:
-            error_internal(detail=f"no images to acquire ({num_wells = },{num_sites = },{num_channels = },{num_channel_z_combinations = })")
-
-        # calculate meta information about acquisition
-        cam_img_width=g_config['main_camera_image_width_px']
-        assert cam_img_width is not None
-        target_width:int=cam_img_width.intvalue
-        cam_img_height=g_config['main_camera_image_height_px']
-        assert cam_img_height is not None
-        target_height:int=cam_img_height.intvalue
-        # get byte size per pixel from config main camera pixel format
-        main_cam_pix_format=g_config['main_camera_pixel_format']
-        assert main_cam_pix_format is not None
-        match main_cam_pix_format.value:
-            case "mono8":
-                bytes_per_pixel=1
-            case "mono10":
-                bytes_per_pixel=2
-            case "mono12":
-                bytes_per_pixel=2
-            case _unexpected:
-                error_internal(detail=f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}")
-            
-        image_size_bytes=target_width*target_height*bytes_per_pixel
-        max_storage_size_images_GB=num_images_total*image_size_bytes/1024**3
-
-        # print(f"acquiring {num_wells} wells, {num_sites} sites, {num_channels} channels, i.e. {num_images_total} images, taking up to {max_storage_size_images_GB}GB")
-
-        # z movement below this threshold is not performed
-        DISPLACEMENT_THRESHOLD_UM=0.5
-
-        base_storage_path_item=g_config["base_image_output_dir"]
-        assert base_storage_path_item is not None
-        assert type(base_storage_path_item.value) is str
-        base_storage_path=path.Path(base_storage_path_item.value)
-        assert base_storage_path.exists(), f"{base_storage_path = } does not exist"
-
-        project_name_is_acceptable=len(config_file.project_name) and name_validity_regex.match(config_file.project_name)
-        if not project_name_is_acceptable:
-            error_internal(detail="project name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes")
-        
-        plate_name_is_acceptable=len(config_file.plate_name)>0 and name_validity_regex.match(config_file.plate_name)
-        if not plate_name_is_acceptable:
-            error_internal(detail="plate name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes")
-
-        project_output_path=base_storage_path/config_file.project_name/config_file.plate_name/acquisition_id
-        project_output_path.mkdir(parents=True)
-
-        channels:tp.List[sc.AcquisitionChannelConfig]=[]
-        for channel in config_file.channels:
-            if channel.enabled:
-                channels.append(channel)
-
         queue_in=asyncio.Queue()
         queue_out=asyncio.Queue()
         acquisition_status=AcquisitionStatus(
@@ -2575,19 +2100,36 @@ class Core:
             queue_in=queue_in,
             queue_out=queue_out,
             last_status=None,
-            thread_is_running=True,
+            thread_is_running=False,
         )
         self.acquisition_map[acquisition_id]=acquisition_status
+            
 
-        # write config file to output directory
-        with (project_output_path/"config.json").open("w") as file:
-            file.write(config_file.json())
+        ongoing_image_store_tasks:list=[]
+        def handle_q_in(q_in=queue_in):
+            """ if there is something in q_in, fetch it and handle it (e.g. terminae on cancel command) """
+            if not q_in.empty():
+                q_in_item=q_in.get_nowait()
+                if q_in_item==AcquisitionCommand.CANCEL:
+                    error_internal(detail="acquisition cancelled")
+
+                print(f"warning - command unhandled: {q_in_item}")
+        protocol=ProtocolGenerator(
+            config_file=config_file,
+            handle_q_in=handle_q_in,
+            plate=plate,
+            acquisition_status=acquisition_status,
+            acquisition_id=acquisition_id,
+            ongoing_image_store_tasks=ongoing_image_store_tasks
+        )
+
+        if protocol.num_images_total==0:
+            # TODO set acquisition_status here
+            error_internal(detail=f"no images to acquire ({protocol.num_wells = },{protocol.num_sites = },{protocol.num_channels = },{protocol.num_channel_z_combinations = })")
 
         async def run_acquisition(
             q_in:asyncio.Queue[AcquisitionCommand],
             q_out:asyncio.Queue[InternalErrorModel|AcquisitionStatusOut],
-
-            img_compression_algorithm:tp.Literal["LZW","zlib"]="LZW",
         ):
             """
             acquisition execution
@@ -2599,278 +2141,35 @@ class Core:
                 - q_out:q.Queue acquisition status updates are posted at regular logic intervals. The
                     queue length is capped to a low number, so long times without reading an update to not
                     consume large amounts of memory. The oldest messages are evicted first.
-                - img_compression_algorithm:tp.Literal["LZW","zlib"] lossless compression algorithms only
 
             """
 
-            def handle_q_in():
-                """ if there is something in q_in, fetch it and handle it (e.g. terminae on cancel command) """
-                if not q_in.empty():
-                    q_in_item=q_in.get_nowait()
-                    if q_in_item==AcquisitionCommand.CANCEL:
-                        error_internal(detail="acquisition cancelled")
-
-                    print(f"warning - command unhandled: {q_in_item}")
-
-            ongoing_image_store_tasks:list=[]
-
             try:
-                # counters on acquisition progress
-                start_time=time.time()
-                start_time_iso_str=sc.datetime2str(dt.datetime.now(dt.timezone.utc))
-                last_image_information=None
+                # initiate generation
+                protocol_generator=protocol.generate()
 
-                num_images_acquired=0
-                storage_usage_bytes=0
-
-                g_config=GlobalConfigHandler.get_dict()
-
-                # get current z coordinate as z reference
-                last_position=await self.mc.get_last_position()
-                reference_z_mm=last_position.z_pos_mm
-
-                # if laser autofocus is enabled, use autofocus z reference as initial z reference
-                gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
-                if config_file.autofocus_enabled and gconfig_refzmm_item is not None:
-                    reference_z_mm=gconfig_refzmm_item.floatvalue
-
-                    res=await MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm).run(self)
-                    if res.status!="success":
-                        error_internal(detail=f"failed to move to laser autofocus ref z because {res.message}")
-
-                # run acquisition:
-
-                for well in config_file.plate_wells:
-                    # these are xy sites
-                    print_time("before next site")
-                    for site_index,site in enumerate(well_sites):
-                        handle_q_in()
-
-                        if not site.selected:
-                            continue
-
-                        # go to site
-                        site_x_mm=plate.get_well_offset_x(well.well_name) + site_topleft_x_mm + site.col * config_file.grid.delta_x_mm
-                        site_y_mm=plate.get_well_offset_y(well.well_name) + site_topleft_y_mm + site.row * config_file.grid.delta_y_mm
-
-                        res=await MoveTo(x_mm=site_x_mm,y_mm=site_y_mm).run(self)
-                        if res.status!="success":
-                            error_internal(detail=f"failed to move to site {site} in well {well} because {res.message}")
-
-                        print_time("moved to site")
-
-                        # run autofocus
-                        if config_file.autofocus_enabled:
-                            for autofocus_attempt_num in range(3):
-                                current_displacement=await AutofocusMeasureDisplacement(config_file=config_file).run(self)
-                                if current_displacement.status!="success":
-                                    error_internal(detail=f"failed to measure autofocus displacement at site {site} in well {well} because {current_displacement.message}")
-                                
-                                current_displacement_um=current_displacement.displacement_um
-                                assert current_displacement_um is not None
-                                # print(f"measured offset of {current_displacement_um:.2f}um on attempt {autofocus_attempt_num}")
-                                if np.abs(current_displacement_um)<DISPLACEMENT_THRESHOLD_UM:
-                                    break
-                                
-                                res=await AutofocusApproachTargetDisplacement(target_offset_um=0,config_file=config_file,pre_approach_refz=False).run(self)
-                                if res.status!="success":
-                                    error_internal(detail=f"failed to autofocus at site {site} in well {well} because {res.message}")
-                            
-                            # reference for channel z offsets
-                            last_position=await self.mc.get_last_position()
-                            reference_z_mm=last_position.z_pos_mm
-
-                        print_time("af performed")
-                        
-                        # z stack may be different for each channel, hence:
-                        # 1. get list of (channel_z_index,channel,z_relative_to_reference), which may contain each channel more than once
-                        # 2. order by z, in ascending (low to high)
-                        # 3. move to lowest, start imaging while moving up
-                        # 4. move to reference z again in preparation for next site
-
-                        image_pos_z_list:list[tuple[int,float,sc.AcquisitionChannelConfig]]=[]
-                        for channel in channels:
-                            channel_delta_z_mm=channel.delta_z_um*1e-3
-
-                            # <channel reference> is <site reference>+<channel z offset>
-                            base_z=reference_z_mm+channel.z_offset_um*1e-3
-
-                            # lower z base is <channel reference> adjusted for z stack, where \
-                            # n-1 z movements are performed, half of those below, half above <channel ref>
-                            base_z-=((channel.num_z_planes-1)/2)*channel_delta_z_mm
-
-                            for i in range(channel.num_z_planes):
-                                i_offset_mm=i*channel_delta_z_mm
-                                target_z_mm=base_z+i_offset_mm
-                                image_pos_z_list.append((i,target_z_mm,channel))
-
-                        # sort in z
-                        image_pos_z_list=sorted(image_pos_z_list,key=lambda v:v[1])
-
-                        Z_STACK_COUNTER_BACKLASH_MM=40e-3 # 40um
-
-                        res=await MoveTo(x_mm=None,y_mm=None,z_mm=image_pos_z_list[0][1]-Z_STACK_COUNTER_BACKLASH_MM).run(self)
-                        if res.status!="success": error_internal(detail=f"failed, because: {res.message}")
-                        res=await MoveTo(x_mm=None,y_mm=None,z_mm=image_pos_z_list[0][1]).run(self)
-                        if res.status!="success": error_internal(detail=f"failed, because: {res.message}")
-
-                        print_time("moved to init z")
-
-                        for plane_index,channel_z_mm,channel in image_pos_z_list:
-                            handle_q_in()
-
-                            # move to channel offset
-                            last_position=await self.mc.get_last_position()
-                            current_z_mm=last_position.z_pos_mm
-
-                            distance_z_to_move_mm=channel_z_mm-current_z_mm
-                            if np.abs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_UM:
-                                res=await MoveTo(x_mm=None,y_mm=None,z_mm=channel_z_mm).run(self)
-                                assert res.status=="success"
-
-                            print_time("moved to channel z")
-
-                            # snap image
-                            res=await _ChannelAcquisitionControl(mode="snap",channel=channel).run(self)
-                            assert res.status=="success"
-
-                            print_time("snapped image")
-
-                            if not isinstance(res,ImageAcquiredResponse):
-                                error_internal(detail=f"failed to snap image at site {site} in well {well} (invalid result type {type(res)})")
-
-                            img_handle=res.img_handle
-                            latest_channel_image=None
-                            if img_handle is not None:
-                                latest_channel_image=self._get_imageinfo_by_handle(img_handle)
-                            if latest_channel_image is None:
-                                error_internal(detail=f"image handle {img_handle} not found in image buffer")
-
-                            img=latest_channel_image.img
-                            
-                            # store image
-                            image_storage_path=f"{str(project_output_path)}/{well.well_name}_s{site_index}_x{site.col+1}_y{site.row+1}_z{plane_index+1}_{channel.handle}.tiff"
-                            # add metadata to the file, based on tags from https://exiftool.org/TagNames/EXIF.html
-                            PIXEL_SIZE_UM=900/2500 # 2500px wide fov covers 0.9mm
-
-                            if channel.handle[:3]=="BF ":
-                                light_source_type=4 # Flash (seems like the best fit)
-                            else:
-                                light_source_type=2 # Fluorescent
-
-                            # store img as .tiff file
-                            async def store_image():
-                                # takes 70-250ms
-                                tifffile.imwrite(
-                                    str(image_storage_path),
-                                    img,
-
-                                    compression=img_compression_algorithm,
-                                    compressionargs={},# for zlib: {'level': 8},
-                                    maxworkers=1,#3,
-
-                                    # this metadata is just embedded as a comment in the file
-                                    metadata={
-                                        # non-standard tag, because the standard bitsperpixel has a real meaning in the image image data, but
-                                        # values that are not multiple of 8 cannot be used with compression
-                                        "BitsPerPixel":latest_channel_image.bit_depth,
-                                        "BitPaddingInfo":"lower bits are padding with 0s",
-
-                                        "LightSourceName":channel.name,
-
-                                        "ExposureTimeMS":f"{channel.exposure_time_ms:.2f}",
-                                        "AnalogGainDB":f"{channel.analog_gain:.2f}",
-                                    },
-
-                                    photometric="minisblack", # zero means black
-                                    resolutionunit=3, # 3 = cm
-                                    resolution=(1/(PIXEL_SIZE_UM*1e-6),1/(PIXEL_SIZE_UM*1e-6)),
-                                    extratags=[
-                                        # tuples as accepted at https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L856
-                                        # tags may be specified as string interpretable by https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L5000
-                                        ("Make", 's', 0, self.main_cam.vendor_name, True),
-                                        ("Model", 's', 0, self.main_cam.model_name, True),
-
-                                        # apparently these are not widely supported
-                                        ("ExposureTime", 'q', 1, int(channel.exposure_time_ms*1e3), True),
-                                        ("LightSource", 'h', 1, light_source_type, True),
-                                    ]
-                                )
-
-                                print(f"stored image to {str(image_storage_path)}")
-
-                            # improve system responsiveness while compressing and writing to disk
-                            ongoing_image_store_tasks.append(asyncio.create_task(store_image()))
-
-                            print_time("scheduled image store")
-
-                            num_images_acquired+=1
-                            # get storage size from filesystem because tiff compression may reduce size below size in memory
-                            try:
-                                file_size_on_disk=path.Path(image_storage_path).stat().st_size
-                                storage_usage_bytes+=file_size_on_disk
-                            except:
-                                # ignore any errors here, because this is not an essential feature
-                                pass
-
-                            # status items
-                            last_image_information=LastImageInformation(
-                                well=well.well_name,
-                                site=WellSite(
-                                    x=site.col,
-                                    y=site.row,
-                                    z=plane_index,
-                                ),
-                                timepoint=1,
-                                channel_name=channel.name,
-                                full_path=image_storage_path,
-                                handle=img_handle,
-                            )
-                            time_since_start_s=time.time()-start_time
-                            if num_images_acquired>0:
-                                estimated_total_time_s=time_since_start_s*(num_images_total-num_images_acquired)/num_images_acquired
-                            else:
-                                estimated_total_time_s=None
-
-                            acquisition_status.last_status=AcquisitionStatusOut(
-                                status="success",
-
-                                acquisition_id=acquisition_id,
-                                acquisition_status="running",
-                                acquisition_progress=AcquisitionProgressStatus(
-                                    # measureable progress
-                                    current_num_images=num_images_acquired,
-                                    time_since_start_s=time_since_start_s,
-                                    start_time_iso=start_time_iso_str,
-                                    current_storage_usage_GB=storage_usage_bytes/(1024**3),
-
-                                    # estimated completion time information
-                                    # estimation may be more complex than linear interpolation, hence done on server side
-                                    estimated_total_time_s=estimated_total_time_s,
-
-                                    # last image that was acquired
-                                    last_image=last_image_information,
-                                ),
-
-                                # some meta information about the acquisition, derived from configuration file
-                                # i.e. this is not updated during acquisition
-                                acquisition_meta_information=AcquisitionMetaInformation(
-                                    total_num_images=num_images_total,
-                                    max_storage_size_images_GB=max_storage_size_images_GB,
-                                ),
-
-                                acquisition_config=config_file,
-
-                                message=f"Acquisition is {(100*num_images_acquired/num_images_total):.2f}% complete"
-                            )
+                # send none on first yield
+                next_step=protocol_generator.send(None)
+                while next_step is not None:
+                    if isinstance(next_step,str):
+                        result=None
+                    elif next_step is None:
+                        break
+                    else:
+                        result=await next_step.run(self)
+                    next_step=protocol_generator.send(result)
 
                 # finished regularly, set status accordingly (there must have been at least one image, so a status has been set)
                 assert acquisition_status.last_status is not None
                 acquisition_status.last_status.acquisition_status="completed"
 
             except Exception as e:
+                print(f"error during acquisition {e}\n{traceback.format_exc()}")
+                
                 if isinstance(e,HTTPException):
+                    print("exception is httpexcepton")
                     if acquisition_status.last_status is not None:
+                        print("exception is httpexcepton")
                         acquisition_status.last_status.acquisition_status="cancelled"
 
                 else:
@@ -2891,6 +2190,7 @@ class Core:
             return
 
         self.acquisition_thread=asyncio.create_task(coro=run_acquisition(queue_in,queue_out))
+        acquisition_status.thread_is_running=True
 
         return AcquisitionStartResponse(status="success",acquisition_id=acquisition_id)
 
