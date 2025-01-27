@@ -23,7 +23,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@dee746a3859863c119e1223cf008d9779912c01a/p2.js" charset="utf-8"></script>
+        <script src="p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/docLinks.js"></script>
@@ -114,7 +114,7 @@
                                         p:init="Plot.plot_init(element)"
                                         p:init-vis="Plot.plot_fit(element,{init:true,isvisible:true})"
                                     >
-                                        <img class="data" src="{{(channel.handle in microscope_state.latest_channel_images)?('/img/get_by_handle?img_handle='+microscope_state.latest_channel_images[channel.handle].handle):''}}" width=600 height=600 loading="lazy"/>
+                                        <img class="data" src="{{(microscope_state.latest_channel_images.get(channel.handle))?('/img/get_by_handle?img_handle='+microscope_state.latest_channel_images.get(channel.handle).handle):''}}" width=600 height=600 loading="lazy"/>
                                     </div>
                                 </div>
                             </template>

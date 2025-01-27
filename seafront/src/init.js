@@ -10,8 +10,19 @@ function range(n){
     return Array.from({length:n},(v,i)=>i)
 }
 
-// keep track of information sent from the microscope to indicate what status it is in
-let microscope_state=_p.manage({
+/**
+ * @type{{
+ * machine_name:string,
+ * state:string,
+ * is_in_loading_position:boolean,
+ * streaming:boolean,
+ * pos:{x_mm:number,y_mm:number,z_um:number},
+ * fov_size:{x_mm:number,y_mm:number},
+ * last_image_name:string,
+ * latest_channel_images:Map<string,ImageStoreInfo>
+ * }}
+*/
+let _initialMachoneConfigInfo={
     machine_name:"",
     state:"idle",
     is_in_loading_position:false,
@@ -26,8 +37,10 @@ let microscope_state=_p.manage({
         y_mm:0.9,
     },
     last_image_name:"No image acquired yet",
-    latest_channel_images:{}
-})
+    latest_channel_images:new Map(),
+}
+// keep track of information sent from the microscope to indicate what status it is in
+let microscope_state=_p.manage(_initialMachoneConfigInfo)
 
 /**
  * @typedef {{
@@ -87,31 +100,30 @@ function get_current_state(cb){
     }
 
     const data={}
-    new XHR(true)
+    new XHR(false)
         .onload(onload)
         .onerror(onerror)
         .send("/api/get_info/current_state",data,"POST")
 }
 
-let last_acquisition_status_successful=true
+let image_loading={in_progress:false}
+/**@type{{id:string|null,status_successful:boolean}} */
+let last_acquisition={
+    id:null,
+    status_successful:true,
+}
 let last_update_successful=true
-let updateInProgress=false
 /** @type{number?} */
 let loadTimer=null
 /** @type{Map<HTMLImageElement,{loaded:boolean}>} */
 const element_image_load_state=new Map()
 function updateMicroscopePosition(){
-    if(updateInProgress)return;
-
-    updateInProgress=true
 
     function onerror(){
         if(last_update_successful){
             message_open("error","error updating microscope position")
             last_update_successful=false
         }
-    
-        updateInProgress=false
     }
 
     /** @param{CoreCurrentState} data */
@@ -139,11 +151,7 @@ function updateMicroscopePosition(){
                 let latest_channel_info=data.latest_imgs[channel.handle]
                 if(latest_channel_info==null)continue
 
-                // update async to avoid blocking main thread on image update
-                setTimeout(function(){
-                    // @ts-ignore
-                    microscope_state.latest_channel_images[channel.handle]=latest_channel_info
-                },0)
+                microscope_state.latest_channel_images.set(channel.handle,latest_channel_info)
             }
 
             if(!element_image_load_state.has(view_latest_image)){
@@ -170,27 +178,22 @@ function updateMicroscopePosition(){
                 // if the src is a new one
                 const new_src_url=new URL(new_src,window.location.origin)
 
-                if(view_latest_image.src!==new_src_url.toString()){
-                    var image_loading_in_progress=false
+                if(view_latest_image.src!==new_src_url.toString() && !image_loading.in_progress){
+                    image_loading.in_progress=true
+
                     /**
                      * @param{string} src
                      * @return{Promise<boolean>}
                      */
                     function validate_image(src){
                         return new Promise(resolve=>{
-                            if(image_loading_in_progress)return resolve(false)
-
-                            image_loading_in_progress=true
-
                             let img = new Image()
                             img.addEventListener('load', () => {
-                                image_loading_in_progress=false
                                 resolve(true)
                             })
                             img.addEventListener('error', (e) => {
                                 if(!latest_image)throw new Error("no image found")
                                 console.error("image handle "+latest_image.handle+" is not valid:",e);
-                                image_loading_in_progress=false
                                 resolve(false)
                             })
                             img.src = src
@@ -199,10 +202,12 @@ function updateMicroscopePosition(){
 
                     // ensure that the image is only loaded if it exists
                     validate_image(new_src).then((img_is_valid)=>{
-                        if(!img_is_valid)return;
+                        if(!img_is_valid){
+                            image_loading.in_progress=false
+                            return
+                        }
 
                         // init load (by setting .src), and indicate that loading has not yet finished
-                        element_load_state.loaded=false
                         view_latest_image.src=new_src
 
                         if(!latest_image)throw new Error("no image found")
@@ -210,117 +215,98 @@ function updateMicroscopePosition(){
                             view_latest_image.setAttribute("width",String(latest_image.width_px))
                         if(latest_image.height_px!=null && latest_image.height_px!=parseFloat(view_latest_image.getAttribute("height")||"nan"))
                             view_latest_image.setAttribute("height",String(latest_image.height_px))
-
-                        let histogram_update_in_progress=false
-
-                        // set callback on load finish
-                        const f=function(){
-                            // remove the callback
-                            if(loadTimer!=null){
-                                clearTimeout(loadTimer)
-                                loadTimer=null
-                            }
-                            view_latest_image.removeEventListener("load",f)
-                            view_latest_image.removeEventListener("error",f)
-
-                            element_load_state.loaded=true
-                        }
-                        // consider image loaded either on actual load, or on error
-                        view_latest_image.addEventListener("load",f,{once:true})
-                        view_latest_image.addEventListener("error",f,{once:true})
                         
-                        //update histogram (async)
+                        //update histogram
                         const histogram_query_data={
                             img_handle:latest_image.handle
                         }
-                        if(!histogram_update_in_progress){
-                            histogram_update_in_progress=true
-                            new XHR(true)
-                                .onload(function(xhr){
-                                    let data=JSON.parse(xhr.responseText)
-                                    if(data.status!="success"){
-                                        console.error("error getting histogram",data)
-                                        histogram_update_in_progress=false
-                                        return
-                                    }
-                                    let hist_data=data.hist_values
 
-                                    const trace_data={
-                                        x:range(hist_data.length),
-                                        // @ts-ignore transform scale to be able to display 0 values on log scale
-                                        y:hist_data.map(v=>v+1),
-                                        // @ts-ignore display original value (i.e. zero to whatever)
-                                        text:hist_data.map(v=>"count: "+v),
-                                        type:"scatter",
-                                        //orientation:"horizontal",
-                                        name:data.channel_name
-                                    }
+                        new XHR(false)
+                            .onload(function(xhr){
+                                let data=JSON.parse(xhr.responseText)
+                                if(data.status!="success"){
+                                    console.error("error getting histogram",data)
+                                    return
+                                }
+                                let hist_data=data.hist_values
 
+                                const trace_data={
+                                    x:range(hist_data.length),
+                                    // @ts-ignore transform scale to be able to display 0 values on log scale
+                                    y:hist_data.map(v=>v+1),
+                                    // @ts-ignore display original value (i.e. zero to whatever)
+                                    text:hist_data.map(v=>"count: "+v),
+                                    type:"scatter",
+                                    //orientation:"horizontal",
+                                    name:data.channel_name
+                                }
+
+                                // @ts-ignore
+                                //console.log(Plotly.validate([trace_data]),trace_data)
+                                if(plt_num_traces==0){
                                     // @ts-ignore
-                                    //console.log(Plotly.validate([trace_data]),trace_data)
-                                    if(plt_num_traces==0){
-                                        // @ts-ignore
-                                        Plotly.addTraces(histogram_plot_element_id,trace_data,plt_num_traces)
+                                    Plotly.addTraces(histogram_plot_element_id,trace_data,plt_num_traces)
 
-                                        plt_num_traces+=1
-                                    }else{
-                                        // trace update must have a _list_ of x and y values
-                                        const trace_update={
-                                            x:[trace_data.x],
-                                            y:[trace_data.y],
-                                            text:[trace_data.text],
-                                            name:[trace_data.name]
-                                        }
-                                        // @ts-ignore
-                                        Plotly.restyle(histogram_plot_element_id,trace_update,[0])
+                                    plt_num_traces+=1
+                                }else{
+                                    // trace update must have a _list_ of x and y values
+                                    const trace_update={
+                                        x:[trace_data.x],
+                                        y:[trace_data.y],
+                                        text:[trace_data.text],
+                                        name:[trace_data.name]
                                     }
+                                    // @ts-ignore
+                                    Plotly.restyle(histogram_plot_element_id,trace_update,[0])
+                                }
+                            })
+                            .onerror(function(){
+                                console.error("error getting histogram")
+                            })
+                            .send("/api/action/get_histogram_by_handle",histogram_query_data,"POST")
 
-                                    histogram_update_in_progress=false
-                                })
-                                .onerror(function(){
-                                    console.error("error getting histogram")
-                                    histogram_update_in_progress=false
-                                })
-                                .send("/api/action/get_histogram_by_handle",histogram_query_data,"POST")
-                        }
-                        // if the image is not done loading after 3 seconds, assume it failed
-                        loadTimer=setTimeout(f,3e3)
-
-                        // if image is already loaded, call the function immediately
-                        if(view_latest_image.complete){
-                            f()
-                        }
+                        image_loading.in_progress=false
                     })
                 }
             }
             microscope_state.last_image_name=latest_image.channel.name
         }
 
-        if(data.current_acquisition_id){            
-            let acquisition_progress_element=document.getElementById("acquisition-progress-bar")
+        let acquisition_progress_element=document.getElementById("acquisition-progress-bar")
+        if(!acquisition_progress_element)throw new Error("progress_element is null")
+        /**@param{number} percent */
+        function setAcquisitionProgressPercent(percent){
             if(!acquisition_progress_element)throw new Error("progress_element is null")
+            acquisition_progress_element.style.setProperty(
+                "--percent-done",
+                percent + "%"
+            )
+        }
 
+        // get latest acquisition id
+        if(data.current_acquisition_id){
+            last_acquisition.id=data.current_acquisition_id
+        }
+
+        // whatever the last acquisition was, get its status
+        // TODO make this more performant, since there will no updates most of the time
+        if(last_acquisition.id){
             get_acquisition_info(
-                data.current_acquisition_id,
+                last_acquisition.id,
                 {
                     load:(progress)=>{
                         if(!acquisition_progress_element)throw new Error("progress_element is null")
 
                         if(progress.status!="success"){
-                            acquisition_progress.text="error - "+progress.message
+                            acquisition_progress.text=progress.acquisition_status+" - "+progress.message
                             message_open("error","no acquisition progress available because ",progress.message)
                             return
                         }
 
-                        if(!last_acquisition_status_successful){
+                        if(!last_acquisition.status_successful){
                             message_open("info","acquisition progress updated")
                         }
-                        last_acquisition_status_successful=true
-
-                        if(progress.acquisition_progress==null || progress.acquisition_meta_information==null){
-                            acquisition_progress.text="running"
-                            return
-                        }
+                        last_acquisition.status_successful=true
 
                         acquisition_progress.time_since_start_s=""+progress.acquisition_progress.time_since_start_s
 
@@ -369,41 +355,33 @@ function updateMicroscopePosition(){
                             }
                             acquisition_progress.estimated_time_remaining_msg=time_remain_estimate_msg_string
 
-                            acquisition_progress.text="running - "+progress.message
-                            acquisition_progress_element.style.setProperty(
-                                "--percent-done",
-                                (
-                                    progress.acquisition_progress.current_num_images
-                                    / progress.acquisition_meta_information.total_num_images
-                                    * 100
-                                ) + "%"
+                            acquisition_progress.text=progress.acquisition_status+" - "+progress.message
+                            setAcquisitionProgressPercent(
+                                progress.acquisition_progress.current_num_images
+                                / progress.acquisition_meta_information.total_num_images
+                                * 100
                             )
-                        }
-
-                        // stop polling when acquisition is done
-                        if(progress.acquisition_progress.current_num_images==progress.acquisition_meta_information.total_num_images){
-                            acquisition_progress.text="done"
                         }
                     },
                     error:()=>{
-                        if(last_acquisition_status_successful){
+                        if(last_acquisition.status_successful){
                             message_open("error","error getting acquisition progress")
                         }
-                        last_acquisition_status_successful=false
+                        last_acquisition.status_successful=false
                     }
                 }
             )
         }
-    
-        updateInProgress=false
     }
 
     get_current_state({
         load:onload,
         error:onerror
     })
+
+    requestAnimationFrame(updateMicroscopePosition)
 }
-setInterval(updateMicroscopePosition,1e3/15)
+requestAnimationFrame(updateMicroscopePosition)
 
 class ImagingChannel{
     /**
@@ -647,8 +625,8 @@ function microscopeConfigOverride(new_config){
     if(new_config.wellplate_type!=null)
         microscope_config.wellplate_type = new_config.wellplate_type
 
-    // selected wells
-    let interval_id=0    
+    // selected wells (patrick from the future says: this code is weird. i think it tries to wait for some conditions to be present before it initializes something)
+    let interval_id=0
     interval_id=setInterval(function(){
         if(interval_id==-1){
             console.error("interval cleared twice")
@@ -753,10 +731,11 @@ setTimeout(function(){
     }
 },0)
 
-setInterval(function(){
+function storeConfigIntoBrowserLocalStorage(){
     // store microscope_config in local storage to reload on page refresh
     localStorage.setItem("microscope_config",JSON.stringify(_p.getUnmanaged(microscope_config)))
-},1e3) // only every once in a while
+}
+setInterval(storeConfigIntoBrowserLocalStorage,1e3) // once per second
 
 /**
  * list that only contains selected channels (to simplify GUI)
