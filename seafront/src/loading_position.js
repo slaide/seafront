@@ -12,14 +12,11 @@ function enterLoadingPosition(){
     new XHR(true)
         .onload(function(xhr){
             let data=JSON.parse(xhr.responseText)
-            if(data.status!="success"){
-                message_open("error","error entering loading position",data)
-            }
 
             progress_indicator.stop()
         })
-        .onerror(function(){
-            message_open("error","error entering loading position")
+        .onerror(function(xhr){
+            message_open("error","error entering loading position",xhr.responseText)
 
             progress_indicator.stop()
         })
@@ -38,14 +35,11 @@ function leaveLoadingPosition(){
     new XHR(true)
         .onload(function(xhr){
             let data=JSON.parse(xhr.responseText)
-            if(data.status!="success"){
-                message_open("error","error leaving loading position",data)
-            }
 
             progress_indicator.stop()
         })
-        .onerror(function(){
-            message_open("error","error leaving loading position")
+        .onerror(function(xhr){
+            message_open("error","error leaving loading position",xhr.responseText)
 
             progress_indicator.stop()
         })

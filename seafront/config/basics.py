@@ -117,7 +117,6 @@ class GlobalConfigHandler:
             critical_machine_config=json.load(f)
 
 
-
         main_camera_attributes=[
             ConfigItem(
                 name="main camera model",
@@ -205,7 +204,7 @@ class GlobalConfigHandler:
                 value_kind="option",
                 value="no",
                 options=ConfigItemOption.get_bool_options(),
-                frozen=True, # unfrozen for debugging!
+                frozen=True,
             ),
             ConfigItem(
                 name="main camera flip image vertically",
@@ -213,7 +212,7 @@ class GlobalConfigHandler:
                 value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
-                frozen=True, # unfrozen for debugging!
+                frozen=True,
             ),
         ]
 

@@ -1,13 +1,13 @@
 [project]
 name="seafront"
-version="0.1.0"
+version="0.2.0"
 authors=[
     {name="Patrick Hennig",email="patrick.hennig@uu.se"}
 ]
 dependencies = [
     "flask", # for communication with the outside world
     "gxipy@git+https://github.com/slaide/daheng-imaging-gxipy", # camera API
-    "seaconfig@git+https://github.com/slaide/seafront-config@f2e491dbe306cb28122a7819561fa717b73b1808", # configuration file handling
+    "seaconfig@git+https://github.com/slaide/seafront-config@0a4f8ab6671d60f5293aaee189987260b1b383ff", # configuration file handling
     "pyserial", # for microcontroller communication
     "crc<2", # for basic microcontroller packet communication
     "pillow", # for image format conversion to store to disk/send to client for display
@@ -21,6 +21,7 @@ dependencies = [
     "uvicorn",
     "fastapi",
     "pydantic==2.9.2",
+    "websockets",
 ]
 
 [build-system]

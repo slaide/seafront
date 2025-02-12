@@ -12,6 +12,8 @@ import serial.tools.list_ports
 import crc
 import numpy as np
 
+from .adapter import Position as AdapterPosition
+
 def intFromPayload(payload,start_index,num_bytes):
     ret=0
     for i in range(num_bytes):
@@ -314,6 +316,13 @@ class Position:
     def z_pos_mm(self):
         return FirmwareDefinitions.mm_per_ustep_z()*self.z_usteps
 
+    @property
+    def pos(self)->AdapterPosition:
+        return AdapterPosition(
+            x_pos_mm=self.x_pos_mm,
+            y_pos_mm=self.y_pos_mm,
+            z_pos_mm=self.z_pos_mm,
+        )
 
 class Command:
     def __init__(self):

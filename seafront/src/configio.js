@@ -14,15 +14,11 @@ function load_remote_config(file_data){
     new XHR(false)
         .onload((xhr)=>{
             const response=JSON.parse(xhr.responseText)
-            if(response.status!="success"){
-                message_open("error","failed to load config because",response)
-                return
-            }
 
             microscopeConfigOverride(response.file)
         })
-        .onerror(()=>{
-            message_open("error","failed to load config")
+        .onerror((xhr)=>{
+            message_open("error","failed to load config",xhr.responseText)
         })
         .send("/api/acquisition/config_fetch",data,"POST")
 }
@@ -69,18 +65,14 @@ function config_store(){
                         new XHR(false)
                             .onload((xhr)=>{
                                 const response=JSON.parse(xhr.responseText)
-                                if (response.status!="success"){
-                                    message_open("error","storing config failed: ",response)
-                                    return
-                                }
 
                                 config_store_modal_filename_element.value=""
                                 config_store_modal_comment_element.value=""
 
                                 modal_close()
                             })
-                            .onerror(()=>{
-                                message_open("error","failed to store config")
+                            .onerror((xhr)=>{
+                                message_open("error","failed to store config",xhr.responseText)
                             })
                             .send("/api/acquisition/config_store",data,"POST")
                     }
@@ -94,10 +86,6 @@ function config_list(){
     new XHR(false)
         .onload((xhr)=>{
             const response=JSON.parse(xhr.responseText)
-            if (response.status!="success"){
-                message_open("error","fetching config list failed: ",response)
-                return
-            }
 
             files.length=0
             files.splice(0,0,...response.configs)
@@ -113,8 +101,8 @@ function config_list(){
 
             spawnModal("Load Configuration File",config_load_modal_element)
         })
-        .onerror(()=>{
-            message_open("error","failed to retrieve config list")
+        .onerror((xhr)=>{
+            message_open("error","failed to retrieve config list",xhr.responseText)
         })
         .send("/api/acquisition/config_list",data,"POST")
 }

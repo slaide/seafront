@@ -25,10 +25,7 @@ function snapReflectionAutofocus(){
             progress_indicator.stop()
 
             let response=JSON.parse(xhr.responseText)
-            if(response.status!="success"){
-                message_open("error","error snapping reflection autofocus",response)
-                return
-            }
+
             let handle=response.img_handle
             let img=document.getElementById("view_af_image")
             if(!(img instanceof HTMLImageElement))throw new Error("element with id 'view_af_image' is not an image element")

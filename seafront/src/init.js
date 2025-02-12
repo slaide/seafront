@@ -42,238 +42,165 @@ let _initialMachoneConfigInfo={
 // keep track of information sent from the microscope to indicate what status it is in
 let microscope_state=_p.manage(_initialMachoneConfigInfo)
 
-/**
- * @typedef {{
-    name:string,
-    handle:string,
-
-    illum_perc:number,
-    exposure_time_ms:number,
-    analog_gain:number,
-
-    z_offset_um:number,
-
-    num_z_planes:number,
-    delta_z_um:number,
-    
-    enabled:boolean,
- * }} AcquisitionChannelConfig
- * @typedef {{
-    x_pos_mm:number,
-    y_pos_mm:number,
-    z_pos_mm:number,
- * }} StagePosition
- * @typedef {{
-    handle:string,
-    channel:AcquisitionChannelConfig,
-    width_px:number,
-    height_px:number,
-    timestamp:number,
- * }} ImageStoreInfo
- * @typedef {{
-    status:"success",
-    state:string,
-    is_in_loading_position:boolean,
-    stage_position:StagePosition,
-    // python dictionary
-    latest_imgs:Record<string,ImageStoreInfo|null>,
-    current_acquisition_id:string|null,
- * }} CoreCurrentState
- */
-
-/**
- * @param{{load:(s:CoreCurrentState)=>void,error:()=>void}?} cb 
- */
-function get_current_state(cb){
-    function onerror(){
-        if(cb && cb.error){
-            cb.error()
-        }
-    }
-    /** @param {XMLHttpRequest} xhr  */
-    function onload(xhr){
-        /** @type{CoreCurrentState} */
-        let data=JSON.parse(xhr.responseText)
-        if(cb&&cb.load){
-            cb.load(data)
-        }
-    }
-
-    const data={}
-    new XHR(false)
-        .onload(onload)
-        .onerror(onerror)
-        .send("/api/get_info/current_state",data,"POST")
-}
-
 let image_loading={in_progress:false}
-/**@type{{id:string|null,status_successful:boolean}} */
+/**@type{{id:string|null,status_successful:boolean,ws:WebSocket|null}} */
 let last_acquisition={
     id:null,
     status_successful:true,
+    ws:null,
 }
 let last_update_successful=true
 /** @type{number?} */
 let loadTimer=null
 /** @type{Map<HTMLImageElement,{loaded:boolean}>} */
 const element_image_load_state=new Map()
-function updateMicroscopePosition(){
 
+/**
+ * @type{Array<{load:function(CoreCurrentState):void,error:function():void}>}
+ */
+let state_callbacks=[]
+/**
+ * 
+ * @param {{load:function(CoreCurrentState):void,error:function():void}} callbacks 
+ */
+function get_current_state(callbacks){
+    state_callbacks.push(callbacks)
+}
+
+/**
+ * 
+ * @param {string} channel_name 
+ * @returns {Promise<ImageData>}
+ */
+function fetch_image(channel_name){
+    console.log("fetching image for ",channel_name)
+
+    return new Promise((resolve,reject)=>{
+        // use websocket only once, as protocol to transfer arbitrary bytes (image data, uncompressed, no standardized format)
+        const websocket_protocol=window.location.protocol=="https:"?"wss:":"ws:"
+        const websocket_url=websocket_protocol+"//"+window.location.host+"/ws/get_info/acquired_image"
+        const ws=new WebSocket(websocket_url)
+
+        /**
+         * 
+         * @param {MessageEvent} event 
+         */
+        function outer_message(event){
+            let payload=JSON.parse(event.data)
+
+            ws.binaryType="arraybuffer"
+            ws.onmessage=event=>{
+                const rawbytes=new Uint8Array(event.data)
+                
+                let rgba=new Uint8ClampedArray()
+                if((rawbytes.length/(payload.width*payload.height))==1){
+                    const mono=rawbytes
+
+                    rgba=new Uint8ClampedArray(4*payload.width*payload.height)
+                    for(let i=0;i<mono.length;i++){
+                        // clamp happens inside the array
+                        const pix=mono[i]
+
+                        rgba[i*4+0]=pix
+                        rgba[i*4+1]=pix
+                        rgba[i*4+2]=pix
+                        rgba[i*4+3]=255
+                    }
+                }else{
+                    const mono=new Uint16Array(event.data)
+
+                    rgba=new Uint8ClampedArray(4*payload.width*payload.height)
+                    for(let i=0;i<mono.length;i++){
+                        // convert u16 to u8 by shifting
+                        // clamp happens inside the array
+                        const pix=(mono[i]>>4)
+
+                        rgba[i*4+0]=pix
+                        rgba[i*4+1]=pix
+                        rgba[i*4+2]=pix
+                        rgba[i*4+3]=255
+                    }
+                }
+                const imagedata=new ImageData(rgba,payload.width,payload.height)
+
+                resolve(imagedata)
+            }
+        }
+
+        ws.onopen=()=>ws.send(channel_name)
+        ws.onmessage=outer_message
+        ws.onerror=err=>{
+            console.log("img_ws err:",err)
+            reject(err)
+        }
+    })
+}
+
+/** @type{WebSocket?} */
+let status_update_websocket=null
+let last_image={timestamp:0}
+function updateMicroscopePosition(){
     function onerror(){
         if(last_update_successful){
             message_open("error","error updating microscope position")
             last_update_successful=false
         }
+
+        for(let cb of state_callbacks){
+            cb.error()
+        }
+        state_callbacks=[]
     }
 
     /** @param{CoreCurrentState} data */
-    function onload(data){
+    async function onload(data){
         if(!last_update_successful){
             message_open("info","recovered microscope position update")
             last_update_successful=true
         }
 
-        microscope_state.pos.x_mm=data.stage_position.x_pos_mm
-        microscope_state.pos.y_mm=data.stage_position.y_pos_mm
-        microscope_state.pos.z_um=data.stage_position.z_pos_mm*1e3
+        for(let cb of state_callbacks){
+            cb.load(data)
+        }
+        state_callbacks=[]
 
-        microscope_state.state=data.state
-        microscope_state.is_in_loading_position=data.is_in_loading_position
+        microscope_state.pos.x_mm=data.adapter_state.stage_position.x_pos_mm
+        microscope_state.pos.y_mm=data.adapter_state.stage_position.y_pos_mm
+        microscope_state.pos.z_um=data.adapter_state.stage_position.z_pos_mm*1e3
+
+        microscope_state.state=data.adapter_state.state
+        microscope_state.is_in_loading_position=data.adapter_state.is_in_loading_position
 
         let view_latest_image=document.getElementById("view_latest_image")
-        if((view_latest_image instanceof HTMLImageElement) && data.latest_imgs!=null && Object.keys(data.latest_imgs).length>0){
-            const img_list=Object.keys(data.latest_imgs).map(k=>data.latest_imgs[k])
-            let latest_timestamp=img_list.filter(d=>d!=null).map(d=>d.timestamp).reduce((a,b)=>Math.max(a,b),0)
-            let latest_image=img_list.filter(d=>d!=null).find(d=>d.timestamp==latest_timestamp)
-            if(!latest_image)throw new Error("no image found")
+        if(data.latest_imgs!=null && Object.keys(data.latest_imgs).length>0){
+            // default: pick first channel
+            let display_channel_name=Object.keys(data.latest_imgs)[0]
 
-            for(let channel of microscope_config.channels){
-                let latest_channel_info=data.latest_imgs[channel.handle]
-                if(latest_channel_info==null)continue
-
-                microscope_state.latest_channel_images.set(channel.handle,latest_channel_info)
-            }
-
-            if(!element_image_load_state.has(view_latest_image)){
-                // indicate that the current state has finished loading on initilization
-                element_image_load_state.set(view_latest_image,{loaded:true})
-            }
-
-            // check if the image has finished loading
-            let element_load_state=element_image_load_state.get(view_latest_image)
-            if(!element_load_state){throw new Error("element load state is null")}
-            if(!element_load_state.loaded){
-                // skip updating if loading is still ongoing, otherwise processing will stop and
-                // nothing will be displayed while a new image arrives
-                console.warn("image not loaded yet, skipping update")
-            }else{
-                let src_api_action=""
-                if(microscope_state.streaming){
-                    src_api_action="/img/get_by_handle_preview"
-                }else{
-                    src_api_action="/img/get_by_handle"
-                }
-                const new_src=src_api_action+"?img_handle="+latest_image.handle
-                
-                // if the src is a new one
-                const new_src_url=new URL(new_src,window.location.origin)
-
-                if(view_latest_image.src!==new_src_url.toString() && !image_loading.in_progress){
-                    image_loading.in_progress=true
-
-                    /**
-                     * @param{string} src
-                     * @return{Promise<boolean>}
-                     */
-                    function validate_image(src){
-                        return new Promise(resolve=>{
-                            let img = new Image()
-                            img.addEventListener('load', () => {
-                                resolve(true)
-                            })
-                            img.addEventListener('error', (e) => {
-                                if(!latest_image)throw new Error("no image found")
-                                console.error("image handle "+latest_image.handle+" is not valid:",e);
-                                resolve(false)
-                            })
-                            img.src = src
-                        })
-                    }
-
-                    // ensure that the image is only loaded if it exists
-                    validate_image(new_src).then((img_is_valid)=>{
-                        if(!img_is_valid){
-                            image_loading.in_progress=false
-                            return
-                        }
-
-                        // init load (by setting .src), and indicate that loading has not yet finished
-                        view_latest_image.src=new_src
-
-                        if(!latest_image)throw new Error("no image found")
-                        if(latest_image.width_px!=null && latest_image.width_px!=parseFloat(view_latest_image.getAttribute("width")||"nan"))
-                            view_latest_image.setAttribute("width",String(latest_image.width_px))
-                        if(latest_image.height_px!=null && latest_image.height_px!=parseFloat(view_latest_image.getAttribute("height")||"nan"))
-                            view_latest_image.setAttribute("height",String(latest_image.height_px))
-                        
-                        //update histogram
-                        const histogram_query_data={
-                            img_handle:latest_image.handle
-                        }
-
-                        new XHR(false)
-                            .onload(function(xhr){
-                                let data=JSON.parse(xhr.responseText)
-                                if(data.status!="success"){
-                                    console.error("error getting histogram",data)
-                                    return
-                                }
-                                let hist_data=data.hist_values
-
-                                const trace_data={
-                                    x:range(hist_data.length),
-                                    // @ts-ignore transform scale to be able to display 0 values on log scale
-                                    y:hist_data.map(v=>v+1),
-                                    // @ts-ignore display original value (i.e. zero to whatever)
-                                    text:hist_data.map(v=>"count: "+v),
-                                    type:"scatter",
-                                    //orientation:"horizontal",
-                                    name:data.channel_name
-                                }
-
-                                // @ts-ignore
-                                //console.log(Plotly.validate([trace_data]),trace_data)
-                                if(plt_num_traces==0){
-                                    // @ts-ignore
-                                    Plotly.addTraces(histogram_plot_element_id,trace_data,plt_num_traces)
-
-                                    plt_num_traces+=1
-                                }else{
-                                    // trace update must have a _list_ of x and y values
-                                    const trace_update={
-                                        x:[trace_data.x],
-                                        y:[trace_data.y],
-                                        text:[trace_data.text],
-                                        name:[trace_data.name]
-                                    }
-                                    // @ts-ignore
-                                    Plotly.restyle(histogram_plot_element_id,trace_update,[0])
-                                }
-                            })
-                            .onerror(function(){
-                                console.error("error getting histogram")
-                            })
-                            .send("/api/action/get_histogram_by_handle",histogram_query_data,"POST")
-
-                        image_loading.in_progress=false
-                    })
+            // find channel with newest timestamp
+            let timestamp=last_image.timestamp
+            for(let channel_name of Object.keys(data.latest_imgs)){
+                const channel_data=data.latest_imgs[channel_name]
+                const channel_timestamp=parseFloat(""+(channel_data?.timestamp||"0"))
+                if(channel_timestamp>timestamp){
+                    timestamp=channel_timestamp
+                    display_channel_name=channel_name
                 }
             }
-            microscope_state.last_image_name=latest_image.channel.name
+
+            // if that timestamp is newer than that of the last image that was displayed, fetch new image and display
+            if(last_image.timestamp<timestamp){
+                last_image.timestamp=timestamp
+
+                const canvas=view_latest_image
+                const imagedata=await fetch_image(display_channel_name)
+                if(!(canvas instanceof HTMLCanvasElement))throw new Error("")
+                canvas.getContext("2d")?.putImageData(imagedata,0,0)
+            }
         }
 
         let acquisition_progress_element=document.getElementById("acquisition-progress-bar")
-        if(!acquisition_progress_element)throw new Error("progress_element is null")
+        if(!acquisition_progress_element)/*page not finished loading*/return;//throw new Error("progress_element is null")
+
         /**@param{number} percent */
         function setAcquisitionProgressPercent(percent){
             if(!acquisition_progress_element)throw new Error("progress_element is null")
@@ -284,104 +211,167 @@ function updateMicroscopePosition(){
         }
 
         // get latest acquisition id
-        if(data.current_acquisition_id){
+        if(data.current_acquisition_id!=last_acquisition.id){
             last_acquisition.id=data.current_acquisition_id
         }
 
-        // whatever the last acquisition was, get its status
-        // TODO make this more performant, since there will no updates most of the time
-        if(last_acquisition.id){
-            get_acquisition_info(
-                last_acquisition.id,
-                {
-                    load:(progress)=>{
-                        if(!acquisition_progress_element)throw new Error("progress_element is null")
+        // ensure websocket is running to fetch latest acquisition status
+        if(last_acquisition.id!=null){
+            if(last_acquisition.ws==null){
+                const websocket_protocol=window.location.protocol=="https:"?"wss:":"ws:"
+                const websocket_url=websocket_protocol+"//"+window.location.host+"/ws/acquisition/status"
+                last_acquisition.ws=new WebSocket(websocket_url)
 
-                        if(progress.status!="success"){
-                            acquisition_progress.text=progress.acquisition_status+" - "+progress.message
-                            message_open("error","no acquisition progress available because ",progress.message)
-                            return
+                function get_status(){
+                    // a connection that closed before the animation frame is triggered may leave a stale callback to this function
+                    // so we act accordingly
+                    if(last_acquisition.ws==null)return
+
+                    if(last_acquisition.id!=null){
+                        last_acquisition.ws.send(JSON.stringify({"acquisition_id":last_acquisition.id}))
+                    }
+
+                    // when an acquisition has stopped, last_acquisition.id will be null, but then a new acquisition may start later
+                    // so we still need to query an update, even if no acquisition is currently running
+                    requestAnimationFrame(get_status)
+                }
+                last_acquisition.ws.onopen=()=>{get_status()}
+                last_acquisition.ws.onmessage=(event)=>{
+                    let data=JSON.parse(JSON.parse(event.data))
+
+                    display_acquisition_status(data)
+                }
+                last_acquisition.ws.onerror=(event)=>{
+                    if(last_acquisition.status_successful){
+                        message_open("error","error getting acquisition progress",event)
+                    }
+                    last_acquisition.status_successful=false
+                }
+                last_acquisition.ws.onclose=()=>{
+                    last_acquisition.ws=null
+                }
+            }
+        }
+
+        /**
+         * 
+         * @param {AcquisitionStatusOut} progress 
+         */
+        function display_acquisition_status(progress){
+            if(!acquisition_progress_element)throw new Error("progress_element is null")
+
+            if(!last_acquisition.status_successful){
+                message_open("info","acquisition progress updated")
+            }
+            last_acquisition.status_successful=true
+
+            acquisition_progress.time_since_start_s=""+progress.acquisition_progress.time_since_start_s
+
+            // called estimated_total_time_s but actually contains the _remaining_ time in s
+            let remaining_time_s_total=progress.acquisition_progress.estimated_total_time_s
+
+            if(remaining_time_s_total!=null){
+                let minutes=remaining_time_s_total%3600
+                let hours=(remaining_time_s_total-minutes)/3600
+                let seconds=minutes%60
+                minutes=(minutes-seconds)/60
+
+                let remaining_time_s=seconds.toFixed(0)
+                let remaining_time_m=minutes.toFixed(0)
+                let remaining_time_h=hours.toFixed(0)
+
+                /**
+                 * @param{string} s
+                 * @return{string}
+                 */
+                function pad_to_two_digits(s){
+                    if(s.length<2){
+                        return "0"+s
+                    }
+                    return s
+                }
+
+                let time_remain_estimate_msg_string=""
+                if(remaining_time_s_total>0){
+                    time_remain_estimate_msg_string="done in "
+                    if(hours>0){
+                        time_remain_estimate_msg_string+=remaining_time_h+"h:"
+                    }
+                    if(minutes>0){
+                        if(hours>0){
+                            time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_m)+"m:"
+                        }else{
+                            time_remain_estimate_msg_string+=remaining_time_m+"m:"
                         }
-
-                        if(!last_acquisition.status_successful){
-                            message_open("info","acquisition progress updated")
-                        }
-                        last_acquisition.status_successful=true
-
-                        acquisition_progress.time_since_start_s=""+progress.acquisition_progress.time_since_start_s
-
-                        // called estimated_total_time_s but actually contains the _remaining_ time in s
-                        let remaining_time_s_total=progress.acquisition_progress.estimated_total_time_s
-
-                        if(remaining_time_s_total!=null){
-                            let minutes=remaining_time_s_total%3600
-                            let hours=(remaining_time_s_total-minutes)/3600
-                            let seconds=minutes%60
-                            minutes=(minutes-seconds)/60
-
-                            let remaining_time_s=seconds.toFixed(0)
-                            let remaining_time_m=minutes.toFixed(0)
-                            let remaining_time_h=hours.toFixed(0)
-
-                            /**
-                             * @param{string} s
-                             * @return{string}
-                             */
-                            function pad_to_two_digits(s){
-                                if(s.length<2){
-                                    return "0"+s
-                                }
-                                return s
-                            }
-
-                            let time_remain_estimate_msg_string=""
-                            if(remaining_time_s_total>0){
-                                time_remain_estimate_msg_string="done in "
-                                if(hours>0){
-                                    time_remain_estimate_msg_string+=remaining_time_h+"h:"
-                                }
-                                if(minutes>0){
-                                    if(hours>0){
-                                        time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_m)+"m:"
-                                    }else{
-                                        time_remain_estimate_msg_string+=remaining_time_m+"m:"
-                                    }
-                                }
-                                if(minutes>0){
-                                    time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_s)+"s"
-                                }else{
-                                    time_remain_estimate_msg_string+=remaining_time_s+"s"
-                                }
-                            }
-                            acquisition_progress.estimated_time_remaining_msg=time_remain_estimate_msg_string
-
-                            acquisition_progress.text=progress.acquisition_status+" - "+progress.message
-                            setAcquisitionProgressPercent(
-                                progress.acquisition_progress.current_num_images
-                                / progress.acquisition_meta_information.total_num_images
-                                * 100
-                            )
-                        }
-                    },
-                    error:()=>{
-                        if(last_acquisition.status_successful){
-                            message_open("error","error getting acquisition progress")
-                        }
-                        last_acquisition.status_successful=false
+                    }
+                    if(minutes>0){
+                        time_remain_estimate_msg_string+=pad_to_two_digits(remaining_time_s)+"s"
+                    }else{
+                        time_remain_estimate_msg_string+=remaining_time_s+"s"
                     }
                 }
-            )
+                acquisition_progress.estimated_time_remaining_msg=time_remain_estimate_msg_string
+
+                acquisition_progress.text=progress.acquisition_status+" - "+progress.message
+                setAcquisitionProgressPercent(
+                    progress.acquisition_progress.current_num_images
+                    / progress.acquisition_meta_information.total_num_images
+                    * 100
+                )
+            }
         }
     }
 
-    get_current_state({
-        load:onload,
-        error:onerror
-    })
+    
+    /**
+     * call .close on the return value to close the websocket again
+     * @returns {WebSocket}
+     */
+    if(status_update_websocket==null){
+        const websocket_protocol=window.location.protocol=="https:"?"wss:":"ws:"
+        const websocket_url=websocket_protocol+"//"+window.location.host+"/ws/get_info/current_state"
+        const ws=new WebSocket(websocket_url)
 
-    requestAnimationFrame(updateMicroscopePosition)
+        let last_time=performance.now()
+        function request_update(){
+            ws.send("get_info/current_state")
+
+            const time_since_last_update_ms=performance.now()-last_time
+            if(time_since_last_update_ms>300){
+                // print informative message if the update delta time exceeds some arbitrary, but longer than expected, delta
+                console.log("time since last update:",time_since_last_update_ms,"ms (this is longer than expected, but may happen occasionally)")
+            }
+            last_time=performance.now()
+        }
+
+        ws.onopen=()=>{
+            request_update()
+        }
+        ws.onmessage=async event=>{
+            const data=JSON.parse(JSON.parse(event.data))
+            await onload(data)
+
+            requestAnimationFrame(request_update)
+        }
+        ws.onerror=async err_event=>{
+            // likely caused by connection issue, which will result in a disconnect/close, which in turn will cause a reconnect, so we do not have to handle errors specifically
+            console.error("ws error:",err_event)
+            await onerror()
+        }
+        ws.onclose=()=>{
+            // closed externally, usually caused by server disconnect
+            console.log("ws closed")
+
+            // clear stored websocket handle (now stale)
+            status_update_websocket=null
+            // and schedule reconnect attempt
+            requestAnimationFrame(updateMicroscopePosition)
+        }
+
+        status_update_websocket=ws
+    }
 }
-requestAnimationFrame(updateMicroscopePosition)
+updateMicroscopePosition()
 
 class ImagingChannel{
     /**
@@ -447,7 +437,7 @@ function getMachineDefaults(){
 
             ret=data
         })
-        .send("/api/get_features/machine_defaults")
+        .send("/api/get_features/machine_defaults",{},"POST")
 
     return ret
 }
@@ -463,39 +453,6 @@ function getConfigState(){
 }
 
 /**
- * @typedef {{
-    Manufacturer:string,
-    Model_name:string,
-    Model_id_manufacturer:string,
-
-    Model_id:string,
-
-    Offset_A1_x_mm:number,
-    Offset_A1_y_mm:number,
-
-    Offset_bottom_mm:number,
-
-    Well_distance_x_mm:number,
-    Well_distance_y_mm:number,
-
-    Well_size_x_mm:number,
-    Well_size_y_mm:number,
-
-    Num_wells_x:number,
-    Num_wells_y:number,
-
-    Length_mm:number,
-    Width_mm:number,
-
-    Well_shape:*
- * }} Wellplate
- * @typedef {{
-    wellplate_types:Wellplate[],
-    main_camera_imaging_channels:AcquisitionChannelConfig[],
- * }} HardwareCapabilitiesResponse
- */
-
-/**
  * @return{HardwareCapabilitiesResponse|null}
  */
 function get_hardware_capabilities(){
@@ -508,7 +465,7 @@ function get_hardware_capabilities(){
         .onerror(() => {
             console.error("error getting hardware_capabilities")
         })
-        .send("/api/get_features/hardware_capabilities")
+        .send("/api/get_features/hardware_capabilities",{},"POST")
 }
 
 function microscopeConfigGetDefault(){

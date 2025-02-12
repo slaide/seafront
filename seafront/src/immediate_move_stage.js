@@ -23,15 +23,11 @@ function immediate_move(sign,axis,distance_mm,async=true){
             progress_indicator.stop()
             
             let response=JSON.parse(xhr.responseText)
-            if(response.status!="success"){
-                message_open("error","error moving "+axis,response)
-                return
-            }
         })
-        .onerror(()=>{
+        .onerror((xhr)=>{
             progress_indicator.stop()
             
-            message_open("error","error moving "+axis)
+            message_open("error","error moving "+axis,xhr.responseText)
         })
         .send("/api/action/move_by",data,"POST")
 }

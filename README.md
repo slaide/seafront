@@ -127,6 +127,10 @@ python3 -m seafront
 source python_env/deactivate.sh
 ```
 
+# documentation
+
+this server uses the fastapi framework, which is able to automatically generate openapi specs, which in turn can be used to generate client side code for a variety of languages (see [swagger editor](https://editor.swagger.io/)). This documentation (which is auto-generated upon server start) contains the doc strings from the python code, as well as type annotations, so it serves as automatic but also human-readable documentation. When the server is running, check `/docs` (uses the swagger UI, based on openapi.json), `/redoc` (uses redoc UI, based on openapi.json) and `/openapi.json` for the relevant pages.
+
 # what even is a bug?
 
 this software has a broad target audience: from student with no microscopy experience to microscope engineer, the software should support 

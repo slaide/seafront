@@ -45,20 +45,17 @@ function measureLaserAutofocusOffset(return_immediate=false){
             progress_indicator.stop()
 
             let response=JSON.parse(xhr.responseText)
-            if(response.status!="success"){
-                message_open("error","error measuring laser autofocus offset: ",response)
-                return
-            }
+
             laserautofocusdata.currentOffset=response.displacement_um
 
             if(return_immediate){
                 immediate_return_value=response.displacement_um
             }
         })
-        .onerror(()=>{
+        .onerror((xhr)=>{
             progress_indicator.stop()
             
-            message_open("error","error measuring laser autofocus offset")
+            message_open("error","error measuring laser autofocus offset",xhr.responseText)
         })
         .send("/api/action/measure_displacement",data,"POST")
 
@@ -81,10 +78,6 @@ function setLaserAutofocusReference(){
             
             /**@type{{status:string,calibration_data?:{x_reference:number,um_per_px:number,calibration_position:{x_pos_mm:number,y_pos_mm:number,z_pos_mm:number}}}}*/
             let response=JSON.parse(xhr.responseText)
-            if(response.status!="success"){
-                message_open("error","error setting laser autofocus reference: ",response)
-                return
-            }
 
             const autofocus_enabled_checkbox_element=document.getElementById("autofocus-enabled-checkbox")
             if(!(autofocus_enabled_checkbox_element instanceof HTMLInputElement)){console.error("element not found");return}
@@ -105,10 +98,10 @@ function setLaserAutofocusReference(){
             // enable use of autofocus upon calibration
             microscope_config.autofocus_enabled=true
         })
-        .onerror(()=>{
+        .onerror((xhr)=>{
             progress_indicator.stop()
             
-            message_open("error","error setting laser autofocus reference")
+            message_open("error","error setting laser autofocus reference",xhr.responseText)
         })
         .send("/api/action/laser_af_calibrate",data,"POST")
 }
@@ -136,15 +129,11 @@ function laserAutofocusMoveToTargetOffset(){
             progress_indicator.stop()
             
             let response=JSON.parse(xhr.responseText)
-            if(response.status!="success"){
-                message_open("error","error moving to target offset: ",response)
-                return
-            }
         })
-        .onerror(()=>{
+        .onerror((xhr)=>{
             progress_indicator.stop()
             
-            message_open("error","error moving to target offset")
+            message_open("error","error moving to target offset",xhr.responseText)
         })
         .send("/api/action/laser_autofocus_move_to_target_offset",data,"POST")
 }

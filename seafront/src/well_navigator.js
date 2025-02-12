@@ -283,7 +283,7 @@ function dblclickWell(item){
             progress_indicator.stop()
             
             let response=JSON.parse(xhr.responseText)
-            if(response.status!="success"){
+            if(response.detail){
                 message_open("error","failed to move to well:",response,";item: ",item)
                 return
             }

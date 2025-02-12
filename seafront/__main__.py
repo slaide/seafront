@@ -2,17 +2,14 @@
 
 # system deps
 
-import json, time, os, io
+import json, time, os, json
 import typing as tp
 from typing import Callable, Optional
 from types import MethodType
-from enum import Enum
 
-import gc
 import datetime as dt
 import pathlib as path
 import re
-import cv2
 import random
 import traceback
 from functools import wraps
@@ -22,46 +19,35 @@ import asyncio
 # math and image dependencies
 
 import numpy as np
-from PIL import Image
-import tifffile
-import scipy
-from scipy import stats
 
 # for robust type safety at runtime
 
-from pydantic import create_model, BaseModel, Field, ConfigDict
+from pydantic import create_model, BaseModel, Field
+from pydantic.fields import FieldInfo
 
 # for debugging
 
-import matplotlib.pyplot as plt
 _DEBUG_P2JS=True
 
 # http server dependencies
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIWebSocketRoute
 
 import uvicorn
 
 # microscope dependencies
 
 from .server.commands import *
-from .server.commands import _ChannelAcquisitionControl
 
 import seaconfig as sc
 from seaconfig.acquisition import AcquisitionConfig
 from .config.basics import ConfigItem, GlobalConfigHandler
 from .hardware.camera import Camera, gxiapi
 from .hardware import microcontroller as mc
-
-# utility functions
-
-def linear_regression(x:list[float]|np.ndarray,y:list[float]|np.ndarray)->tuple[float,float]:
-    "returns (slope,intercept)"
-    slope, intercept, _,_,_ = stats.linregress(x, y)
-    return slope,intercept #type:ignore
 
 # Set the working directory to the script's directory as reference for static file paths
 
@@ -78,22 +64,37 @@ def generate_random_number_string(num_digits:int=9)->str:
     max_val-=2
     return f"{(int(random.random()*max_val)+1):0{num_digits}d}"
 
-app = FastAPI(debug=True)
+app = FastAPI(debug=False)
 app.mount("/src", StaticFiles(directory="src"), name="static")
 
-@app.get("/")
+# route tags to structure swagger interface (/docs,/redoc)
+
+class RouteTag(str,Enum):
+    STATIC_FILES="Static Files"
+    ACTIONS="Microscope Actions"
+    ACQUISITION_CONTROLS="Acquisition Controls"
+    DOCUMENTATION="Documentation"
+
+openapi_tags=[
+    {"name":RouteTag.STATIC_FILES.value,"description":"serve static files of all sorts"},
+    {"name":RouteTag.ACTIONS.value,"description":"actions for the microscope to perform immediately"},
+    {"name":RouteTag.ACQUISITION_CONTROLS.value,"description":"acquisition related controls and information i/o"},
+    {"name":RouteTag.DOCUMENTATION.value,"description":"documentation on software and api"},
+]
+
+@app.get("/",tags=[RouteTag.STATIC_FILES.value])
 async def index():
     return FileResponse("index.html")
 
-@app.get("/css/{path:path}")
+@app.get("/css/{path:path}",tags=[RouteTag.STATIC_FILES.value])
 async def send_css(path: str):
     return FileResponse(f"css/{path}")
 
-@app.get("/src/{path:path}")
+@app.get("/src/{path:path}",tags=[RouteTag.STATIC_FILES.value])
 async def send_js(path: str):
     return FileResponse(f"src/{path}")
 
-@app.api_route("/api/get_features/hardware_capabilities", methods=["GET"], summary="Get available imaging channels and plate types.")
+@app.api_route("/api/get_features/hardware_capabilities", methods=["POST"], summary="Get available imaging channels and plate types.")
 def get_hardware_capabilities()->HardwareCapabilitiesResponse:
     """
     get a list of all the hardware capabilities of the system
@@ -191,7 +192,7 @@ def get_hardware_capabilities()->HardwareCapabilitiesResponse:
 from .config.basics import GlobalConfigHandler
 GlobalConfigHandler.reset()
 
-@app.api_route("/api/get_features/machine_defaults", methods=["GET"], summary="Get default low-level machine parameters.")
+@app.api_route("/api/get_features/machine_defaults", methods=["POST"], summary="Get default low-level machine parameters.")
 def get_machine_defaults()->list[ConfigItem]:
     """
     get a list of all the low level machine settings
@@ -258,613 +259,124 @@ class CoreLock(BaseModel):
         self._last_key_use=time.time()
         return True
 
-class ImageStoreEntry(BaseModel):
-    """ utility class to store camera images with some metadata """
+from .server.protocol import ProtocolGenerator
+from .hardware.squid import SquidAdapter
 
-    img: np.ndarray = Field(..., repr=False)
-    timestamp: float
-    channel_config: sc.AcquisitionChannelConfig
-    bit_depth: int
+class HistogramResponse(BaseModel):
+    channel_name:str
+    hist_values:tp.List[int]
 
+from threading import Thread
+import asyncio, time, typing
+if typing.TYPE_CHECKING:
+    from concurrent.futures import Future
+    from asyncio import AbstractEventLoop
+
+class AsyncThreadPool:
+    """
+    Thread pool for running async future/coroutines
+
+    Example:
+    ```
+    async def work():
+        print("async work")
+
+    # initialize pool
+    pool = AsyncThreadPool()
+    # submit to pool
+    future = pool.run(work())
+    # block waiting for results
+    future.result()
+    # shutdown pool
+    pool.join()
+    ```
+
+    from https://stackoverflow.com/a/77682889
+    """
+    def __init__(self, workers:int=1):
+        self.workers: int = workers
+        """ Number of worker threads in the pool """
+        self.threads: list[Thread] = []
+        """ Running threads in the pool """
+        self.loops: list[AbstractEventLoop] = []
+        """ Event loops for each thread """
+        self.roundrobin: int = 0
+        """ Next thread to run something in, for round-robin scheduling """
+
+        # initialize threads
+        for i in range(workers):
+            loop = asyncio.new_event_loop()
+            self.loops.append(loop)
+            thread = Thread(target=loop.run_forever)
+            thread.start()
+            self.threads.append(thread)
+
+    def run(self, target: "typing.Coroutine | typing.Future", worker: int|None=None) -> "Future":
+        """ Run async future/coroutine in the thread pool
+        
+            :param target: the future/coroutine to execute
+            :param worker: worker thread you want to run the callable; None for round-robin
+                selection of worker thread
+            :return: future with result
+        """
+        if worker is None:
+            worker = self.roundrobin
+            self.roundrobin = (worker + 1) % self.workers
+        return asyncio.run_coroutine_threadsafe(target, self.loops[worker])
+    
+    def join(self, timeout:float=.1):
+        """ Blocking call to close the thread pool
+        
+            :param timeout: timeout for polling a thread to check if its async tasks are all finished
+        """
+        for i in range(self.workers):
+            # wait for completion of pending tasks before stopping;
+            # stop only waits for current batch of callbacks to complete
+            loop = self.loops[i]
+            while len(asyncio.all_tasks(loop)):
+                time.sleep(timeout)
+            loop.call_soon_threadsafe(loop.stop)
+            self.threads[i].join()
+
+class CustomRoute(BaseModel):
+    handler:tp.Union[tp.Type[BaseCommand],tp.Callable]
+    tags:tp.List[str]=Field(default_factory=list)
+
+    callback:tp.Optional[tp.Union[tp.Callable[[tp.Any,tp.Any],None],tp.Callable[[tp.Any,tp.Any],tp.Coroutine[tp.Any,tp.Any,None]]]]=None
+    
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-class MC_getLastPosition(BaseModel):
-    """ command class to retrieve core.mc.get_last_position """
-    async def run(self,core:"Core")->mc.Position:
-        return await core.mc.get_last_position()
+custom_route_handlers:tp.Dict[str,CustomRoute]={}
 
-class Core_getMainCam(BaseModel):
-    async def run(self,core:"Core")->Camera:
-        return core.main_cam
-
-class Core_getImageByHandle(BaseModel):
-    img_handle:str
-
-    async def run(self,core:"Core")->tp.Union[ImageStoreEntry,None]:
-        return core._get_imageinfo_by_handle(self.img_handle)
-
-# store img as .tiff file
-async def store_image(
-    latest_channel_image:ImageStoreEntry,
-    channel:sc.AcquisitionChannelConfig,
-    core_main_cam:Camera,
-    image_storage_path:str,
-    img_compression_algorithm:str,
-    PIXEL_SIZE_UM:float,
-    light_source_type:int
-):
-    # takes 70-250ms
-    tifffile.imwrite(
-        image_storage_path,
-        latest_channel_image.img,
-
-        compression=img_compression_algorithm,
-        compressionargs={},# for zlib: {'level': 8},
-        maxworkers=1,#3,
-
-        # this metadata is just embedded as a comment in the file
-        metadata={
-            # non-standard tag, because the standard bitsperpixel has a real meaning in the image image data, but
-            # values that are not multiple of 8 cannot be used with compression
-            "BitsPerPixel":latest_channel_image.bit_depth, # type:ignore
-            "BitPaddingInfo":"lower bits are padding with 0s",
-
-            "LightSourceName":channel.name,
-
-            "ExposureTimeMS":f"{channel.exposure_time_ms:.2f}",
-            "AnalogGainDB":f"{channel.analog_gain:.2f}",
-        },
-
-        photometric="minisblack", # zero means black
-        resolutionunit=3, # 3 = cm
-        resolution=(1/(PIXEL_SIZE_UM*1e-6),1/(PIXEL_SIZE_UM*1e-6)),
-        extratags=[
-            # tuples as accepted at https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L856
-            # tags may be specified as string interpretable by https://github.com/blink1073/tifffile/blob/master/tifffile/tifffile.py#L5000
-            ("Make", 's', 0, core_main_cam.vendor_name, True),
-            ("Model", 's', 0, core_main_cam.model_name, True),
-
-            # apparently these are not widely supported
-            ("ExposureTime", 'q', 1, int(channel.exposure_time_ms*1e3), True),
-            ("LightSource", 'h', 1, light_source_type, True),
-        ]
-    )
-
-    print(f"stored image to {image_storage_path}")
-
-class ProtocolGenerator(BaseModel):
-    """
-    params:
-        img_compression_algorithm: tp.Literal["LZW","zlib"] - lossless compression algorithms only
-    """
-
-    config_file:sc.AcquisitionConfig
-    handle_q_in:tp.Callable[[],None]
-    plate:sc.Wellplate
-    acquisition_status:AcquisitionStatus
-    acquisition_id:str
-    ongoing_image_store_tasks:list
-
-    img_compression_algorithm:tp.Literal["LZW","zlib"]="LZW"
-
-    # the values below are initialized during post init hook
-    num_wells:int=-1
-    num_sites:int=-1
-    num_channels:int=-1
-    num_channel_z_combinations:int=-1
-    num_images_total:int=-1
-    site_topleft_x_mm:float=-1
-    site_topleft_y_mm:float=-1
-    image_size_bytes:int=-1
-    max_storage_size_images_GB:float=-1
-    project_output_path:path.Path=Field(default_factory=path.Path)
-
-    @property
-    def well_sites(self):
-        "selected sites in the grid mask"
-        return [s for s in self.config_file.grid.mask if s.selected]
-    @property
-    def channels(self):
-        "selected channels"
-        return [c for c in self.config_file.channels if c.enabled]
-
-    # pydantics version of dataclass.__post_init__
-    def model_post_init(self,__context):
-        self.num_wells=len(self.config_file.plate_wells)
-        self.num_sites=len(self.well_sites)
-        self.num_channels=len([c for c in self.config_file.channels if c.enabled])
-        self.num_channel_z_combinations=sum((c.num_z_planes for c in self.config_file.channels))
-        self.num_images_total=self.num_wells*self.num_sites*self.num_channel_z_combinations
-
-        # the grid is centered around the center of the well
-        self.site_topleft_x_mm=self.plate.Well_size_x_mm / 2 - ((self.config_file.grid.num_x-1) * self.config_file.grid.delta_x_mm) / 2
-        "offset of top left site from top left corner of the well, in x, in mm"
-        self.site_topleft_y_mm=self.plate.Well_size_y_mm / 2 - ((self.config_file.grid.num_y-1) * self.config_file.grid.delta_y_mm) / 2
-        "offset of top left site from top left corner of the well, in y, in mm"
-
-        g_config=GlobalConfigHandler.get_dict()
-
-        # calculate meta information about acquisition
-        cam_img_width=g_config['main_camera_image_width_px']
-        assert cam_img_width is not None
-        target_width:int=cam_img_width.intvalue
-        cam_img_height=g_config['main_camera_image_height_px']
-        assert cam_img_height is not None
-        target_height:int=cam_img_height.intvalue
-        # get byte size per pixel from config main camera pixel format
-        main_cam_pix_format=g_config['main_camera_pixel_format']
-        assert main_cam_pix_format is not None
-        match main_cam_pix_format.value:
-            case "mono8":
-                bytes_per_pixel=1
-            case "mono10":
-                bytes_per_pixel=2
-            case "mono12":
-                bytes_per_pixel=2
-            case _unexpected:
-                error_internal(detail=f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}")
-
-        self.image_size_bytes=target_width*target_height*bytes_per_pixel
-        self.max_storage_size_images_GB=self.num_images_total*self.image_size_bytes/1024**3
-
-        base_storage_path_item=g_config["base_image_output_dir"]
-        assert base_storage_path_item is not None
-        assert type(base_storage_path_item.value) is str
-        base_storage_path=path.Path(base_storage_path_item.value)
-        assert base_storage_path.exists(), f"{base_storage_path = } does not exist"
-
-        project_name_is_acceptable=len(self.config_file.project_name) and name_validity_regex.match(self.config_file.project_name)
-        if not project_name_is_acceptable:
-            error_internal(detail="project name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes")
-        
-        plate_name_is_acceptable=len(self.config_file.plate_name)>0 and name_validity_regex.match(self.config_file.plate_name)
-        if not plate_name_is_acceptable:
-            error_internal(detail="plate name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes")
-
-        self.project_output_path=base_storage_path/self.config_file.project_name/self.config_file.plate_name/self.acquisition_id
-        self.project_output_path.mkdir(parents=True)
-
-        # write config file to output directory
-        with (self.project_output_path/"config.json").open("w") as file:
-            file.write(self.config_file.json())
-
-    def generate(self)->tp.Generator[
-        # yielded types: None means done, str is returned on first iter
-        tp.Union[ None, str, MoveTo, AutofocusMeasureDisplacement, AutofocusApproachTargetDisplacement, _ChannelAcquisitionControl, MC_getLastPosition, Core_getMainCam, Core_getImageByHandle],
-        # received types (at runtime must match return type of <yielded type>.run()."resulttype")
-        tp.Union[ None, AutofocusMeasureDisplacementResult, BasicSuccessResponse, ImageAcquiredResponse, StreamingStartedResponse, mc.Position, Camera, ImageStoreEntry]
-        # generator return value
-        ,None
-    ]:
-        # print(f"acquiring {num_wells} wells, {num_sites} sites, {num_channels} channels, i.e. {num_images_total} images, taking up to {max_storage_size_images_GB}GB")
-
-        # 
-        Z_STACK_COUNTER_BACKLASH_MM=40e-3 # 40um
-        PIXEL_SIZE_UM=900/3000 # 3000px wide fov covers 0.9mm
-        # movement below this threshold is not performed
-        DISPLACEMENT_THRESHOLD_UM: float=0.5
-
-        # counters on acquisition progress
-        start_time=time.time()
-        start_time_iso_str=sc.datetime2str(dt.datetime.now(dt.timezone.utc))
-        last_image_information=None
-
-        num_images_acquired=0
-        storage_usage_bytes=0
-
-        g_config=GlobalConfigHandler.get_dict()
-        
-        # first yield indicates that this generator is ready to produce commands
-        # the value from the consumer on the first yield is None
-        # i.e. this MUST be the first yield !!
-        yield "ready"
-
-        # get current z coordinate as z reference
-        last_position=yield MC_getLastPosition()
-        assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
-        reference_z_mm=last_position.z_pos_mm
-
-        # if laser autofocus is enabled, use autofocus z reference as initial z reference
-        gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
-        if self.config_file.autofocus_enabled and gconfig_refzmm_item is not None:
-            reference_z_mm=gconfig_refzmm_item.floatvalue
-
-            res=yield MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm)
-            assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
-            if res.status!="success": error_internal(detail=f"failed to move to laser autofocus ref z because {res.message}")
-
-        # run acquisition:
-
-        # used to store into metadata
-        core_main_cam=yield Core_getMainCam()
-        assert type(core_main_cam)==Camera
-
-        for well in self.config_file.plate_wells:
-            # these are xy sites
-            print_time("before next site")
-            for site_index,site in enumerate(self.well_sites):
-                self.handle_q_in()
-
-                # go to site
-                site_x_mm=self.plate.get_well_offset_x(well.well_name) + self.site_topleft_x_mm + site.col * self.config_file.grid.delta_x_mm
-                site_y_mm=self.plate.get_well_offset_y(well.well_name) + self.site_topleft_y_mm + site.row * self.config_file.grid.delta_y_mm
-
-                res=yield MoveTo(x_mm=site_x_mm,y_mm=site_y_mm)
-                assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
-
-                print_time("moved to site")
-
-                # run autofocus
-                if self.config_file.autofocus_enabled:
-                    for autofocus_attempt_num in range(3):
-                        current_displacement=yield AutofocusMeasureDisplacement(config_file=self.config_file)
-                        assert isinstance(current_displacement,AutofocusMeasureDisplacementResult), f"{type(current_displacement)=}"
-                        if current_displacement.status!="success": error_internal(detail=f"failed to measure autofocus displacement at site {site} in well {well} because {current_displacement.message}")
-                        
-                        current_displacement_um=current_displacement.displacement_um
-                        assert current_displacement_um is not None
-                        # print(f"measured offset of {current_displacement_um:.2f}um on attempt {autofocus_attempt_num}")
-                        if np.abs(current_displacement_um)<DISPLACEMENT_THRESHOLD_UM:
-                            break
-                        
-                        res=yield AutofocusApproachTargetDisplacement(target_offset_um=0,config_file=self.config_file,pre_approach_refz=False)
-                        assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
-                        if res.status!="success": error_internal(detail=f"failed to autofocus at site {site} in well {well} because {res.message}")
-
-                # reference for channel z offsets
-                # (this position may have been adjusted by the autofocus system, but even without autofocus the current position must be the reference)
-                last_position=yield MC_getLastPosition()
-                assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
-                reference_z_mm=last_position.z_pos_mm
-
-                print_time("af performed")
-                
-                # z stack may be different for each channel, hence:
-                # 1. get list of (channel_z_index,channel,z_relative_to_reference), which may contain each channel more than once
-                # 2. order by z, in ascending (low to high)
-                # 3. move to lowest, start imaging while moving up
-                # 4. move to reference z again in preparation for next site
-
-                image_pos_z_list:list[tuple[int,float,sc.AcquisitionChannelConfig]]=[]
-                for channel in self.channels:
-                    channel_delta_z_mm=channel.delta_z_um*1e-3
-
-                    # <channel reference> is <site reference>+<channel z offset>
-                    base_z=reference_z_mm+channel.z_offset_um*1e-3
-
-                    # lower z base is <channel reference> adjusted for z stack, where \
-                    # n-1 z movements are performed, half of those below, half above <channel ref>
-                    base_z-=((channel.num_z_planes-1)/2)*channel_delta_z_mm
-
-                    for i in range(channel.num_z_planes):
-                        i_offset_mm=i*channel_delta_z_mm
-                        target_z_mm=base_z+i_offset_mm
-                        image_pos_z_list.append((i,target_z_mm,channel))
-
-                # sort in z
-                image_pos_z_list=sorted(image_pos_z_list,key=lambda v:v[1])
-
-                res=yield MoveTo(x_mm=None,y_mm=None,z_mm=image_pos_z_list[0][1]-Z_STACK_COUNTER_BACKLASH_MM)
-                assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
-                if res.status!="success": error_internal(detail=f"failed, because: {res.message}")
-                res=yield MoveTo(x_mm=None,y_mm=None,z_mm=image_pos_z_list[0][1])
-                assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
-                if res.status!="success": error_internal(detail=f"failed, because: {res.message}")
-
-                print_time("moved to init z")
-
-                for plane_index,channel_z_mm,channel in image_pos_z_list:
-                    self.handle_q_in()
-
-                    # move to channel offset
-                    last_position=yield MC_getLastPosition()
-                    assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
-                    current_z_mm=last_position.z_pos_mm
-
-                    distance_z_to_move_mm=channel_z_mm-current_z_mm
-                    if np.abs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_UM:
-                        res=yield MoveTo(x_mm=None,y_mm=None,z_mm=channel_z_mm)
-                        assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
-                        assert res.status=="success"
-
-                    print_time("moved to channel z")
-
-                    # snap image
-                    res=yield _ChannelAcquisitionControl(mode="snap",channel=channel)
-                    assert isinstance(res,ImageAcquiredResponse), f"{type(res)=}"
-                    assert res.status=="success"
-                    if not isinstance(res,ImageAcquiredResponse):error_internal(detail=f"failed to snap image at site {site} in well {well} (invalid result type {type(res)})")
-
-                    print_time("snapped image")
-
-                    img_handle=res.img_handle
-                    latest_channel_image=None
-                    if img_handle is not None:
-                        latest_channel_image=yield Core_getImageByHandle(img_handle=img_handle)
-                        assert isinstance(latest_channel_image,(ImageStoreEntry,None)), f"{type(latest_channel_image)=}" # type:ignore
-                    if latest_channel_image is None:
-                        error_internal(detail=f"image handle {img_handle} not found in image buffer")
-                    
-                    # store image
-                    image_storage_path=f"{str(self.project_output_path)}/{well.well_name}_s{site_index}_x{site.col+1}_y{site.row+1}_z{plane_index+1}_{channel.handle}.tiff"
-                    # add metadata to the file, based on tags from https://exiftool.org/TagNames/EXIF.html
-
-                    if channel.handle[:3]=="BF ":
-                        light_source_type=4 # Flash (seems like the best fit)
-                    else:
-                        light_source_type=2 # Fluorescent
-
-                    # improve system responsiveness while compressing and writing to disk
-                    self.ongoing_image_store_tasks.append(asyncio.create_task(store_image(
-                        latest_channel_image=latest_channel_image, #type:ignore
-                        channel=channel,
-                        core_main_cam=core_main_cam,
-                        image_storage_path=str(image_storage_path),
-                        img_compression_algorithm=self.img_compression_algorithm,
-                        PIXEL_SIZE_UM=PIXEL_SIZE_UM,
-                        light_source_type=light_source_type
-                    )))
-
-                    # pop finished tasks off queue (in-place, hence pop()+push())
-                    running_tasks=[]
-                    num_done=0
-                    while len(self.ongoing_image_store_tasks)>0:
-                        task=self.ongoing_image_store_tasks.pop()
-                        if task.done():
-                            num_done+=1
-                        else:
-                            running_tasks.append(task)
-                    print_time(f"image store tasks: {len(running_tasks)} running, {num_done} finished")
-                    for task in running_tasks:
-                        self.ongoing_image_store_tasks.append(task)
-
-                    print_time("scheduled image store")
-
-                    num_images_acquired+=1
-                    # get storage size from filesystem because tiff compression may reduce size below size in memory
-                    try:
-                        file_size_on_disk=path.Path(image_storage_path).stat().st_size
-                        storage_usage_bytes+=file_size_on_disk
-                    except:
-                        # ignore any errors here, because this is not an essential feature
-                        pass
-
-                    # status items
-                    last_image_information=LastImageInformation(
-                        well=well.well_name,
-                        site=WellSite(
-                            x=site.col,
-                            y=site.row,
-                            z=plane_index,
-                        ),
-                        timepoint=1,
-                        channel_name=channel.name,
-                        full_path=image_storage_path,
-                        handle=img_handle,
-                    )
-                    time_since_start_s=time.time()-start_time
-                    if num_images_acquired>0:
-                        estimated_total_time_s=time_since_start_s*(self.num_images_total-num_images_acquired)/num_images_acquired
-                    else:
-                        estimated_total_time_s=None
-
-                    print(f"{num_images_acquired}/{self.num_images_total} images acquired")
-                    
-                    self.acquisition_status.last_status=AcquisitionStatusOut(
-                        status="success",
-
-                        acquisition_id=self.acquisition_id,
-                        acquisition_status="running",
-                        acquisition_progress=AcquisitionProgressStatus(
-                            # measureable progress
-                            current_num_images=num_images_acquired,
-                            time_since_start_s=time_since_start_s,
-                            start_time_iso=start_time_iso_str,
-                            current_storage_usage_GB=storage_usage_bytes/(1024**3),
-
-                            # estimated completion time information
-                            # estimation may be more complex than linear interpolation, hence done on server side
-                            estimated_total_time_s=estimated_total_time_s,
-
-                            # last image that was acquired
-                            last_image=last_image_information,
-                        ),
-
-                        # some meta information about the acquisition, derived from configuration file
-                        # i.e. this is not updated during acquisition
-                        acquisition_meta_information=AcquisitionMetaInformation(
-                            total_num_images=self.num_images_total,
-                            max_storage_size_images_GB=self.max_storage_size_images_GB,
-                        ),
-
-                        acquisition_config=self.config_file,
-
-                        message=f"Acquisition is {(100*num_images_acquired/self.num_images_total):.2f}% complete"
-                    )
-
-                    print(f"last message: {self.acquisition_status.last_status.message}")
-
-        # done -> yield None and return
-        print(f"last message before yield: {self.acquisition_status.last_status.message}")
-        yield None
+from fastapi import WebSocket, WebSocketDisconnect
 
 class Core:
-    @property
-    def main_cam(self):
-        defaults=GlobalConfigHandler.get_dict()
-        main_camera_model_name=defaults["main_camera_model"].value
-        _main_cameras=[c for c in self.cams if c.model_name==main_camera_model_name]
-        if len(_main_cameras)==0:
-            error_internal(detail=f"no camera with model name {main_camera_model_name} found")
-        main_camera=_main_cameras[0]
-        return main_camera
-
-    @property
-    def focus_cam(self):
-        defaults=GlobalConfigHandler.get_dict()
-        focus_camera_model_name=defaults["laser_autofocus_camera_model"].value
-        _focus_cameras=[c for c in self.cams if c.model_name==focus_camera_model_name]
-        if len(_focus_cameras)==0:
-            error_internal(detail=f"no camera with model name {focus_camera_model_name} found")
-        focus_camera=_focus_cameras[0]
-        return focus_camera
-
-    @property
-    def calibrated_stage_position(self)->tp.Tuple[float,float,float]:
-        """
-        return calibrated XY stage offset from GlobalConfigHandler in order (x_mm,y_mm)
-        """
-
-        off_x_mm=GlobalConfigHandler.get_dict()["calibration_offset_x_mm"].value
-        assert isinstance(off_x_mm,float), f"off_x_mm is {off_x_mm} of type {type(off_x_mm)}"
-        off_y_mm=GlobalConfigHandler.get_dict()["calibration_offset_y_mm"].value
-        assert isinstance(off_y_mm,float), f"off_y_mm is {off_y_mm} of type {type(off_y_mm)}"
-        # TODO this is currently unused
-        off_z_mm=0
-
-        return (off_x_mm,off_y_mm,off_z_mm)
-
-    # real/should position = measured/is position + calibrated offset
-
-    def pos_x_measured_to_real(self,x_mm:float)->float:
-        """
-        convert measured x position to real position
-        """
-        return x_mm+self.calibrated_stage_position[0]
-    def pos_y_measured_to_real(self,y_mm:float)->float:
-        """
-        convert measured y position to real position
-        """
-        return y_mm+self.calibrated_stage_position[1]
-    def pos_z_measured_to_real(self,z_mm:float)->float:
-        """
-        convert measured z position to real position
-        """
-        return z_mm+self.calibrated_stage_position[2]
-    def pos_x_real_to_measured(self,x_mm:float)->float:
-        """
-        convert real x position to measured position
-        """
-        return x_mm-self.calibrated_stage_position[0]
-    def pos_y_real_to_measured(self,y_mm:float)->float:
-        """
-        convert real y position to measured position
-        """
-        return y_mm-self.calibrated_stage_position[1]
-    def pos_z_real_to_measured(self,z_mm:float)->float:
-        """
-        convert real z position to measured position
-        """
-        return z_mm-self.calibrated_stage_position[2]
+    """application core, contains server capabilities and microcontroller interaction"""
 
     async def home(self):
+        """perform homing maneuver"""
 
-        # reset the MCU
-        await self.mc.send_cmd(mc.Command.reset())
+        return await self.squid.home()
 
-        # reinitialize motor drivers and DAC
-        await self.mc.send_cmd(mc.Command.initialize())
-        await self.mc.send_cmd(mc.Command.configure_actuators())
-
-        print("ensuring illumination is off")
-        # make sure all illumination is off
-        for illum_src in [
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
-
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
-        ]:
-            await self.mc.send_cmd(mc.Command.illumination_end(illum_src))
-
-        print("calibrating xy stage")
-
-        # when starting up the microscope, the initial position is considered (0,0,0)
-        # even homing considers the limits, so before homing, we need to disable the limits
-        await self.mc.send_cmd(mc.Command.set_limit_mm("z",-10.0,"lower"))
-        await self.mc.send_cmd(mc.Command.set_limit_mm("z",10.0,"upper"))
-
-        # move objective out of the way
-        await self.mc.send_cmd(mc.Command.home("z"))
-        await self.mc.send_cmd(mc.Command.set_zero("z"))
-        # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
-        await self.mc.send_cmd(mc.Command.set_limit_mm("z",0.0,"lower"))
-        await self.mc.send_cmd(mc.Command.set_limit_mm("z",6.7,"upper"))
-        # home x to set x reference
-        await self.mc.send_cmd(mc.Command.home("x"))
-        await self.mc.send_cmd(mc.Command.set_zero("x"))
-        # clear clamp in x
-        await self.mc.send_cmd(mc.Command.move_by_mm("x",30))
-        # then move in position to properly apply clamp
-        await self.mc.send_cmd(mc.Command.home("y"))
-        await self.mc.send_cmd(mc.Command.set_zero("y"))
-        # home x again to engage clamp
-        await self.mc.send_cmd(mc.Command.home("x"))
-
-        # move to an arbitrary position to disengage the clamp
-        await self.mc.send_cmd(mc.Command.move_by_mm("x",30))
-        await self.mc.send_cmd(mc.Command.move_by_mm("y",30))
-
-        # and move objective up, slightly
-        await self.mc.send_cmd(mc.Command.move_by_mm("z",1))
-
-        print("done initializing microscope")
-        self.homing_performed=True
+    @property
+    def main_cam(self):
+        return self.squid.main_camera
+    @property
+    def focus_cam(self):
+        return self.squid.focus_camera
+    @property
+    def mc(self):
+        return self.squid.microcontroller
 
     def __init__(self):
         self.lock=CoreLock()
 
-        self.microcontrollers=mc.Microcontroller.get_all()
-        self.cams=Camera.get_all()
-
-        abort_startup=False
-
-        if len(self.microcontrollers)==0:
-            print("error - no microcontrollers found.")
-            abort_startup=True
-        if len(self.cams)<2:
-            print(f"error - found less than two cameras (found {len(self.cams)})")
-            abort_startup=True
-
-        if abort_startup:
-            raise RuntimeError("did not find microscope hardware")
-        
-        defaults=GlobalConfigHandler.get_dict()
-        main_camera_model_name=defaults["main_camera_model"].value
-        focus_camera_model_name=defaults["laser_autofocus_camera_model"].value
-
-        found_main_cam=False
-        found_focus_cam=False
-        for cam in self.cams:
-            if cam.model_name==main_camera_model_name:
-                device_type="main"
-                found_main_cam=True
-            elif cam.model_name==focus_camera_model_name:
-                device_type="autofocus"
-                found_focus_cam=True
-            else:
-                # skip other cameras
-                continue
-            
-            cam.open(device_type=device_type)
-
-        if not found_main_cam:
-            raise RuntimeError(f"error - did not find main camera with model name {main_camera_model_name}")
-        if not found_focus_cam:
-            raise RuntimeError(f"error - did not find autofocus camera with model name {focus_camera_model_name}")
-        
-        self.mc=self.microcontrollers[0]
-        self.mc.open()
+        self.squid=SquidAdapter.make()
 
         print("initializing microcontroller")
-        self.homing_performed=False
 
         self.acquisition_map:tp.Dict[str,AcquisitionStatus]={}
-        """
-        map containing information on past and current acquisitions
-        """
+        """ map containing information on past and current acquisitions """
 
         # set up routes to member functions
 
@@ -878,24 +390,44 @@ class Core:
         request_models=dict()
 
         # Utility function to wrap the shared logic by including handlers for GET requests
-        def route_wrapper(path: str, target_func: Callable, methods:list[str]=["GET"], allow_while_acquisition_is_running: bool = True, summary:str|None=None, **kwargs_static):
+        def route_wrapper(
+            path: str,
+            route: CustomRoute,
+            methods:list[str]=["GET"],
+            allow_while_acquisition_is_running: bool = True,
+            summary:str|None=None,
+            **kwargs_static
+        ):
+            custom_route_handlers[path]=route
+
+            target_func=route.handler
+
             async def callfunc(request_data):
+                arg=None
                 # Call the target function
-                if inspect.iscoroutinefunction(target_func):
-                    return await target_func(**request_data)
-                elif inspect.isfunction(target_func) or isinstance(target_func, MethodType):
-                    return target_func(**request_data)
-                elif inspect.isclass(target_func):
+                if inspect.isclass(target_func):
                     instance = target_func(**request_data)
-                    if hasattr(instance, 'run'):
-                        if inspect.iscoroutinefunction(instance.run):
-                            return await instance.run(self)
-                        else:
-                            return instance.run(self)
+                    arg=instance
+                    if isinstance(instance, BaseCommand):
+                        result=await self.squid.execute(instance)
                     else:
-                        raise AttributeError(f"Provided class {target_func} has no method 'run'")
+                        raise AttributeError(f"Provided class {target_func} {type(target_func)=} is no BaseCommand")
+                elif inspect.iscoroutinefunction(target_func):
+                    arg=request_data
+                    result=await target_func(**request_data)
+                elif inspect.isfunction(target_func) or isinstance(target_func, MethodType):
+                    arg=request_data
+                    result=target_func(**request_data)
                 else:
                     raise TypeError(f"Unsupported target_func type: {type(target_func)}")
+
+                if route.callback is not None:
+                    if inspect.iscoroutinefunction(route.callback):
+                        await route.callback(arg,result)
+                    else:
+                        route.callback(arg,result)
+
+                return result
 
             def get_return_type():
                 """
@@ -906,9 +438,12 @@ class Core:
                 if inspect.iscoroutinefunction(target_func) or inspect.isfunction(target_func) or isinstance(target_func, MethodType):
                     #print(f"returning {target_func.__name__} {inspect.signature(target_func).return_annotation}")
                     return inspect.signature(target_func).return_annotation
+
+                if issubclass(target_func,BaseCommand):#type:ignore
+                    return target_func.__private_attributes__["_ReturnValue"].default#type:ignore
                 
                 # Case 2: target_func is a class, get return type of the 'run()' method if it exists
-                elif inspect.isclass(target_func):
+                if inspect.isclass(target_func):
                     if hasattr(target_func, 'run'):
                         run_method = getattr(target_func, 'run')
                         return_type=inspect.signature(run_method).return_annotation
@@ -916,7 +451,7 @@ class Core:
                         return return_type
 
                 # Default case: if none of the above matches
-                print(f"{target_func=} has unknown return type (hasattr run {hasattr(target_func, 'run')})")
+                print(f"{target_func=} has unknown return type")
                 return tp.Any
 
             return_type=get_return_type()
@@ -930,7 +465,8 @@ class Core:
                 request_data=kwargs.copy()
                 request_data.update(kwargs_static)
 
-                return await callfunc(request_data)
+                result=await callfunc(request_data)
+                return result
 
             # Dynamically create a Pydantic model for the POST request body if the target function has parameters
             model_fields = {}
@@ -967,7 +503,8 @@ class Core:
                             request_body_as_toplevel_dict[key]=getattr(request_body,key)
                         request_data.update(request_body_as_toplevel_dict)
 
-                    return await callfunc(request_data)
+                    result=await callfunc(request_data)
+                    return result
             else:
                 async def handler_logic_post(): # type:ignore
                     # Perform verification
@@ -976,7 +513,8 @@ class Core:
 
                     request_data = kwargs_static.copy()
 
-                    return await callfunc(request_data)
+                    result=await callfunc(request_data)
+                    return result
 
             # copy annotation and fix return type
             handler_logic_post.__doc__ = target_func.__doc__
@@ -989,9 +527,6 @@ class Core:
                     summary=docstring_lines[0]
 
             for m in methods:
-                # Extract return annotation if present
-                return_annotation = inspect.signature(target_func).return_annotation
-
                 if m == "GET":
                     app.add_api_route(
                         path,
@@ -1002,6 +537,7 @@ class Core:
                         responses={
                             500:{"model":InternalErrorModel},
                         },
+                        tags=route.tags,#type:ignore
                     )
                 if m == "POST":
                     app.add_api_route(
@@ -1013,33 +549,63 @@ class Core:
                         responses={
                             500:{"model":InternalErrorModel},
                         },
+                        tags=route.tags,#type:ignore
                     )
 
         # Register URL rules requiring machine interaction
         route_wrapper(
             "/api/get_info/current_state",
-            self.get_current_state,
-            methods=["GET", "POST"],
+            CustomRoute(handler=self.get_current_state),
+            methods=["POST"],
         )
+        
+        @app.websocket("/ws/get_info/current_state")
+        async def ws_get_info_current_state(ws:WebSocket):
+            await ws.accept()
+            try:
+                while True:
+                    # await message, but ignore its contents
+                    await ws.receive()
+                    await ws.send_json((await self.get_current_state()).json())
+            except WebSocketDisconnect:
+                pass
+
+        @app.websocket("/ws/get_info/acquired_image")
+        async def getacquiredimage(ws:WebSocket):
+            await ws.accept()
+            try:
+                while True:
+                    channel_name=await ws.receive_text()
+
+                    img=self.latest_images[channel_name]
+                    if img is not None:
+                        await ws.send_json({"width":img._img.shape[0],"height":img._img.shape[1],"bit_depth":img.bit_depth})
+
+                        img_bytes=np.ascontiguousarray(img._img).tobytes()
+
+                        await ws.send_bytes(img_bytes)
+
+            except WebSocketDisconnect:
+                pass
 
         # Register URLs for immediate moves
         route_wrapper(
             "/api/action/move_by",
-            MoveBy,
+            CustomRoute(handler=MoveBy,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
 
         # Register URL for start_acquisition
         route_wrapper(
             "/api/acquisition/start",
-            self.start_acquisition,
+            CustomRoute(handler=self.start_acquisition,tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
         )
 
         # Register URL for cancel_acquisition
         route_wrapper(
             "/api/acquisition/cancel",
-            self.cancel_acquisition,
+            CustomRoute(handler=self.cancel_acquisition,tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             allow_while_acquisition_is_running=True,
             methods=["POST"],
         )
@@ -1047,176 +613,153 @@ class Core:
         # Register URL for get_acquisition_status
         route_wrapper(
             "/api/acquisition/status",
-            self.get_acquisition_status,
+            CustomRoute(handler=self.get_acquisition_status,tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             allow_while_acquisition_is_running=True,
-            methods=["GET", "POST"],
+            methods=["POST"],
         )
+
+        @app.websocket("/ws/acquisition/status")
+        async def ws_acquisition_status(ws:WebSocket):
+            await ws.accept()
+            try:
+                while True:
+                    # await message, but ignore its contents
+                    args=await ws.receive_json()
+                    await ws.send_json((await self.get_acquisition_status(**args)).json())
+            except WebSocketDisconnect:
+                pass
 
         # Retrieve config list
         route_wrapper(
             "/api/acquisition/config_list",
-            self.get_config_list,
+            CustomRoute(handler=self.get_config_list,tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
         )
 
         # Fetch acquisition config
         route_wrapper(
             "/api/acquisition/config_fetch",
-            self.config_fetch,
+            CustomRoute(handler=self.config_fetch,tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
         )
 
         # Save/load config
         route_wrapper(
             "/api/acquisition/config_store",
-            self.config_store,
+            CustomRoute(handler=self.config_store,tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
         )
 
         # Move to well
         route_wrapper(
             "/api/action/move_to_well",
-            MoveToWell,
-            methods=["POST"],
-        )
-
-        # Send image by handle
-        route_wrapper(
-            "/img/get_by_handle",
-            self.send_image_by_handle,
-            quick_preview=False,
-            allow_while_acquisition_is_running=True,
-            methods=["GET"],
-        )
-
-        # Send image by handle preview
-        route_wrapper(
-            "/img/get_by_handle_preview",
-            self.send_image_by_handle,
-            quick_preview=True,
-            allow_while_acquisition_is_running=True,
-            methods=["GET"],
-        )
-
-        # Send image histogram
-        route_wrapper(
-            "/api/action/get_histogram_by_handle",
-            SendImageHistogram,
-            allow_while_acquisition_is_running=True,
+            CustomRoute(handler=MoveToWell,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
 
         # Loading position enter/leave
-        self.is_in_loading_position:bool = False
         route_wrapper(
             "/api/action/enter_loading_position",
-            LoadingPositionEnter,
+            CustomRoute(handler=LoadingPositionEnter,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
         route_wrapper(
             "/api/action/leave_loading_position",
-            LoadingPositionLeave,
+            CustomRoute(handler=LoadingPositionLeave,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
+
+        async def write_image(cmd:ChannelSnapshot,res:ImageAcquiredResponse):
+            await self._store_new_image(img=res._img,channel_config=cmd.channel)
 
         # Snap channel
         route_wrapper(
             "/api/action/snap_channel",
-            _ChannelAcquisitionControl,
-            mode="snap",
+            CustomRoute(handler=ChannelSnapshot,tags=[RouteTag.ACTIONS.value],callback=write_image),
             methods=["POST"],
         )
 
         route_wrapper(
             "/api/action/snap_selected_channels",
-            self.snap_selected_channels,
+            CustomRoute(handler=self.snap_selected_channels,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
 
         # Start streaming (i.e., acquire x images per sec, until stopped)
-        self.is_streaming:bool = False
-        self.stream_handler: tp.Optional[CoreStreamHandler] = None
+        self.image_store_threadpool=AsyncThreadPool()
+        stream_info:tp.Dict[str,None|sc.AcquisitionChannelConfig]={"channel":None}
+        def handle_image(arg:np.ndarray|bool)->bool:
+            if isinstance(arg,bool):
+                should_stop=arg
+                if should_stop:return True
+            else:
+                img=arg
+                assert stream_info["channel"] is not None
+                self.image_store_threadpool.run(self._store_new_image(img=img,channel_config=stream_info["channel"]))
+            return False
+
+        def register_stream_begin(begin:ChannelStreamBegin,res):
+            # register callback on microscope
+            self.squid.stream_callback=handle_image
+            # store channel info, to be used inside the streaming callback to store the images in the server properly
+            stream_info["channel"]=begin.channel
+        def register_stream_end(a,b):
+            self.squid.stream_callback=None
+
         route_wrapper(
             "/api/action/stream_channel_begin",
-            _ChannelAcquisitionControl,
-            mode="stream_begin",
+            CustomRoute(handler=ChannelStreamBegin,tags=[RouteTag.ACTIONS.value],callback=register_stream_begin),
             methods=["POST"],
         )
         route_wrapper(
             "/api/action/stream_channel_end",
-            _ChannelAcquisitionControl,
-            mode="stream_end",
+            CustomRoute(handler=ChannelStreamEnd,tags=[RouteTag.ACTIONS.value],callback=register_stream_end),
             methods=["POST"],
         )
 
         # Laser autofocus system
         route_wrapper(
             "/api/action/snap_reflection_autofocus",
-            AutofocusSnap,
+            CustomRoute(handler=AutofocusSnap,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
         route_wrapper(
             "/api/action/measure_displacement",
-            AutofocusMeasureDisplacement,
+            CustomRoute(handler=AutofocusMeasureDisplacement,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
         route_wrapper(
             "/api/action/laser_autofocus_move_to_target_offset",
-            AutofocusApproachTargetDisplacement,
+            CustomRoute(handler=AutofocusApproachTargetDisplacement,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
         route_wrapper(
             "/api/action/laser_af_calibrate",
-            self.laser_af_calibrate_here,
+            CustomRoute(handler=LaserAutofocusCalibrate,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
         route_wrapper(
             "/api/action/laser_af_warm_up_laser",
-            AutofocusLaserWarmup,
+            CustomRoute(handler=AutofocusLaserWarmup,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
 
         # Calibrate stage position
         route_wrapper(
             "/api/action/calibrate_stage_xy_here",
-            self.calibrate_stage_xy_here,
+            CustomRoute(handler=self.calibrate_stage_xy_here,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
 
         # Turn off all illumination
         route_wrapper(
             "/api/action/turn_off_all_illumination",
-            IlluminationEndAll,
+            CustomRoute(handler=IlluminationEndAll,tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
 
-        # init some self.fields
-
-        main_camera_imaging_channels=get_hardware_capabilities().main_camera_imaging_channels
-        self.latest_image_handle:dict[str,str]={
-            channel.handle:""
-            for channel
-            in main_camera_imaging_channels
-        }
-        """
-        store last image acquired with main imaging camera.
-        key is channel handle, value is actual handle
-        """
-        self.images:dict[str,dict[str,ImageStoreEntry]]={
-            channel.handle:{}
-            for channel
-            in main_camera_imaging_channels
-        }
-        """
-        contain the actual image data for each handle.
-        the image handle code is responsible for cleaning up old images
-        """
-
-        # only store the latest laser af image
-        self.laser_af_image_latest_handle:str=""
-        self.laser_af_images:dict[str,ImageStoreEntry]={}
-
-        self.state=CoreState.Idle
+        self.latest_images:tp.Dict[str,ImageStoreEntry]={}
+        "latest image acquired in each channel"
 
         self.acquisition_thread=None
 
@@ -1272,7 +815,6 @@ class Core:
             config_list_str.append(next_config)
 
         ret=ConfigListResponse(
-            status="success",
             configs=config_list_str,
         )
 
@@ -1301,7 +843,6 @@ class Core:
         config=sc.AcquisitionConfig(**config_json)
 
         return ConfigFetchResponse(
-            status="success",
             file=config
         )
 
@@ -1327,7 +868,7 @@ class Core:
         except Exception as e:
             error_internal(detail=f"failed storing config to file because {e}")
 
-        return BasicSuccessResponse(status="success")
+        return BasicSuccessResponse()
 
     async def snap_selected_channels(self,config_file:sc.AcquisitionConfig)->BasicSuccessResponse:
         """
@@ -1338,59 +879,7 @@ class Core:
         if autofocus is calibrated, this will automatically run the autofocus and take channel z offsets into account
         """
 
-        if self.is_in_loading_position:
-            error_internal(detail="now allowed while in loading position")
-
-        # get machine config
-        if config_file.machine_config is not None:
-            GlobalConfigHandler.override(config_file.machine_config)
-
-        g_config=GlobalConfigHandler.get_dict()
-
-        laf_is_calibrated=g_config["laser_autofocus_is_calibrated"]
-
-        # get channels from that, filter for selected/enabled channels
-        channels=[c for c in config_file.channels if c.enabled]
-
-        # then:
-        # if autofocus is available, measure and approach 0 in a loop up to 5 times
-        current_state=await self.get_current_state()
-        if current_state.status!="success":
-            return current_state
-        reference_z_mm=current_state.stage_position.z_pos_mm
-
-        if laf_is_calibrated is not None and laf_is_calibrated.boolvalue:
-            for i in range(5):
-                displacement_measure_data=await AutofocusMeasureDisplacement(config_file=config_file).run(self)
-                if displacement_measure_data.status!="success":
-                    error_internal(detail=f"failed to measure displacement for reference z: {displacement_measure_data.message}")
-
-                current_displacement_um=displacement_measure_data.displacement_um
-                assert current_displacement_um is not None
-                if np.abs(current_displacement_um)<0.5:
-                    break
-
-                move_data=await MoveBy(axis="z",distance_mm=-1e-3*current_displacement_um).run(self)
-                if move_data.status!="success":
-                    error_internal(detail=f"failed to move into focus: {move_data.message}")
-
-            # then store current z coordinate as reference z
-            current_state=await self.get_current_state()
-            if current_state.status!="success":
-                return current_state
-            reference_z_mm=current_state.stage_position.z_pos_mm
-
-        # then go through list of channels, and approach each channel with offset relative to reference z 
-        for channel in channels:
-            move_to_data=await MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm+channel.z_offset_um*1e-3).run(self)
-            if move_to_data.status!="success":
-                error_internal(detail=f"failed to move to channel offset: {move_to_data.message}")
-
-            channel_snap_data=await ChannelSnapshot(channel=channel.dict()).run(self)
-            if channel_snap_data.status!="success":
-                error_internal(detail=f"failed to take channel snapshot: {channel_snap_data.message}")
-
-        return BasicSuccessResponse(status="success")
+        return await self.squid.snap_selected_channels(config_file)
 
     async def calibrate_stage_xy_here(self)->BasicSuccessResponse:
         """
@@ -1402,13 +891,13 @@ class Core:
         due to the delay between improper calibration and actual cause of the damage, this function should be treat with appropriate care.
         """
 
-        if self.is_in_loading_position:
+        if self.squid.is_in_loading_position:
             error_internal(detail="now allowed while in loading position")
 
         # TODO this needs a better solution where the plate type can be configured
         plate=[p for p in sc.Plates if p.Model_id=="revvity-phenoplate-384"][0]
 
-        current_pos=await self.mc.get_last_position()
+        current_pos=(await self.squid.get_current_state()).stage_position
 
         # real/should position = measured/is position + calibrated offset
         # i.e. calibrated offset = real/should position - measured/is position
@@ -1431,430 +920,49 @@ class Core:
             )
         })
 
-        return BasicSuccessResponse(
-            status="success"
-        )
+        return BasicSuccessResponse()
 
-    def _get_peak_coords(self,img:np.ndarray,use_glass_top:bool=False,TOP_N_PEAKS:int=2)->tuple[float,list[float]]:
+    async def _store_new_image(self,img:np.ndarray,channel_config:sc.AcquisitionChannelConfig)->str:
         """
-        get peaks in laser autofocus signal
+            store a new image, return the channel handle (into self.latest_images)
 
-        used to derive actual location information. by itself not terribly useful.
-
-        returns rightmost_peak_x, distances_between_peaks
-        """
-
-        # 8 bit signal -> max value 255
-        I = img
-        I_1d:np.ndarray=I.max(axis=0) # use max to avoid issues with noise (sum is another option, but prone to issues with noise)
-        x=np.array(range(len(I_1d)))
-        y=I_1d
-
-        # locate peaks == locate dots
-        peak_locations,_ = scipy.signal.find_peaks(I_1d,distance=300,height=10)
-
-        # order by height to pick top N
-        tallestpeaks_x=list(sorted(peak_locations.tolist(),key=lambda x:float(I_1d[x])))[-TOP_N_PEAKS:]
-        # then order peaks by x again
-        tallestpeaks_x=list(sorted(tallestpeaks_x))
-        assert len(tallestpeaks_x)>0, "no signal found"
-
-        # Find the rightmost (largest x) peak
-        rightmost_peak:float = max(tallestpeaks_x)
-
-        # Compute distances between consecutive peaks
-        distances_between_peaks:list[float] = [tallestpeaks_x[i+1] - tallestpeaks_x[i] for i in range(len(tallestpeaks_x)-1)]
-
-        # Output rightmost peak and distances between consecutive peaks
-        return rightmost_peak, distances_between_peaks
-
-    async def laser_af_calibrate_here(self,
-        z_mm_movement_range_mm:float=0.3,
-
-        Z_MM_BACKLASH_COUNTER:float=40e-3,
-        NUM_Z_STEPS_CALIBRATE:int=13
-    )->LaserAutofocusCalibrationResponse:
-        """
-            set current position as laser autofocus reference
-
-            calculates the conversion factor between pixels and micrometers, and sets the reference for the laser autofocus signal
-
-            the calibration process takes dozens of measurements of the laser autofocus signal at known z positions.
-            then it calculates the positions of the dots, and tracks them over time. this is expected to observe two dots, 
-            at constant distance to each other. one dot may only be visible for a subrange of the total z range, which is
-            expected.
-            one dot is known to be always visible, so its trajectory is used as reference data.
-
-            measuring the actual offset at an unknown z then locates the dot[s] on the sensor, and uses the position of the dot
-            that is known to be always visible to calculate the approximate z offset, based on the reference measurements.
-        """
-
-        if self.is_in_loading_position:
-            error_internal(detail="now allowed while in loading position")
-
-        DEBUG_LASER_AF_CALIBRATION=bool(0)
-        DEBUG_LASER_AF_SHOW_REGRESSION_FIT=False
-        DEBUG_LASER_AF_SHOW_EVAL_FIT=True
-
-        if DEBUG_LASER_AF_CALIBRATION:
-            z_mm_movement_range_mm=0.3
-            NUM_Z_STEPS_CALIBRATE=13
-        else:
-            z_mm_movement_range_mm=0.05
-            NUM_Z_STEPS_CALIBRATE=7
-
-        async def get_current_z_mm()->float:
-            current_state=await self.get_current_state()
-            assert current_state.status=="success"
-            return current_state.stage_position.z_pos_mm
-
-        g_config=GlobalConfigHandler.get_dict()
-
-        conf_af_exp_ms_item=g_config["laser_autofocus_exposure_time_ms"]
-        assert conf_af_exp_ms_item is not None
-        conf_af_exp_ms=conf_af_exp_ms_item.floatvalue
-
-        conf_af_exp_ag_item=g_config["laser_autofocus_analog_gain"]
-        assert conf_af_exp_ag_item is not None
-        conf_af_exp_ag=conf_af_exp_ag_item.floatvalue
-
-        z_step_mm=z_mm_movement_range_mm/(NUM_Z_STEPS_CALIBRATE-1)
-        half_z_mm=z_mm_movement_range_mm/2
-
-        start_z_mm:float=await get_current_z_mm()
-
-        # move down by half z range
-        if Z_MM_BACKLASH_COUNTER is not None:
-            await self.mc.send_cmd(mc.Command.move_by_mm("z",-(half_z_mm+Z_MM_BACKLASH_COUNTER)))
-            await self.mc.send_cmd(mc.Command.move_by_mm("z",Z_MM_BACKLASH_COUNTER))
-        else:
-            await self.mc.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
-
-        # Display each peak's height and width
-        class CalibrationData(BaseModel):
-            z_mm:float
-            p:tuple[float,list[float]]
-
-        async def measure_dot_params():
-            # measure pos
-            res=await AutofocusSnap(exposure_time_ms=conf_af_exp_ms,analog_gain=conf_af_exp_ag).run(self)
-            if res.status!="success":
-                error_internal(detail="failed to snap autofocus image [1]")
-
-            assert self.laser_af_image_latest_handle is not None
-            latest_laser_af_image=self.laser_af_images.get(self.laser_af_image_latest_handle)
-            if latest_laser_af_image is None:
-                error_internal(detail="no laser autofocus image found [1]")
-
-            params = self._get_peak_coords(latest_laser_af_image.img)
-            return params
-
-        peak_info:list[CalibrationData] = []
-
-        for i in range(NUM_Z_STEPS_CALIBRATE):
-            if i>0:
-                # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                await self.mc.send_cmd(mc.Command.move_by_mm("z",z_step_mm))
-
-            params = await measure_dot_params()
-
-            peak_info.append(CalibrationData(z_mm=-half_z_mm+i*z_step_mm,p=params))
-
-        # move to original position
-        await self.mc.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
-
-        class DomainInfo(BaseModel):
-            lowest_x:float
-            highest_x:float
-            peak_xs:list[tuple[list[float],list[float]]]
-
-        # in the two peak domain, both dots are visible
-        two_peak_domain=DomainInfo(lowest_x=3000,highest_x=0,peak_xs=[])
-        # in the one peak domain, only one dot is visible (the one with the lower x in the two dot domain)
-        one_peak_domain=DomainInfo(lowest_x=3000,highest_x=0,peak_xs=[])
-
-        distances=[]
-        distance_x=[]
-        for i in peak_info:
-            rightmost_x,p_distances=i.p
-
-            new_distances=[rightmost_x]
-            for p_d in p_distances:
-                new_distances.append(new_distances[-1]-p_d)
-
-            new_z=[i.z_mm]*len(new_distances)
-
-            distances.extend(new_distances)
-            distance_x.extend(new_z)
-
-            if len(p_distances)==0:
-                target_domain=one_peak_domain
-            elif len(p_distances)==1:
-                target_domain=two_peak_domain
-            else:
-                assert False
-
-            for x in new_distances:
-                target_domain.lowest_x=min(target_domain.lowest_x,x)
-                target_domain.highest_x=max(target_domain.highest_x,x)
-                target_domain.peak_xs.append((new_distances,new_z))
-
-        if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_REGRESSION_FIT:
-            plt.figure(figsize=(8, 6))
-            plt.scatter(distance_x,distances, color='blue',label="all peaks")
-
-        # x is dot x
-        # y is z coordinate
-        left_dot_x=[]
-        left_dot_y=[]
-        right_dot_x=[]
-        right_dot_y=[]
-
-        for peak_y,peak_x in one_peak_domain.peak_xs:
-            left_dot_x.append(peak_x[0])
-            left_dot_y.append(peak_y[0])
-
-        for peak_y,peak_x in two_peak_domain.peak_xs:
-            right_dot_x.append(peak_x[0])
-            right_dot_y.append(peak_y[0])
-            left_dot_x.append(peak_x[1])
-            left_dot_y.append(peak_y[1])
-
-        left_dot_regression=linear_regression(left_dot_x,left_dot_y)
-        right_dot_regression=linear_regression(right_dot_x,right_dot_y)
-
-        if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_REGRESSION_FIT:
-            # plot one peak domain
-            domain_x=[]
-            domain_y=[]
-            for py,pz in one_peak_domain.peak_xs:
-                domain_x.extend(pz)
-                domain_y.extend(py)
-
-            plt.scatter(domain_x,domain_y,color="green",marker="x",label="one peak domain")
-
-            # plot two peak domain
-            domain_x=[]
-            domain_y=[]
-            for py,pz in two_peak_domain.peak_xs:
-                domain_x.extend(pz)
-                domain_y.extend(py)
-
-            plt.scatter(domain_x,domain_y,color="red",marker="x",label="two peak domain")
-
-            #plot left dot regression
-            slope,intercept=left_dot_regression
-            plt.axline((0,intercept),slope=slope,color="purple",label="left dot regression")
-
-            # plot right dot regression
-            slope,intercept=right_dot_regression
-            plt.axline((0,intercept),slope=slope,color="black",label="right dot regression")
-
-            plt.xlabel('physical z coordinate')
-            plt.ylabel('sensor x coordinate')
-            plt.legend()
-            plt.grid(True)
-            plt.show()
-
-        # -- eval performance, display with pyplot
-        if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_EVAL_FIT:
-
-            start_z=await get_current_z_mm()
-            # z_mm_movement_range_mm*=0.8
-            half_z_mm=z_mm_movement_range_mm/2
-            num_z_steps_eval=51
-            z_step_mm=z_mm_movement_range_mm/(num_z_steps_eval-1)
-
-            if Z_MM_BACKLASH_COUNTER is not None:
-                await self.mc.send_cmd(mc.Command.move_by_mm("z",-(half_z_mm+Z_MM_BACKLASH_COUNTER)))
-                await self.mc.send_cmd(mc.Command.move_by_mm("z",Z_MM_BACKLASH_COUNTER))
-            else:
-                await self.mc.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
-
-            approximated_z:list[tuple[float,float]]=[]
-            for i in range(num_z_steps_eval):
-                if i>0:
-                    # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                    await self.mc.send_cmd(mc.Command.move_by_mm("z",z_step_mm))
-
-                approx=await self._approximate_laser_af_z_offset_mm(LaserAutofocusCalibrationData(um_per_px=left_dot_regression[0],x_reference=left_dot_regression[1],calibration_position=StagePosition.zero()))
-                current_z_mm=await get_current_z_mm()
-                approximated_z.append((current_z_mm-start_z,approx))
-
-            # move to original position
-            await self.mc.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
-
-            plt.figure(figsize=(8, 6))
-            plt.scatter([v[0]*1e3 for v in approximated_z],[v[0]*1e3 for v in approximated_z], color='green',label="real/expected", marker='o', linestyle='-')
-            plt.scatter([v[0]*1e3 for v in approximated_z],[v[1]*1e3 for v in approximated_z], color='blue',label="estimated", marker='o', linestyle='-')
-            plt.scatter([v[0]*1e3 for v in approximated_z],[(v[1]-v[0])*1e3 for v in approximated_z], color='red',label="error", marker='o', linestyle='-')
-            plt.xlabel('real z [um]')
-            plt.ylabel('measured z [um]')
-            plt.legend()
-            plt.grid(True)
-            plt.show()
-
-        um_per_px,_x_reference=left_dot_regression
-        print(f"y = {_x_reference} + x * {um_per_px}")
-        x_reference=(await measure_dot_params())[0]
-        print(f"{_x_reference=} {x_reference=}")
-
-        current_state=await self.get_current_state()
-        if current_state.status!="success":
-            return current_state
-
-        calibration_position=current_state.stage_position
-
-        calibration_data=LaserAutofocusCalibrationData(
-            # calculate the conversion factor, based on lowest and highest measured position
-            um_per_px=um_per_px,
-            # set reference position
-            x_reference=x_reference,
-            calibration_position=calibration_position
-        )
-
-        return LaserAutofocusCalibrationResponse(status="success",calibration_data=calibration_data)
-
-    async def _approximate_laser_af_z_offset_mm(self,calib_params:LaserAutofocusCalibrationData,_leftmostxinsteadofestimatedz:bool=False)->float:
-        """
-        approximate current z offset (distance from current imaging plane to focus plane)
-
-        args:
-            calib_params:
-            _leftmostxinsteadofestimatedz: if True, return the coordinate of the leftmost dot in the laser autofocus signal instead of the estimated z value that is based on this coordinate
+            note: this stores regular images, as well as autofocus images
         """
 
         g_config=GlobalConfigHandler.get_dict()
 
-        conf_af_exp_ms_item=g_config["laser_autofocus_exposure_time_ms"]
-        assert conf_af_exp_ms_item is not None
-        conf_af_exp_ms=conf_af_exp_ms_item.floatvalue
-
-        conf_af_exp_ag_item=g_config["laser_autofocus_analog_gain"]
-        assert conf_af_exp_ag_item is not None
-        conf_af_exp_ag=conf_af_exp_ag_item.floatvalue
-
-        # get params to describe current signal
-        res=await AutofocusSnap(exposure_time_ms=conf_af_exp_ms,analog_gain=conf_af_exp_ag).run(self)
-        assert res.status=="success"
-
-        assert self.laser_af_image_latest_handle is not None
-        latest_laser_af_image=self.laser_af_images.get(self.laser_af_image_latest_handle)
-        assert latest_laser_af_image is not None
-
-        new_params = self._get_peak_coords(latest_laser_af_image.img)
-        rightmost_x,interpeakdistances=new_params
-
-        if len(interpeakdistances)==0:
-            leftmost_x=rightmost_x
-        elif len(interpeakdistances)==1:
-            leftmost_x=rightmost_x-interpeakdistances[0]
-        else: assert False
-
-        if _leftmostxinsteadofestimatedz:
-            return leftmost_x
-
-        def find_x_for_y(y_measured,regression_params):
-            "find x (input value, z position) for given y (measured value, dot location on sensor)"
-            slope,intercept=regression_params
-            return (y_measured - intercept) / slope
-
-        regression_params=(calib_params.um_per_px,calib_params.x_reference)
-
-        return find_x_for_y(leftmost_x,regression_params)
-
-    def _store_new_laseraf_image(self,img:np.ndarray,channel_config:sc.AcquisitionChannelConfig)->str:
-        """
-            store a new laser autofocus image, return the handle
-        """
-
-        # apply a bit of blur to solve some noise related issues
-        img = cv2.GaussianBlur(img,(3,3),cv2.BORDER_DEFAULT)
-
-        # generate new handle
-        self.laser_af_image_latest_handle=f"laseraf_{generate_random_number_string()}"
-            
-        pxfmt_int,pxfmt_str=self.focus_cam.handle.PixelFormat.get() # type: ignore
-        match pxfmt_int:
-            case gxiapi.GxPixelFormatEntry.MONO8:
-                pixel_depth=8
-            case gxiapi.GxPixelFormatEntry.MONO10:
-                pixel_depth=10
-            case gxiapi.GxPixelFormatEntry.MONO12:
-                pixel_depth=12
-            case _unknown:
-                error_internal(detail=f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
+        adapter_state=await self.squid.get_current_state()
 
         # store new image
-        self.laser_af_images[self.laser_af_image_latest_handle]=ImageStoreEntry(img=img,timestamp=time.time(),channel_config=channel_config,bit_depth=pixel_depth)
+        new_image_store_entry=ImageStoreEntry(
+            pixel_format=g_config["laser_autofocus_pixel_format"].strvalue,
+            info=ImageStoreInfo(
+                channel=channel_config,
+                width_px=0,
+                height_px=0,
+                timestamp=time.time(),
+                position=SitePosition(
+                    well_name="",
+                    site_x=0,site_y=0,site_z=0,
+                    x_offset_mm=0,y_offset_mm=0,z_offset_mm=0,
+                    position=adapter_state.stage_position,
+                ),
+            )
+        )
+        new_image_store_entry._img=img
+        self.latest_images[channel_config.name]=new_image_store_entry
 
-        # remove oldest images if more than 8 are stored
-        MAX_NUM_IMAGES=8
-        if len(self.laser_af_images)>MAX_NUM_IMAGES:
-            channel_image_entries=sorted(list(self.laser_af_images.items()),key=lambda i:i[1].timestamp)[:-MAX_NUM_IMAGES]
-            for channel_image_key,channel_image_entry in channel_image_entries:
-                del self.laser_af_images[channel_image_key]
+        return channel_config.name
 
-        return self.laser_af_image_latest_handle
-
-    def _store_new_image(self,img:np.ndarray,channel_config:sc.AcquisitionChannelConfig)->str:
-        """
-            store a new image, return the handle
-        """
-
-        # remove last image in channel from self.images
-
-        channel_images=self.images[channel_config.handle]
-
-        image_timestamps=sorted([(k,v) for (k,v) in channel_images.items()],key=lambda i:i[1].timestamp)
-        # only keep last N-1 (then add new one for a total of N)
-        MAX_NUM_IMAGES_PER_CHANNEL=8
-        for image_handle,image in image_timestamps[:-(MAX_NUM_IMAGES_PER_CHANNEL-1)]:
-            del image.img # specifically delete this to free memory
-            del channel_images[image_handle]
-
-        # generate new handle
-        new_image_handle=channel_config.handle+generate_random_number_string()
-        self.latest_image_handle[channel_config.handle]=new_image_handle
-
-        pxfmt_int,pxfmt_str=self.main_cam.handle.PixelFormat.get() # type: ignore
-        match pxfmt_int:
-            case gxiapi.GxPixelFormatEntry.MONO8:
-                pixel_depth=8
-            case gxiapi.GxPixelFormatEntry.MONO10:
-                pixel_depth=10
-            case gxiapi.GxPixelFormatEntry.MONO12:
-                pixel_depth=12
-            case _unknown:
-                error_internal(detail=f"unexpected pixel format {pxfmt_int = } {pxfmt_str = }")
-            
-        # store new image
-        channel_images[new_image_handle]=ImageStoreEntry(img=img,timestamp=time.time(),channel_config=channel_config,bit_depth=pixel_depth)
-
-        return new_image_handle
-
-    def _get_imageinfo_by_handle(self,img_handle:str)->Optional[ImageStoreEntry]:
-        "get image story entry for image handle, regardless of channel (only images though, not laser af)"
-        img_container=None
-        for channel_images in self.images.values():
-            img_container=channel_images.get(img_handle)
-            if img_container is not None:
-                break
-
-        if img_container is None:
-            img_container=self.laser_af_images.get(img_handle)
-            
-        return img_container
-
-    async def send_image_by_handle(self,img_handle:str,quick_preview:bool=False)->Response:
-        """
+    """async def _send_image_by_handle(self,img_handle:str,quick_preview:bool=False)->Response:
+        """"""
             send image with given handle
 
             allows use in <img src='...'> tags.
 
             args:
                 quick_preview: if true, reduces image quality to minimize camera->display latency
-        """
+        """"""
 
         img_container=self._get_imageinfo_by_handle(img_handle)
             
@@ -1927,13 +1035,15 @@ class Core:
         headers = {"Content-Disposition": f"inline; filename=image.{streaming_format}"}
 
         return StreamingResponse(img_io, media_type=mimetype, headers=headers)
-
-    async def get_image_histogram(self,handle:str)->HistogramResponse:
-        """
+    """
+    """async def _calculate_histogram(self,handle:str)->HistogramResponse:
+        """"""
         calculate image histogram
 
         returns 256 value bucket of image histogram from handle, no matter the pixel depth.
-        """
+
+        may internally downsample the image to reduce calculation time.
+        """"""
 
         img_info=self._get_imageinfo_by_handle(handle)
 
@@ -1956,37 +1066,14 @@ class Core:
 
         hist=await asyncio.get_running_loop().run_in_executor(None,calc_hist)
 
-        return HistogramResponse(status="success",channel_name=img_info.channel_config.name,hist_values=hist)
-
+        return HistogramResponse(channel_name=img_info.info.channel.name,hist_values=hist)
+    """
     async def get_current_state(self)->CoreCurrentState:
         """
         get current state of the microscope
 
         for details see fields of return value
         """
-
-        last_stage_position=await self.mc.get_last_position()
-
-        latest_img_info={
-            channel_handle:ImageStoreInfo(
-                handle=img_handle,
-                channel=img_info.channel_config,
-                width_px=img_info.img.shape[1],
-                height_px=img_info.img.shape[0],
-                timestamp=img_info.timestamp,
-            )
-            for (channel_handle,img_handle,img_info)
-            in (
-                (channel_handle,img_handle,self.images[channel_handle][img_handle])
-                for (channel_handle,img_handle)
-                in self.latest_image_handle.items()
-                if img_handle in self.images[channel_handle]
-            )
-        }
-
-        # supposed=real-calib
-        x_pos_mm=self.pos_x_measured_to_real(last_stage_position.x_pos_mm)
-        y_pos_mm=self.pos_y_measured_to_real(last_stage_position.y_pos_mm)
 
         current_acquisition_id=None
         if self.acquisition_is_running:
@@ -1995,17 +1082,13 @@ class Core:
                     if current_acquisition_id is not None:
                         print(f"warning - more than one acquisition is running at a time?! {current_acquisition_id} and {acq_id}")
                     current_acquisition_id=acq_id
+
+        # blur laser autofocus image (this code is super out of place here)
+        # img = cv2.GaussianBlur(img,(3,3),cv2.BORDER_DEFAULT)
         
         return CoreCurrentState(
-            status="success",
-            state=self.state.value,
-            is_in_loading_position=self.is_in_loading_position,
-            stage_position=StagePosition(
-                x_pos_mm=x_pos_mm,
-                y_pos_mm=y_pos_mm,
-                z_pos_mm=last_stage_position.z_pos_mm,
-            ),
-            latest_imgs=latest_img_info,
+            adapter_state=await self.squid.get_current_state(),
+            latest_imgs={key:entry.info for key,entry in self.latest_images.items()},
             current_acquisition_id=current_acquisition_id,
         )
 
@@ -2030,7 +1113,7 @@ class Core:
 
         await acq.queue_in.put(AcquisitionCommand.CANCEL)
 
-        return BasicSuccessResponse(status="success")
+        return BasicSuccessResponse()
 
     @property
     def acquisition_is_running(self)->bool:
@@ -2050,7 +1133,7 @@ class Core:
         the acquisition is run in the background, i.e. this command returns after acquisition bas begun. see /api/acquisition/status for ongoing status of the acquisition.
         """
 
-        if self.is_in_loading_position:
+        if self.squid.is_in_loading_position:
             error_internal(detail="now allowed while in loading position")
         
         if self.acquisition_thread is not None:
@@ -2103,7 +1186,6 @@ class Core:
             thread_is_running=False,
         )
         self.acquisition_map[acquisition_id]=acquisition_status
-            
 
         ongoing_image_store_tasks:list=[]
         def handle_q_in(q_in=queue_in):
@@ -2114,6 +1196,7 @@ class Core:
                     error_internal(detail="acquisition cancelled")
 
                 print(f"warning - command unhandled: {q_in_item}")
+
         protocol=ProtocolGenerator(
             config_file=config_file,
             handle_q_in=handle_q_in,
@@ -2122,6 +1205,15 @@ class Core:
             acquisition_id=acquisition_id,
             ongoing_image_store_tasks=ongoing_image_store_tasks
         )
+
+        project_name_is_acceptable=len(protocol.config_file.project_name) and name_validity_regex.match(protocol.config_file.project_name)
+        if not project_name_is_acceptable:
+            error_internal(detail="project name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes")
+        
+        plate_name_is_acceptable=len(protocol.config_file.plate_name)>0 and name_validity_regex.match(protocol.config_file.plate_name)
+        if not plate_name_is_acceptable:
+            error_internal(detail="plate name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes")
+
 
         if protocol.num_images_total==0:
             # TODO set acquisition_status here
@@ -2156,7 +1248,11 @@ class Core:
                     elif next_step is None:
                         break
                     else:
-                        result=await next_step.run(self)
+                        result=await self.squid.execute(next_step)
+
+                        if isinstance(next_step,ChannelSnapshot):
+                            await self._store_new_image(result._img,next_step.channel)
+
                     next_step=protocol_generator.send(result)
 
                 # finished regularly, set status accordingly (there must have been at least one image, so a status has been set)
@@ -2164,15 +1260,13 @@ class Core:
                 acquisition_status.last_status.acquisition_status="completed"
 
             except Exception as e:
-                print(f"error during acquisition {e}\n{traceback.format_exc()}")
-                
                 if isinstance(e,HTTPException):
-                    print("exception is httpexcepton")
                     if acquisition_status.last_status is not None:
-                        print("exception is httpexcepton")
                         acquisition_status.last_status.acquisition_status="cancelled"
 
                 else:
+                    print(f"error during acquisition {e}\n{traceback.format_exc()}")
+                
                     full_error=traceback.format_exc()
                     await q_out.put(InternalErrorModel(detail=f"acquisition thread failed because {str(e)}, more specifically: {full_error}"))
 
@@ -2192,7 +1286,7 @@ class Core:
         self.acquisition_thread=asyncio.create_task(coro=run_acquisition(queue_in,queue_out))
         acquisition_status.thread_is_running=True
 
-        return AcquisitionStartResponse(status="success",acquisition_id=acquisition_id)
+        return AcquisitionStartResponse(acquisition_id=acquisition_id)
 
     async def get_acquisition_status(self,acquisition_id:str)->AcquisitionStatusOut:
         """
@@ -2209,13 +1303,11 @@ class Core:
             return acq_res.last_status
     
     def close(self):
-        for mc in self.microcontrollers:
-            mc.close()
-
-        for cam in self.cams:
-            cam.close()
+        self.squid.close()
 
         GlobalConfigHandler.store()
+
+        self.image_store_threadpool.join()
 
 # handle validation errors with ability to print to terminal for debugging
 
@@ -2229,8 +1321,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # -- fix issue in tp.Optional annotation with pydantic
 # (from https://github.com/fastapi/fastapi/pull/9873#issuecomment-1997105091)
-
-from fastapi.openapi.utils import get_openapi
 
 def handle_anyof_nullable(schema: dict|list):
     """Recursively modifies the schema to handle anyOf with null for OpenAPI 3.0 compatibility."""
@@ -2252,26 +1342,172 @@ def handle_anyof_nullable(schema: dict|list):
         for item in schema:
             handle_anyof_nullable(item)
 
-def downgrade_openapi_schema_to_3_0(schema: dict) -> dict:
-    """Downgrades an OpenAPI schema from 3.1 to 3.0, handling anyOf with null."""
-
-    handle_anyof_nullable(schema)
-    return schema
-
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
 
-    openapi_schema = get_openapi(
-        title="my API",
-        openapi_version="3.0.1",
-        version="1.0.0",
-        description="Seafront OpenAPI schema",
-        routes=app.routes,
-    )
-    # Here, modify the openapi_schema as needed to ensure 3.0.0 compatibility
-    # For example, adjust for `nullable` fields compatibility
-    openapi_schema = downgrade_openapi_schema_to_3_0(openapi_schema)
+    openapi_schema = {
+        "openapi":"3.0.1",
+        "info":{
+            "title":"seafront api",
+            "version":"0.2.0"
+        },
+        "paths":{},
+        "description":"Seafront OpenAPI schema",
+        "tags":openapi_tags,
+    }
+
+    def register_pydantic_schema(t):
+        assert issubclass(t,BaseModel)
+
+        for field in t.model_fields.values():
+            # register field types
+            type_to_schema(field)
+
+        # make schema as json
+        model_schema=t.model_json_schema(mode="serialization")
+
+        # pydantic uses $defs to reference the type of internal fields, but openapi uses components/schemas
+        # which we swap via stringify-replace-reparse to write as little code as possible to do what is
+        # otherwise recursion
+        schema_str=json.dumps(model_schema)
+        schema_str=schema_str.replace("#/$defs/","#/components/schemas/")
+        model_schema=json.loads(schema_str)
+
+        # the json schema has a top level field called defs, which contains internal fields, which we
+        # embed into the openapi schema here (the path replacement is separate from this)
+        defs=model_schema.pop("$defs",{})
+        openapi_schema.setdefault("components",{}).setdefault("schemas",{}).update(defs)
+
+        # unsure if this works with the new code (written for 0.1, untested in 0.2)
+        handle_anyof_nullable(model_schema)
+
+        # finally, add the actual model we have handled to the openapi schema
+        openapi_schema.setdefault("components",{}).setdefault("schemas",{})[t.__name__]=model_schema
+
+        return {"$ref":f"#/components/schemas/{t.__name__}"}
+
+    def type_to_schema(t):
+        if isinstance(t,FieldInfo):
+            t=t.annotation
+
+        if t is int:
+            return {"type":"integer"}
+        elif t is float:
+            return {"type":"number","format":"float"}
+        elif t is bool:
+            return {"type":"boolean"}
+        elif t is dict:
+            return {"type":"object"}
+        elif inspect.isclass(t) and issubclass(t,BaseModel):#type:ignore
+            return register_pydantic_schema(t)#type:ignore
+        else:
+            origin=tp.get_origin(t)
+            if origin in (list,):
+                item_type=tp.get_args(t)[0]
+                return {"type":"array","items":type_to_schema(item_type)}
+            return {"type":"string"}
+
+    for route in app.routes:
+        if not hasattr(route,"endpoint"):
+            continue
+
+        route_path:str=route.path#type:ignore
+
+        tags:tp.List[str]
+        if hasattr(route,"tags"):
+            tags=route.tags#type:ignore
+        else:
+            tags=[]
+
+        responses={
+            "200":{
+                "description":"Success",
+                # actual content type is filled in during return type annotation inspection below
+                "content":{"application/json":{"schema":None}}
+            },
+            "500":{
+                "description":"any failure mode",
+                "content":{"application/json":{"schema":register_pydantic_schema(InternalErrorModel)}}
+            },
+        }
+
+        parameters=[]
+
+        endpoint=route.endpoint#type:ignore
+        if customroute:=custom_route_handlers.get(route_path):
+            if inspect.isclass(customroute.handler) and issubclass(customroute.handler,BaseCommand):#type:ignore
+                assert issubclass(customroute.handler,BaseModel), f"{customroute.handler.__name__} does not inherit from basemodel, even though it inherits from basecommand"
+
+                # register 
+                type_to_schema(customroute.handler)
+                
+                responses["200"]["content"]["application/json"]["schema"]=type_to_schema(customroute.handler.__private_attributes__["_ReturnValue"].default)#type:ignore
+
+                for name,field in customroute.handler.model_fields.items():
+                    parameters.append({
+                        "name":name,
+                        "in":"query",
+                        "required":field.is_required(),
+                        "schema":type_to_schema(field),
+                    })
+                
+        if responses["200"]["content"]["application/json"]["schema"] is None:
+            if customroute:=custom_route_handlers.get(route_path):
+                endpoint=customroute.handler
+
+            sig=inspect.signature(endpoint)
+            hints=tp.get_type_hints(endpoint)
+            
+            for name,param in sig.parameters.items():
+                if name in {"request","background_tasks"}:
+                    continue
+
+                if inspect.isclass(endpoint) and issubclass(endpoint,BaseModel) and ((not endpoint.model_fields[name].repr) or (endpoint.model_fields[name].exclude)):
+                    continue
+
+                param_schema={
+                    "name":name,
+                    "in":"query",
+                    "required":param.default is inspect.Parameter.empty,
+                }
+
+                if name in hints:
+                    param_schema["schema"]=type_to_schema(hints[name])
+
+                parameters.append(param_schema)
+                
+            ret=sig.return_annotation
+            if ret is not inspect.Signature.empty:
+                responses["200"]["content"]["application/json"]["schema"]=type_to_schema(ret)
+
+        doc=endpoint.__doc__ or ""
+        doc_lines=[l.strip() for l in doc.splitlines() if l.strip()]
+        summary=doc_lines[0] if doc_lines else ""
+        description="\n".join(doc_lines[1:]) if len(doc_lines)>1 else ""
+
+        if isinstance(route,APIWebSocketRoute):
+            method="get"
+            responses["101"]={
+                "description":"switch protocol (to websocket)"
+            }
+        else:
+            method=list(route.methods)[0].lower()#type:ignore
+
+        if route_path not in openapi_schema["paths"]:
+            openapi_schema["paths"][route_path]={}
+
+        if route_path in ("/docs","/redoc","/openapi.json","/docs/oauth2-redirect") and len(tags)==0:
+            tags=[RouteTag.DOCUMENTATION.value]
+
+        openapi_schema["paths"][route_path][method]={
+            "summary":summary,
+            "description":description,
+            "parameters":parameters,
+            "responses":responses,
+            "tags":tags,
+        }
+    
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
@@ -2281,6 +1517,15 @@ app.openapi = custom_openapi
 
 import asyncio
 
+# disable compression of websocket connections..
+# because compression time is unpredictable (takes 70ms to send an all-white image, and 1400ms, twenty times as long (!!!!) for all-black images, which are not a rare occurence in practice)
+import websockets.server
+_orig_init=websockets.server.WebSocketServerProtocol.__init__
+def _no_comp_init(self,*args,**kwargs):
+    kwargs["extensions"]=[]
+    return _orig_init(self,*args,**kwargs)
+websockets.server.WebSocketServerProtocol.__init__=_no_comp_init
+
 def main():
     core = Core()
 
@@ -2288,7 +1533,7 @@ def main():
     
     try:
         # Start FastAPI using uvicorn
-        uvicorn.run(app, host="127.0.0.1", port=5002, log_level="debug")
+        uvicorn.run(app, host="127.0.0.1", port=5002)#, log_level="debug")
     except Exception as e:
         print(f"error running uvicorn: {e=}")
         pass

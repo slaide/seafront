@@ -29,10 +29,6 @@ function start_acquisition(){
     new XHR(false)
         .onload((xhr)=>{
             const data=JSON.parse(xhr.responseText)
-            if(data.status!="success"){
-                message_open("error","acquisition start failed because:",data.message)
-                return
-            }
 
             acquisition_progress.acquisition_id=data.acquisition_id
             message_open("info","acquisition started with id:",acquisition_progress.acquisition_id," ; response text: ",xhr.responseText)
@@ -44,116 +40,8 @@ function start_acquisition(){
 }
 
 /**
- * @typedef{{
-    x:number,
-    y:number,
-    z:number,
-    }} WellSite
-* @typedef {{
-    well:string,
-    site:WellSite
-    timepoint:number,
-    channel_name:string,
-    full_path:string,
-    handle:string,
-}} LastImageInformation
-* @typedef {{
-    current_num_images:number,
-    time_since_start_s:number,
-    start_time_iso:string,
-    current_storage_usage_GB:number,
-
-    estimated_total_time_s:number|null,
-
-    last_image:LastImageInformation
- * }} AcquisitionProgressStatus
- * @typedef {{
-    total_num_images:number,
-    max_storage_size_images_GB:number,
- * }} AcquisitionMetaInformation
- * @typedef {{
-    row:number,
-    col:number,
-    selected:boolean,
- * }} AcquisitionWellSiteConfigurationSiteSelectionItem
- * @typedef {{
-    h:number,
-    m:number,
-    s:number,
- * }} AcquisitionWellSiteConfigurationDeltaTime
- * @typedef {{
-    num_x:number,
-    delta_x_mm:number,
-    num_y:number,
-    delta_y_mm:number,
-    num_t:number,
-    delta_t:AcquisitionWellSiteConfigurationDeltaTime,
-
-    mask:AcquisitionWellSiteConfigurationSiteSelectionItem[],
- * }} AcquisitionWellSiteConfiguration
- * @typedef {{
-    row:number,
-    col:number,
-    selected:boolean,
- * }} PlateWellConfig
- * @typedef {{
-    name:string,
-    handle:string,
-    info:*
-    }} ConfigItemOption
- * @typedef {{
-    name:string,
-    handle:string,
-    value_kind:"number"|"text"|"option"|"action",
-    value:number|string,
-    frozen:boolean,
-    options:(ConfigItemOption[])|null
- * }} ConfigItem
- * @typedef {{
-    major:number,
-    minor:number,
-    patch:number,
- * }} Version
- * @typedef {{
-    project_name:string,
-    plate_name:string,
-    cell_line:string,
-    
-    grid:AcquisitionWellSiteConfiguration,
-
-    wellplate_type:string,
-    plate_wells:PlateWellConfig[],
-
-    channels:AcquisitionChannelConfig[],
-
-    autofocus_enabled:boolean,
-
-    machine_config:(ConfigItem[])?,
-
-    comment:string|null,
-
-    spec_version:Version,
-
-    timestamp:string|null,
- * }} AcquisitionConfig
- * @typedef {{
-    status:"success",
-
-    acquisition_id:string,
-    acquisition_status:"running"|"cancelled"|"completed"|"crashed",
-    acquisition_progress:AcquisitionProgressStatus,
-
-    acquisition_meta_information:AcquisitionMetaInformation,
-
-    acquisition_config:AcquisitionConfig,
-
-    message:string,
- * }} AcquisitionStatusOut
- */
-
-/**
  * @param{string} acq_id
- * @param{{load:(acq_stat:AcquisitionStatusOut)=>void,error:()=>void}?} cb
+ * @param{{load:(acq_stat:AcquisitionStatusOut)=>void,error:(xhr:XMLHttpRequest)=>void}?} cb
  */
 function get_acquisition_info(acq_id,cb){
     const send_data={"acquisition_id":acq_id}
@@ -170,15 +58,13 @@ function get_acquisition_info(acq_id,cb){
                 cb.load(progress)
             }
         })
-        .onerror(()=>{
+        .onerror((xhr)=>{
             if(cb&&cb.error){
-                cb.error()
+                cb.error(xhr)
             }
         })
         .send("/api/acquisition/status",send_data,"POST")
 }
-
-/**@typedef {{status:"success"}} AcquisitionCancelResponse*/
 
 function cancel_acquisition(){
     get_current_state({load:(microscope_status)=>{

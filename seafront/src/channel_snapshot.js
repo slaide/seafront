@@ -20,15 +20,11 @@ function snapChannel(channel){
             progress_indicator.stop()
             
             let response=JSON.parse(xhr.responseText)
-            if(response.status!="success"){
-                message_open("error","error snapping channel",response)
-                return
-            }
         })
-        .onerror(()=>{
+        .onerror((xhr)=>{
             progress_indicator.stop()
             
-            message_open("error","error snapping channel")
+            message_open("error","error snapping channel",xhr.responseText)
         })
         .send("/api/action/snap_channel",data,"POST")
 }
@@ -51,14 +47,11 @@ function snap_selection(){
     new XHR(true)
         .onload((xhr)=>{
             const data=JSON.parse(xhr.responseText)
-            if(data.status!="success"){
-                message_open("info","error during snap selected channels:",data)
-            }
 
             progress_indicator.stop()
         })
-        .onerror(()=>{
-            message_open("info","failed")
+        .onerror((xhr)=>{
+            message_open("info","failed "+xhr.responseText)
 
             progress_indicator.stop()
         })

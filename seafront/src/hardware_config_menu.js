@@ -59,14 +59,11 @@ function executeActionItem(item){
             progress_indicator.stop()
             
             let response=JSON.parse(xhr.responseText)
-            if(response.status!="success"){
-                console.error("action failed",item,response)
-            }
         })
-        .onerror(()=>{
+        .onerror((xhr)=>{
             progress_indicator.stop()
             
-            console.error("action failed",item)
+            console.error("action failed",item,xhr.responseText)
         })
         // @ts-ignore
         .send(item.value,data,"POST")

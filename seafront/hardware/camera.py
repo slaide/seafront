@@ -365,6 +365,13 @@ class Camera:
                             pass
 
                     stop_acquisition=callback(img)
+                    
+                    if stop_acquisition:
+                        if self.acquisition_ongoing:
+                            self.acquisition_ongoing=False
+
+                        return
+
 
                 # adjust target framerate for acquisition overhead
                 # ... this is not quite right, but yields better results than no adjustment
