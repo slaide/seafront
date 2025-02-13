@@ -25,7 +25,7 @@ def linear_regression(x:list[float]|np.ndarray,y:list[float]|np.ndarray)->tuple[
     slope, intercept, _,_,_ = stats.linregress(x, y)
     return slope,intercept #type:ignore
 
-def _process_image(img:np.ndarray)->np.ndarray:
+def _process_image(img:np.ndarray,camera:Camera)->np.ndarray:
     """
         center crop main camera image to target size
     """
@@ -66,9 +66,23 @@ def _process_image(img:np.ndarray)->np.ndarray:
     if flip_img_vertical.boolvalue:
         ret=np.flip(ret,axis=0)
 
-    # TODO correct bit depth
+    image_file_pad_low=g_config['image_file_pad_low']
+    assert image_file_pad_low is not None
+    if image_file_pad_low.boolvalue:
+        match camera.pixel_format:
+            case gxiapi.GxPixelFormatEntry.MONO8:
+                pass
+            case gxiapi.GxPixelFormatEntry.MONO10:
+                ret=ret<<(16-10)
+            case gxiapi.GxPixelFormatEntry.MONO12:
+                ret=ret<<(16-12)
+            case gxiapi.GxPixelFormatEntry.MONO14:
+                ret=ret<<(16-14)
+            case gxiapi.GxPixelFormatEntry.MONO16:
+                pass
+            case _:assert False
+        pass
     
-
     return ret
 
 class SquidAdapter(BaseModel):
@@ -254,12 +268,9 @@ class SquidAdapter(BaseModel):
         return calibrated XY stage offset from GlobalConfigHandler in order (x_mm,y_mm)
         """
 
-        off_x_mm=GlobalConfigHandler.get_dict()["calibration_offset_x_mm"].value
-        assert isinstance(off_x_mm,float), f"off_x_mm is {off_x_mm} of type {type(off_x_mm)}"
-        off_y_mm=GlobalConfigHandler.get_dict()["calibration_offset_y_mm"].value
-        assert isinstance(off_y_mm,float), f"off_y_mm is {off_y_mm} of type {type(off_y_mm)}"
-        # TODO this is currently unused
-        off_z_mm=0
+        off_x_mm=GlobalConfigHandler.get_dict()["calibration_offset_x_mm"].floatvalue
+        off_y_mm=GlobalConfigHandler.get_dict()["calibration_offset_y_mm"].floatvalue
+        off_z_mm=GlobalConfigHandler.get_dict()["calibration_offset_z_mm"].floatvalue
 
         return (off_x_mm,off_y_mm,off_z_mm)
 
@@ -763,18 +774,6 @@ class SquidAdapter(BaseModel):
 
             g_config=GlobalConfigHandler.get_dict()
 
-            conf_af_exp_ms_item=g_config["laser_autofocus_exposure_time_ms"]
-            assert conf_af_exp_ms_item is not None
-            conf_af_exp_ms=conf_af_exp_ms_item.floatvalue
-
-            conf_af_exp_ag_item=g_config["laser_autofocus_analog_gain"]
-            assert conf_af_exp_ag_item is not None
-            conf_af_exp_ag=conf_af_exp_ag_item.floatvalue
-
-            conf_af_pix_fmt_item=g_config["laser_autofocus_pixel_format"]
-            assert conf_af_pix_fmt_item is not None
-            # todo also use conf_af_pix_fmt
-
             conf_af_if_calibrated=g_config["laser_autofocus_is_calibrated"]
             conf_af_calib_x=g_config["laser_autofocus_calibration_x"]
             conf_af_calib_umpx=g_config["laser_autofocus_calibration_umpx"]
@@ -883,7 +882,7 @@ class SquidAdapter(BaseModel):
 
             self.state=CoreState.Idle
 
-            img=_process_image(img)
+            img=_process_image(img,camera=self.main_camera)
 
             result=cmd.ImageAcquiredResponse()
             result._img=img
@@ -922,7 +921,7 @@ class SquidAdapter(BaseModel):
                     assert img_np is not None
                     img_np=img_np.copy()
 
-                    img_np=_process_image(img_np)
+                    img_np=_process_image(img_np,camera=self.main_camera)
             
                     return forward_image_callback["callback"](img_np)
                 else:

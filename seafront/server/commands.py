@@ -238,7 +238,7 @@ class AcquisitionProgressStatus(BaseModel):
     estimated_total_time_s:tp.Optional[float]
 
     # last image that was acquired
-    last_image:ImageStoreInfo
+    last_image:tp.Optional[ImageStoreInfo]
 
 class AcquisitionMetaInformation(BaseModel):
     total_num_images:int
@@ -248,7 +248,7 @@ class AcquisitionStatusOut(BaseModel):
     """acquisition thread message out"""
 
     acquisition_id:str
-    acquisition_status:tp.Literal["running","cancelled","completed","crashed"]
+    acquisition_status:tp.Literal["running","cancelled","completed","crashed","scheduled"]
     acquisition_progress:AcquisitionProgressStatus
 
     # some meta information about the acquisition, derived from configuration file

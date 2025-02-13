@@ -171,7 +171,7 @@ class ProtocolGenerator(BaseModel):
     handle_q_in:tp.Callable[[],None]
     plate:sc.Wellplate
     acquisition_status:AcquisitionStatus
-    
+
     acquisition_id:str=Field(default_factory=make_unique_acquisition_id)
 
     image_store_pool:AsyncThreadPool=Field(default_factory=lambda:AsyncThreadPool())
@@ -254,6 +254,18 @@ class ProtocolGenerator(BaseModel):
         # write config file to output directory
         with (self.project_output_path/"config.json").open("w") as file:
             file.write(self.config_file.json())
+
+        self.acquisition_status.last_status=AcquisitionStatusOut(
+            acquisition_id=self.acquisition_id,
+            acquisition_status="scheduled",
+            acquisition_progress=AcquisitionProgressStatus(current_num_images=0,time_since_start_s=0,start_time_iso="scheduled",current_storage_usage_GB=0,estimated_total_time_s=0,last_image=None),
+            acquisition_meta_information=AcquisitionMetaInformation(
+                total_num_images=self.num_images_total,
+                max_storage_size_images_GB=self.max_storage_size_images_GB,
+            ),
+            acquisition_config=self.config_file,
+            message="scheduled",
+        )
 
     def generate(self)->tp.Generator[
         # yielded types: None means done, str is returned on first iter, other types are results of BaseCommands

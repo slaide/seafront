@@ -357,47 +357,17 @@ class GlobalConfigHandler:
                 value=critical_machine_config["base_image_output_dir"],
             ),
 
-            # preview settings are performance sensitive
-            # e.g. on an rpi5, the max streaming framerate for jpeg at scale=2 resolution is 5fps
-            #      but for png, to reach 5fps the resolution must be at least scale=5
+            # images with bit depth not a multiple of 8 (e.g. 12) use the lowest n bits of the bytes used to store them, which is an issue, because
+            # most image file formats cannot handle bit depth that is not a multiple of 8. padding that data to preserve correct interpretation requires
+            # padding the lowest bits of the next largest multiple of 8 with zeros, e.g. 12 bits -> shift 12 actual bits left to occupy top 12 bits, 
+            # then set lowest (2*8)-12=4 bits to zero.
+            # this flag indicates if the lower bits should be padded (and value bits shifted into upper bits)
             ConfigItem(
-                name="streaming preview resolution scaling",
-                handle="streaming_preview_resolution_scaling",
-                value_kind="number",
-                value=2,
-            ),
-            ConfigItem(
-                name="streaming preview image format",
-                handle="streaming_preview_format",
+                name="image file pad low",
+                handle="image_file_pad_low",
                 value_kind="option",
-                value="jpeg",
-                options=[
-                    ConfigItemOption(
-                        name="JPEG",
-                        handle="jpeg",
-                    ),
-                    ConfigItemOption(
-                        name="PNG",
-                        handle="png",
-                    ),
-                ]
-            ),
-
-            ConfigItem(
-                name="full image display format",
-                handle="image_display_format",
-                value_kind="option",
-                value="jpeg",
-                options=[
-                    ConfigItemOption(
-                        name="JPEG",
-                        handle="jpeg",
-                    ),
-                    ConfigItemOption(
-                        name="PNG",
-                        handle="png",
-                    ),
-                ]
+                value="yes",
+                options=ConfigItemOption.get_bool_options(),
             ),
 
             ConfigItem(

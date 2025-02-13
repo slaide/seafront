@@ -767,7 +767,7 @@ class Microcontroller:
 
             cmd_is_completed=packet.last_cmd_id==cmd[0] and packet.exec_status==0
             if cmd.is_move_cmd:
-                # TODO : moves in Z sometimes to not indicate completion, even when moving to target position is done
+                # TODO : moves in Z sometimes do not indicate completion, even when moving to target position is done
                 cmd_name=CommandName(cmd[1])
                 match cmd_name:
                     case CommandName.MOVETO_Z:

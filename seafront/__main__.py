@@ -805,7 +805,7 @@ class Core:
 
         return await self.squid.snap_selected_channels(config_file)
 
-    async def calibrate_stage_xy_here(self)->BasicSuccessResponse:
+    async def calibrate_stage_xy_here(self,plate_model_id:str="revvity-phenoplate-384")->BasicSuccessResponse:
         """
         set current xy position as reference
 
@@ -818,8 +818,10 @@ class Core:
         if self.squid.is_in_loading_position:
             error_internal(detail="now allowed while in loading position")
 
-        # TODO this needs a better solution where the plate type can be configured
-        plate=[p for p in sc.Plates if p.Model_id=="revvity-phenoplate-384"][0]
+        _plates=[p for p in sc.Plates if p.Model_id==plate_model_id]
+        if len(_plates)==0:
+            error_internal(f"{plate_model_id=} is not a known plate model")
+        plate=_plates[0]
 
         current_pos=(await self.squid.get_current_state()).stage_position
 
@@ -827,6 +829,7 @@ class Core:
         # i.e. calibrated offset = real/should position - measured/is position
         ref_x_mm=plate.get_well_offset_x("B02")-current_pos.x_pos_mm
         ref_y_mm=plate.get_well_offset_y("B02")-current_pos.y_pos_mm
+        ref_z_mm=0.0 # TODO currently unused
 
         # new_config_items:tp.Union[tp.Dict[str,ConfigItem
         GlobalConfigHandler.override({
@@ -841,6 +844,12 @@ class Core:
                 handle="calibration_offset_y_mm",
                 value_kind="number",
                 value=ref_y_mm,
+            ),
+            "calibration_offset_z_mm":ConfigItem(
+                name="ignored",
+                handle="calibration_offset_z_mm",
+                value_kind="number",
+                value=ref_z_mm,
             )
         })
 
@@ -1131,8 +1140,13 @@ class Core:
 
 
         if protocol.num_images_total==0:
-            # TODO set acquisition_status here
-            error_internal(detail=f"no images to acquire ({protocol.num_wells = },{protocol.num_sites = },{protocol.num_channels = },{protocol.num_channel_z_combinations = })")
+            error_detail=f"no images to acquire ({protocol.num_wells = },{protocol.num_sites = },{protocol.num_channels = },{protocol.num_channel_z_combinations = })"
+
+            assert protocol.acquisition_status.last_status is not None
+            protocol.acquisition_status.last_status.acquisition_status="crashed"
+            protocol.acquisition_status.last_status.message=error_detail
+
+            error_internal(detail=error_detail)
 
         async def run_acquisition(
             q_in:asyncio.Queue[AcquisitionCommand],

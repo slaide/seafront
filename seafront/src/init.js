@@ -113,7 +113,7 @@ function fetch_image(channel_name){
                     for(let i=0;i<mono.length;i++){
                         // convert u16 to u8 by shifting
                         // clamp happens inside the array
-                        const pix=(mono[i]>>4)
+                        const pix=(mono[i]>>8)
 
                         rgba[i*4+0]=pix
                         rgba[i*4+1]=pix
