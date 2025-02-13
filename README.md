@@ -27,7 +27,8 @@ cd seafront
 
 # install udev rule to enable communication with microscope
 cd install
-bash teensyduino_udev_rules.sh
+sudo bash teensyduino_udev_rules.sh
+sudo bash galaxy_camera_fix_usb_memory.sh # read this file for an additional comment
 cd ..
 
 # set up python environment
