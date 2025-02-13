@@ -31,10 +31,11 @@ function start_acquisition(){
             const data=JSON.parse(xhr.responseText)
 
             acquisition_progress.acquisition_id=data.acquisition_id
-            message_open("info","acquisition started with id:",acquisition_progress.acquisition_id," ; response text: ",xhr.responseText)
+            message_open("info","acquisition started with id:",acquisition_progress.acquisition_id)
         })
         .onerror((xhr)=>{
-            message_open("error","error starting acquisition: ",xhr.responseText)
+            const data=JSON.parse(xhr.responseText)
+            message_open("error","error starting acquisition:",data.detail)
         })
         .send("/api/acquisition/start",data,"POST")
 }
