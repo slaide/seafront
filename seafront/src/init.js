@@ -123,6 +123,9 @@ function fetch_image(channel_name){
                 }
                 const imagedata=new ImageData(rgba,payload.width,payload.height)
 
+                // close websocket connection, it will stay open forever otherwise
+                ws.close()
+
                 resolve(imagedata)
             }
         }
@@ -139,6 +142,10 @@ function fetch_image(channel_name){
 /** @type{WebSocket?} */
 let status_update_websocket=null
 let last_image={timestamp:0}
+/**
+ * initiates the background update loop that handles more than just the position
+ * (loop -> updates frequently after the first call)
+ */
 function updateMicroscopePosition(){
     function onerror(){
         if(last_update_successful){
@@ -193,7 +200,11 @@ function updateMicroscopePosition(){
 
                 const canvas=view_latest_image
                 const imagedata=await fetch_image(display_channel_name)
-                if(!(canvas instanceof HTMLCanvasElement))throw new Error("")
+                if(!(canvas instanceof HTMLCanvasElement)){
+                    console.error(view_latest_image,typeof view_latest_image)
+                    // assume page is not done loading, print error to console and try again later
+                    return
+                }
                 canvas.getContext("2d")?.putImageData(imagedata,0,0)
             }
         }
@@ -322,7 +333,6 @@ function updateMicroscopePosition(){
         }
     }
 
-    
     /**
      * call .close on the return value to close the websocket again
      * @returns {WebSocket}
