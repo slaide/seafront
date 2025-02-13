@@ -13,6 +13,10 @@ INSTALL_DIR="$SCRIPT_DIR/python-$PYTHON_VERSION"
 # Save current PATH
 export OLD_PATH="$PATH"
 
+export PYTHONPATH=$INSTALL_DIR/lib/python3.13 
+export PYTHONHOME=$INSTALL_DIR
+export SSL_CERT_FILE=$(echo "import certifi;print(certifi.where())" | $INSTALL_DIR/bin/python3.13 -)
+
 # Modify PATH to use the installed Python version
 export PATH="$INSTALL_DIR/bin:$PATH"
 
