@@ -2,11 +2,114 @@ import typing as tp
 import pathlib as path
 import datetime as dt
 
+import random, string
+import asyncio as aio, time, math
+
+import tifffile
 import seaconfig as sc
 from pydantic import BaseModel,Field
-import tifffile
 
 from .commands import *
+
+from threading import Thread
+from concurrent.futures import Future as ConcurrentFuture
+
+class AsyncThreadPool(BaseModel):
+    """
+    Thread pool for running async future/coroutines
+
+    Example:
+    ```
+    async def work():
+        print("async work")
+
+    # initialize pool
+    pool = AsyncThreadPool()
+    # submit to pool
+    future = pool.run(work())
+    # block waiting for results
+    future.result()
+    # shutdown pool
+    pool.join()
+    ```
+
+    from https://stackoverflow.com/a/77682889
+    """
+
+    workers:int=Field(default=1)
+    """ Number of worker threads in the pool """
+    threads:tp.List[Thread]=Field(default_factory=list)
+    """ Running threads in the pool """
+    loops:tp.List[aio.AbstractEventLoop]=Field(default_factory=list)
+    """ Event loops for each thread """
+    roundrobin:int=Field(default=0)
+    """ Next thread to run something in, for round-robin scheduling """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # pydantics version of dataclass.__post_init__
+    def model_post_init(self,__context):
+        # initialize threads
+        for i in range(self.workers):
+            loop = aio.new_event_loop()
+            self.loops.append(loop)
+            thread = Thread(target=loop.run_forever)
+            thread.start()
+            self.threads.append(thread)
+
+    def run(self, target: "tp.Coroutine | aio.Future", worker: int|None=None) -> "ConcurrentFuture":
+        """ Run async future/coroutine in the thread pool
+        
+            :param target: the future/coroutine to execute
+            :param worker: worker thread you want to run the callable; None for round-robin
+                selection of worker thread
+            :return: future with result
+        """
+        if worker is None:
+            worker = self.roundrobin
+            self.roundrobin = (worker + 1) % self.workers
+
+        return aio.run_coroutine_threadsafe(target, self.loops[worker])
+    
+    def join(self, timeout:float=0.5):
+        """ Blocking call to close the thread pool
+        
+            :param timeout: timeout for polling a thread to check if its async tasks are all finished
+        """
+        for i in range(self.workers):
+            # wait for completion of pending tasks before stopping;
+            # stop only waits for current batch of callbacks to complete
+            loop = self.loops[i]
+            while len(aio.all_tasks(loop)):
+                time.sleep(timeout)
+            loop.call_soon_threadsafe(loop.stop)
+            self.threads[i].join(timeout=timeout)
+
+
+def make_unique_acquisition_id(length: tp.Literal[16,32] = 16) -> str:
+    """
+    Generates a random microscope image acquisition protocol name.
+
+    The name:
+    - Starts with an uppercase letter.
+    - Uses only uppercase letters and digits (i.e. no mix of cases).
+    - Is either 16 or 32 characters long.
+    
+    Parameters:
+        length (int): The desired length of the ID (must be 16 or 32).
+
+    Returns:
+        str: A randomly generated protocol name.
+    """
+    
+    # Ensure the first character is an uppercase letter.
+    first_char = random.choice(string.ascii_uppercase)
+    
+    # The remaining characters can be uppercase letters or digits.
+    allowed_chars = string.ascii_uppercase + string.digits
+    remaining = ''.join(random.choices(allowed_chars, k=length-1))
+    
+    return first_char + remaining
 
 async def store_image(
     image_entry:ImageStoreEntry,
@@ -68,8 +171,10 @@ class ProtocolGenerator(BaseModel):
     handle_q_in:tp.Callable[[],None]
     plate:sc.Wellplate
     acquisition_status:AcquisitionStatus
-    acquisition_id:str
-    ongoing_image_store_tasks:list
+    
+    acquisition_id:str=Field(default_factory=make_unique_acquisition_id)
+
+    image_store_pool:AsyncThreadPool=Field(default_factory=lambda:AsyncThreadPool())
 
     img_compression_algorithm:tp.Literal["LZW","zlib"]="LZW"
 
@@ -86,6 +191,8 @@ class ProtocolGenerator(BaseModel):
     project_output_path:path.Path=Field(default_factory=path.Path)
 
     latest_channel_images:tp.Dict[str,ImageStoreEntry]=Field(default_factory=dict)
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
     def well_sites(self):
@@ -141,7 +248,7 @@ class ProtocolGenerator(BaseModel):
         base_storage_path=path.Path(base_storage_path_item.value)
         assert base_storage_path.exists(), f"{base_storage_path = } does not exist"
 
-        self.project_output_path=base_storage_path/self.config_file.project_name/self.config_file.plate_name/self.acquisition_id
+        self.project_output_path=base_storage_path/self.config_file.project_name/f"{str(self.config_file.plate_name)}_{sc.datetime2str(dt.datetime.now(dt.timezone.utc))}"
         self.project_output_path.mkdir(parents=True)
 
         # write config file to output directory
@@ -220,7 +327,7 @@ class ProtocolGenerator(BaseModel):
                             current_displacement_um=current_displacement.displacement_um
                             assert current_displacement_um is not None
                             # print(f"measured offset of {current_displacement_um:.2f}um on attempt {autofocus_attempt_num}")
-                            if np.abs(current_displacement_um)<DISPLACEMENT_THRESHOLD_UM:
+                            if math.fabs(current_displacement_um)<DISPLACEMENT_THRESHOLD_UM:
                                 break
                             
                             res=yield AutofocusApproachTargetDisplacement(target_offset_um=0,config_file=self.config_file,pre_approach_refz=False)
@@ -279,7 +386,7 @@ class ProtocolGenerator(BaseModel):
                         current_z_mm=last_position.z_pos_mm
 
                         distance_z_to_move_mm=channel_z_mm-current_z_mm
-                        if np.abs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_UM:
+                        if math.fabs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_UM:
                             res=yield MoveTo(x_mm=None,y_mm=None,z_mm=channel_z_mm)
                             assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
 
@@ -337,20 +444,7 @@ class ProtocolGenerator(BaseModel):
                                 "PixelSizeUM":f"{PIXEL_SIZE_UM:.3f}",
                             },
                         )
-                        self.ongoing_image_store_tasks.append(asyncio.create_task(image_store_task))
-
-                        # pop finished tasks off queue (in-place, hence pop()+push())
-                        running_tasks=[]
-                        num_done=0
-                        while len(self.ongoing_image_store_tasks)>0:
-                            task=self.ongoing_image_store_tasks.pop()
-                            if task.done():
-                                num_done+=1
-                            else:
-                                running_tasks.append(task)
-                        print_time(f"image store tasks: {len(running_tasks)} running, {num_done} finished")
-                        for task in running_tasks:
-                            self.ongoing_image_store_tasks.append(task)
+                        self.image_store_pool.run(image_store_task)
 
                         print_time("scheduled image store")
 
@@ -403,6 +497,9 @@ class ProtocolGenerator(BaseModel):
 
                             message=f"Acquisition is {(100*num_images_acquired/self.num_images_total):.2f}% complete"
                         )
+
+        # wait for image storage tasks to finish
+        self.image_store_pool.join()
 
         # done -> yield None and return
         yield None

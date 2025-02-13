@@ -31,7 +31,7 @@ _DEBUG_P2JS=True
 
 # http server dependencies
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -45,9 +45,10 @@ from .server.commands import *
 
 import seaconfig as sc
 from seaconfig.acquisition import AcquisitionConfig
+
 from .config.basics import ConfigItem, GlobalConfigHandler
-from .hardware.camera import Camera, gxiapi
-from .hardware import microcontroller as mc
+from .server.protocol import ProtocolGenerator, AsyncThreadPool, make_unique_acquisition_id
+from .hardware.squid import SquidAdapter
 
 # Set the working directory to the script's directory as reference for static file paths
 
@@ -259,84 +260,9 @@ class CoreLock(BaseModel):
         self._last_key_use=time.time()
         return True
 
-from .server.protocol import ProtocolGenerator
-from .hardware.squid import SquidAdapter
-
 class HistogramResponse(BaseModel):
     channel_name:str
     hist_values:tp.List[int]
-
-from threading import Thread
-import asyncio, time, typing
-if typing.TYPE_CHECKING:
-    from concurrent.futures import Future
-    from asyncio import AbstractEventLoop
-
-class AsyncThreadPool:
-    """
-    Thread pool for running async future/coroutines
-
-    Example:
-    ```
-    async def work():
-        print("async work")
-
-    # initialize pool
-    pool = AsyncThreadPool()
-    # submit to pool
-    future = pool.run(work())
-    # block waiting for results
-    future.result()
-    # shutdown pool
-    pool.join()
-    ```
-
-    from https://stackoverflow.com/a/77682889
-    """
-    def __init__(self, workers:int=1):
-        self.workers: int = workers
-        """ Number of worker threads in the pool """
-        self.threads: list[Thread] = []
-        """ Running threads in the pool """
-        self.loops: list[AbstractEventLoop] = []
-        """ Event loops for each thread """
-        self.roundrobin: int = 0
-        """ Next thread to run something in, for round-robin scheduling """
-
-        # initialize threads
-        for i in range(workers):
-            loop = asyncio.new_event_loop()
-            self.loops.append(loop)
-            thread = Thread(target=loop.run_forever)
-            thread.start()
-            self.threads.append(thread)
-
-    def run(self, target: "typing.Coroutine | typing.Future", worker: int|None=None) -> "Future":
-        """ Run async future/coroutine in the thread pool
-        
-            :param target: the future/coroutine to execute
-            :param worker: worker thread you want to run the callable; None for round-robin
-                selection of worker thread
-            :return: future with result
-        """
-        if worker is None:
-            worker = self.roundrobin
-            self.roundrobin = (worker + 1) % self.workers
-        return asyncio.run_coroutine_threadsafe(target, self.loops[worker])
-    
-    def join(self, timeout:float=.1):
-        """ Blocking call to close the thread pool
-        
-            :param timeout: timeout for polling a thread to check if its async tasks are all finished
-        """
-        for i in range(self.workers):
-            # wait for completion of pending tasks before stopping;
-            # stop only waits for current batch of callbacks to complete
-            loop = self.loops[i]
-            while len(asyncio.all_tasks(loop)):
-                time.sleep(timeout)
-            loop.call_soon_threadsafe(loop.stop)
-            self.threads[i].join()
 
 class CustomRoute(BaseModel):
     handler:tp.Union[tp.Type[BaseCommand],tp.Callable]
@@ -347,8 +273,6 @@ class CustomRoute(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 custom_route_handlers:tp.Dict[str,CustomRoute]={}
-
-from fastapi import WebSocket, WebSocketDisconnect
 
 class Core:
     """application core, contains server capabilities and microcontroller interaction"""
@@ -1148,14 +1072,7 @@ class Core:
 
         g_config=GlobalConfigHandler.get_dict()
 
-        # TODO generate some unique acqisition id to identify this acquisition by
-        # must be robust against server restarts, and async requests
-        # must also cache previous run results, to allow fetching information from past acquisitions
-        RANDOM_ACQUISITION_ID="a65914"
-        # actual acquisition id has some unique identifier, plus a timestamp for legacy reasons
-        # TODO remove the timestamp from the directory name in the future, because this is a horribly hacky way
-        # to handle duplicate directory names, which should be avoided anyway
-        acquisition_id=f"{RANDOM_ACQUISITION_ID}_{sc.datetime2str(dt.datetime.now(dt.timezone.utc))}"
+        acquisition_id=make_unique_acquisition_id()
 
         plates=[p for p in sc.Plates if p.Model_id==config_file.wellplate_type]
         if len(plates)==0:
@@ -1187,7 +1104,6 @@ class Core:
         )
         self.acquisition_map[acquisition_id]=acquisition_status
 
-        ongoing_image_store_tasks:list=[]
         def handle_q_in(q_in=queue_in):
             """ if there is something in q_in, fetch it and handle it (e.g. terminae on cancel command) """
             if not q_in.empty():
@@ -1202,8 +1118,7 @@ class Core:
             handle_q_in=handle_q_in,
             plate=plate,
             acquisition_status=acquisition_status,
-            acquisition_id=acquisition_id,
-            ongoing_image_store_tasks=ongoing_image_store_tasks
+            acquisition_id=acquisition_id
         )
 
         project_name_is_acceptable=len(protocol.config_file.project_name) and name_validity_regex.match(protocol.config_file.project_name)
@@ -1275,7 +1190,7 @@ class Core:
 
             finally:
                 # ensure no dangling image store task threads
-                await asyncio.gather(*ongoing_image_store_tasks)
+                protocol.image_store_pool.join()
 
             # indicate that this thread has stopped running (no matter the cause)
             acquisition_status.thread_is_running=False
