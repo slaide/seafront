@@ -499,9 +499,9 @@ class Core:
             await ws.accept()
             try:
                 while True:
-                    channel_name=await ws.receive_text()
+                    channel_handle=await ws.receive_text()
 
-                    img=self.latest_images[channel_name]
+                    img=self.latest_images[channel_handle]
                     if img is not None:
                         await ws.send_json({"width":img._img.shape[0],"height":img._img.shape[1],"bit_depth":img.bit_depth})
 
@@ -603,9 +603,16 @@ class Core:
             methods=["POST"],
         )
 
+        async def write_images(cmd:ChannelSnapSelection,res:ChannelSnapSelectionResult):
+            for channel_handle,img in res._images.items():
+                channel=[c for c in cmd.config_file.channels if c.handle==channel_handle]
+                if len(channel)!=1:error_internal(f"{len(channel)=} != 1")
+
+                await self._store_new_image(img=img,channel_config=channel[0])
+                
         route_wrapper(
             "/api/action/snap_selected_channels",
-            CustomRoute(handler=self.snap_selected_channels,tags=[RouteTag.ACTIONS.value]),
+            CustomRoute(handler=ChannelSnapSelection,tags=[RouteTag.ACTIONS.value],callback=write_images),
             methods=["POST"],
         )
 
@@ -683,7 +690,7 @@ class Core:
         )
 
         self.latest_images:tp.Dict[str,ImageStoreEntry]={}
-        "latest image acquired in each channel"
+        "latest image acquired in each channel, key is channel handle"
 
         self.acquisition_thread=None
 
@@ -794,17 +801,6 @@ class Core:
 
         return BasicSuccessResponse()
 
-    async def snap_selected_channels(self,config_file:sc.AcquisitionConfig)->BasicSuccessResponse:
-        """
-        take a snapshot of all selected channels
-
-        these images will be stored into the local buffer for immediate retrieval, i.e. NOT stored to disk.
-
-        if autofocus is calibrated, this will automatically run the autofocus and take channel z offsets into account
-        """
-
-        return await self.squid.snap_selected_channels(config_file)
-
     async def calibrate_stage_xy_here(self,plate_model_id:str="revvity-phenoplate-384")->BasicSuccessResponse:
         """
         set current xy position as reference
@@ -883,7 +879,7 @@ class Core:
             )
         )
         new_image_store_entry._img=img
-        self.latest_images[channel_config.name]=new_image_store_entry
+        self.latest_images[channel_config.handle]=new_image_store_entry
 
         return channel_config.name
 

@@ -1,6 +1,6 @@
 from pydantic import BaseModel,ConfigDict,Field
 import typing as tp
-import asyncio
+import asyncio, math
 
 import scipy
 from matplotlib import pyplot as plt
@@ -245,7 +245,8 @@ class SquidAdapter(BaseModel):
 
                 current_displacement_um=displacement_measure_data.displacement_um
                 assert current_displacement_um is not None
-                if np.abs(current_displacement_um)<0.5:
+                
+                if math.fabs(current_displacement_um)<0.5:
                     break
 
                 move_data=await self.execute(cmd.MoveBy(axis="z",distance_mm=-1e-3*current_displacement_um))
@@ -887,6 +888,22 @@ class SquidAdapter(BaseModel):
             result=cmd.ImageAcquiredResponse()
             result._img=img
             return result#type:ignore
+
+        elif isinstance(command,cmd.ChannelSnapSelection):
+            channel_handles:tp.List[str]=[]
+            channel_images:tp.Dict[str,np.ndarray]={}
+            for channel in command.config_file.channels:
+                if not channel.enabled:continue
+
+                cmd_snap=cmd.ChannelSnapshot(channel=channel,machine_config=command.config_file.machine_config or [] )
+                res=await self.execute(cmd_snap)
+
+                channel_images[channel.handle]=res._img
+                channel_handles.append(channel.handle)
+
+            result=cmd.ChannelSnapSelectionResult(channel_handles=channel_handles)
+            result._images=channel_images
+            return result#type:ignore
         
         elif isinstance(command,cmd.ChannelStreamBegin):
 
@@ -1018,7 +1035,7 @@ class SquidAdapter(BaseModel):
 
                 last_distance_estimate_mm=await _estimate_offset_mm()
                 MAX_MOVEMENT_RANGE_MM=0.3 # should be derived from the calibration data, but this value works fine in practice
-                if np.abs(last_distance_estimate_mm)>MAX_MOVEMENT_RANGE_MM:
+                if math.fabs(last_distance_estimate_mm)>MAX_MOVEMENT_RANGE_MM:
                     cmd.error_internal(detail="measured autofocus focal plane offset too large")
 
                 for rep_i in range(command.max_num_reps):
@@ -1026,7 +1043,7 @@ class SquidAdapter(BaseModel):
 
                     # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
                     # (since this indicates that we have moved away from the focal plane, which should not happen)
-                    if rep_i>0 and np.abs(last_distance_estimate_mm)<np.abs(distance_estimate_mm):
+                    if rep_i>0 and math.fabs(last_distance_estimate_mm)<math.fabs(distance_estimate_mm):
                         break
 
                     last_distance_estimate_mm=distance_estimate_mm

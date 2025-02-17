@@ -341,6 +341,22 @@ class ChannelSnapshot(BaseModel,BaseCommand[ImageAcquiredResponse]):
 
     _ReturnValue:type=PrivateAttr(default=ImageAcquiredResponse)
 
+class ChannelSnapSelectionResult(BaseModel):
+    channel_handles:tp.List[str]
+    _images:tp.Dict[str,np.ndarray]=PrivateAttr(default_factory=dict)
+class ChannelSnapSelection(BaseModel,BaseCommand[ChannelSnapSelectionResult]):
+    """
+    take a snapshot of all selected channels
+
+    these images will be stored into the local buffer for immediate retrieval, i.e. NOT stored to disk.
+
+    if autofocus is calibrated, this will automatically run the autofocus and take channel z offsets into account
+    """
+
+    config_file:sc.AcquisitionConfig
+
+    _ReturnValue:type=PrivateAttr(default=ChannelSnapSelectionResult)
+
 class MoveByResult(BaseModel):
     axis:str
     moved_by_mm:float

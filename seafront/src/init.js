@@ -142,6 +142,44 @@ function fetch_image(channel_name){
 /** @type{WebSocket?} */
 let status_update_websocket=null
 let last_image={timestamp:0}
+/**@type{Map<string,ImageStoreInfo>} */
+class ChannelUpdater{
+    constructor(){
+        /**@type{Map<string,ImageStoreInfo>} */
+        this.latest_channel_images=new Map()
+        /**@type{Map<string,{p:Promise<{img:ImageData,info:ImageStoreInfo}>,resolved:boolean}>} */
+        this.channel_update_in_progress=new Map()
+    }
+    /**
+     * @param{ImageStoreInfo}channel_data
+     * @returns{Promise<{img:ImageData,info:ImageStoreInfo}>}
+     */
+    schedule(channel_data){
+        const current_update=this.channel_update_in_progress.get(channel_data.channel.handle)
+        if(current_update && !current_update.resolved){
+            return current_update.p
+        }
+
+        const new_update=fetch_image(channel_data.channel.handle).then(imagedata=>{
+            let handle={img:imagedata,info:channel_data}
+
+            this.latest_channel_images.set(channel_data.channel.handle,handle.info)
+
+            let update_handle=this.channel_update_in_progress.get(channel_data.channel.handle)
+            if(!update_handle)throw new Error("")
+            update_handle.resolved=true
+
+            return handle
+        })
+        this.channel_update_in_progress.set(channel_data.channel.handle,{p:new_update,resolved:false})
+
+        return new_update
+    }
+}
+let channel_updater=new ChannelUpdater()
+
+/**@type{Map<string,number>} */
+let last_channel_update_timestamps=new Map()
 /**
  * initiates the background update loop that handles more than just the position
  * (loop -> updates frequently after the first call)
@@ -179,33 +217,55 @@ function updateMicroscopePosition(){
         microscope_state.is_in_loading_position=data.adapter_state.is_in_loading_position
 
         let view_latest_image=document.getElementById("view_latest_image")
-        if(data.latest_imgs!=null && Object.keys(data.latest_imgs).length>0){
+        let channel_names=Object.keys(data.latest_imgs)
+        if(data.latest_imgs!=null && channel_names.length>0){
             // default: pick first channel
-            let display_channel_name=Object.keys(data.latest_imgs)[0]
+            /**@type{ImageStoreInfo|null} */
+            let latest_channel_info=data.latest_imgs[channel_names[0]]
 
             // find channel with newest timestamp
             let timestamp=last_image.timestamp
             for(let channel_name of Object.keys(data.latest_imgs)){
                 const channel_data=data.latest_imgs[channel_name]
-                const channel_timestamp=parseFloat(""+(channel_data?.timestamp||"0"))
+                if(!channel_data)continue // unreachable, but type checker is not smart enough
+                const channel_timestamp=parseFloat(""+(channel_data.timestamp||"0"))
+
                 if(channel_timestamp>timestamp){
                     timestamp=channel_timestamp
-                    display_channel_name=channel_name
+                    latest_channel_info=channel_data
+                }
+
+                if((last_channel_update_timestamps.get(channel_data.channel.handle)||0) < channel_timestamp){
+                    last_channel_update_timestamps.set(channel_data.channel.handle,channel_timestamp)
+
+                    channel_updater.schedule(channel_data).then(data=>{
+                        const latest_channel_image_canvas=document.getElementById("view_latest_image_"+data.info.channel.handle)
+                        if(!(latest_channel_image_canvas instanceof HTMLCanvasElement)){
+                            console.error("latest_channel_image_canvas",latest_channel_image_canvas,typeof latest_channel_image_canvas)
+                            // assume page is not done loading, print error to console and try again later
+                        }else{
+                            latest_channel_image_canvas.getContext("2d")?.putImageData(data.img,0,0)
+                        }
+                    })
                 }
             }
+
+            if(!latest_channel_info)throw new Error("unreachable")
 
             // if that timestamp is newer than that of the last image that was displayed, fetch new image and display
             if(last_image.timestamp<timestamp){
                 last_image.timestamp=timestamp
 
-                const canvas=view_latest_image
-                const imagedata=await fetch_image(display_channel_name)
-                if(!(canvas instanceof HTMLCanvasElement)){
-                    console.error(view_latest_image,typeof view_latest_image)
-                    // assume page is not done loading, print error to console and try again later
-                    return
-                }
-                canvas.getContext("2d")?.putImageData(imagedata,0,0)
+                channel_updater.schedule(latest_channel_info).then(data=>{
+                    const latest_image_canvas=view_latest_image
+                    if(!(latest_image_canvas instanceof HTMLCanvasElement)){
+                        console.error("view_latest_image",view_latest_image,typeof view_latest_image)
+                        // assume page is not done loading, print error to console and try again later
+                    }else{
+                        microscope_state.last_image_name=data.info.channel.name
+                        latest_image_canvas.getContext("2d")?.putImageData(data.img,0,0)
+                    }
+                })
             }
         }
 

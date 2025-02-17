@@ -94,7 +94,7 @@
                             p:init="Plot.plot_init(element)"
                             p:init-vis="Plot.plot_fit(element,{init:true,isvisible:true})"
                         >
-                            <canvas id="view_latest_image" src="" width=2500 height=2500 loading="lazy"></canvas>
+                            <canvas id="view_latest_image" width=2500 height=2500 loading="lazy"></canvas>
                         </div>
 
                         <div id="live-view-x-axis-container">
@@ -114,7 +114,7 @@
                                         p:init="Plot.plot_init(element)"
                                         p:init-vis="Plot.plot_fit(element,{init:true,isvisible:true})"
                                     >
-                                        <img class="data" src="{{(microscope_state.latest_channel_images.get(channel.handle))?('/img/get_by_handle?img_handle='+microscope_state.latest_channel_images.get(channel.handle).handle):''}}" width=600 height=600 loading="lazy"/>
+                                        <canvas id="view_latest_image_{{channel.handle}}" width=2500 height=2500 loading="lazy"></canvas>
                                     </div>
                                 </div>
                             </template>

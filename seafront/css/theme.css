@@ -1,4 +1,9 @@
-
+*::selection{
+    background-color:var(--text-selected-background-color);
+}
+*::moz-selection{
+    background-color:var(--text-selected-background-color);
+}
 body{
     background:var(--background-color);
     color:var(--text-color);
@@ -27,6 +32,7 @@ body.light-theme{
     --background-color:#eeee;
     --text-color:black;
     --placeholder-text-color:rgb(110, 110, 110);
+    --text-selected-background-color:rgb(110, 110, 110);
 
     --button-text-color:black;
     --button-background-color:rgb(205, 205, 205);
@@ -61,6 +67,7 @@ body.dark-theme{
     --background-color:#303030;
     --text-color:white;
     --placeholder-text-color:rgb(174, 174, 174);
+    --text-selected-background-color:rgb(174, 174, 174);
 
     --button-text-color:white;
     --button-background-color:rgb(86, 86, 86);
