@@ -28,6 +28,7 @@ function nrand(n,min_v,max_v){
     return out
 }
 
+/**@type{PlotlyLayout} */
 const layout={
     autosize:true,
 
@@ -58,6 +59,7 @@ const layout={
     paper_bgcolor:"lightgrey"
 }
 
+/**@type{PlotlyConfig} */
 const config={
     responsive: true,
     modeBarButtonsToRemove:[
@@ -71,6 +73,7 @@ const config={
 }
 
 const histogram_plot_element_id='histogram-panel'
+/** @ts-ignore @type{PlotlyHTMLElement|null} */
 const histogram_plot_element = document.getElementById(histogram_plot_element_id);
 if(!histogram_plot_element){throw new Error("child is null")}
 
@@ -81,5 +84,22 @@ new ResizeObserver(function(){
 
 /** number of traces in the plot */
 let plt_num_traces=0
-/// @ts-ignore
+
+/**
+ * @typedef{{title?:string,type?:("log"),autorange?:boolean,fixedrange?:boolean,showticklabels?:boolean,tickvals?:number[],ticktext?:string[]}} PlotlyAxis
+ * @typedef{{autosize?:boolean,showlegend?:boolean,yaxis?:PlotlyAxis,xaxis?:PlotlyAxis,margin?:{t?:number,b?:number,l?:number,r?:number},plot_bgcolor?:string,paper_bgcolor?:string}} PlotlyLayout
+ * @typedef{{responsive?:boolean,modeBarButtonsToRemove?:("sendDataToCloud"|"zoom2d"|"pan2d"|"select2d"|"lasso2d"|"zoomIn2d"|"zoomOut2d"|"autoScale2d"|"resetScale2d")[],showLink?:boolean,displaylogo?:boolean}} PlotlyConfig
+ * @typedef{(HTMLElement&{data:{name:string}[]})}PlotlyHTMLElement
+ * @typedef{{x?:number[],y?:number[],type?:("scatter"),name?:string}}PlotlyTrace
+ * 
+ * ref https://plotly.com/javascript/plotlyjs-function-reference/
+ * 
+ * @ts-ignore @type{{
+ * newPlot:function(string,any[]?,PlotlyLayout?,PlotlyConfig?):void,
+ * deleteTraces:function(PlotlyHTMLElement,number[]):void,
+ * addTraces:function(PlotlyHTMLElement,PlotlyTrace):void,
+ * }}
+ */
+let Plotly=window.Plotly
+
 Plotly.newPlot(histogram_plot_element_id, [], layout, config)

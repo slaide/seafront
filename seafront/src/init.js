@@ -73,8 +73,6 @@ function get_current_state(callbacks){
  * @returns {Promise<ImageData>}
  */
 function fetch_image(channel_name){
-    console.log("fetching image for ",channel_name)
-
     return new Promise((resolve,reject)=>{
         // use websocket only once, as protocol to transfer arbitrary bytes (image data, uncompressed, no standardized format)
         const websocket_protocol=window.location.protocol=="https:"?"wss:":"ws:"
@@ -175,8 +173,31 @@ class ChannelUpdater{
 
         return new_update
     }
+    /**
+     * 
+     * @param {string} channel_name 
+     */
+    clear(channel_name){
+        this.latest_channel_images.delete(channel_name)
+        this.channel_update_in_progress.delete(channel_name)
+    }
 }
 let channel_updater=new ChannelUpdater()
+
+/**
+ * 
+ * @param {ImageData} img 
+ * @returns {number[]}
+ */
+function calculate_histogram(img){
+    let ret=new Array(256)
+    for(let i=0;i<256;i++)ret[i]=0
+    // image data has 4 components
+    for(let i=0;i<img.data.length;i+=4){
+        ret[img.data[i]]++
+    }
+    return ret
+}
 
 /**@type{Map<string,number>} */
 let last_channel_update_timestamps=new Map()
@@ -198,7 +219,7 @@ function updateMicroscopePosition(){
     }
 
     /** @param{CoreCurrentState} data */
-    async function onload(data){
+    function onload(data){
         if(!last_update_successful){
             message_open("info","recovered microscope position update")
             last_update_successful=true
@@ -223,11 +244,32 @@ function updateMicroscopePosition(){
             /**@type{ImageStoreInfo|null} */
             let latest_channel_info=data.latest_imgs[channel_names[0]]
 
+            // remove histograms for channels that are no longer in the config
+            /**@type{number[]}*/const indicesToRemove = [];
+            if(!histogram_plot_element){console.error("histogram_plot_element not present");return}
+            histogram_plot_element.data.forEach((trace, index) => {
+                if (!microscope_config.channels.find(c=>trace.name==c.handle && c.enabled)){
+                    indicesToRemove.push(index)
+
+                    channel_updater.clear(trace.name)
+                    last_channel_update_timestamps.delete(trace.name)
+                }
+            });
+            if (indicesToRemove.length > 0) {
+                Plotly.deleteTraces(histogram_plot_element, indicesToRemove);
+            }
+
             // find channel with newest timestamp
             let timestamp=last_image.timestamp
             for(let channel_name of Object.keys(data.latest_imgs)){
                 const channel_data=data.latest_imgs[channel_name]
                 if(!channel_data)continue // unreachable, but type checker is not smart enough
+
+                // if data is for a channel that is not currently selected, skip it
+                if (!microscope_config.channels.find(c=>channel_name==c.handle && c.enabled)){
+                    continue
+                }
+
                 const channel_timestamp=parseFloat(""+(channel_data.timestamp||"0"))
 
                 if(channel_timestamp>timestamp){
@@ -245,6 +287,28 @@ function updateMicroscopePosition(){
                             // assume page is not done loading, print error to console and try again later
                         }else{
                             latest_channel_image_canvas.getContext("2d")?.putImageData(data.img,0,0)
+
+                            // takes 18-22ms on 3ghz rpi5
+                            let histo=calculate_histogram(data.img)
+
+                            // slightly wasteful, but nice to copy to other places
+                            if(!histogram_plot_element){console.error("histogram_plot_element not present");return}
+                            /**@type{number[]}*/const indicesToRemove = [];
+                            histogram_plot_element.data.forEach((trace, index) => {
+                                if (trace.name === channel_data.channel.handle) {
+                                    indicesToRemove.push(index);
+                                }
+                            });
+                            if (indicesToRemove.length > 0) {
+                                Plotly.deleteTraces(histogram_plot_element, indicesToRemove);
+                            }
+
+                            Plotly.addTraces(histogram_plot_element,{
+                                x:histo.map((val,i,ar)=>i),
+                                y:histo,
+                                type:"scatter",
+                                name:channel_data.channel.handle
+                            })
                         }
                     })
                 }
