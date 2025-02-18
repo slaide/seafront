@@ -259,9 +259,22 @@ function updateMicroscopePosition(){
                 Plotly.deleteTraces(histogram_plot_element, indicesToRemove);
             }
 
+            const colors = [
+                "#1f77b4", // Blue
+                "#ff7f0e", // Orange
+                "#2ca02c", // Green
+                "#d62728", // Red
+                "#9467bd", // Purple
+                "#8c564b", // Brown
+                "#e377c2", // Pink
+                "#7f7f7f", // Gray
+                "#bcbd22", // Olive
+                "#17becf"  // Cyan
+            ]              
+
             // find channel with newest timestamp
             let timestamp=last_image.timestamp
-            for(let channel_name of Object.keys(data.latest_imgs)){
+            for(let [channel_name,channel_index] of Object.keys(data.latest_imgs).map(/**@type{function(string,number):[string,number]}*/(v,i)=>[v,i])){
                 const channel_data=data.latest_imgs[channel_name]
                 if(!channel_data)continue // unreachable, but type checker is not smart enough
 
@@ -307,7 +320,10 @@ function updateMicroscopePosition(){
                                 x:histo.map((val,i,ar)=>i),
                                 y:histo,
                                 type:"scatter",
-                                name:channel_data.channel.handle
+                                mode:"lines",
+                                name:channel_data.channel.handle,
+                                legendrank:channel_index,
+                                line:{color:colors[channel_index]},
                             })
                         }
                     })

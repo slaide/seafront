@@ -90,7 +90,8 @@ let plt_num_traces=0
  * @typedef{{autosize?:boolean,showlegend?:boolean,yaxis?:PlotlyAxis,xaxis?:PlotlyAxis,margin?:{t?:number,b?:number,l?:number,r?:number},plot_bgcolor?:string,paper_bgcolor?:string}} PlotlyLayout
  * @typedef{{responsive?:boolean,modeBarButtonsToRemove?:("sendDataToCloud"|"zoom2d"|"pan2d"|"select2d"|"lasso2d"|"zoomIn2d"|"zoomOut2d"|"autoScale2d"|"resetScale2d")[],showLink?:boolean,displaylogo?:boolean}} PlotlyConfig
  * @typedef{(HTMLElement&{data:{name:string}[]})}PlotlyHTMLElement
- * @typedef{{x?:number[],y?:number[],type?:("scatter"),name?:string}}PlotlyTrace
+ * @typedef{{color?:string}}PlotElementStyle
+ * @typedef{{x?:number[],y?:number[],type?:("scatter"),name?:string,legendrank?:number,mode?:"lines"|"markers"|"lines+markers",line?:PlotElementStyle,marker?:PlotElementStyle}}PlotlyTrace
  * 
  * ref https://plotly.com/javascript/plotlyjs-function-reference/
  * 
