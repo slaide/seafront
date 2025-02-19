@@ -277,21 +277,6 @@ custom_route_handlers:tp.Dict[str,CustomRoute]={}
 class Core:
     """application core, contains server capabilities and microcontroller interaction"""
 
-    async def home(self):
-        """perform homing maneuver"""
-
-        return await self.squid.home()
-
-    @property
-    def main_cam(self):
-        return self.squid.main_camera
-    @property
-    def focus_cam(self):
-        return self.squid.focus_camera
-    @property
-    def mc(self):
-        return self.squid.microcontroller
-
     def __init__(self):
         self.lock=CoreLock()
 
@@ -883,120 +868,6 @@ class Core:
 
         return channel_config.name
 
-    """async def _send_image_by_handle(self,img_handle:str,quick_preview:bool=False)->Response:
-        """"""
-            send image with given handle
-
-            allows use in <img src='...'> tags.
-
-            args:
-                quick_preview: if true, reduces image quality to minimize camera->display latency
-        """"""
-
-        img_container=self._get_imageinfo_by_handle(img_handle)
-            
-        if img_container is None:
-            error_internal(detail=f"img_handle {img_handle} not found")
-
-        img_raw=img_container.img
-
-        # convert from u12 to u8
-        match img_raw.dtype:
-            case np.uint16:
-                match img_container.bit_depth:
-                    case 12:
-                        img=(img_raw>>(16-12)).astype(np.uint8)
-                    case 10:
-                        img=(img_raw>>(16-10)).astype(np.uint8)
-                    case _:
-                        error_internal(detail=f"unexpected bit depth {img_container.bit_depth}")
-            case np.uint8:
-                assert img_container.bit_depth==8, f"unexpected {img_container.bit_depth = }"
-                img=img_raw
-            case _:
-                error_internal(detail=f"unexpected dtype {img_raw.dtype}")
-
-        if quick_preview:
-            preview_resolution_scaling=GlobalConfigHandler.get_dict()["streaming_preview_resolution_scaling"].intvalue
-
-            img=img[::preview_resolution_scaling,::preview_resolution_scaling]
-
-        if quick_preview:
-            g_config=GlobalConfigHandler.get_dict()
-            streaming_format_item=g_config["streaming_preview_format"]
-            assert streaming_format_item is not None
-            streaming_format=streaming_format_item.value
-            match streaming_format:
-                case "jpeg":
-                    pil_kwargs,mimetype={"format":"JPEG","quality":50},"image/jpeg"
-                case "png":
-                    pil_kwargs,mimetype={"format":"PNG","compress_level":0},"image/png"
-                case _other:
-                    error_internal(detail=f"unexpected streaming_preview_format format {streaming_format}")
-
-        else:
-            g_config=GlobalConfigHandler.get_dict()
-            streaming_format_item=g_config["image_display_format"]
-            assert streaming_format_item is not None
-            streaming_format=streaming_format_item.value
-            match streaming_format:
-                case "jpeg":
-                    pil_kwargs,mimetype={"format":"JPEG","quality":95},"image/jpeg"
-                case "png":
-                    pil_kwargs,mimetype={"format":"PNG","compress_level":3},"image/png"
-                case _other:
-                    error_internal(detail=f"unexpected image_display_format format {streaming_format}")
-
-        # compress image async
-        def compress_image():
-            img_pil=Image.fromarray(img,mode="L")
-
-            img_io=io.BytesIO()
-
-            img_pil.save(img_io,**pil_kwargs)
-
-            img_io.seek(0)
-
-            return img_io
-
-        img_io=await asyncio.get_running_loop().run_in_executor(None,compress_image)
-
-        headers = {"Content-Disposition": f"inline; filename=image.{streaming_format}"}
-
-        return StreamingResponse(img_io, media_type=mimetype, headers=headers)
-    """
-    """async def _calculate_histogram(self,handle:str)->HistogramResponse:
-        """"""
-        calculate image histogram
-
-        returns 256 value bucket of image histogram from handle, no matter the pixel depth.
-
-        may internally downsample the image to reduce calculation time.
-        """"""
-
-        img_info=self._get_imageinfo_by_handle(handle)
-
-        if img_info is None:
-            error_internal(detail="image not found")
-        
-        img=img_info.img
-
-        # calc time scales with DOWNSAMPLE_FACTOR squared! (i.e. factor=2 -> 1/4th the time)
-        DOWNSAMPLE_FACTOR=4
-        rescaled_img=img[::DOWNSAMPLE_FACTOR,::DOWNSAMPLE_FACTOR]
-
-        def calc_hist()->list[int]:
-            if img.dtype==np.uint16:
-                hist,edges=np.histogram((rescaled_img>>(16-img_info.bit_depth)).astype(np.uint8),bins=256,range=(0,255))
-            else:
-                hist,edges=np.histogram(rescaled_img,bins=256,range=(0,255))
-
-            return hist.tolist()
-
-        hist=await asyncio.get_running_loop().run_in_executor(None,calc_hist)
-
-        return HistogramResponse(channel_name=img_info.info.channel.name,hist_values=hist)
-    """
     async def get_current_state(self)->CoreCurrentState:
         """
         get current state of the microscope
@@ -1454,7 +1325,7 @@ websockets.server.WebSocketServerProtocol.__init__=_no_comp_init
 def main():
     core = Core()
 
-    asyncio.run(core.home())
+    asyncio.run(core.squid.home())
     
     try:
         # Start FastAPI using uvicorn
