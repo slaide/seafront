@@ -23,9 +23,9 @@ function laser_autofocus_initcheckbox(element){
  * measure autofocus offset
  * 
  * if return_immediate is true, this call is sync and returns the offset in um
- * @returns {number?}
+ * @returns {Promise<number?>}
  */
-function measureLaserAutofocusOffset(return_immediate=false){
+async function measureLaserAutofocusOffset(){
     let data={
         config_file:_p.getUnmanaged(microscope_config),
     }
@@ -37,10 +37,8 @@ function measureLaserAutofocusOffset(return_immediate=false){
         return null
     }
 
-    /**@type{number?}*/
-    let immediate_return_value=null
-
-    new XHR(!return_immediate)
+    return new Promise((resolve,reject)=>{
+    new XHR(true)
         .onload((xhr)=>{
             progress_indicator.stop()
 
@@ -48,21 +46,20 @@ function measureLaserAutofocusOffset(return_immediate=false){
 
             laserautofocusdata.currentOffset=response.displacement_um
 
-            if(return_immediate){
-                immediate_return_value=response.displacement_um
-            }
+            resolve(response.displacement_um)
         })
         .onerror((xhr)=>{
             progress_indicator.stop()
             
             message_open("error","error measuring laser autofocus offset",xhr.responseText)
+
+            reject()
         })
         .send("/api/action/measure_displacement",data,"POST")
-
-    return immediate_return_value
+    })
 }
 
-function setLaserAutofocusReference(){
+async function setLaserAutofocusReference(){
     let data={}
 
     try{

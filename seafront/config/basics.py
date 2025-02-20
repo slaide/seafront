@@ -244,7 +244,7 @@ class GlobalConfigHandler:
                     name="laser autofocus camera analog gain",
                     handle="laser_autofocus_analog_gain",
                     value_kind="number",
-                    value=0,
+                    value=0.0,
                 ),
                 ConfigItem(
                     name="laser autofocus use glass top",
@@ -289,21 +289,21 @@ class GlobalConfigHandler:
                     name="laser autofocus calibration: x peak pos",
                     handle="laser_autofocus_calibration_x",
                     value_kind="number",
-                    value=0,
+                    value=0.0,
                 ),
                 # calibrated um/px on sensor
                 ConfigItem(
                     name="laser autofocus calibration: um per px",
                     handle="laser_autofocus_calibration_umpx",
                     value_kind="number",
-                    value=0,
+                    value=0.0,
                 ),
                 # z coordinate at time of calibration
                 ConfigItem(
                     name="laser autofocus calibration: ref z in mm",
                     handle="laser_autofocus_calibration_refzmm",
                     value_kind="number",
-                    value=0,
+                    value=0.0,
                 ),
             ]
         else:

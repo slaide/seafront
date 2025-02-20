@@ -82,9 +82,6 @@ new ResizeObserver(function(){
     Plotly.relayout(histogram_plot_element_id, {autosize: true});
 }).observe(histogram_plot_element)
 
-/** number of traces in the plot */
-let plt_num_traces=0
-
 /**
  * @typedef{{title?:string,type?:("log"),autorange?:boolean,fixedrange?:boolean,showticklabels?:boolean,tickvals?:number[],ticktext?:string[]}} PlotlyAxis
  * @typedef{{autosize?:boolean,showlegend?:boolean,yaxis?:PlotlyAxis,xaxis?:PlotlyAxis,margin?:{t?:number,b?:number,l?:number,r?:number},plot_bgcolor?:string,paper_bgcolor?:string}} PlotlyLayout

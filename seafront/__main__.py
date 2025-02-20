@@ -48,7 +48,7 @@ from seaconfig.acquisition import AcquisitionConfig
 
 from .config.basics import ConfigItem, GlobalConfigHandler
 from .server.protocol import ProtocolGenerator, AsyncThreadPool, make_unique_acquisition_id
-from .hardware.squid import SquidAdapter
+from .hardware.squid import SquidAdapter, DisconnectError
 
 # Set the working directory to the script's directory as reference for static file paths
 
@@ -260,10 +260,6 @@ class CoreLock(BaseModel):
         self._last_key_use=time.time()
         return True
 
-class HistogramResponse(BaseModel):
-    channel_name:str
-    hist_values:tp.List[int]
-
 class CustomRoute(BaseModel):
     handler:tp.Union[tp.Type[BaseCommand],tp.Callable]
     tags:tp.List[str]=Field(default_factory=list)
@@ -281,8 +277,6 @@ class Core:
         self.lock=CoreLock()
 
         self.squid=SquidAdapter.make()
-
-        print("initializing microcontroller")
 
         self.acquisition_map:tp.Dict[str,AcquisitionStatus]={}
         """ map containing information on past and current acquisitions """
@@ -318,9 +312,15 @@ class Core:
                     instance = target_func(**request_data)
                     arg=instance
                     if isinstance(instance, BaseCommand):
-                        result=await self.squid.execute(instance)
+                        try:
+                            # ensure a connection is established, before running any other command
+                            _=await self.squid.execute(EstablishHardwareConnection())
+                            result=await self.squid.execute(instance)
+                        except DisconnectError:
+                            error_internal("hardware disconnected")
                     else:
                         raise AttributeError(f"Provided class {target_func} {type(target_func)=} is no BaseCommand")
+                        
                 elif inspect.iscoroutinefunction(target_func):
                     arg=request_data
                     result=await target_func(**request_data)
@@ -488,7 +488,7 @@ class Core:
 
                     img=self.latest_images[channel_handle]
                     if img is not None:
-                        await ws.send_json({"width":img._img.shape[0],"height":img._img.shape[1],"bit_depth":img.bit_depth})
+                        await ws.send_json({"width":img._img.shape[1],"height":img._img.shape[0],"bit_depth":img.bit_depth})
 
                         img_bytes=np.ascontiguousarray(img._img).tobytes()
 
@@ -578,7 +578,11 @@ class Core:
             methods=["POST"],
         )
 
+        async def write_image_laseraf(cmd:AutofocusSnap,res:AutofocusSnapResult):
+            "store new laser autofocus image"
+            await self._store_new_image(img=res._img,channel_config=res._channel)
         async def write_image(cmd:ChannelSnapshot,res:ImageAcquiredResponse):
+            "store new regular image"
             await self._store_new_image(img=res._img,channel_config=cmd.channel)
 
         # Snap channel
@@ -614,12 +618,12 @@ class Core:
                 self.image_store_threadpool.run(self._store_new_image(img=img,channel_config=stream_info["channel"]))
             return False
 
-        def register_stream_begin(begin:ChannelStreamBegin,res):
+        def register_stream_begin(begin:ChannelStreamBegin,res:StreamingStartedResponse):
             # register callback on microscope
             self.squid.stream_callback=handle_image
             # store channel info, to be used inside the streaming callback to store the images in the server properly
             stream_info["channel"]=begin.channel
-        def register_stream_end(a,b):
+        def register_stream_end(a:ChannelStreamEnd,b:BasicSuccessResponse):
             self.squid.stream_callback=None
 
         route_wrapper(
@@ -636,7 +640,7 @@ class Core:
         # Laser autofocus system
         route_wrapper(
             "/api/action/snap_reflection_autofocus",
-            CustomRoute(handler=AutofocusSnap,tags=[RouteTag.ACTIONS.value]),
+            CustomRoute(handler=AutofocusSnap,tags=[RouteTag.ACTIONS.value],callback=write_image_laseraf),
             methods=["POST"],
         )
         route_wrapper(
@@ -845,7 +849,10 @@ class Core:
 
         g_config=GlobalConfigHandler.get_dict()
 
-        adapter_state=await self.squid.get_current_state()
+        try:
+            adapter_state=await self.squid.get_current_state()
+        except DisconnectError:
+            error_internal(f"hardware disconnect")
 
         # store new image
         new_image_store_entry=ImageStoreEntry(
@@ -883,11 +890,13 @@ class Core:
                         print(f"warning - more than one acquisition is running at a time?! {current_acquisition_id} and {acq_id}")
                     current_acquisition_id=acq_id
 
-        # blur laser autofocus image (this code is super out of place here)
-        # img = cv2.GaussianBlur(img,(3,3),cv2.BORDER_DEFAULT)
+        try:
+            squid_adapter_state=await self.squid.get_current_state()
+        except DisconnectError:
+            error_internal("hardware disconnect")
         
         return CoreCurrentState(
-            adapter_state=await self.squid.get_current_state(),
+            adapter_state=squid_adapter_state,
             latest_imgs={key:entry.info for key,entry in self.latest_images.items()},
             current_acquisition_id=current_acquisition_id,
         )
@@ -932,6 +941,12 @@ class Core:
 
         the acquisition is run in the background, i.e. this command returns after acquisition bas begun. see /api/acquisition/status for ongoing status of the acquisition.
         """
+
+        # check if microscope is even is connected
+        try:
+            _=await self.squid.get_current_state()
+        except DisconnectError:
+            error_internal("device not connected")
 
         if self.squid.is_in_loading_position:
             error_internal(detail="now allowed while in loading position")
@@ -1017,7 +1032,7 @@ class Core:
 
         async def run_acquisition(
             q_in:asyncio.Queue[AcquisitionCommand],
-            q_out:asyncio.Queue[InternalErrorModel|AcquisitionStatusOut],
+            q_out:asyncio.Queue[tp.Literal["disconnected"]|InternalErrorModel|AcquisitionStatusOut],
         ):
             """
             acquisition execution
@@ -1044,9 +1059,13 @@ class Core:
                     elif next_step is None:
                         break
                     else:
-                        result=await self.squid.execute(next_step)
+                        result=None
+                        try:
+                            result=await self.squid.execute(next_step)
+                        except DisconnectError as e:
+                            protocol_generator.throw(e)
 
-                        if isinstance(next_step,ChannelSnapshot):
+                        if result is not None and isinstance(next_step,ChannelSnapshot):
                             await self._store_new_image(result._img,next_step.channel)
 
                     next_step=protocol_generator.send(result)
@@ -1055,19 +1074,26 @@ class Core:
                 assert acquisition_status.last_status is not None
                 acquisition_status.last_status.acquisition_status="completed"
 
+            except HTTPException as e:
+                assert acquisition_status.last_status is not None
+                acquisition_status.last_status.acquisition_status="cancelled"
+
+            except DisconnectError:
+                await q_out.put("disconnected")
+                self.squid.close()
+
+                assert acquisition_status.last_status is not None
+                acquisition_status.last_status.acquisition_status="crashed"
+                acquisition_status.last_status.message="hardware disconnect"
+
             except Exception as e:
-                if isinstance(e,HTTPException):
-                    if acquisition_status.last_status is not None:
-                        acquisition_status.last_status.acquisition_status="cancelled"
+                print(f"error during acquisition {e}\n{traceback.format_exc()}")
+            
+                full_error=traceback.format_exc()
+                await q_out.put(InternalErrorModel(detail=f"acquisition thread failed because {str(e)}, more specifically: {full_error}"))
 
-                else:
-                    print(f"error during acquisition {e}\n{traceback.format_exc()}")
-                
-                    full_error=traceback.format_exc()
-                    await q_out.put(InternalErrorModel(detail=f"acquisition thread failed because {str(e)}, more specifically: {full_error}"))
-
-                    if acquisition_status.last_status is not None:
-                        acquisition_status.last_status.acquisition_status="crashed"
+                if acquisition_status.last_status is not None:
+                    acquisition_status.last_status.acquisition_status="crashed"
 
             finally:
                 # ensure no dangling image store task threads
@@ -1324,8 +1350,6 @@ websockets.server.WebSocketServerProtocol.__init__=_no_comp_init
 
 def main():
     core = Core()
-
-    asyncio.run(core.squid.home())
     
     try:
         # Start FastAPI using uvicorn

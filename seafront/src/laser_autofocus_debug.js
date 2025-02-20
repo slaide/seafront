@@ -1,5 +1,5 @@
 
-function laser_autofocus_debug_measure(){
+async function laser_autofocus_debug_measure(){
     const debug_num_images_element=document.getElementById("laser-autofocus-debug-num-images")
     const total_z_um_element=document.getElementById("laser-autofocus-debug-total-z-um")
 
@@ -41,20 +41,19 @@ function laser_autofocus_debug_measure(){
     console.log("starting autofocus debug measurements")
 
     const clear_z_backlash_distance_mm=40*1e-3
-    immediate_move(1,"z",bottom_move_dist_um*1e-3,false)
-    immediate_move(1,"z",-clear_z_backlash_distance_mm,false)
-    immediate_move(1,"z",clear_z_backlash_distance_mm,false)
+    await immediate_move(1,"z",bottom_move_dist_um*1e-3,false)
+    await immediate_move(1,"z",-clear_z_backlash_distance_mm,false)
+    await immediate_move(1,"z",clear_z_backlash_distance_mm,false)
     for(let i=0;i<num_images;i++){
         if(i>0){
-            immediate_move(1,"z",step_size_um*1e-3,false)
+            await immediate_move(1,"z",step_size_um*1e-3,false)
         }
-        var current_offset=measureLaserAutofocusOffset(true)
+        var current_offset=await measureLaserAutofocusOffset()
         if(current_offset==null)current_offset=NaN;
         trace2.y[i]=current_offset
     }
-    immediate_move(1,"z",bottom_move_dist_um*1e-3,false)
+    await immediate_move(1,"z",bottom_move_dist_um*1e-3,false)
     console.log("done with autofocus debug measurements")
-
 
     const trace3={
         x:trace1.x,

@@ -57,8 +57,27 @@ class Camera:
             open device for interaction
         """
 
-        print(f"opening device with sn {self.sn}")
-        self.handle=Camera.device_manager.open_device_by_sn(self.sn)
+        for i in range(5):
+            try:
+                Camera.device_manager.update_all_device_list()
+                self.handle=Camera.device_manager.open_device_by_sn(self.sn)
+            except Exception as e:
+                print(f"failed {i} times {e=}")
+
+                try:
+                    self.close()
+                except Exception as e:
+                    print(f"{e=}")
+                finally:
+                    print("closed?")
+                time.sleep(2)
+                print("DONE SLEEPING")
+                continue
+
+            print("opened camera")
+            break
+
+
         if self.handle is None:
             raise RuntimeError(f"failed to open camera {self.device_info}")
         
@@ -212,13 +231,18 @@ class Camera:
         """
             close device handle
         """
-        assert self.handle is not None
+        if self.handle is None:
+            return
 
         # turning stream off takes 300ms (for continuous and single frame mode)
         self.is_streaming=False
-        self.handle.stream_off()
 
-        self.handle.close_device()
+        # this may throw if the device is already offline or just not streaming
+        try:self.handle.stream_off()
+        except:pass
+
+        try:self.handle.close_device()
+        except:pass
         self.handle=None
 
     def _exposure_time_ms_to_native(self,exposure_time_ms:float):
@@ -325,17 +349,18 @@ class Camera:
                 self.handle.TriggerSoftware.send_command()
 
                 # wait for image to arrive
-                img:gxiapi.RawImage=self.handle.data_stream[0].get_image()
+                img:gxiapi.RawImage|None=self.handle.data_stream[0].get_image()
+
+                if img is None:
+                    self.acquisition_ongoing=False
+                    return None
+
                 match img.get_status():
                     case gxiapi.GxFrameStatusList.INCOMPLETE:
                         self.acquisition_ongoing=False
                         raise RuntimeError("incomplete frame")
-                    case gxiapi.GxFrameStatusList.SUCCESS: 
+                    case gxiapi.GxFrameStatusList.SUCCESS:
                         pass
-
-                if img is None:
-                    self.acquisition_ongoing=False
-                    raise RuntimeError("did not receive an image")
 
                 np_img=img.get_numpy_array()
                 assert np_img is not None
@@ -351,7 +376,8 @@ class Camera:
                 stop_acquisition=False
                 def run_callback(img:gxiapi.RawImage):
                     nonlocal stop_acquisition
-                    if stop_acquisition:
+
+                    if stop_acquisition or img is None:
                         if self.acquisition_ongoing:
                             self.acquisition_ongoing=False
 

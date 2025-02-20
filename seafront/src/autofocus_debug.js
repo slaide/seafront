@@ -21,25 +21,22 @@ function snapReflectionAutofocus(){
     }
 
     new XHR(true)
-        .onload((xhr)=>{
+        .onload(async (xhr)=>{
             progress_indicator.stop()
 
-            let response=JSON.parse(xhr.responseText)
+            await fetch_image("laser_autofocus").then(imagedata=>{
+                let img=document.getElementById("view_af_image")
+                if(!(img instanceof HTMLCanvasElement))throw new Error("element with id 'view_af_image' is not an image element")
 
-            let handle=response.img_handle
-            let img=document.getElementById("view_af_image")
-            if(!(img instanceof HTMLImageElement))throw new Error("element with id 'view_af_image' is not an image element")
+                img.height=imagedata.height
+                img.width=imagedata.width
 
-            if(response.width_px!=null)
-                img.setAttribute("width",response.width_px)
-            if(response.height_px!=null)
-                img.setAttribute("height",response.height_px)
-            img.src="/img/get_by_handle?img_handle="+handle
+                img.getContext("2d")?.putImageData(imagedata,0,0)
+            })
         })
         .onerror(()=>{
             progress_indicator.stop()
             
             message_open("error","error snapping reflection autofocus")
-        })
-        .send("/api/action/snap_reflection_autofocus",data,"POST")
+        }).send("/api/action/snap_reflection_autofocus",data,"POST")
 }

@@ -6,6 +6,7 @@ from enum import Enum
 import threading
 import dataclasses
 from dataclasses import dataclass
+import inspect, datetime
 
 import serial
 import serial.tools.list_ports
@@ -13,6 +14,37 @@ import crc
 import numpy as np
 
 from .adapter import Position as AdapterPosition
+
+_LAST_TIMESTAMP=time.time()
+def print_time(msg:str,threshold:bool=False):
+    """essentially a logging function"""
+    global _LAST_TIMESTAMP
+
+    # Get call site information (filename and line number of the caller)
+    currentframe=inspect.currentframe()
+    assert currentframe is not None
+    caller_frame = currentframe.f_back
+    assert caller_frame is not None
+    caller_info = inspect.getframeinfo(caller_frame)
+    call_site = f"{caller_info.filename}:{caller_info.lineno}"
+
+    # Get current time and compute the delta
+    current_time = time.time()
+    delta = current_time - _LAST_TIMESTAMP
+    _LAST_TIMESTAMP = current_time
+
+    # Get current datetime and format with 4-digit milliseconds
+    now = datetime.datetime.now()
+    ms = now.microsecond // 1000  # convert microseconds to milliseconds
+    formatted_time = now.strftime("%Y-%m-%d:%H:%M:%S") + f":{ms:04d}"
+
+    # Define a threshold of 1 millisecond
+    TIME_THRESHOLD = 1e-3  # 1ms
+
+    # Print only if the elapsed time exceeds the threshold or if forced
+    if (not threshold) or (delta > TIME_THRESHOLD):
+        # Delta time is converted to milliseconds
+        print(f"{call_site} {formatted_time} - {(delta * 1e3):21.1f}ms : {msg}")
 
 def intFromPayload(payload,start_index,num_bytes):
     ret=0
@@ -656,11 +688,13 @@ class Command:
         return ret
 
     @staticmethod
-    def illumination_begin(illumination_source:ILLUMINATION_CODE,intensity_percent:float)->tp.List["Command"]:
+    def illumination_begin(illumination_source:ILLUMINATION_CODE,intensity_percent:float,led_color_r:float=1.0,led_color_g:float=1.0,led_color_b:float=1.0)->tp.List["Command"]:
         """
             turn on illumination source, and set intensity
 
             intensity_percent: should be in range [0;100] - will be internally clamped to [0;100] for safety either way
+
+            led_color_[r|g|b]: color component used for matrix led, must be in range (and will be clamped to) [0;1]
         """
 
         cmds=[]
@@ -672,11 +706,16 @@ class Command:
         cmd = Command()
         if illumination_source.is_led_matrix:
             cmd[1] = CommandName.SET_ILLUMINATION_LED_MATRIX.value
+            cmd[2] = illumination_source.value
+            # clamp rgb*255 to [0;255]
+            cmd[3] = max(0,min(int(led_color_r*255),255))
+            cmd[4] = max(0,min(int(led_color_g*255),255))
+            cmd[5] = max(0,min(int(led_color_b*255),255))
         else:
             cmd[1] = CommandName.SET_ILLUMINATION.value
-        cmd[2] = illumination_source.value
-        cmd[3] = (intensity_clamped >>8*1) & 0xFF
-        cmd[4] = (intensity_clamped >>8*0) & 0xFF
+            cmd[2] = illumination_source.value
+            cmd[3] = (intensity_clamped >>8*1) & 0xFF
+            cmd[4] = (intensity_clamped >>8*0) & 0xFF
         cmds.append(cmd)
 
         cmd = Command()
@@ -692,8 +731,7 @@ class Command:
             cmd = Command()
             cmd[1] = CommandName.SET_ILLUMINATION.value
             cmd[2] = illumination_source.value
-            cmd[3] = 0
-            cmd[4] = 0
+            # other bytes indicating strength/color are zero
             cmds.append(cmd)
         
         cmd = Command()
@@ -730,18 +768,22 @@ class Command:
 import asyncio
 
 class Microcontroller:
-    @staticmethod
     async def _wait_until_cmd_is_finished(
-        mc:"Microcontroller",
+        self,
         cmd:"Command",
-        additional_delay:tp.Optional[float]=None
+        additional_delay:tp.Optional[float]=None,
+
+        _ignore_cmd_id:bool=False,
     ):
+        """
+        _ignore_cmd_id is only for use with RESET
+        """
         last_position_x=0
         last_position_y=0
         last_position_z=0
         init_wait_complete=False
 
-        def read_packet(packet:MicrocontrollerStatusPackage)->bool:
+        async def read_packet(packet:MicrocontrollerStatusPackage)->bool:
             nonlocal last_position_x
             nonlocal last_position_y
             nonlocal last_position_z
@@ -754,7 +796,7 @@ class Microcontroller:
             if cmd.is_move_cmd:
                 # wait for 5ms for a move command to have engaged the motors
                 if not init_wait_complete:
-                    time.sleep(5e-3)
+                    await asyncio.sleep(5e-3)
                     init_wait_complete=True
                     return False
 
@@ -765,7 +807,7 @@ class Microcontroller:
                     last_position_z=latest_position_z
                     return False
 
-            cmd_is_completed=packet.last_cmd_id==cmd[0] and packet.exec_status==0
+            cmd_is_completed=(_ignore_cmd_id or (packet.last_cmd_id==cmd[0])) and packet.exec_status==0
             if cmd.is_move_cmd:
                 # TODO : moves in Z sometimes do not indicate completion, even when moving to target position is done
                 cmd_name=CommandName(cmd[1])
@@ -777,7 +819,7 @@ class Microcontroller:
 
             return cmd_is_completed
         
-        await mc._read_packets(read_packet)
+        await self._read_packets(read_packet)
 
         if additional_delay is not None:
             await asyncio.sleep(additional_delay)
@@ -798,7 +840,7 @@ class Microcontroller:
 
         self.last_position=Position(0,0,0)
 
-    async def _read_packets(self,until:tp.Callable[[MicrocontrollerStatusPackage],bool]):
+    async def _read_packets(self,until:tp.Callable[[MicrocontrollerStatusPackage],bool]|tp.Callable[[MicrocontrollerStatusPackage],tp.Coroutine[None,None,bool]]):
         """
             read packets until 'until' returns True
 
@@ -813,8 +855,13 @@ class Microcontroller:
 
         self.terminate_reading_received_packet_thread=False
         while not self.terminate_reading_received_packet_thread:
-            # wait to receive data
-            assert self.handle is not None
+            # wait to connect and receive data
+
+            if self.handle is None:
+                print_time("self.handle is None ")
+                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY)
+                continue
+
             serial_in_waiting_status=self.handle.in_waiting
 
             if serial_in_waiting_status==0:
@@ -841,7 +888,12 @@ class Microcontroller:
             # save last position
             self.last_position=packet.pos
             
-            self.terminate_reading_received_packet_thread=until(packet)
+            should_terminate=until(packet)
+            if inspect.iscoroutine(should_terminate):
+                should_terminate=await should_terminate
+            assert isinstance(should_terminate,bool), f"{type(should_terminate)=}"
+                
+            self.terminate_reading_received_packet_thread=should_terminate
 
     async def get_last_position(self)->Position:
         """
@@ -851,13 +903,17 @@ class Microcontroller:
         """
 
         if self.lock.acquire(blocking=False):
-            def read_one_packet(packet_in:MicrocontrollerStatusPackage)->bool:
-                return True
-            
-            # internally updates the last known position
-            await self._read_packets(read_one_packet)
+            try:
+                def read_one_packet(packet_in:MicrocontrollerStatusPackage)->bool:
+                    return True
+                
+                # do not wait to read a package if there is currently no connection
+                if self.handle is not None:
+                    # internally updates the last known position
+                    await self._read_packets(read_one_packet)
 
-            self.lock.release()
+            finally:
+                self.lock.release()
 
         return self.last_position
 
@@ -899,7 +955,11 @@ class Microcontroller:
                 assert self.handle is not None
                 self.handle.write(cmd.bytes)
                 if cmd.wait_for_completion:
-                    await Microcontroller._wait_until_cmd_is_finished(self,cmd)
+                    await self._wait_until_cmd_is_finished(
+                        cmd,
+                        # reset command also resets the command id to zero, so we need to ignore the command id then
+                        _ignore_cmd_id=cmd[1]==Command.reset()[1]
+                    )
 
     def open(self):
         "open connection to device"

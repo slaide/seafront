@@ -36,6 +36,9 @@ class AsyncThreadPool(BaseModel):
     from https://stackoverflow.com/a/77682889
     """
 
+    handle_disconnect:bool=Field(default=False)
+    "indicate if hardware disconnect errors should be handled by this protocol"
+
     workers:int=Field(default=1)
     """ Number of worker threads in the pool """
     threads:tp.List[Thread]=Field(default_factory=list)
@@ -113,7 +116,7 @@ def make_unique_acquisition_id(length: tp.Literal[16,32] = 16) -> str:
 
 async def store_image(
     image_entry:ImageStoreEntry,
-    img_compression_algorithm:str,
+    img_compression_algorithm:tp.Literal["LZW","zlib"],
 
     metadata:tp.Dict[str,str],
 ):
@@ -191,7 +194,6 @@ class ProtocolGenerator(BaseModel):
     project_output_path:path.Path=Field(default_factory=path.Path)
 
     latest_channel_images:tp.Dict[str,ImageStoreEntry]=Field(default_factory=dict)
-
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
@@ -283,6 +285,9 @@ class ProtocolGenerator(BaseModel):
         # movement below this threshold is not performed
         DISPLACEMENT_THRESHOLD_UM: float=0.5
 
+        # 10um
+        UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM=10e-3
+
         # counters on acquisition progress
         start_time=time.time()
         start_time_iso_str=sc.datetime2str(dt.datetime.now(dt.timezone.utc))
@@ -298,6 +303,8 @@ class ProtocolGenerator(BaseModel):
         # i.e. this MUST be the first yield !!
         yield "ready"
 
+        yield EstablishHardwareConnection()
+
         # get current z coordinate as z reference
         last_position=yield MC_getLastPosition()
         assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
@@ -305,6 +312,7 @@ class ProtocolGenerator(BaseModel):
 
         # if laser autofocus is enabled, use autofocus z reference as initial z reference
         gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
+        print_time(f"{self.config_file.autofocus_enabled=} {gconfig_refzmm_item=}")
         if self.config_file.autofocus_enabled and gconfig_refzmm_item is not None:
             reference_z_mm=gconfig_refzmm_item.floatvalue
 
@@ -332,18 +340,28 @@ class ProtocolGenerator(BaseModel):
 
                     # run autofocus
                     if self.config_file.autofocus_enabled:
+                        res=None
+                        total_compensating_moves=0
                         for autofocus_attempt_num in range(3):
-                            current_displacement=yield AutofocusMeasureDisplacement(config_file=self.config_file)
-                            assert isinstance(current_displacement,AutofocusMeasureDisplacementResult), f"{type(current_displacement)=}"
-                            
-                            current_displacement_um=current_displacement.displacement_um
-                            assert current_displacement_um is not None
-                            # print(f"measured offset of {current_displacement_um:.2f}um on attempt {autofocus_attempt_num}")
-                            if math.fabs(current_displacement_um)<DISPLACEMENT_THRESHOLD_UM:
-                                break
-                            
+                            # approach target offset
                             res=yield AutofocusApproachTargetDisplacement(target_offset_um=0,config_file=self.config_file,pre_approach_refz=False)
-                            assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
+                            assert isinstance(res,AutofocusApproachTargetDisplacementResult), f"{type(res)=}"
+
+                            total_compensating_moves+=res.num_compensating_moves
+
+                            # if the final estimated offset is larger than some small threshold, assume it has failed
+                            # and reset to some known good-ish z position
+                            if res.uncompensated_offset_mm>UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM:
+                                res=yield MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm)
+                                break
+
+                            # if no moves have been performed to compensate for offset, assume we have reached the target offset
+                            # (may in practice be still offset, but at least we cannot do better than we have so far)
+                            if res.num_compensating_moves==0 or res.reached_threshold:
+                                break
+
+                        if res is not None:
+                            print_time(f"{total_compensating_moves=} ; uncompensated {res.uncompensated_offset_mm*1e3} um")
 
                     # reference for channel z offsets
                     # (this position may have been adjusted by the autofocus system, but even without autofocus the current position must be the reference)
@@ -454,6 +472,9 @@ class ProtocolGenerator(BaseModel):
                                 "ExposureTimeMS":f"{channel.exposure_time_ms:.2f}",
                                 "AnalogGainDB":f"{channel.analog_gain:.2f}",
                                 "PixelSizeUM":f"{PIXEL_SIZE_UM:.3f}",
+                                "Position_x_mm":f"{image_store_entry.info.position.position.x_pos_mm:.3f}",
+                                "Position_y_mm":f"{image_store_entry.info.position.position.y_pos_mm:.3f}",
+                                "Position_z_mm":f"{image_store_entry.info.position.position.z_pos_mm:.3f}",
                             },
                         )
                         self.image_store_pool.run(image_store_task)

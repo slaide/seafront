@@ -2,10 +2,12 @@ from pydantic import BaseModel,ConfigDict,Field
 import typing as tp
 import asyncio, math
 
-import scipy
+import scipy # to find peaks in a signal
+import scipy.ndimage # for guassian blur
+from scipy import stats # for linear regression
 from matplotlib import pyplot as plt
-from scipy import stats
 import numpy as np
+import cv2
 
 from gxipy import gxiapi
 from .camera import Camera, AcquisitionMode
@@ -14,14 +16,20 @@ import seaconfig as sc
 
 from ..config.basics import ConfigItem, GlobalConfigHandler
 from ..server import commands as cmd
-from ..server.commands import T
+from ..server.commands import T, BasicSuccessResponse, IlluminationEndAll, error_internal, print_time
 
 from .adapter import AdapterState, Position, CoreState
 
 # utility functions
+
+class DisconnectError(BaseException):
+    """indicate that the hardware was disconnected"""
+    def __init__(self):
+        super().__init__()
  
 def linear_regression(x:list[float]|np.ndarray,y:list[float]|np.ndarray)->tuple[float,float]:
     "returns (slope,intercept)"
+    print(f"{x=} {y=}")
     slope, intercept, _,_,_ = stats.linregress(x, y)
     return slope,intercept #type:ignore
 
@@ -95,6 +103,7 @@ class SquidAdapter(BaseModel):
     microcontroller:mc.Microcontroller
 
     state:CoreState=CoreState.Idle
+    is_connected:bool=False
     is_in_loading_position:bool = False
 
     stream_callback:tp.Optional[tp.Callable[[tp.Union[np.ndarray,bool]],bool]]=Field(default=None)
@@ -117,7 +126,6 @@ class SquidAdapter(BaseModel):
         if abort_startup:
             raise RuntimeError("did not find microscope hardware")
         
-
         main_camera_model_name=g_dict["main_camera_model"].value
         _main_cameras=[c for c in cams if c.model_name==main_camera_model_name]
         if len(_main_cameras)==0:
@@ -138,78 +146,128 @@ class SquidAdapter(BaseModel):
             microcontroller=microcontroller
         )
 
-        squid.open_connections()
+        # do NOT connect yet
 
         return squid
 
     def open_connections(self):
         """ open connections to devices """
-        self.main_camera.open(device_type="main")
-        self.focus_camera.open(device_type="autofocus")
-        self.microcontroller.open()
+        if self.is_connected:
+            return
+
+        # small round trip because short disconnects from the cameras do not notify the cameras of the disconnect
+        # so an attempted reconnect will throw an error indicating an existing connection
+        # which cannot be severed without a physical connection (which may disrupted on the disconnect)
+        # hence we ensure proper disconnect before a reconnect (even though this could waste an on->off->on roundtrip)
+        self.is_connected=True
+        self.close()
+        self.is_connected=False
+
+        try:
+            self.main_camera.open(device_type="main")
+            print("connected to main cam")
+            self.focus_camera.open(device_type="autofocus")
+            print("connected to focus cam")
+            self.microcontroller.open()
+            print("connected to microcontroller")
+        except gxiapi.OffLine:
+            raise DisconnectError()
+        except IOError:
+            raise DisconnectError()
+
+        self.is_connected=True
 
     def close(self):
-        """close connection to microcontroller and cameras"""
-        self.microcontroller.close()
+        """
+        close connection to microcontroller and cameras
 
-        self.main_camera.close()
-        self.focus_camera.close()
+        may also be used to close connection to remaining devices if connection to one has failed
+        """
+        if not self.is_connected:
+            return
+
+        self.is_connected=False
+
+        try: self.microcontroller.close()
+        except: pass
+
+        try: self.main_camera.close()
+        except: pass
+        try: self.focus_camera.close()
+        except: pass
 
     async def home(self):
         """perform homing maneuver"""
 
-        # reset the MCU
-        await self.microcontroller.send_cmd(mc.Command.reset())
+        print_time("starting home")
+        try:
 
-        # reinitialize motor drivers and DAC
-        await self.microcontroller.send_cmd(mc.Command.initialize())
-        await self.microcontroller.send_cmd(mc.Command.configure_actuators())
+            # reset the MCU
+            print_time("resetting mcu")
+            awaitme=self.microcontroller.send_cmd(mc.Command.reset())
+            print_time("?")
+            await awaitme
+            print_time("done")
 
-        print("ensuring illumination is off")
-        # make sure all illumination is off
-        for illum_src in [
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
+            # reinitialize motor drivers and DAC
+            print_time("initialize")
+            await self.microcontroller.send_cmd(mc.Command.initialize())
+            print_time("done")
+            print_time("configure_actuators")
+            await self.microcontroller.send_cmd(mc.Command.configure_actuators())
+            print_time("done")
 
-            mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
-        ]:
-            await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_src))
+            print_time("ensuring illumination is off")
+            # make sure all illumination is off
+            for illum_src in [
+                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
+                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
+                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
+                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
+                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
 
-        print("calibrating xy stage")
+                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
+            ]:
+                await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_src))
 
-        # when starting up the microscope, the initial position is considered (0,0,0)
-        # even homing considers the limits, so before homing, we need to disable the limits
-        await self.microcontroller.send_cmd(mc.Command.set_limit_mm("z",-10.0,"lower"))
-        await self.microcontroller.send_cmd(mc.Command.set_limit_mm("z",10.0,"upper"))
+            print_time("calibrating xy stage")
 
-        # move objective out of the way
-        await self.microcontroller.send_cmd(mc.Command.home("z"))
-        await self.microcontroller.send_cmd(mc.Command.set_zero("z"))
-        # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
-        await self.microcontroller.send_cmd(mc.Command.set_limit_mm("z",0.0,"lower"))
-        await self.microcontroller.send_cmd(mc.Command.set_limit_mm("z",6.7,"upper"))
-        # home x to set x reference
-        await self.microcontroller.send_cmd(mc.Command.home("x"))
-        await self.microcontroller.send_cmd(mc.Command.set_zero("x"))
-        # clear clamp in x
-        await self.microcontroller.send_cmd(mc.Command.move_by_mm("x",30))
-        # then move in position to properly apply clamp
-        await self.microcontroller.send_cmd(mc.Command.home("y"))
-        await self.microcontroller.send_cmd(mc.Command.set_zero("y"))
-        # home x again to engage clamp
-        await self.microcontroller.send_cmd(mc.Command.home("x"))
+            # when starting up the microscope, the initial position is considered (0,0,0)
+            # even homing considers the limits, so before homing, we need to disable the limits
+            await self.microcontroller.send_cmd(mc.Command.set_limit_mm("z",-10.0,"lower"))
+            await self.microcontroller.send_cmd(mc.Command.set_limit_mm("z",10.0,"upper"))
 
-        # move to an arbitrary position to disengage the clamp
-        await self.microcontroller.send_cmd(mc.Command.move_by_mm("x",30))
-        await self.microcontroller.send_cmd(mc.Command.move_by_mm("y",30))
+            # move objective out of the way
+            await self.microcontroller.send_cmd(mc.Command.home("z"))
+            await self.microcontroller.send_cmd(mc.Command.set_zero("z"))
+            # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
+            await self.microcontroller.send_cmd(mc.Command.set_limit_mm("z",0.0,"lower"))
+            await self.microcontroller.send_cmd(mc.Command.set_limit_mm("z",6.7,"upper"))
+            # home x to set x reference
+            await self.microcontroller.send_cmd(mc.Command.home("x"))
+            await self.microcontroller.send_cmd(mc.Command.set_zero("x"))
+            # clear clamp in x
+            await self.microcontroller.send_cmd(mc.Command.move_by_mm("x",30))
+            # then move in position to properly apply clamp
+            await self.microcontroller.send_cmd(mc.Command.home("y"))
+            await self.microcontroller.send_cmd(mc.Command.set_zero("y"))
+            # home x again to engage clamp
+            await self.microcontroller.send_cmd(mc.Command.home("x"))
 
-        # and move objective up, slightly
-        await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",1))
+            # move to an arbitrary position to disengage the clamp
+            await self.microcontroller.send_cmd(mc.Command.move_by_mm("x",30))
+            await self.microcontroller.send_cmd(mc.Command.move_by_mm("y",30))
 
-        print("done initializing microscope")
+            # and move objective up, slightly
+            await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",1))
+
+            print_time("done initializing microscope")
+
+        except IOError:
+            self.close()
+            raise DisconnectError()
+        finally:
+            print_time("????")
     
     async def snap_selected_channels(self,config_file:sc.AcquisitionConfig)->cmd.BasicSuccessResponse:
         """
@@ -236,7 +294,11 @@ class SquidAdapter(BaseModel):
 
         # then:
         # if autofocus is available, measure and approach 0 in a loop up to 5 times
-        current_stage_position=await self.microcontroller.get_last_position()
+        try:
+            current_stage_position=await self.microcontroller.get_last_position()
+        except IOError:
+            self.close()
+            raise DisconnectError()
         reference_z_mm=current_stage_position.z_pos_mm
 
         if laf_is_calibrated is not None and laf_is_calibrated.boolvalue:
@@ -252,7 +314,11 @@ class SquidAdapter(BaseModel):
                 move_data=await self.execute(cmd.MoveBy(axis="z",distance_mm=-1e-3*current_displacement_um))
 
             # then store current z coordinate as reference z
-            current_stage_position=await self.microcontroller.get_last_position()
+            try:
+                current_stage_position=await self.microcontroller.get_last_position()
+            except IOError:
+                self.close()
+                raise DisconnectError()
             reference_z_mm=current_stage_position.z_pos_mm
 
         # then go through list of channels, and approach each channel with offset relative to reference z 
@@ -314,11 +380,15 @@ class SquidAdapter(BaseModel):
         # locate peaks == locate dots
         peak_locations,_ = scipy.signal.find_peaks(I_1d,distance=300,height=10)
 
-        # order by height to pick top N
-        tallestpeaks_x=list(sorted(peak_locations.tolist(),key=lambda x:float(I_1d[x])))[-TOP_N_PEAKS:]
-        # then order peaks by x again
+        if len(peak_locations.tolist())==0:
+            error_internal("no signal found")
+
+        # order by height
+        tallestpeaks_x=list(sorted(peak_locations.tolist(),key=lambda x:float(I_1d[x])))
+        # pick top N
+        tallestpeaks_x=tallestpeaks_x[-TOP_N_PEAKS:]
+        # then order n tallest peaks by x
         tallestpeaks_x=list(sorted(tallestpeaks_x))
-        assert len(tallestpeaks_x)>0, "no signal found"
 
         # Find the rightmost (largest x) peak
         rightmost_peak:float = max(tallestpeaks_x)
@@ -376,8 +446,8 @@ class SquidAdapter(BaseModel):
         Z_MM_BACKLASH_COUNTER:float=40e-3,
         NUM_Z_STEPS_CALIBRATE:int=13,
 
-        DEBUG_LASER_AF_CALIBRATION=bool(0),
-        DEBUG_LASER_AF_SHOW_REGRESSION_FIT=False,
+        DEBUG_LASER_AF_CALIBRATION=bool(1),
+        DEBUG_LASER_AF_SHOW_REGRESSION_FIT=bool(1),
         DEBUG_LASER_AF_SHOW_EVAL_FIT=True,
     )->cmd.LaserAutofocusCalibrationResponse:
         """
@@ -407,15 +477,19 @@ class SquidAdapter(BaseModel):
         z_step_mm=Z_MM_MOVEMENT_RANGE_MM/(NUM_Z_STEPS_CALIBRATE-1)
         half_z_mm=Z_MM_MOVEMENT_RANGE_MM/2
 
-        current_pos=await self.microcontroller.get_last_position()
-        start_z_mm:float=current_pos.z_pos_mm
+        try:
+            current_pos=await self.microcontroller.get_last_position()
+            start_z_mm:float=current_pos.z_pos_mm
 
-        # move down by half z range
-        if Z_MM_BACKLASH_COUNTER is not None:
-            await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",-(half_z_mm+Z_MM_BACKLASH_COUNTER)))
-            await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",Z_MM_BACKLASH_COUNTER))
-        else:
-            await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
+            # move down by half z range
+            if Z_MM_BACKLASH_COUNTER is not None:
+                await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",-(half_z_mm+Z_MM_BACKLASH_COUNTER)))
+                await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",Z_MM_BACKLASH_COUNTER))
+            else:
+                await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
+        except IOError:
+            self.close()
+            raise DisconnectError()
 
         # Display each peak's height and width
         class CalibrationData(BaseModel):
@@ -434,14 +508,22 @@ class SquidAdapter(BaseModel):
         for i in range(NUM_Z_STEPS_CALIBRATE):
             if i>0:
                 # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",z_step_mm))
+                try:
+                    await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",z_step_mm))
+                except IOError:
+                    self.close()
+                    raise DisconnectError()
 
             params = await measure_dot_params()
 
             peak_info.append(CalibrationData(z_mm=-half_z_mm+i*z_step_mm,p=params))
 
         # move to original position
-        await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
+        try:
+            await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",-half_z_mm))
+        except IOError:
+            self.close()
+            raise DisconnectError()
 
         class DomainInfo(BaseModel):
             lowest_x:float
@@ -485,10 +567,10 @@ class SquidAdapter(BaseModel):
 
         # x is dot x
         # y is z coordinate
-        left_dot_x=[]
-        left_dot_y=[]
-        right_dot_x=[]
-        right_dot_y=[]
+        left_dot_x:tp.List[float]=[]
+        left_dot_y:tp.List[float]=[]
+        right_dot_x:tp.List[float]=[]
+        right_dot_y:tp.List[float]=[]
 
         for peak_y,peak_x in one_peak_domain.peak_xs:
             left_dot_x.append(peak_x[0])
@@ -501,7 +583,11 @@ class SquidAdapter(BaseModel):
             left_dot_y.append(peak_y[1])
 
         left_dot_regression=linear_regression(left_dot_x,left_dot_y)
-        right_dot_regression=linear_regression(right_dot_x,right_dot_y)
+        if len(right_dot_x)>0:
+            right_dot_regression=linear_regression(right_dot_x,right_dot_y)
+        else:
+            print_time("no right dot found")
+            right_dot_regression=0,0
 
         if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_REGRESSION_FIT:
             # plot one peak domain
@@ -585,7 +671,11 @@ class SquidAdapter(BaseModel):
         x_reference=(await measure_dot_params())[0]
         print(f"{_x_reference=} {x_reference=}")
 
-        calibration_position=await self.microcontroller.get_last_position()
+        try:
+            calibration_position=await self.microcontroller.get_last_position()
+        except IOError:
+            self.close()
+            raise DisconnectError()
 
         calibration_data=cmd.LaserAutofocusCalibrationData(
             # calculate the conversion factor, based on lowest and highest measured position
@@ -598,7 +688,11 @@ class SquidAdapter(BaseModel):
         return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)
 
     async def get_current_state(self)->AdapterState:
-        last_stage_position=await self.microcontroller.get_last_position()
+        try:
+            last_stage_position=await self.microcontroller.get_last_position()
+        except IOError:
+            self.close()
+            raise DisconnectError()
 
         # supposed=real-calib
         x_pos_mm=self._pos_x_measured_to_real(last_stage_position.x_pos_mm)
@@ -616,452 +710,506 @@ class SquidAdapter(BaseModel):
         )
 
     async def execute(self,command: cmd.BaseCommand[T]) -> T:
-        
-        if isinstance(command, cmd.LoadingPositionEnter):
-            if self.is_in_loading_position:
-                cmd.error_internal(detail="already in loading position")
+
+        try:
+            if isinstance(command, cmd.EstablishHardwareConnection):
+                if not self.is_connected:
+                    try:
+                        # if no connection has yet been established, connecting will have the hardware in an undefined state
+                        self.open_connections()
+                        # so after connecting:
+                        # 1) turn off all illumination
+                        print("turning off illumination")
+                        await self.execute(IlluminationEndAll())
+                        print("turned off illumination")
+                        # 2) perform home maneuver to reset stage position to known values
+                        print("homing")
+                        try:
+                            await self.home()
+                        finally:
+                            print("homing failed")
+                        print("homed")
+                    except DisconnectError:
+                        error_internal("hardware connection could not be established")
+
+                result=BasicSuccessResponse()
+                return result#type:ignore
+
+            elif isinstance(command, cmd.LoadingPositionEnter):
+                if self.is_in_loading_position:
+                    cmd.error_internal(detail="already in loading position")
+                
+                self.state=CoreState.Moving
+                
+                # home z
+                await self.microcontroller.send_cmd(mc.Command.home("z"))
+
+                # clear clamp in y first
+                await self.microcontroller.send_cmd(mc.Command.move_to_mm("y",30))
+                # then clear clamp in x
+                await self.microcontroller.send_cmd(mc.Command.move_to_mm("x",30))
+
+                # then home y, x
+                await self.microcontroller.send_cmd(mc.Command.home("y"))
+                await self.microcontroller.send_cmd(mc.Command.home("x"))
+                
+                self.is_in_loading_position=True
+
+                self.state=CoreState.LoadingPosition
+
+                result=cmd.BasicSuccessResponse()
+                return result #type:ignore (this type is correctly inferred at the call site, but here it is not)
             
-            self.state=CoreState.Moving
-            
-            # home z
-            await self.microcontroller.send_cmd(mc.Command.home("z"))
+            elif isinstance(command, cmd.LoadingPositionLeave):
 
-            # clear clamp in y first
-            await self.microcontroller.send_cmd(mc.Command.move_to_mm("y",30))
-            # then clear clamp in x
-            await self.microcontroller.send_cmd(mc.Command.move_to_mm("x",30))
+                if not self.is_in_loading_position:
+                    cmd.error_internal(detail="not in loading position")
+                
+                self.state=CoreState.Moving
 
-            # then home y, x
-            await self.microcontroller.send_cmd(mc.Command.home("y"))
-            await self.microcontroller.send_cmd(mc.Command.home("x"))
-            
-            self.is_in_loading_position=True
+                await self.microcontroller.send_cmd(mc.Command.move_to_mm("x",30))
+                await self.microcontroller.send_cmd(mc.Command.move_to_mm("y",30))
+                await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",1))
+                
+                self.is_in_loading_position=False
 
-            self.state=CoreState.LoadingPosition
-
-            result=cmd.BasicSuccessResponse()
-            return result #type:ignore (this type is correctly inferred at the call site, but here it is not)
-        
-        elif isinstance(command, cmd.LoadingPositionLeave):
-
-            if not self.is_in_loading_position:
-                cmd.error_internal(detail="not in loading position")
-            
-            self.state=CoreState.Moving
-
-            await self.microcontroller.send_cmd(mc.Command.move_to_mm("x",30))
-            await self.microcontroller.send_cmd(mc.Command.move_to_mm("y",30))
-            await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",1))
-            
-            self.is_in_loading_position=False
-
-            self.state=CoreState.Idle
-
-            result=cmd.BasicSuccessResponse()
-            return result #type:ignore
-        
-        elif isinstance(command,cmd.MoveBy):
-            if self.is_in_loading_position:
-                cmd.error_internal(detail="now allowed while in loading position")
-
-            self.state=CoreState.Moving
-
-            await self.microcontroller.send_cmd(mc.Command.move_by_mm(command.axis,command.distance_mm))
-
-            self.state=CoreState.Idle
-
-            result=cmd.MoveByResult(moved_by_mm=command.distance_mm,axis=command.axis)
-            return result#type:ignore
-        
-        elif isinstance(command,cmd.MoveTo):
-            if self.is_in_loading_position:
-                cmd.error_internal(detail="now allowed while in loading position")
-
-            if command.x_mm is not None and command.x_mm<0:
-                cmd.error_internal(detail=f"x coordinate out of bounds {command.x_mm = }")
-            if command.y_mm is not None and command.y_mm<0:
-                cmd.error_internal(detail=f"y coordinate out of bounds {command.y_mm = }")
-            if command.z_mm is not None and command.z_mm<0:
-                cmd.error_internal(detail=f"z coordinate out of bounds {command.z_mm = }")
-
-            prev_state=self.state
-            self.state=CoreState.Moving
-
-            approach_x_before_y=True
-
-            if command.x_mm is not None and command.y_mm is not None:
-                current_stage_position=await self.microcontroller.get_last_position()
-
-                # plate center is (very) rougly at x=61mm, y=40mm
-                # we have: start position, target position, and two possible edges to move across
-
-                center=61.0,40.0
-                start=current_stage_position.x_pos_mm,current_stage_position.y_pos_mm
-                target=command.x_mm,command.y_mm
-
-                # if edge1 is closer to center, then approach_x_before_y=True, else approach_x_before_y=False
-                edge1=command.x_mm,current_stage_position.y_pos_mm
-                edge2=current_stage_position.x_pos_mm,command.y_mm
-
-                def dist(p1:tp.Tuple[float,float],p2:tp.Tuple[float,float])->float:
-                    return ((p1[0]-p2[0])**2+(p1[1]-p2[1])**2)**0.5
-
-                approach_x_before_y=dist(edge1,center)<dist(edge2,center)
-
-                # we want to choose the edge that is closest to the center, because this avoid moving through the forbidden plate corners
-
-            if approach_x_before_y:
-                if command.x_mm is not None:
-                    x_mm=self._pos_x_real_to_measured(command.x_mm)
-                    if x_mm<0:
-                        cmd.error_internal(detail=f"calibrated x coordinate out of bounds {x_mm = }")
-                    await self.microcontroller.send_cmd(mc.Command.move_to_mm("x",x_mm))
-
-                if command.y_mm is not None:
-                    y_mm=self._pos_y_real_to_measured(command.y_mm)
-                    if y_mm<0:
-                        cmd.error_internal(detail=f"calibrated y coordinate out of bounds {y_mm = }")
-                    await self.microcontroller.send_cmd(mc.Command.move_to_mm("y",y_mm))
-            else:
-                if command.y_mm is not None:
-                    y_mm=self._pos_y_real_to_measured(command.y_mm)
-                    if y_mm<0:
-                        cmd.error_internal(detail=f"calibrated y coordinate out of bounds {y_mm = }")
-                    await self.microcontroller.send_cmd(mc.Command.move_to_mm("y",y_mm))
-
-                if command.x_mm is not None:
-                    x_mm=self._pos_x_real_to_measured(command.x_mm)
-                    if x_mm<0:
-                        cmd.error_internal(detail=f"calibrated x coordinate out of bounds {x_mm = }")
-                    await self.microcontroller.send_cmd(mc.Command.move_to_mm("x",x_mm))
-
-            if command.z_mm is not None:
-                z_mm=self._pos_z_real_to_measured(command.z_mm)
-                if z_mm<0:
-                    cmd.error_internal(detail=f"calibrated z coordinate out of bounds {z_mm = }")
-                await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",z_mm))
-
-            self.state=prev_state
-
-            result=cmd.BasicSuccessResponse()
-            return result#type:ignore
-        
-        elif isinstance(command,cmd.MoveToWell):
-            if self.is_in_loading_position:
-                cmd.error_internal(detail="now allowed while in loading position")
-
-            plates=[p for p in sc.Plates if p.Model_id==command.plate_type]
-            if len(plates)==0:
-                cmd.error_internal(detail="plate type not found")
-
-            assert len(plates)==1, f"found multiple plates with id {command.plate_type}"
-
-            plate=plates[0]
-
-            if cmd.wellIsForbidden(command.well_name,plate):
-                cmd.error_internal(detail="well is forbidden")
-
-            x_mm=plate.get_well_offset_x(command.well_name) + plate.Well_size_x_mm/2
-            y_mm=plate.get_well_offset_y(command.well_name) + plate.Well_size_y_mm/2
-
-            res=await self.execute(cmd.MoveTo(x_mm=x_mm,y_mm=y_mm))
-
-            result=cmd.BasicSuccessResponse()
-            return result#type:ignore
-        
-        elif isinstance(command,cmd.AutofocusMeasureDisplacement):
-            if command.config_file.machine_config is not None:
-                GlobalConfigHandler.override(command.config_file.machine_config)
-
-            g_config=GlobalConfigHandler.get_dict()
-
-            conf_af_if_calibrated=g_config["laser_autofocus_is_calibrated"]
-            conf_af_calib_x=g_config["laser_autofocus_calibration_x"]
-            conf_af_calib_umpx=g_config["laser_autofocus_calibration_umpx"]
-            if conf_af_if_calibrated is None or conf_af_calib_x is None or conf_af_calib_umpx is None or not conf_af_if_calibrated.boolvalue:
-                cmd.error_internal(detail="laser autofocus not calibrated")
-
-            # get laser spot location
-            # sometimes one of the two expected dots cannot be found in _get_laser_spot_centroid because the plate is so far off the focus plane though, catch that case
-            try:
-                calib_params=cmd.LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx.floatvalue,x_reference=conf_af_calib_x.floatvalue,calibration_position=cmd.Position.zero())
-                displacement_um=0
-
-                num_images=3 or command.override_num_images
-                for i in range(num_images):
-                    latest_esimated_z_offset_mm=await self._approximate_laser_af_z_offset_mm(calib_params)
-                    displacement_um+=latest_esimated_z_offset_mm*1e3/num_images
-
-            except Exception as e:
-                cmd.error_internal(detail="failed to measure displacement (got no signal): {str(e)}")
-
-            result=cmd.AutofocusMeasureDisplacementResult(displacement_um=displacement_um)
-            return result#type:ignore
-
-        elif isinstance(command,cmd.AutofocusSnap):
-            if command.turn_laser_on:
-                await self.microcontroller.send_cmd(mc.Command.af_laser_illum_begin())
-        
-            channel_config=sc.AcquisitionChannelConfig(
-                name="laser autofocus acquisition", # unused
-                handle="__invalid_laser_autofocus_channel__", # unused
-                illum_perc=100, # unused
-                exposure_time_ms=command.exposure_time_ms,
-                analog_gain=command.analog_gain,
-                z_offset_um=0, # unused
-                num_z_planes=0, # unused
-                delta_z_um=0, # unused
-            )
-
-            img=self.focus_camera.acquire_with_config(channel_config)
-            if img is None:
                 self.state=CoreState.Idle
-                cmd.error_internal(detail="failed to acquire image")
 
-            if command.turn_laser_off:
+                result=cmd.BasicSuccessResponse()
+                return result #type:ignore
+            
+            elif isinstance(command,cmd.MoveBy):
+                if self.is_in_loading_position:
+                    cmd.error_internal(detail="now allowed while in loading position")
+
+                self.state=CoreState.Moving
+
+                await self.microcontroller.send_cmd(mc.Command.move_by_mm(command.axis,command.distance_mm))
+
+                self.state=CoreState.Idle
+
+                result=cmd.MoveByResult(moved_by_mm=command.distance_mm,axis=command.axis)
+                return result#type:ignore
+            
+            elif isinstance(command,cmd.MoveTo):
+                if self.is_in_loading_position:
+                    cmd.error_internal(detail="now allowed while in loading position")
+
+                if command.x_mm is not None and command.x_mm<0:
+                    cmd.error_internal(detail=f"x coordinate out of bounds {command.x_mm = }")
+                if command.y_mm is not None and command.y_mm<0:
+                    cmd.error_internal(detail=f"y coordinate out of bounds {command.y_mm = }")
+                if command.z_mm is not None and command.z_mm<0:
+                    cmd.error_internal(detail=f"z coordinate out of bounds {command.z_mm = }")
+
+                prev_state=self.state
+                self.state=CoreState.Moving
+
+                approach_x_before_y=True
+
+                if command.x_mm is not None and command.y_mm is not None:
+                    current_stage_position=await self.microcontroller.get_last_position()
+
+                    # plate center is (very) rougly at x=61mm, y=40mm
+                    # we have: start position, target position, and two possible edges to move across
+
+                    center=61.0,40.0
+                    start=current_stage_position.x_pos_mm,current_stage_position.y_pos_mm
+                    target=command.x_mm,command.y_mm
+
+                    # if edge1 is closer to center, then approach_x_before_y=True, else approach_x_before_y=False
+                    edge1=command.x_mm,current_stage_position.y_pos_mm
+                    edge2=current_stage_position.x_pos_mm,command.y_mm
+
+                    def dist(p1:tp.Tuple[float,float],p2:tp.Tuple[float,float])->float:
+                        return ((p1[0]-p2[0])**2+(p1[1]-p2[1])**2)**0.5
+
+                    approach_x_before_y=dist(edge1,center)<dist(edge2,center)
+
+                    # we want to choose the edge that is closest to the center, because this avoid moving through the forbidden plate corners
+
+                if approach_x_before_y:
+                    if command.x_mm is not None:
+                        x_mm=self._pos_x_real_to_measured(command.x_mm)
+                        if x_mm<0:
+                            cmd.error_internal(detail=f"calibrated x coordinate out of bounds {x_mm = }")
+                        await self.microcontroller.send_cmd(mc.Command.move_to_mm("x",x_mm))
+
+                    if command.y_mm is not None:
+                        y_mm=self._pos_y_real_to_measured(command.y_mm)
+                        if y_mm<0:
+                            cmd.error_internal(detail=f"calibrated y coordinate out of bounds {y_mm = }")
+                        await self.microcontroller.send_cmd(mc.Command.move_to_mm("y",y_mm))
+                else:
+                    if command.y_mm is not None:
+                        y_mm=self._pos_y_real_to_measured(command.y_mm)
+                        if y_mm<0:
+                            cmd.error_internal(detail=f"calibrated y coordinate out of bounds {y_mm = }")
+                        await self.microcontroller.send_cmd(mc.Command.move_to_mm("y",y_mm))
+
+                    if command.x_mm is not None:
+                        x_mm=self._pos_x_real_to_measured(command.x_mm)
+                        if x_mm<0:
+                            cmd.error_internal(detail=f"calibrated x coordinate out of bounds {x_mm = }")
+                        await self.microcontroller.send_cmd(mc.Command.move_to_mm("x",x_mm))
+
+                if command.z_mm is not None:
+                    z_mm=self._pos_z_real_to_measured(command.z_mm)
+                    if z_mm<0:
+                        cmd.error_internal(detail=f"calibrated z coordinate out of bounds {z_mm = }")
+                    await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",z_mm))
+
+                self.state=prev_state
+
+                result=cmd.BasicSuccessResponse()
+                return result#type:ignore
+            
+            elif isinstance(command,cmd.MoveToWell):
+                if self.is_in_loading_position:
+                    cmd.error_internal(detail="now allowed while in loading position")
+
+                plates=[p for p in sc.Plates if p.Model_id==command.plate_type]
+                if len(plates)==0:
+                    cmd.error_internal(detail="plate type not found")
+
+                assert len(plates)==1, f"found multiple plates with id {command.plate_type}"
+
+                plate=plates[0]
+
+                if cmd.wellIsForbidden(command.well_name,plate):
+                    cmd.error_internal(detail="well is forbidden")
+
+                x_mm=plate.get_well_offset_x(command.well_name) + plate.Well_size_x_mm/2
+                y_mm=plate.get_well_offset_y(command.well_name) + plate.Well_size_y_mm/2
+
+                res=await self.execute(cmd.MoveTo(x_mm=x_mm,y_mm=y_mm))
+
+                result=cmd.BasicSuccessResponse()
+                return result#type:ignore
+            
+            elif isinstance(command,cmd.AutofocusMeasureDisplacement):
+                if command.config_file.machine_config is not None:
+                    GlobalConfigHandler.override(command.config_file.machine_config)
+
+                g_config=GlobalConfigHandler.get_dict()
+
+                conf_af_if_calibrated=g_config["laser_autofocus_is_calibrated"]
+                conf_af_calib_x=g_config["laser_autofocus_calibration_x"]
+                conf_af_calib_umpx=g_config["laser_autofocus_calibration_umpx"]
+                if conf_af_if_calibrated is None or conf_af_calib_x is None or conf_af_calib_umpx is None or not conf_af_if_calibrated.boolvalue:
+                    cmd.error_internal(detail="laser autofocus not calibrated")
+
+                # get laser spot location
+                # sometimes one of the two expected dots cannot be found in _get_laser_spot_centroid because the plate is so far off the focus plane though, catch that case
+                try:
+                    calib_params=cmd.LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx.floatvalue,x_reference=conf_af_calib_x.floatvalue,calibration_position=cmd.Position.zero())
+                    displacement_um=0
+
+                    num_images=3 or command.override_num_images
+                    for i in range(num_images):
+                        latest_esimated_z_offset_mm=await self._approximate_laser_af_z_offset_mm(calib_params)
+                        displacement_um+=latest_esimated_z_offset_mm*1e3/num_images
+
+                except Exception as e:
+                    cmd.error_internal(detail="failed to measure displacement (got no signal): {str(e)}")
+
+                result=cmd.AutofocusMeasureDisplacementResult(displacement_um=displacement_um)
+                return result#type:ignore
+
+            elif isinstance(command,cmd.AutofocusSnap):
+                if command.turn_laser_on:
+                    await self.microcontroller.send_cmd(mc.Command.af_laser_illum_begin())
+            
+                channel_config=sc.AcquisitionChannelConfig(
+                    name="Laser Autofocus", # unused
+                    handle="laser_autofocus", # unused
+                    illum_perc=100, # unused
+                    exposure_time_ms=command.exposure_time_ms,
+                    analog_gain=command.analog_gain,
+                    z_offset_um=0, # unused
+                    num_z_planes=0, # unused
+                    delta_z_um=0, # unused
+                )
+
+                img=self.focus_camera.acquire_with_config(channel_config)
+                if img is None:
+                    self.state=CoreState.Idle
+                    cmd.error_internal(detail="failed to acquire image")
+
+                if command.turn_laser_off:
+                    await self.microcontroller.send_cmd(mc.Command.af_laser_illum_end())
+
+                result=cmd.AutofocusSnapResult(
+                    width_px=img.shape[1],
+                    height_px=img.shape[0],
+                )
+
+                # blur laser autofocus image to get rid of some noise
+                # img = scipy.ndimage.gaussian_filter(img, sigma=1.0) # this takes 5 times as long as cv2
+                img = cv2.GaussianBlur(img, (3, 3), sigmaX=1.0, borderType=cv2.BORDER_DEFAULT)
+
+                result._img=img
+                result._channel=channel_config
+                return result#type:ignore
+            
+            elif isinstance(command,cmd.AutofocusLaserWarmup):
+                await self.microcontroller.send_cmd(mc.Command.af_laser_illum_begin())
+
+                # wait for the laser to warm up
+                await asyncio.sleep(command.warmup_time_s)
+
                 await self.microcontroller.send_cmd(mc.Command.af_laser_illum_end())
 
-            result=cmd.AutofocusSnapResult(
-                width_px=img.shape[1],
-                height_px=img.shape[0],
-            )
-            result._img=img
-            return result#type:ignore
-        
-        elif isinstance(command,cmd.AutofocusLaserWarmup):
-            await self.microcontroller.send_cmd(mc.Command.af_laser_illum_begin())
-
-            # wait for the laser to warm up
-            await asyncio.sleep(command.warmup_time_s)
-
-            await self.microcontroller.send_cmd(mc.Command.af_laser_illum_end())
-
-            result=cmd.BasicSuccessResponse()
-            return result#type:ignore
-        
-        elif isinstance(command,cmd.IlluminationEndAll):
-            # make sure all illumination is off
-            for illum_src in [
-                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
-                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
-                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
-                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
-                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
-
-                mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
-            ]:
-                await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_src))
-
-            ret=cmd.BasicSuccessResponse()
-            return ret#type:ignore
-        
-        elif isinstance(command,cmd.ChannelSnapshot):
-
-            try:
-                illum_code=mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
-            except Exception as e:
-                cmd.error_internal(detail=f"invalid channel handle: {command.channel.handle}")
+                result=cmd.BasicSuccessResponse()
+                return result#type:ignore
             
-            if command.machine_config is not None:
-                GlobalConfigHandler.override(command.machine_config)
+            elif isinstance(command,cmd.IlluminationEndAll):
+                # make sure all illumination is off
+                for illum_src in [
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
 
-            if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
+                ]:
+                    await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_src))
+
+                ret=cmd.BasicSuccessResponse()
+                return ret#type:ignore
             
-            self.state=CoreState.ChannelSnap
+            elif isinstance(command,cmd.ChannelSnapshot):
 
-            cmd.print_time("before illum on")
-            await self.microcontroller.send_cmd(mc.Command.illumination_begin(illum_code,command.channel.illum_perc))
-            cmd.print_time("before acq")
-            img=self.main_camera.acquire_with_config(command.channel)
-            cmd.print_time("after acq")
-            await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_code))
-            cmd.print_time("after illum off")
-            if img is None:
-                self.state=CoreState.Idle
-                cmd.error_internal(detail="failed to acquire image")
+                try:
+                    illum_code=mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
+                except Exception as e:
+                    cmd.error_internal(detail=f"invalid channel handle: {command.channel.handle}")
+                
+                if command.machine_config is not None:
+                    GlobalConfigHandler.override(command.machine_config)
 
-            self.state=CoreState.Idle
-
-            img=_process_image(img,camera=self.main_camera)
-
-            result=cmd.ImageAcquiredResponse()
-            result._img=img
-            return result#type:ignore
-
-        elif isinstance(command,cmd.ChannelSnapSelection):
-            channel_handles:tp.List[str]=[]
-            channel_images:tp.Dict[str,np.ndarray]={}
-            for channel in command.config_file.channels:
-                if not channel.enabled:continue
-
-                cmd_snap=cmd.ChannelSnapshot(channel=channel,machine_config=command.config_file.machine_config or [] )
-                res=await self.execute(cmd_snap)
-
-                channel_images[channel.handle]=res._img
-                channel_handles.append(channel.handle)
-
-            result=cmd.ChannelSnapSelectionResult(channel_handles=channel_handles)
-            result._images=channel_images
-            return result#type:ignore
-        
-        elif isinstance(command,cmd.ChannelStreamBegin):
-
-            if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
-
-            try:
-                illum_code=mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
-            except Exception as e:
-                cmd.error_internal(detail=f"invalid channel handle: {command.channel.handle}")
-            
-            if command.machine_config is not None:
-                GlobalConfigHandler.override(command.machine_config)
-
-            self.state=CoreState.ChannelStream
-
-            await self.microcontroller.send_cmd(mc.Command.illumination_begin(illum_code,command.channel.illum_perc))
-
-            # returns true if should stop
-            forward_image_callback={}
-            def forward_image(img:gxiapi.RawImage)->bool:
                 if self.stream_callback is not None:
-                    forward_image_callback["callback"]=self.stream_callback
+                    cmd.error_internal(detail="already streaming")
+                
+                self.state=CoreState.ChannelSnap
 
-                    match img.get_status():
-                        case gxiapi.GxFrameStatusList.INCOMPLETE:
-                            cmd.error_internal(detail="incomplete frame")
-                        case gxiapi.GxFrameStatusList.SUCCESS:
-                            pass
-    
-                    img_np=img.get_numpy_array()
-                    assert img_np is not None
-                    img_np=img_np.copy()
+                cmd.print_time("before illum on")
+                await self.microcontroller.send_cmd(mc.Command.illumination_begin(illum_code,command.channel.illum_perc))
+                cmd.print_time("before acq")
+                img=self.main_camera.acquire_with_config(command.channel)
+                cmd.print_time("after acq")
+                await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_code))
+                cmd.print_time("after illum off")
+                if img is None:
+                    self.state=CoreState.Idle
+                    cmd.error_internal(detail="failed to acquire image")
 
-                    img_np=_process_image(img_np,camera=self.main_camera)
+                self.state=CoreState.Idle
+
+                img=_process_image(img,camera=self.main_camera)
+
+                result=cmd.ImageAcquiredResponse()
+                result._img=img
+                return result#type:ignore
+
+            elif isinstance(command,cmd.ChannelSnapSelection):
+                channel_handles:tp.List[str]=[]
+                channel_images:tp.Dict[str,np.ndarray]={}
+                for channel in command.config_file.channels:
+                    if not channel.enabled:continue
+
+                    cmd_snap=cmd.ChannelSnapshot(channel=channel,machine_config=command.config_file.machine_config or [] )
+                    res=await self.execute(cmd_snap)
+
+                    channel_images[channel.handle]=res._img
+                    channel_handles.append(channel.handle)
+
+                result=cmd.ChannelSnapSelectionResult(channel_handles=channel_handles)
+                result._images=channel_images
+                return result#type:ignore
             
-                    return forward_image_callback["callback"](img_np)
-                else:
-                    return forward_image_callback["callback"](True)
+            elif isinstance(command,cmd.ChannelStreamBegin):
 
-            self.main_camera.acquire_with_config(
-                command.channel,
-                mode="until_stop",
-                callback=forward_image,
-                target_framerate_hz=command.framerate_hz
-            )
+                if self.stream_callback is not None:
+                    cmd.error_internal(detail="already streaming")
 
-            result=cmd.StreamingStartedResponse(channel=command.channel)
-            return result#type:ignore
+                try:
+                    illum_code=mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
+                except Exception as e:
+                    cmd.error_internal(detail=f"invalid channel handle: {command.channel.handle}")
+                
+                if command.machine_config is not None:
+                    GlobalConfigHandler.override(command.machine_config)
+
+                self.state=CoreState.ChannelStream
+
+                await self.microcontroller.send_cmd(mc.Command.illumination_begin(illum_code,command.channel.illum_perc))
+
+                # returns true if should stop
+                forward_image_callback={}
+                def forward_image(img:gxiapi.RawImage)->bool:
+                    if self.stream_callback is not None:
+                        forward_image_callback["callback"]=self.stream_callback
+
+                        match img.get_status():
+                            case gxiapi.GxFrameStatusList.INCOMPLETE:
+                                cmd.error_internal(detail="incomplete frame")
+                            case gxiapi.GxFrameStatusList.SUCCESS:
+                                pass
         
-        elif isinstance(command,cmd.ChannelStreamEnd):
-            if (self.stream_callback is None) or (not self.main_camera.acquisition_ongoing):
-                cmd.error_internal(detail="not currently streaming")
+                        img_np=img.get_numpy_array()
+                        assert img_np is not None
+                        img_np=img_np.copy()
 
-            try:
-                illum_code=mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
-            except Exception as e:
-                cmd.error_internal(detail=f"invalid channel handle: {command.channel.handle}")
+                        img_np=_process_image(img_np,camera=self.main_camera)
+                
+                        return forward_image_callback["callback"](img_np)
+                    else:
+                        return forward_image_callback["callback"](True)
+
+                self.main_camera.acquire_with_config(
+                    command.channel,
+                    mode="until_stop",
+                    callback=forward_image,
+                    target_framerate_hz=command.framerate_hz
+                )
+
+                result=cmd.StreamingStartedResponse(channel=command.channel)
+                return result#type:ignore
             
-            if command.machine_config is not None:
-                GlobalConfigHandler.override(command.machine_config)
+            elif isinstance(command,cmd.ChannelStreamEnd):
+                if (self.stream_callback is None) or (not self.main_camera.acquisition_ongoing):
+                    cmd.error_internal(detail="not currently streaming")
+
+                try:
+                    illum_code=mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
+                except Exception as e:
+                    cmd.error_internal(detail=f"invalid channel handle: {command.channel.handle}")
+                
+                if command.machine_config is not None:
+                    GlobalConfigHandler.override(command.machine_config)
+                
+                self.stream_callback=None
+                await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_code))
+                # cancel ongoing acquisition
+                self.main_camera.acquisition_ongoing=False
+                self.main_camera._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
+
+                self.state=CoreState.Idle
+                
+                result=cmd.BasicSuccessResponse()
+                return result#type:ignore
+
+            elif isinstance(command,cmd.LaserAutofocusCalibrate):
+                result=await self._laser_af_calibrate_here(**command.dict())
+                return result#type:ignore
             
-            self.stream_callback=None
-            await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_code))
-            # cancel ongoing acquisition
-            self.main_camera.acquisition_ongoing=False
-            self.main_camera._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
+            elif isinstance(command,cmd.AutofocusApproachTargetDisplacement):
+                async def _estimate_offset_mm():
+                    res=await self.execute(cmd.AutofocusMeasureDisplacement(config_file=command.config_file))
 
-            self.state=CoreState.Idle
+                    current_displacement_um=res.displacement_um
+                    assert current_displacement_um is not None
+
+                    return (command.target_offset_um-current_displacement_um)*1e-3
+
+                if self.is_in_loading_position:
+                    cmd.error_internal(detail="now allowed while in loading position")
+
+                if self.state!=CoreState.Idle:
+                    cmd.error_internal(detail="cannot move while in non-idle state")
+
+                g_config=GlobalConfigHandler.get_dict()
+
+                # get autofocus calibration data
+                conf_af_calib_x=g_config["laser_autofocus_calibration_x"].floatvalue
+                conf_af_calib_umpx=g_config["laser_autofocus_calibration_umpx"].floatvalue
+                # autofocus_calib=LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx,x_reference=conf_af_calib_x,calibration_position=Position.zero())
+
+                # we are looking for a z coordinate where the measured dot_x is equal to this target_x.
+                # we can estimate the current z offset based on the currently measured dot_x.
+                # then we loop:
+                #   we move by the estimated offset to reduce the difference between target_x and dot_x.
+                #   then we check if we are at target_x.
+                #     if we have not reached it, we move further in that direction, based on another estimate.
+                #     if have overshot (moved past) it, we move back by some estimate.
+                #     terminate when dot_x is within a margin of target_x.
+
+                OFFSET_MOVEMENT_THRESHOLD_MM=0.5e-3
+
+                current_state=await self.microcontroller.get_last_position()
+                current_z=current_state.z_pos_mm
+                initial_z=current_z
+
+                if command.pre_approach_refz:
+                    gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
+                    if gconfig_refzmm_item is None:
+                        cmd.error_internal(detail="laser_autofocus_calibration_refzmm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set")
+
+                    # move to reference z, only if it is far enough away to make a move worth it
+                    if math.fabs(current_z-gconfig_refzmm_item.floatvalue)>OFFSET_MOVEMENT_THRESHOLD_MM:
+                        res=await self.execute(cmd.MoveTo(x_mm=None,y_mm=None,z_mm=gconfig_refzmm_item.floatvalue))
+
+                old_state=self.state
+                self.state=CoreState.Moving
+
+                last_distance_estimate_mm=0.0
+                num_compensating_moves=0
+                reached_threshold=False
+                try:
+                    last_distance_estimate_mm=await _estimate_offset_mm()
+                    last_z_mm=(await self.microcontroller.get_last_position()).z_pos_mm
+                    MAX_MOVEMENT_RANGE_MM=0.3 # should be derived from the calibration data, but this value works fine in practice
+                    if math.fabs(last_distance_estimate_mm)>MAX_MOVEMENT_RANGE_MM:
+                        cmd.error_internal(detail="measured autofocus focal plane offset too large")
+
+                    for rep_i in range(command.max_num_reps):
+                        if rep_i==0:
+                            distance_estimate_mm=last_distance_estimate_mm
+                        else:
+                            distance_estimate_mm=await _estimate_offset_mm()
+
+                        # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
+                        # (since this indicates that we have moved away from the focal plane, which should not happen)
+                        if rep_i>0 and math.fabs(last_distance_estimate_mm)<math.fabs(distance_estimate_mm):
+                            # move back to last z, since that seemed like the better position to be in
+                            await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",last_z_mm))
+                            # TODO unsure if this is the best approach. we cannot do better, but we also have not actually gotten close to the offset
+                            reached_threshold=True
+                            break
+
+                        last_distance_estimate_mm=distance_estimate_mm
+                        last_z_mm=(await self.microcontroller.get_last_position()).z_pos_mm
+
+                        # if movement distance is not worth compensating, stop
+                        if math.fabs(distance_estimate_mm)<OFFSET_MOVEMENT_THRESHOLD_MM:
+                            reached_threshold=True
+                            break
+
+                        await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",distance_estimate_mm))
+                        num_compensating_moves+=1
+
+                except:
+                    # if any interaction failed, attempt to reset z position to known somewhat-good position
+                    await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",initial_z))
+                finally:
+                    self.state=old_state
+
+                res=cmd.AutofocusApproachTargetDisplacementResult(
+                    num_compensating_moves=num_compensating_moves,
+                    uncompensated_offset_mm=last_distance_estimate_mm,
+                    reached_threshold=reached_threshold,
+                )
+                return res#type:ignore
             
-            result=cmd.BasicSuccessResponse()
-            return result#type:ignore
-
-        elif isinstance(command,cmd.LaserAutofocusCalibrate):
-            result=self._laser_af_calibrate_here(**command.dict())
-            return result#type:ignore
-        
-        elif isinstance(command,cmd.AutofocusApproachTargetDisplacement):
-            async def _estimate_offset_mm():
-                res=await self.execute(cmd.AutofocusMeasureDisplacement(config_file=command.config_file))
-
-                current_displacement_um=res.displacement_um
-                assert current_displacement_um is not None
-
-                return (command.target_offset_um-current_displacement_um)*1e-3
-
-            if self.is_in_loading_position:
-                cmd.error_internal(detail="now allowed while in loading position")
-
-            if self.state!=CoreState.Idle:
-                cmd.error_internal(detail="cannot move while in non-idle state")
-
-            g_config=GlobalConfigHandler.get_dict()
-
-            # get autofocus calibration data
-            conf_af_calib_x=g_config["laser_autofocus_calibration_x"].floatvalue
-            conf_af_calib_umpx=g_config["laser_autofocus_calibration_umpx"].floatvalue
-            # autofocus_calib=LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx,x_reference=conf_af_calib_x,calibration_position=Position.zero())
-
-            # we are looking for a z coordinate where the measured dot_x is equal to this target_x.
-            # we can estimate the current z offset based on the currently measured dot_x.
-            # then we loop:
-            #   we move by the estimated offset to reduce the difference between target_x and dot_x.
-            #   then we check if we are at target_x.
-            #     if we have not reached it, we move further in that direction, based on another estimate.
-            #     if have overshot (moved past) it, we move back by some estimate.
-            #     terminate when dot_x is within a margin of target_x.
-
-            current_state=await self.microcontroller.get_last_position()
-            current_z=current_state.z_pos_mm
-            initial_z=current_z
-
-            if command.pre_approach_refz:
-                gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
-                if gconfig_refzmm_item is None:
-                    cmd.error_internal(detail="laser_autofocus_calibration_refzmm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set")
-
-                res=await self.execute(cmd.MoveTo(x_mm=None,y_mm=None,z_mm=gconfig_refzmm_item.floatvalue))
-
-            old_state=self.state
-            self.state=CoreState.Moving
-
-            try:
-                # TODO : make this better, utilizing these value pairs
-                # (
-                #    physz = (await core.get_current_state()).stage_position.z_pos_mm,
-                #    dotx = await core._approximate_laser_af_z_offset_mm(autofocus_calib,_leftmostxinsteadofestimatedz=True)
-                # )
-
-                last_distance_estimate_mm=await _estimate_offset_mm()
-                MAX_MOVEMENT_RANGE_MM=0.3 # should be derived from the calibration data, but this value works fine in practice
-                if math.fabs(last_distance_estimate_mm)>MAX_MOVEMENT_RANGE_MM:
-                    cmd.error_internal(detail="measured autofocus focal plane offset too large")
-
-                for rep_i in range(command.max_num_reps):
-                    distance_estimate_mm=await _estimate_offset_mm()
-
-                    # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
-                    # (since this indicates that we have moved away from the focal plane, which should not happen)
-                    if rep_i>0 and math.fabs(last_distance_estimate_mm)<math.fabs(distance_estimate_mm):
-                        break
-
-                    last_distance_estimate_mm=distance_estimate_mm
-
-                    await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",distance_estimate_mm))
-
-            except:
-                # if any interaction failed, attempt to reset z position to known somewhat-good position
-                await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",initial_z))
-            finally:
-                self.state=old_state
-
-            res=cmd.BasicSuccessResponse()
-            return res#type:ignore
-        
-        elif isinstance(command,cmd.MC_getLastPosition):
-            res=await self.microcontroller.get_last_position()
-            return res#type:ignore
-        
-        else:
-            raise cmd.error_internal(detail=f"Unsupported command type {type(command)}")
+            elif isinstance(command,cmd.MC_getLastPosition):
+                res=await self.microcontroller.get_last_position()
+                return res#type:ignore
+            
+            else:
+                cmd.error_internal(detail=f"Unsupported command type {type(command)}")
+        except gxiapi.OffLine:
+            raise DisconnectError()
+        except IOError:
+            raise DisconnectError()

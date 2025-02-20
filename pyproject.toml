@@ -20,6 +20,7 @@ dependencies = [
     "websockets>=14.2,<14.3", # to enable uvicorn websocket capabilities
     "pydantic>=2.9,<2.10", # python type model verification
     "ome-types", # for ome info in image files
+    "opencv-python>=4.11,<4.12", # fast gaussian blur for noise autofocus images
 ]
 
 [build-system]
