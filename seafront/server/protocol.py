@@ -423,7 +423,7 @@ class ProtocolGenerator(BaseModel):
                         last_position=yield MC_getLastPosition()
                         assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
 
-                        print_time("moved to channel z")
+                        print_time(f"moved to channel z (should {channel_z_mm:.4f}mm, is {last_position.z_pos_mm:.4f}mm)")
 
                         # snap image
                         res=yield ChannelSnapshot(channel=channel)
