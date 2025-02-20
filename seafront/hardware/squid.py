@@ -922,6 +922,7 @@ class SquidAdapter(BaseModel):
             elif isinstance(command,cmd.AutofocusSnap):
                 if command.turn_laser_on:
                     await self.microcontroller.send_cmd(mc.Command.af_laser_illum_begin())
+                    print_time("autofocus - turned laser on")
             
                 channel_config=sc.AcquisitionChannelConfig(
                     name="Laser Autofocus", # unused
@@ -935,12 +936,14 @@ class SquidAdapter(BaseModel):
                 )
 
                 img=self.focus_camera.acquire_with_config(channel_config)
+                print_time("autofocus - acquired image")
                 if img is None:
                     self.state=CoreState.Idle
                     cmd.error_internal(detail="failed to acquire image")
 
                 if command.turn_laser_off:
                     await self.microcontroller.send_cmd(mc.Command.af_laser_illum_end())
+                    print_time("autofocus - turned laser off")
 
                 result=cmd.AutofocusSnapResult(
                     width_px=img.shape[1],
@@ -950,6 +953,7 @@ class SquidAdapter(BaseModel):
                 # blur laser autofocus image to get rid of some noise
                 # img = scipy.ndimage.gaussian_filter(img, sigma=1.0) # this takes 5 times as long as cv2
                 img = cv2.GaussianBlur(img, (3, 3), sigmaX=1.0, borderType=cv2.BORDER_DEFAULT)
+                print_time("autofocus - applied blur to image")
 
                 result._img=img
                 result._channel=channel_config
