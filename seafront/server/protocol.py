@@ -338,6 +338,9 @@ class ProtocolGenerator(BaseModel):
 
                     print_time("moved to site")
 
+                    # indicate if autofocus was performed, and if it succeeded
+                    autofocus_succeeded=False
+
                     # run autofocus
                     if self.config_file.autofocus_enabled:
                         res=None
@@ -351,7 +354,7 @@ class ProtocolGenerator(BaseModel):
 
                             # if the final estimated offset is larger than some small threshold, assume it has failed
                             # and reset to some known good-ish z position
-                            if res.uncompensated_offset_mm>UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM:
+                            if math.fabs(res.uncompensated_offset_mm)>UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM:
                                 res=yield MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm)
                                 assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
                                 break
@@ -359,6 +362,7 @@ class ProtocolGenerator(BaseModel):
                             # if no moves have been performed to compensate for offset, assume we have reached the target offset
                             # (may in practice be still offset, but at least we cannot do better than we have so far)
                             if res.num_compensating_moves==0 or res.reached_threshold:
+                                autofocus_succeeded=True
                                 break
 
                         if res is not None:
@@ -479,6 +483,7 @@ class ProtocolGenerator(BaseModel):
                                 "Position_x_mm":f"{image_store_entry.info.position.position.x_pos_mm:.3f}",
                                 "Position_y_mm":f"{image_store_entry.info.position.position.y_pos_mm:.3f}",
                                 "Position_z_mm":f"{image_store_entry.info.position.position.z_pos_mm:.3f}",
+                                "autofocus_succeeded":f"{autofocus_succeeded}",
                             },
                         )
                         self.image_store_pool.run(image_store_task)
