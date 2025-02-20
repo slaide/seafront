@@ -446,8 +446,8 @@ class SquidAdapter(BaseModel):
         Z_MM_BACKLASH_COUNTER:float=40e-3,
         NUM_Z_STEPS_CALIBRATE:int=13,
 
-        DEBUG_LASER_AF_CALIBRATION=bool(1),
-        DEBUG_LASER_AF_SHOW_REGRESSION_FIT=bool(1),
+        DEBUG_LASER_AF_CALIBRATION=bool(0),
+        DEBUG_LASER_AF_SHOW_REGRESSION_FIT=bool(0),
         DEBUG_LASER_AF_SHOW_EVAL_FIT=True,
     )->cmd.LaserAutofocusCalibrationResponse:
         """
