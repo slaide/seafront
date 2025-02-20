@@ -353,6 +353,7 @@ class ProtocolGenerator(BaseModel):
                             # and reset to some known good-ish z position
                             if res.uncompensated_offset_mm>UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM:
                                 res=yield MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm)
+                                assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
                                 break
 
                             # if no moves have been performed to compensate for offset, assume we have reached the target offset
@@ -361,7 +362,10 @@ class ProtocolGenerator(BaseModel):
                                 break
 
                         if res is not None:
-                            print_time(f"{total_compensating_moves=} ; uncompensated {res.uncompensated_offset_mm*1e3} um")
+                            if isinstance(res,AutofocusApproachTargetDisplacementResult):
+                                print_time(f"{total_compensating_moves=} ; uncompensated {res.uncompensated_offset_mm*1e3} um")
+                            else:
+                                print_time(f"{total_compensating_moves=}")
 
                     # reference for channel z offsets
                     # (this position may have been adjusted by the autofocus system, but even without autofocus the current position must be the reference)
