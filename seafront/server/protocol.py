@@ -282,8 +282,8 @@ class ProtocolGenerator(BaseModel):
         # 
         Z_STACK_COUNTER_BACKLASH_MM=40e-3 # 40um
         PIXEL_SIZE_UM=900/3000 # 3000px wide fov covers 0.9mm
-        # movement below this threshold is not performed
-        DISPLACEMENT_THRESHOLD_UM: float=0.5
+        # movement below this threshold is not performed (0.5um)
+        DISPLACEMENT_THRESHOLD_MM: float=0.5e-3
 
         # 10um
         UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM=10e-3
@@ -420,7 +420,7 @@ class ProtocolGenerator(BaseModel):
                         current_z_mm=last_position.z_pos_mm
 
                         distance_z_to_move_mm=channel_z_mm-current_z_mm
-                        if math.fabs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_UM:
+                        if math.fabs(distance_z_to_move_mm)>DISPLACEMENT_THRESHOLD_MM:
                             res=yield MoveTo(x_mm=None,y_mm=None,z_mm=channel_z_mm)
                             assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
 
