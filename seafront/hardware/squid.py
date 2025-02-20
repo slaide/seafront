@@ -583,11 +583,14 @@ class SquidAdapter(BaseModel):
             left_dot_y.append(peak_y[1])
 
         left_dot_regression=linear_regression(left_dot_x,left_dot_y)
+        right_dot_regression=0,0
         if len(right_dot_x)>0:
-            right_dot_regression=linear_regression(right_dot_x,right_dot_y)
-        else:
-            print_time("no right dot found")
-            right_dot_regression=0,0
+            # there are at least two possible issues here, that we ignore:
+            # 1) no values present (zero/low signal)
+            # 2) all values are identical (caused by only measuring noise)
+            try:
+                right_dot_regression=linear_regression(right_dot_x,right_dot_y)
+            except:pass
 
         if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_REGRESSION_FIT:
             # plot one peak domain
