@@ -1154,6 +1154,8 @@ class SquidAdapter(BaseModel):
                     if math.fabs(current_z-gconfig_refzmm_item.floatvalue)>OFFSET_MOVEMENT_THRESHOLD_MM:
                         res=await self.execute(cmd.MoveTo(x_mm=None,y_mm=None,z_mm=gconfig_refzmm_item.floatvalue))
 
+                    print_time("autofocus - did pre approach refz")
+
                 old_state=self.state
                 self.state=CoreState.Moving
 
@@ -1162,6 +1164,7 @@ class SquidAdapter(BaseModel):
                 reached_threshold=False
                 try:
                     last_distance_estimate_mm=await _estimate_offset_mm()
+                    print_time("autofocus - estimated offset")
                     last_z_mm=(await self.microcontroller.get_last_position()).z_pos_mm
                     MAX_MOVEMENT_RANGE_MM=0.3 # should be derived from the calibration data, but this value works fine in practice
                     if math.fabs(last_distance_estimate_mm)>MAX_MOVEMENT_RANGE_MM:
@@ -1172,12 +1175,14 @@ class SquidAdapter(BaseModel):
                             distance_estimate_mm=last_distance_estimate_mm
                         else:
                             distance_estimate_mm=await _estimate_offset_mm()
+                            print_time("autofocus - estimated offset")
 
                         # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
                         # (since this indicates that we have moved away from the focal plane, which should not happen)
                         if rep_i>0 and math.fabs(last_distance_estimate_mm)<math.fabs(distance_estimate_mm):
                             # move back to last z, since that seemed like the better position to be in
                             await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",last_z_mm))
+                            print_time("autofocus - reset z to known good position")
                             # TODO unsure if this is the best approach. we cannot do better, but we also have not actually gotten close to the offset
                             reached_threshold=True
                             break
@@ -1192,10 +1197,12 @@ class SquidAdapter(BaseModel):
 
                         await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",distance_estimate_mm))
                         num_compensating_moves+=1
+                        print_time("autofocus - refined z")
 
                 except:
                     # if any interaction failed, attempt to reset z position to known somewhat-good position
                     await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",initial_z))
+                    print_time("autofocus - reset z position")
                 finally:
                     self.state=old_state
 
