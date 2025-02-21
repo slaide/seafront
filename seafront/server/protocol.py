@@ -197,6 +197,10 @@ class ProtocolGenerator(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
+    def plate_wells(self):
+        "selected wells"
+        return [w for w in self.config_file.plate_wells if w.selected]
+    @property
     def well_sites(self):
         "selected sites in the grid mask"
         return [s for s in self.config_file.grid.mask if s.selected]
@@ -207,10 +211,10 @@ class ProtocolGenerator(BaseModel):
 
     # pydantics version of dataclass.__post_init__
     def model_post_init(self,__context):
-        self.num_wells=len(self.config_file.plate_wells)
+        self.num_wells=len(self.plate_wells)
         self.num_sites=len(self.well_sites)
-        self.num_channels=len([c for c in self.config_file.channels if c.enabled])
-        self.num_channel_z_combinations=sum((c.num_z_planes for c in self.config_file.channels))
+        self.num_channels=len(self.channels)
+        self.num_channel_z_combinations=sum((c.num_z_planes for c in self.channels))
         self.num_images_total=self.num_wells*self.num_sites*self.num_channel_z_combinations
 
         # the grid is centered around the center of the well
@@ -323,7 +327,7 @@ class ProtocolGenerator(BaseModel):
 
         # for each timepoint, starting at 1
         for timepoint in range(1,self.config_file.grid.num_t+1):
-            for well in self.config_file.plate_wells:
+            for well in self.plate_wells:
                 # these are xy sites
                 print_time("before next site")
                 for site_index,site in enumerate(self.well_sites):

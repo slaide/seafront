@@ -973,7 +973,7 @@ class Core:
         plate=plates[0]
 
         for well in config_file.plate_wells:
-            if wellIsForbidden(well.well_name,plate):
+            if well.selected and wellIsForbidden(well.well_name,plate):
                 error_internal(detail=f"well {well.well_name} is not allowed on this plate")
 
         if config_file.autofocus_enabled:
