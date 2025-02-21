@@ -288,14 +288,6 @@ class ProtocolGenerator(BaseModel):
         # 10um
         UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM=10e-3
 
-        # counters on acquisition progress
-        start_time=time.time()
-        start_time_iso_str=sc.datetime2str(dt.datetime.now(dt.timezone.utc))
-        last_image_information=None
-
-        num_images_acquired=0
-        storage_usage_bytes=0
-
         g_config=GlobalConfigHandler.get_dict()
         
         # first yield indicates that this generator is ready to produce commands
@@ -304,6 +296,14 @@ class ProtocolGenerator(BaseModel):
         yield "ready"
 
         yield EstablishHardwareConnection()
+
+        # counters on acquisition progress
+        start_time=time.time()
+        start_time_iso_str=sc.datetime2str(dt.datetime.now(dt.timezone.utc))
+        last_image_information=None
+
+        num_images_acquired=0
+        storage_usage_bytes=0
 
         # get current z coordinate as z reference
         last_position=yield MC_getLastPosition()
