@@ -7,6 +7,7 @@ from seaconfig import AcquisitionChannelConfig
 from gxipy import gxiapi
 
 from ..config.basics import GlobalConfigHandler
+from ..logger import logger
 
 gxiapi.gx_init_lib()
 
@@ -62,23 +63,22 @@ class Camera:
                 Camera.device_manager.update_all_device_list()
                 self.handle=Camera.device_manager.open_device_by_sn(self.sn)
             except Exception as e:
-                print(f"failed {i} times {e=}")
+                logger.debug(f"camera - opening failed {i} times {e=}")
 
                 try:
                     self.close()
                 except Exception as e:
-                    print(f"{e=}")
-                finally:
-                    print("closed?")
+                    logger.warning(f"camera - opening failed with error {e=}. retrying. ")
+
                 time.sleep(2)
-                print("DONE SLEEPING")
+                logger.debug("camera - done sleeping to await camera response on open")
                 continue
 
-            print("opened camera")
+            logger.debug("opened camera")
             break
 
-
         if self.handle is None:
+            logger.critical(f"failed to open camera {self.device_info}")
             raise RuntimeError(f"failed to open camera {self.device_info}")
         
         self.device_type=device_type
@@ -231,6 +231,8 @@ class Camera:
         """
             close device handle
         """
+        logger.debug("camera - closing")
+
         if self.handle is None:
             return
 
@@ -243,7 +245,10 @@ class Camera:
 
         try:self.handle.close_device()
         except:pass
+
         self.handle=None
+
+        logger.debug("closed camera")
 
     def _exposure_time_ms_to_native(self,exposure_time_ms:float):
         """
@@ -286,7 +291,7 @@ class Camera:
         assert self.handle is not None
 
         if self.acquisition_ongoing:
-            print("warning - requested acquisition while one was already ongoing. returning None.")
+            logger.warning("camera - requested acquisition while one was already ongoing. returning None.")
             return None
 
         # set pixel format
@@ -311,21 +316,21 @@ class Camera:
         match pixel_format:
             case "mono8":
                 if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO8:
-                    print("perf warning - changing pixel format to mono8")
+                    logger.debug("camera - perf warning - changing pixel format to mono8")
                     self.handle.stream_off()
                     self.pixel_format=gxiapi.GxPixelFormatEntry.MONO8
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO8)
                     self.handle.stream_on()
             case "mono10":
                 if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO10:
-                    print("perf warning - changing pixel format to mono10")
+                    logger.debug("camera - perf warning - changing pixel format to mono10")
                     self.handle.stream_off()
                     self.pixel_format=gxiapi.GxPixelFormatEntry.MONO10
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO10)
                     self.handle.stream_on()
             case "mono12":
                 if self.pixel_format!=gxiapi.GxPixelFormatEntry.MONO12:
-                    print("perf warning - changing pixel format to mono12")
+                    logger.debug("camera - perf warning - changing pixel format to mono12")
                     self.handle.stream_off()
                     self.pixel_format=gxiapi.GxPixelFormatEntry.MONO12
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO12)

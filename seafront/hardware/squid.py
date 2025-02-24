@@ -8,6 +8,7 @@ from scipy import stats # for linear regression
 from matplotlib import pyplot as plt
 import numpy as np
 import cv2
+from ..logger import logger
 
 from gxipy import gxiapi
 from .camera import Camera, AcquisitionMode
@@ -16,7 +17,7 @@ import seaconfig as sc
 
 from ..config.basics import ConfigItem, GlobalConfigHandler
 from ..server import commands as cmd
-from ..server.commands import T, BasicSuccessResponse, IlluminationEndAll, error_internal, print_time
+from ..server.commands import T, BasicSuccessResponse, IlluminationEndAll, error_internal
 
 from .adapter import AdapterState, Position, CoreState
 
@@ -29,7 +30,6 @@ class DisconnectError(BaseException):
  
 def linear_regression(x:list[float]|np.ndarray,y:list[float]|np.ndarray)->tuple[float,float]:
     "returns (slope,intercept)"
-    print(f"{x=} {y=}")
     slope, intercept, _,_,_ = stats.linregress(x, y)
     return slope,intercept #type:ignore
 
@@ -117,25 +117,33 @@ class SquidAdapter(BaseModel):
 
         abort_startup=False
         if len(microcontrollers)==0:
-            print("error - no microcontrollers found.")
+            logger.critical("startup - no microcontrollers found.")
             abort_startup=True
         if len(cams)<2:
-            print(f"error - found less than two cameras (found {len(cams)})")
+            logger.critical(f"startup - found less than two cameras (found {len(cams)})")
             abort_startup=True
 
         if abort_startup:
-            raise RuntimeError("did not find microscope hardware")
+            error_msg="did not find microscope hardware"
+            logger.critical(f"startup - {error_msg}")
+            raise RuntimeError(error_msg)
         
         main_camera_model_name=g_dict["main_camera_model"].value
         _main_cameras=[c for c in cams if c.model_name==main_camera_model_name]
         if len(_main_cameras)==0:
-            cmd.error_internal(detail=f"no camera with model name {main_camera_model_name} found")
+            error_msg=f"no camera with model name {main_camera_model_name} found"
+            logger.critical(f"startup - {error_msg}")
+            cmd.error_internal(detail=error_msg)
+
         main_camera=_main_cameras[0]
 
         focus_camera_model_name=g_dict["laser_autofocus_camera_model"].value
         _focus_cameras=[c for c in cams if c.model_name==focus_camera_model_name]
         if len(_focus_cameras)==0:
-            cmd.error_internal(detail=f"no camera with model name {focus_camera_model_name} found")
+            error_msg=f"no camera with model name {focus_camera_model_name} found"
+            logger.critical(f"startup - {error_msg}")
+            cmd.error_internal(detail=error_msg)
+
         focus_camera=_focus_cameras[0]
 
         microcontroller=microcontrollers[0]
@@ -165,16 +173,19 @@ class SquidAdapter(BaseModel):
 
         try:
             self.main_camera.open(device_type="main")
-            print("connected to main cam")
+            logger.debug("startup - connected to main cam")
             self.focus_camera.open(device_type="autofocus")
-            print("connected to focus cam")
+            logger.debug("startup - connected to focus cam")
             self.microcontroller.open()
-            print("connected to microcontroller")
+            logger.debug("startup - connected to microcontroller")
         except gxiapi.OffLine:
+            logger.critical("startup - camera offline")
             raise DisconnectError()
         except IOError:
+            logger.critical("startup - microcontroller offline")
             raise DisconnectError()
 
+        logger.info("startup - connection to hardware devices established")
         self.is_connected=True
 
     def close(self):
@@ -188,36 +199,42 @@ class SquidAdapter(BaseModel):
 
         self.is_connected=False
 
+        logger.debug("closing microcontroller")
         try: self.microcontroller.close()
         except: pass
 
+        logger.debug("closing main camera")
         try: self.main_camera.close()
         except: pass
+        logger.debug("closing focus camera")
         try: self.focus_camera.close()
         except: pass
+        logger.debug("closing microcontroller")
+
+        logger.info("closed connection to hardware devices")
 
     async def home(self):
         """perform homing maneuver"""
 
-        print_time("starting home")
         try:
+            logger.info("starting stage calibration (by entering loading position)")
 
             # reset the MCU
-            print_time("resetting mcu")
+            logger.debug("resetting mcu")
             awaitme=self.microcontroller.send_cmd(mc.Command.reset())
-            print_time("?")
+            logger.debug("?")
             await awaitme
-            print_time("done")
+            logger.debug("done")
 
             # reinitialize motor drivers and DAC
-            print_time("initialize")
+            logger.debug("initializing microcontroller")
             await self.microcontroller.send_cmd(mc.Command.initialize())
-            print_time("done")
-            print_time("configure_actuators")
+            logger.debug("done initializing microcontroller")
+            logger.debug("configure_actuators")
             await self.microcontroller.send_cmd(mc.Command.configure_actuators())
-            print_time("done")
+            logger.debug("done configuring actuators")
 
-            print_time("ensuring illumination is off")
+            logger.info("ensuring illumination is off")
             # make sure all illumination is off
             for illum_src in [
                 mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
@@ -230,7 +247,7 @@ class SquidAdapter(BaseModel):
             ]:
                 await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_src))
 
-            print_time("calibrating xy stage")
+            logger.debug("calibrating xy stage")
 
             # when starting up the microscope, the initial position is considered (0,0,0)
             # even homing considers the limits, so before homing, we need to disable the limits
@@ -261,13 +278,12 @@ class SquidAdapter(BaseModel):
             # and move objective up, slightly
             await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",1))
 
-            print_time("done initializing microscope")
+            logger.info("done initializing microscope")
 
         except IOError:
+            logger.critical("lost connection to microcontroller")
             self.close()
             raise DisconnectError()
-        finally:
-            print_time("????")
     
     async def snap_selected_channels(self,config_file:sc.AcquisitionConfig)->cmd.BasicSuccessResponse:
         """
@@ -670,9 +686,7 @@ class SquidAdapter(BaseModel):
             plt.show()
 
         um_per_px,_x_reference=left_dot_regression
-        print(f"y = {_x_reference} + x * {um_per_px}")
         x_reference=(await measure_dot_params())[0]
-        print(f"{_x_reference=} {x_reference=}")
 
         try:
             calibration_position=await self.microcontroller.get_last_position()
@@ -715,25 +729,32 @@ class SquidAdapter(BaseModel):
     async def execute(self,command: cmd.BaseCommand[T]) -> T:
 
         try:
+            logger.debug(f"squid - executing {type(command).__qualname__}")
+
             if isinstance(command, cmd.EstablishHardwareConnection):
                 if not self.is_connected:
                     try:
                         # if no connection has yet been established, connecting will have the hardware in an undefined state
+                        logger.debug("squid - connect - connecting to hardware")
                         self.open_connections()
                         # so after connecting:
                         # 1) turn off all illumination
-                        print("turning off illumination")
+                        logger.debug("squid - connect - turning off illumination")
                         await self.execute(IlluminationEndAll())
-                        print("turned off illumination")
+                        logger.debug("squid - connect - turned off illumination")
                         # 2) perform home maneuver to reset stage position to known values
-                        print("homing")
-                        try:
-                            await self.home()
-                        finally:
-                            print("homing failed")
-                        print("homed")
+                        logger.debug("squid - connect - calibrating stage position")
+
+                        await self.home()
+
+                        logger.info("squid - connect - calibrated stage")
+
                     except DisconnectError:
-                        error_internal("hardware connection could not be established")
+                        error_message="hardware connection could not be established"
+                        logger.critical(f"squid - connect - {error_message}")
+                        error_internal(error_message)
+
+                logger.debug("squid - connected.")
 
                 result=BasicSuccessResponse()
                 return result#type:ignore
@@ -760,6 +781,8 @@ class SquidAdapter(BaseModel):
 
                 self.state=CoreState.LoadingPosition
 
+                logger.debug("squid - entered loading position")
+
                 result=cmd.BasicSuccessResponse()
                 return result #type:ignore (this type is correctly inferred at the call site, but here it is not)
             
@@ -778,6 +801,8 @@ class SquidAdapter(BaseModel):
 
                 self.state=CoreState.Idle
 
+                logger.debug("squid - left loading position")
+
                 result=cmd.BasicSuccessResponse()
                 return result #type:ignore
             
@@ -790,6 +815,8 @@ class SquidAdapter(BaseModel):
                 await self.microcontroller.send_cmd(mc.Command.move_by_mm(command.axis,command.distance_mm))
 
                 self.state=CoreState.Idle
+
+                logger.debug("squid - moved by")
 
                 result=cmd.MoveByResult(moved_by_mm=command.distance_mm,axis=command.axis)
                 return result#type:ignore
@@ -864,6 +891,8 @@ class SquidAdapter(BaseModel):
 
                 self.state=prev_state
 
+                logger.debug("squid - moved to")
+
                 result=cmd.BasicSuccessResponse()
                 return result#type:ignore
             
@@ -886,6 +915,8 @@ class SquidAdapter(BaseModel):
                 y_mm=plate.get_well_offset_y(command.well_name) + plate.Well_size_y_mm/2
 
                 res=await self.execute(cmd.MoveTo(x_mm=x_mm,y_mm=y_mm))
+
+                logger.debug("squid - moved to well")
 
                 result=cmd.BasicSuccessResponse()
                 return result#type:ignore
@@ -916,13 +947,15 @@ class SquidAdapter(BaseModel):
                 except Exception as e:
                     cmd.error_internal(detail="failed to measure displacement (got no signal): {str(e)}")
 
+                logger.debug("squid - used autofocus to measure displacement")
+
                 result=cmd.AutofocusMeasureDisplacementResult(displacement_um=displacement_um)
                 return result#type:ignore
 
             elif isinstance(command,cmd.AutofocusSnap):
                 if command.turn_laser_on:
                     await self.microcontroller.send_cmd(mc.Command.af_laser_illum_begin())
-                    print_time("autofocus - turned laser on")
+                    logger.debug("squid - autofocus - turned laser on")
             
                 channel_config=sc.AcquisitionChannelConfig(
                     name="Laser Autofocus", # unused
@@ -936,14 +969,14 @@ class SquidAdapter(BaseModel):
                 )
 
                 img=self.focus_camera.acquire_with_config(channel_config)
-                print_time("autofocus - acquired image")
+                logger.debug("squid - autofocus - acquired image")
                 if img is None:
                     self.state=CoreState.Idle
                     cmd.error_internal(detail="failed to acquire image")
 
                 if command.turn_laser_off:
                     await self.microcontroller.send_cmd(mc.Command.af_laser_illum_end())
-                    print_time("autofocus - turned laser off")
+                    logger.debug("squid - autofocus - turned laser off")
 
                 result=cmd.AutofocusSnapResult(
                     width_px=img.shape[1],
@@ -953,7 +986,7 @@ class SquidAdapter(BaseModel):
                 # blur laser autofocus image to get rid of some noise
                 # img = scipy.ndimage.gaussian_filter(img, sigma=1.0) # this takes 5 times as long as cv2
                 img = cv2.GaussianBlur(img, (3, 3), sigmaX=1.0, borderType=cv2.BORDER_DEFAULT)
-                print_time("autofocus - applied blur to image")
+                logger.debug("squid - autofocus - applied blur to image")
 
                 result._img=img
                 result._channel=channel_config
@@ -966,6 +999,8 @@ class SquidAdapter(BaseModel):
                 await asyncio.sleep(command.warmup_time_s)
 
                 await self.microcontroller.send_cmd(mc.Command.af_laser_illum_end())
+
+                logger.debug("squid - warmed up autofocus laser")
 
                 result=cmd.BasicSuccessResponse()
                 return result#type:ignore
@@ -982,6 +1017,9 @@ class SquidAdapter(BaseModel):
                     mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL, # this will turn off the led matrix
                 ]:
                     await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_src))
+                    logger.debug(f"squid - illumination end all - turned off illumination for {illum_src}")
+
+                logger.debug("squid - turned off all illumination")
 
                 ret=cmd.BasicSuccessResponse()
                 return ret#type:ignore
@@ -1001,20 +1039,23 @@ class SquidAdapter(BaseModel):
                 
                 self.state=CoreState.ChannelSnap
 
-                cmd.print_time("before illum on")
+                logger.debug("channel snap - before illum on")
                 await self.microcontroller.send_cmd(mc.Command.illumination_begin(illum_code,command.channel.illum_perc))
-                cmd.print_time("before acq")
+                logger.debug("channel snap - before acq")
                 img=self.main_camera.acquire_with_config(command.channel)
-                cmd.print_time("after acq")
+                logger.debug("channel snap - after acq")
                 await self.microcontroller.send_cmd(mc.Command.illumination_end(illum_code))
-                cmd.print_time("after illum off")
+                logger.debug("channel snap - after illum off")
                 if img is None:
+                    logger.critical("failed to acquire image")
                     self.state=CoreState.Idle
                     cmd.error_internal(detail="failed to acquire image")
 
                 self.state=CoreState.Idle
 
                 img=_process_image(img,camera=self.main_camera)
+
+                logger.debug("squid - took channel snapshot")
 
                 result=cmd.ImageAcquiredResponse()
                 result._img=img
@@ -1031,6 +1072,8 @@ class SquidAdapter(BaseModel):
 
                     channel_images[channel.handle]=res._img
                     channel_handles.append(channel.handle)
+
+                logger.debug("squid - took snapshot in multiple channels")
 
                 result=cmd.ChannelSnapSelectionResult(channel_handles=channel_handles)
                 result._images=channel_images
@@ -1082,6 +1125,8 @@ class SquidAdapter(BaseModel):
                     target_framerate_hz=command.framerate_hz
                 )
 
+                logger.debug("squid - channel stream begin")
+
                 result=cmd.StreamingStartedResponse(channel=command.channel)
                 return result#type:ignore
             
@@ -1104,12 +1149,15 @@ class SquidAdapter(BaseModel):
                 self.main_camera._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
                 self.state=CoreState.Idle
+
+                logger.debug("squid - channel stream end")
                 
                 result=cmd.BasicSuccessResponse()
                 return result#type:ignore
 
             elif isinstance(command,cmd.LaserAutofocusCalibrate):
                 result=await self._laser_af_calibrate_here(**command.dict())
+                logger.debug("squid - calibrated laser autofocus")
                 return result#type:ignore
             
             elif isinstance(command,cmd.AutofocusApproachTargetDisplacement):
@@ -1158,7 +1206,7 @@ class SquidAdapter(BaseModel):
                     if math.fabs(current_z-gconfig_refzmm_item.floatvalue)>OFFSET_MOVEMENT_THRESHOLD_MM:
                         res=await self.execute(cmd.MoveTo(x_mm=None,y_mm=None,z_mm=gconfig_refzmm_item.floatvalue))
 
-                    print_time("autofocus - did pre approach refz")
+                    logger.debug("autofocus - did pre approach refz")
 
                 old_state=self.state
                 self.state=CoreState.Moving
@@ -1168,7 +1216,7 @@ class SquidAdapter(BaseModel):
                 reached_threshold=False
                 try:
                     last_distance_estimate_mm=await _estimate_offset_mm()
-                    print_time("autofocus - estimated offset")
+                    logger.debug("autofocus - estimated offset")
                     last_z_mm=(await self.microcontroller.get_last_position()).z_pos_mm
                     MAX_MOVEMENT_RANGE_MM=0.3 # should be derived from the calibration data, but this value works fine in practice
                     if math.fabs(last_distance_estimate_mm)>MAX_MOVEMENT_RANGE_MM:
@@ -1179,14 +1227,14 @@ class SquidAdapter(BaseModel):
                             distance_estimate_mm=last_distance_estimate_mm
                         else:
                             distance_estimate_mm=await _estimate_offset_mm()
-                            print_time("autofocus - estimated offset")
+                            logger.debug("autofocus - estimated offset")
 
                         # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
                         # (since this indicates that we have moved away from the focal plane, which should not happen)
                         if rep_i>0 and math.fabs(last_distance_estimate_mm)<math.fabs(distance_estimate_mm):
                             # move back to last z, since that seemed like the better position to be in
                             await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",last_z_mm))
-                            print_time("autofocus - reset z to known good position")
+                            logger.debug("autofocus - reset z to known good position")
                             # TODO unsure if this is the best approach. we cannot do better, but we also have not actually gotten close to the offset
                             reached_threshold=True
                             break
@@ -1201,14 +1249,16 @@ class SquidAdapter(BaseModel):
 
                         await self.microcontroller.send_cmd(mc.Command.move_by_mm("z",distance_estimate_mm))
                         num_compensating_moves+=1
-                        print_time("autofocus - refined z")
+                        logger.debug("autofocus - refined z")
 
                 except:
                     # if any interaction failed, attempt to reset z position to known somewhat-good position
                     await self.microcontroller.send_cmd(mc.Command.move_to_mm("z",initial_z))
-                    print_time("autofocus - reset z position")
+                    logger.debug("autofocus - reset z position")
                 finally:
                     self.state=old_state
+
+                logger.debug("squid - used autofocus to approach target displacement")
 
                 res=cmd.AutofocusApproachTargetDisplacementResult(
                     num_compensating_moves=num_compensating_moves,
@@ -1218,12 +1268,17 @@ class SquidAdapter(BaseModel):
                 return res#type:ignore
             
             elif isinstance(command,cmd.MC_getLastPosition):
+                logger.debug("squid - fetching last stage position")
                 res=await self.microcontroller.get_last_position()
+                logger.debug("squid - fetched last stage position")
                 return res#type:ignore
             
             else:
                 cmd.error_internal(detail=f"Unsupported command type {type(command)}")
+
         except gxiapi.OffLine:
+            logger.critical("squid - lost camera connection")
             raise DisconnectError()
         except IOError:
+            logger.critical("squid - lost connection to microcontroller")
             raise DisconnectError()

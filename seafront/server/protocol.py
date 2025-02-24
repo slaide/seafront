@@ -10,6 +10,7 @@ import seaconfig as sc
 from pydantic import BaseModel,Field
 
 from .commands import *
+from ..logger import logger
 
 from threading import Thread
 from concurrent.futures import Future as ConcurrentFuture
@@ -160,7 +161,7 @@ async def store_image(
         photometric="minisblack", # zero means black
     )
 
-    print(f"stored image to {image_storage_path}")
+    logger.debug(f"stored image to {image_storage_path}")
 
 
 class ProtocolGenerator(BaseModel):
@@ -281,9 +282,9 @@ class ProtocolGenerator(BaseModel):
         # generator return value
         None
     ]:
-        # print(f"acquiring {num_wells} wells, {num_sites} sites, {num_channels} channels, i.e. {num_images_total} images, taking up to {max_storage_size_images_GB}GB")
 
-        # 
+        logger.info(f"protocol - initialised. acquiring {self.num_wells} wells, {self.num_sites} sites per well, {self.num_channel_z_combinations} channel+z combinations, i.e. {self.num_images_total} images, taking up to {self.max_storage_size_images_GB:.2f}GB")
+
         Z_STACK_COUNTER_BACKLASH_MM=40e-3 # 40um
         PIXEL_SIZE_UM=900/3000 # 3000px wide fov covers 0.9mm
         # movement below this threshold is not performed (0.5um)
@@ -299,7 +300,11 @@ class ProtocolGenerator(BaseModel):
         # i.e. this MUST be the first yield !!
         yield "ready"
 
+        logger.info("protocol - ready for execution")
+
         yield EstablishHardwareConnection()
+
+        logger.info("protocol - established hardware connection")
 
         # counters on acquisition progress
         start_time=time.time()
@@ -316,7 +321,6 @@ class ProtocolGenerator(BaseModel):
 
         # if laser autofocus is enabled, use autofocus z reference as initial z reference
         gconfig_refzmm_item=g_config["laser_autofocus_calibration_refzmm"]
-        print_time(f"{self.config_file.autofocus_enabled=} {gconfig_refzmm_item=}")
         if self.config_file.autofocus_enabled and gconfig_refzmm_item is not None:
             reference_z_mm=gconfig_refzmm_item.floatvalue
 
@@ -327,10 +331,17 @@ class ProtocolGenerator(BaseModel):
 
         # for each timepoint, starting at 1
         for timepoint in range(1,self.config_file.grid.num_t+1):
-            for well in self.plate_wells:
+            logger.info(f"protocol - started timepoint {timepoint}/{self.config_file.grid.num_t}")
+
+            for well_index,well in enumerate(self.plate_wells):
+
                 # these are xy sites
-                print_time("before next site")
+                logger.info(f"protocol - handling next well: {well.well_name} {well_index+1}/{len(self.plate_wells)}")
+
                 for site_index,site in enumerate(self.well_sites):
+
+                    logger.info(f"protocol - handling site {site_index+1}/{len(self.well_sites)}")
+
                     self.handle_q_in()
 
                     # go to site
@@ -340,52 +351,61 @@ class ProtocolGenerator(BaseModel):
                     res=yield MoveTo(x_mm=site_x_mm,y_mm=site_y_mm)
                     assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
 
-                    print_time("moved to site")
+                    logger.debug("protocol - moved to site")
 
                     # indicate if autofocus was performed, and if it succeeded
                     autofocus_succeeded=False
 
                     # run autofocus
                     if self.config_file.autofocus_enabled:
+                        logger.debug("protocol - performing autofocus")
+
                         res=None
                         total_compensating_moves=0
-                        for autofocus_attempt_num in range(3):
+                        AUTOFOCUS_NUM_ATTEMPTS_MAX=3
+                        for autofocus_attempt_num in range(AUTOFOCUS_NUM_ATTEMPTS_MAX):
+                            logger.debug(f"protocol - autofocus attempt {autofocus_attempt_num}")
+
                             # approach target offset
                             res=yield AutofocusApproachTargetDisplacement(target_offset_um=0,config_file=self.config_file,pre_approach_refz=False)
                             assert isinstance(res,AutofocusApproachTargetDisplacementResult), f"{type(res)=}"
+
+                            logger.debug(f"protocol - autofocus results: {res.num_compensating_moves=} {res.uncompensated_offset_mm=:.3f}")
 
                             total_compensating_moves+=res.num_compensating_moves
 
                             # if the final estimated offset is larger than some small threshold, assume it has failed
                             # and reset to some known good-ish z position
                             if math.fabs(res.uncompensated_offset_mm)>UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM:
-                                res=yield MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm)
-                                assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
+                                mres=yield MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm)
+                                assert isinstance(mres,BasicSuccessResponse), f"{type(mres)=}"
+                                logger.debug(f"protocol - autofocus done after exceeding uncompensated threshold: {res.uncompensated_offset_mm=:.4f} {UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM=:.4f}")
                                 break
 
                             # if no moves have been performed to compensate for offset, assume we have reached the target offset
                             # (may in practice be still offset, but at least we cannot do better than we have so far)
                             if res.num_compensating_moves==0 or res.reached_threshold:
                                 autofocus_succeeded=True
+                                logger.debug(f"protocol - autofocus done {res.reached_threshold=}")
                                 break
 
                         if res is not None:
                             if isinstance(res,AutofocusApproachTargetDisplacementResult):
-                                print_time(f"{total_compensating_moves=} ; uncompensated {res.uncompensated_offset_mm*1e3} um")
+                                logger.debug(f"{total_compensating_moves=} ; {res.uncompensated_offset_mm=:.4f}")
                             else:
-                                print_time(f"{total_compensating_moves=}")
+                                logger.debug(f"{total_compensating_moves=}")
 
                         # reference for channel z offsets
                         last_position=yield MC_getLastPosition()
                         assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
                         reference_z_mm=last_position.z_pos_mm
 
-                        print_time("af performed")
+                        logger.debug("autofocus performed")
                     else:
                         res=yield MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm)
                         assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
-                        
-                    print_time("approached reference z")
+
+                        logger.debug("approached reference z")
                     
                     # z stack may be different for each channel, hence:
                     # 1. get list of (channel_z_index,channel,z_relative_to_reference), which may contain each channel more than once
@@ -409,6 +429,10 @@ class ProtocolGenerator(BaseModel):
                             target_z_mm=base_z+i_offset_mm
                             image_pos_z_list.append((i,target_z_mm,channel))
 
+                    # TODO add flag to either
+                    #   1) image in z order (fastest), or
+                    #   2) image in order of wavelength (lower wavelength excitation will emit higher wavelength, which in turn may excite and bleach higher wavelengths -> image in reverse order for best image quality)
+
                     # sort in z
                     image_pos_z_list=sorted(image_pos_z_list,key=lambda v:v[1])
 
@@ -417,9 +441,11 @@ class ProtocolGenerator(BaseModel):
                     res=yield MoveTo(x_mm=None,y_mm=None,z_mm=image_pos_z_list[0][1])
                     assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
 
-                    print_time("moved to init z")
+                    logger.debug("protocol - moved to z order bottom")
 
                     for plane_index,channel_z_mm,channel in image_pos_z_list:
+                        logger.debug(f"protocol - imaging plane {plane_index} at site with {channel_z_mm=:.4f} {channel.name=}")
+
                         site_x=site.col
                         site_y=site.row
                         site_z=plane_index
@@ -439,14 +465,14 @@ class ProtocolGenerator(BaseModel):
                         last_position=yield MC_getLastPosition()
                         assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
 
-                        print_time(f"moved to channel z (should {channel_z_mm:.4f}mm, is {last_position.z_pos_mm:.4f}mm)")
+                        logger.debug(f"protocol - moved to channel z (should be {channel_z_mm:.4f}mm, is {last_position.z_pos_mm:.4f}mm)")
 
                         # snap image
                         res=yield ChannelSnapshot(channel=channel)
                         if not isinstance(res,ImageAcquiredResponse):
                             error_internal(detail=f"failed to snap image at site {site} in well {well} (invalid result type {type(res)})")
 
-                        print_time("snapped image")
+                        logger.debug("protocol - took image snapshot")
                         
                         # store image
                         image_storage_path=f"{str(self.project_output_path)}/{well.well_name}_s{site_index}_x{site.col+1}_y{site.row+1}_z{plane_index+1}_{channel.handle}.tiff"
@@ -496,7 +522,7 @@ class ProtocolGenerator(BaseModel):
                         )
                         self.image_store_pool.run(image_store_task)
 
-                        print_time("scheduled image store")
+                        logger.debug(f"protocol - scheduled image store to {image_store_entry.info.storage_path}")
 
                         num_images_acquired+=1
                         # get storage size from filesystem because tiff compression may reduce size below size in memory
@@ -516,7 +542,7 @@ class ProtocolGenerator(BaseModel):
                         else:
                             estimated_total_time_s=None
 
-                        print(f"{num_images_acquired}/{self.num_images_total} images acquired")
+                        logger.debug(f"protocol - {num_images_acquired}/{self.num_images_total} images acquired")
                         
                         self.acquisition_status.last_status=AcquisitionStatusOut(
                             acquisition_id=self.acquisition_id,
@@ -548,8 +574,14 @@ class ProtocolGenerator(BaseModel):
                             message=f"Acquisition is {(100*num_images_acquired/self.num_images_total):.2f}% complete"
                         )
 
+        logger.debug("protocol - finished protocol steps")
+
         # wait for image storage tasks to finish
         self.image_store_pool.join()
+
+        logger.debug("protocol - finished image storage stasks")
+
+        logger.info("protocol - done")
 
         # done -> yield None and return
         yield None

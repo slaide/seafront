@@ -47,41 +47,12 @@ class ImageStoreEntry(BaseModel):
 class InternalErrorModel(BaseModel):
     detail: str
 
+from ..logger import logger
 def error_internal(detail:str)->tp.NoReturn:
     """raise an HTTPException with specified detail """
+    logger.debug(f"error_internal - {detail=}")
+    
     raise HTTPException(status_code=500,detail=detail)
-
-_LAST_TIMESTAMP=time.time()
-import inspect,datetime
-def print_time(msg:str,threshold:bool=False):
-    """essentially a logging function"""
-    global _LAST_TIMESTAMP
-
-    # Get call site information (filename and line number of the caller)
-    currentframe=inspect.currentframe()
-    assert currentframe is not None
-    caller_frame = currentframe.f_back
-    assert caller_frame is not None
-    caller_info = inspect.getframeinfo(caller_frame)
-    call_site = f"{caller_info.filename}:{caller_info.lineno}"
-
-    # Get current time and compute the delta
-    current_time = time.time()
-    delta = current_time - _LAST_TIMESTAMP
-    _LAST_TIMESTAMP = current_time
-
-    # Get current datetime and format with 4-digit milliseconds
-    now = datetime.datetime.now()
-    ms = now.microsecond // 1000  # convert microseconds to milliseconds
-    formatted_time = now.strftime("%Y-%m-%d:%H:%M:%S") + f":{ms:04d}"
-
-    # Define a threshold of 1 millisecond
-    TIME_THRESHOLD = 1e-3  # 1ms
-
-    # Print only if the elapsed time exceeds the threshold or if forced
-    if (not threshold) or (delta > TIME_THRESHOLD):
-        # Delta time is converted to milliseconds
-        print(f"{call_site} {formatted_time} - {(delta * 1e3):21.1f}ms : {msg}")
 
 def wellIsForbidden(well_name:str,plate_type:sc.Wellplate)->bool:
     """check if a well if forbidden, as indicated by global config"""

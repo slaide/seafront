@@ -4,7 +4,6 @@
 
 import json, time, os, json
 import typing as tp
-from typing import Callable, Optional
 from types import MethodType
 
 import datetime as dt
@@ -360,13 +359,13 @@ class Core:
                         return return_type
 
                 # Default case: if none of the above matches
-                print(f"{target_func=} has unknown return type")
+                logger.warning(f"{target_func=} has unknown return type")
                 return tp.Any
 
             return_type=get_return_type()
 
             @wraps(target_func)
-            async def handler_logic_get(**kwargs:Optional[tp.Any])->return_type: # type: ignore
+            async def handler_logic_get(**kwargs:tp.Optional[tp.Any])->return_type: # type: ignore
                 # Perform verification
                 if (not allow_while_acquisition_is_running) and self.acquisition_is_running:
                     return JSONResponse(content={"status": "error", "message": "cannot run this command while acquisition is running"}, status_code=400)
@@ -690,7 +689,7 @@ class Core:
         these files are already stored on the machine, and can be loaded on request.
         """
 
-        def map_filepath_to_info(c:path.Path)->Optional[ConfigFileInfo]:
+        def map_filepath_to_info(c:path.Path)->tp.Optional[ConfigFileInfo]:
             filename=c.name
             timestamp=None
             comment=None
@@ -710,7 +709,7 @@ class Core:
                         plate_type=f"{plate.Manufacturer} {plate.Model_name}"
 
                 if plate_type is None:
-                    print(f"error - plate type {config.wellplate_type} in config file {c.name} not found in seaconfig plate list")
+                    logger.error(f"plate type {config.wellplate_type} in config file {c.name} not found in seaconfig plate list")
                     return None
 
             return ConfigFileInfo(
@@ -887,7 +886,8 @@ class Core:
             for acq_id,acquisition_status in self.acquisition_map.items():
                 if acquisition_status.thread_is_running==True:
                     if current_acquisition_id is not None:
-                        print(f"warning - more than one acquisition is running at a time?! {current_acquisition_id} and {acq_id}")
+                        logger.warning(f"more than one acquisition is running at a time?! {current_acquisition_id} and {acq_id}")
+
                     current_acquisition_id=acq_id
 
         try:
@@ -1002,7 +1002,7 @@ class Core:
                 if q_in_item==AcquisitionCommand.CANCEL:
                     error_internal(detail="acquisition cancelled")
 
-                print(f"warning - command unhandled: {q_in_item}")
+                logger.warning(f"command unhandled: {q_in_item}")
 
         protocol=ProtocolGenerator(
             config_file=config_file,
@@ -1087,7 +1087,7 @@ class Core:
                 acquisition_status.last_status.message="hardware disconnect"
 
             except Exception as e:
-                print(f"error during acquisition {e}\n{traceback.format_exc()}")
+                logger.exception(f"error during acquisition {e}\n{traceback.format_exc()}")
             
                 full_error=traceback.format_exc()
                 await q_out.put(InternalErrorModel(detail=f"acquisition thread failed because {str(e)}, more specifically: {full_error}"))
@@ -1102,7 +1102,7 @@ class Core:
             # indicate that this thread has stopped running (no matter the cause)
             acquisition_status.thread_is_running=False
 
-            print("acquisition thread is done")
+            logger.debug("acquisition thread is done")
             return
 
         self.acquisition_thread=asyncio.create_task(coro=run_acquisition(queue_in,queue_out))
@@ -1125,17 +1125,23 @@ class Core:
             return acq_res.last_status
     
     def close(self):
+        logger.debug("shutdown - closing squid")
         self.squid.close()
 
+        logger.debug("shutdown - storing global config")
         GlobalConfigHandler.store()
 
+        logger.debug("shutdown - closing image store threadpool")
         self.image_store_threadpool.join()
+
+        logger.debug("shutdown - done")
 
 # handle validation errors with ability to print to terminal for debugging
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    print(f"Validation error at {request.url}: {exc.errors()}",flush=True)
+    logger.debug(f"Validation error at {request.url}: {exc.errors()}",flush=True)
+
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors()},
@@ -1340,26 +1346,36 @@ app.openapi = custom_openapi
 import asyncio
 
 # disable compression of websocket connections..
-# because compression time is unpredictable (takes 70ms to send an all-white image, and 1400ms, twenty times as long (!!!!) for all-black images, which are not a rare occurence in practice)
+# because compression time is unpredictable:
+#    takes 70ms to send an all-white image, and 1400ms (twenty times as long !!!!) for all-black images, which are not a rare occurence in practice
 import websockets.server
-_orig_init=websockets.server.WebSocketServerProtocol.__init__
+_orig_init=websockets.server.WebSocketServerProtocol.__init__#type:ignore
 def _no_comp_init(self,*args,**kwargs):
     kwargs["extensions"]=[]
     return _orig_init(self,*args,**kwargs)
-websockets.server.WebSocketServerProtocol.__init__=_no_comp_init
+websockets.server.WebSocketServerProtocol.__init__=_no_comp_init#type:ignore (websockets.server.WebSocketServerProtocol is deprecated, but still supported at the frozen package version)
 
+from .logger import logger
+@logger.catch
 def main():
+    logger.info("intializing core server")
     core = Core()
     
     try:
+        logger.info("starting http server")
         # Start FastAPI using uvicorn
         uvicorn.run(app, host="127.0.0.1", port=5002)#, log_level="debug")
+        logger.info("http server initialised")
+
     except Exception as e:
-        print(f"error running uvicorn: {e=}")
+        logger.critical(f"error running uvicorn: {e=}")
         pass
 
-    print("shutting down")
+    logger.info("shutting down")
+    
     core.close()
+
+    logger.info("shutdown complete")
 
 if __name__=="__main__":
     main()

@@ -21,6 +21,7 @@ dependencies = [
     "pydantic>=2.9,<2.10", # python type model verification
     "ome-types", # for ome info in image files
     "opencv-python>=4.11,<4.12", # fast gaussian blur for noise autofocus images
+    "loguru==0.7.3", # logging
 ]
 
 [build-system]

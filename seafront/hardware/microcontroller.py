@@ -6,45 +6,21 @@ from enum import Enum
 import threading
 import dataclasses
 from dataclasses import dataclass
-import inspect, datetime
+from ..logger import logger
+import asyncio
 
 import serial
 import serial.tools.list_ports
 import crc
 import numpy as np
 
+from pydantic import BaseModel, Field, ConfigDict
+
 from .adapter import Position as AdapterPosition
 
-_LAST_TIMESTAMP=time.time()
-def print_time(msg:str,threshold:bool=False):
-    """essentially a logging function"""
-    global _LAST_TIMESTAMP
-
-    # Get call site information (filename and line number of the caller)
-    currentframe=inspect.currentframe()
-    assert currentframe is not None
-    caller_frame = currentframe.f_back
-    assert caller_frame is not None
-    caller_info = inspect.getframeinfo(caller_frame)
-    call_site = f"{caller_info.filename}:{caller_info.lineno}"
-
-    # Get current time and compute the delta
-    current_time = time.time()
-    delta = current_time - _LAST_TIMESTAMP
-    _LAST_TIMESTAMP = current_time
-
-    # Get current datetime and format with 4-digit milliseconds
-    now = datetime.datetime.now()
-    ms = now.microsecond // 1000  # convert microseconds to milliseconds
-    formatted_time = now.strftime("%Y-%m-%d:%H:%M:%S") + f":{ms:04d}"
-
-    # Define a threshold of 1 millisecond
-    TIME_THRESHOLD = 1e-3  # 1ms
-
-    # Print only if the elapsed time exceeds the threshold or if forced
-    if (not threshold) or (delta > TIME_THRESHOLD):
-        # Delta time is converted to milliseconds
-        print(f"{call_site} {formatted_time} - {(delta * 1e3):21.1f}ms : {msg}")
+class MicrocontrollerTimeout(BaseException):
+    def __int__(self):
+        pass
 
 def intFromPayload(payload,start_index,num_bytes):
     ret=0
@@ -222,7 +198,7 @@ class MicrocontrollerStatusPackage:
     buttons_and_switches:int
     crc:int
 
-    def __init__(self,packet):
+    def __init__(self,packet:bytes|list[int]):
         self.last_cmd_id:int=packet[0]
         self.exec_status:int=packet[1]
         self.x_pos_usteps:int=twos_complement_rev(intFromPayload(packet,2,4),4)*FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X
@@ -765,41 +741,53 @@ class Command:
     def af_laser_illum_end()->"Command":
         return Command.set_pin_level(pin=MCU_PINS.AF_LASER,level=0)
 
-import asyncio
+class Microcontroller(BaseModel):
+    device_info:SerialDeviceInfo
 
-class Microcontroller:
+    handle:tp.Optional[serial.Serial]=None
+    lock:threading.Lock=Field(default_factory=threading.Lock)
+    """ lock on hardware control """
+    illum:threading.Lock=Field(default_factory=threading.Lock)
+    """ lock on illumination control """
+    crc_calculator:crc.CrcCalculator=Field(default_factory=lambda:crc.CrcCalculator(crc.Crc8.CCITT,table_based=True))
+
+    last_command_id:int=-1
+    """ because this is increment BEFORE it is returned, init to -1 -> first id assigned is 0 """
+
+    terminate_reading_received_packet_thread:bool=False
+    last_position:Position=Field(default_factory=lambda:Position(0,0,0))
+
+    baudrate:int=2_000_000
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     async def _wait_until_cmd_is_finished(
         self,
         cmd:"Command",
         additional_delay:tp.Optional[float]=None,
 
         _ignore_cmd_id:bool=False,
+        timeout_s:float=5.0,
     ):
         """
         _ignore_cmd_id is only for use with RESET
+
+        may throw MicrocontrollerTimeout
         """
         last_position_x=0
         last_position_y=0
         last_position_z=0
-        init_wait_complete=False
 
         async def read_packet(packet:MicrocontrollerStatusPackage)->bool:
             nonlocal last_position_x
             nonlocal last_position_y
             nonlocal last_position_z
-            nonlocal init_wait_complete
 
             latest_position_x=packet.x_pos_usteps
             latest_position_y=packet.y_pos_usteps
             latest_position_z=packet.z_pos_usteps
 
             if cmd.is_move_cmd:
-                # wait for 5ms for a move command to have engaged the motors
-                if not init_wait_complete:
-                    await asyncio.sleep(5e-3)
-                    init_wait_complete=True
-                    return False
-
                 # wait until stage has stopped moving (which the microcontroller has no knowledge of)
                 if last_position_x!=latest_position_x or last_position_y!=latest_position_y or last_position_z!=latest_position_z:
                     last_position_x=latest_position_x
@@ -809,7 +797,11 @@ class Microcontroller:
 
             cmd_is_completed=(_ignore_cmd_id or (packet.last_cmd_id==cmd[0])) and packet.exec_status==0
             if cmd.is_move_cmd:
-                # TODO : moves in Z sometimes do not indicate completion, even when moving to target position is done
+                # moves in Z sometimes do not indicate completion, even when moving to target position is done
+                # so for those cases we fall back to checking if
+                # 1) command packet has been executed by microcontroller (last command id matches)
+                # 2) stage has stopped moving (checked above)
+
                 cmd_name=CommandName(cmd[1])
                 match cmd_name:
                     case CommandName.MOVETO_Z:
@@ -819,79 +811,70 @@ class Microcontroller:
 
             return cmd_is_completed
         
-        await self._read_packets(read_packet)
+        if cmd.is_move_cmd:
+            # wait short time for move commands to have engaged the motors to start moving
+            # (moving takes way longer than this short delay, so we are waiting this time anyway)
+            await asyncio.sleep(5e-3)
+
+        await self._read_packets(until=read_packet,timeout_s=timeout_s)
 
         if additional_delay is not None:
             await asyncio.sleep(additional_delay)
     
-    def __init__(self,device_info:SerialDeviceInfo):
-        self.device_info=device_info
-        self.handle=None
+    async def _read_packets(
+        self,
+        until:   tp.Callable[[MicrocontrollerStatusPackage],bool]
+               | tp.Callable[[MicrocontrollerStatusPackage],tp.Coroutine[None,None,bool]],
 
-        self.lock=threading.Lock()
-        """ lock on hardware control """
-        self.illum=threading.Lock()
-        """ lock on illumination control """
+        timeout_s:float=5.0,
 
-        self.crc_calculator=crc.CrcCalculator(crc.Crc8.CCITT,table_based=True)
-        self._last_command_id=-1 # because this is increment BEFORE it is returned, init to -1 -> first id assigned is 0
-
-        self.terminate_reading_received_packet_thread=False
-
-        self.last_position=Position(0,0,0)
-
-    async def _read_packets(self,until:tp.Callable[[MicrocontrollerStatusPackage],bool]|tp.Callable[[MicrocontrollerStatusPackage],tp.Coroutine[None,None,bool]]):
+        MICROCONTROLLER_PACKET_RETRY_DELAY_S=0.4e-3,
+    ):
         """
             read packets until 'until' returns True
 
             this is the central waiting function. other functions with wait-like behaviour rely on this function.
 
+            will throw MicrocontrollerTimeout if 'until' condition has not been met within 'timeout_s'.
+
             params:
                 until:
-                    called on each received package, must return True to continue this loop
+                    called on each received package, must return True to continue this loop (can be sync or async, hence weird signature)
         """
 
-        MICROCONTROLLER_PACKET_RETRY_DELAY=5e-3 # 5ms
+        start_time=time.time()
 
         self.terminate_reading_received_packet_thread=False
         while not self.terminate_reading_received_packet_thread:
             # wait to connect and receive data
 
+            # time out at loop iteration start
+            if((wait_time_s:=(time.time()-start_time))>timeout_s):
+                logger.critical(f"timed out after {wait_time_s:.3f} with {timeout_s=}")
+                raise MicrocontrollerTimeout()
+
             if self.handle is None:
-                print_time("self.handle is None ")
-                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY)
+                logger.warning("self.handle is None ")
+                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
 
-            serial_in_waiting_status=self.handle.in_waiting
+            serial_num_bytes_in_waiting=self.handle.in_waiting
 
-            if serial_in_waiting_status==0:
-                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY)
+            if serial_num_bytes_in_waiting<FirmwareDefinitions.READ_PACKET_LENGTH:
+                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
-            
-            # get rid of old data
-            num_bytes_in_rx_buffer = serial_in_waiting_status
-            if num_bytes_in_rx_buffer > FirmwareDefinitions.READ_PACKET_LENGTH:
-                for i in range(num_bytes_in_rx_buffer-FirmwareDefinitions.READ_PACKET_LENGTH):
-                    self.handle.read()
 
-            # if data is incomplete, sleep and try again (extremely rare case)
-            if serial_in_waiting_status % FirmwareDefinitions.READ_PACKET_LENGTH != 0:
-                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY)
-                continue
-            
-            # read the buffer
-            msg=[]
-            for i in range(FirmwareDefinitions.READ_PACKET_LENGTH):
-                msg.append(ord(self.handle.read()))
+            packet=MicrocontrollerStatusPackage(self.handle.read(FirmwareDefinitions.READ_PACKET_LENGTH))
 
-            packet=MicrocontrollerStatusPackage(msg)
-            # save last position
+            # save current position as last known position
             self.last_position=packet.pos
             
-            should_terminate=until(packet)
-            if inspect.iscoroutine(should_terminate):
-                should_terminate=await should_terminate
-            assert isinstance(should_terminate,bool), f"{type(should_terminate)=}"
+            until_res=until(packet)
+            # the type checker does not understand inspect.iscoroutine, so we isinstance a bool
+            if isinstance(until_res,bool):
+                should_terminate:bool=until_res
+            else:
+                should_terminate:bool=await until_res
                 
             self.terminate_reading_received_packet_thread=should_terminate
 
@@ -904,13 +887,10 @@ class Microcontroller:
 
         if self.lock.acquire(blocking=False):
             try:
-                def read_one_packet(packet_in:MicrocontrollerStatusPackage)->bool:
-                    return True
-                
                 # do not wait to read a package if there is currently no connection
                 if self.handle is not None:
                     # internally updates the last known position
-                    await self._read_packets(read_one_packet)
+                    await self._read_packets(lambda p:True)
 
             finally:
                 self.lock.release()
@@ -924,8 +904,8 @@ class Microcontroller:
             just increment last command id by 1, and wrap to 0 after 255
         """
 
-        self._last_command_id=(self._last_command_id+1)%256
-        return self._last_command_id
+        self.last_command_id=(self.last_command_id+1)%256
+        return self.last_command_id
 
     async def send_cmd(self,cmd_in:tp.Union["Command",tp.List["Command"]]):
         "send command for execution. waits for command to complete if command type requires awaiting."
@@ -955,25 +935,45 @@ class Microcontroller:
                 assert self.handle is not None
                 self.handle.write(cmd.bytes)
                 if cmd.wait_for_completion:
-                    await self._wait_until_cmd_is_finished(
-                        cmd,
-                        # reset command also resets the command id to zero, so we need to ignore the command id then
-                        _ignore_cmd_id=cmd[1]==Command.reset()[1]
-                    )
+                    # make more than one attempt at completing a command
+                    NUM_CMD_REPEATS_MAX=5
+
+                    for cmd_repeat_attempt in range(NUM_CMD_REPEATS_MAX):
+                        logger.debug(f"awaiting {CommandName(cmd[1])} the {cmd_repeat_attempt}th time")
+                        try:
+                            await self._wait_until_cmd_is_finished(
+                                cmd,
+
+                                # allow more time for a move command to finish
+                                timeout_s=10.0  if cmd.is_move_cmd else 1.0,
+
+                                # reset command also resets the command id to zero, so we need to ignore the command id then
+                                _ignore_cmd_id=cmd[1]==Command.reset()[1],
+                            )
+                        except MicrocontrollerTimeout:
+                            pass
+
+                        break
 
     def open(self):
         "open connection to device"
-        self.handle=serial.Serial(self.device_info.device,2000000)
+        self.handle=serial.Serial(self.device_info.device,self.baudrate)
 
     def close(self):
         "close connection to device"
-        assert self.handle is not None
-        self.handle.close()
-        self.handle=None
+        
+        logger.debug("microcontroller - closing")
+
+        if self.handle is not None:
+            self.handle.close()
+            self.handle=None
+
+        logger.debug("microcontroller - closed")
 
     @staticmethod
     def get_all()->tp.List["Microcontroller"]:
         "get all available devices"
+
         ret=[]
         for p in serial.tools.list_ports.comports():
             if p.description=="Arduino Due":
@@ -984,6 +984,6 @@ class Microcontroller:
                 # we dont care about other devices
                 continue
 
-            ret.append(Microcontroller(device_info))
+            ret.append(Microcontroller(device_info=device_info))
 
         return ret
