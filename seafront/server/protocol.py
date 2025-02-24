@@ -375,13 +375,17 @@ class ProtocolGenerator(BaseModel):
                             else:
                                 print_time(f"{total_compensating_moves=}")
 
-                    # reference for channel z offsets
-                    # (this position may have been adjusted by the autofocus system, but even without autofocus the current position must be the reference)
-                    last_position=yield MC_getLastPosition()
-                    assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
-                    reference_z_mm=last_position.z_pos_mm
+                        # reference for channel z offsets
+                        last_position=yield MC_getLastPosition()
+                        assert isinstance(last_position,mc.Position), f"{type(last_position)=}"
+                        reference_z_mm=last_position.z_pos_mm
 
-                    print_time("af performed")
+                        print_time("af performed")
+                    else:
+                        res=yield MoveTo(x_mm=None,y_mm=None,z_mm=reference_z_mm)
+                        assert isinstance(res,BasicSuccessResponse), f"{type(res)=}"
+                        
+                    print_time("approached reference z")
                     
                     # z stack may be different for each channel, hence:
                     # 1. get list of (channel_z_index,channel,z_relative_to_reference), which may contain each channel more than once
