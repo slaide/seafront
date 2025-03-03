@@ -786,16 +786,7 @@ function microscopeConfigOverride(new_config){
         clearInterval(interval_id)
         interval_id=-1
     },0.01e3)
-    
-    // catch performance issue where well selection from cache has not finished in reasonable time
-    // (if it takes too long, might as well not bother because the user will be very confused)
-    setTimeout(function(){
-        if(interval_id!=-1){
-            console.error("loading selected wells took too long. skipping well selection load from cache.")
-            clearInterval(interval_id)
-        }
-    },1e3)
-    
+        
     // channels.. to avoid sync issues, go through each channel and update the values instead of fully replacing the entry
     if(new_config.channels!=null){
         for(let new_channel of new_config.channels){

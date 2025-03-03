@@ -274,10 +274,11 @@ class ProtocolGenerator(BaseModel):
             message="scheduled",
         )
 
+    @logger.catch
     def generate(self)->tp.Generator[
-        # yielded types: None means done, str is returned on first iter, other types are results of BaseCommands
+        # yielded types: None means done, str is returned on first iter, other types are BaseCommands
         tp.Union[None,tp.Literal["ready"],BaseCommand],
-        # received types (at runtime must match return type of <yielded type>.run()."resulttype")
+        # received types (at runtime must match return type of <yielded type>.run().ResultType)
         tp.Union[None,tp.Any],
         # generator return value
         None

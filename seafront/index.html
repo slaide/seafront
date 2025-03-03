@@ -484,8 +484,8 @@
                                         <!-- wells -->
                                         <template class="data" p:for="w of well_list">
                                             <div class="cellclass vert-center-container whiteTextOnGreyBackground"
-                                                width='{{w.w}}'
-                                                height='{{w.h}}'
+                                                width='{{/*height in plate space is width in plot space*/ w.h}}'
+                                                height='{{/*width in plate space is height in plot space*/ w.w}}'
                                                 plot-x-min="{{w.pxm}}"
                                                 plot-y-min="{{ /* adjust y coordinate since plot origin is at bottom left and plate origin at top left (y axis is width of plate) */ WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm - w.pym - w.w }}"
                                             >

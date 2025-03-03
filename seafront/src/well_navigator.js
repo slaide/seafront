@@ -97,7 +97,10 @@ function initwellnavigator(){
     if(!element){console.error("element not found");return}
 
     let plate_type=WellplateType.fromHandle(microscope_config.wellplate_type)
-    if(!plate_type){console.error("wellplate type not found");return}
+    if(!plate_type){
+        console.error("wellplate type",microscope_config.wellplate_type,"not found")
+        return
+    }
     
     let num_cols=plate_type.Num_wells_x
     let num_rows=plate_type.Num_wells_y
@@ -121,9 +124,11 @@ function initwellnavigator(){
         console.error("forbidden_wells not found")
     }else{
         const plate_type_forbidden_wells_str=forbidden_wells_str.value.toString().split(";").filter(s=>s.length>0).map(s=>s.split(":")).find(v=>parseInt(v[0])==plate_type.num_wells)
-        if(!plate_type_forbidden_wells_str)throw new Error("forbidden_wells not found for plate type "+plate_type.num_wells)
-
-        plate_type_forbidden_wells_str[1].split(",").forEach(w_str=>plate_type_forbidden_wells.add(w_str))
+        if(!plate_type_forbidden_wells_str){
+            console.error("forbidden_wells not found for plate type "+plate_type.num_wells)
+        }else{
+            plate_type_forbidden_wells_str[1].split(",").forEach(w_str=>plate_type_forbidden_wells.add(w_str))
+        }
     }
 
     let new_plate_wells=[]

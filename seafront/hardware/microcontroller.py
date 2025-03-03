@@ -18,9 +18,19 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from .adapter import Position as AdapterPosition
 
+@dataclass
+class MicrocontrollerTimeoutInfo:
+    await_move:bool
+    "if the currently awaited command is a move command"
+    move_done:bool
+    "if a move command is awaited, indicates if the movement has finished"
+    target_cmd_id:int
+    "id of the awaited command"
+    current_cmd_id:int
+    "id of the currently processed command on the microcontroller"
+@dataclass
 class MicrocontrollerTimeout(BaseException):
-    def __int__(self):
-        pass
+    info:MicrocontrollerTimeoutInfo|None=None
 
 def intFromPayload(payload,start_index,num_bytes):
     ret=0
@@ -764,7 +774,6 @@ class Microcontroller(BaseModel):
     async def _wait_until_cmd_is_finished(
         self,
         cmd:"Command",
-        additional_delay:tp.Optional[float]=None,
 
         _ignore_cmd_id:bool=False,
         timeout_s:float=5.0,
@@ -777,19 +786,32 @@ class Microcontroller(BaseModel):
         last_position_x=0
         last_position_y=0
         last_position_z=0
+        timeoutinfo:None|MicrocontrollerTimeoutInfo=None
 
         async def read_packet(packet:MicrocontrollerStatusPackage)->bool:
             nonlocal last_position_x
             nonlocal last_position_y
             nonlocal last_position_z
+            nonlocal timeoutinfo
 
             latest_position_x=packet.x_pos_usteps
             latest_position_y=packet.y_pos_usteps
             latest_position_z=packet.z_pos_usteps
 
+            timeoutinfo=MicrocontrollerTimeoutInfo(
+                await_move=cmd.is_move_cmd,
+                move_done=False,
+                target_cmd_id=cmd[0],
+                current_cmd_id=packet.last_cmd_id,
+            )
+
             if cmd.is_move_cmd:
-                # wait until stage has stopped moving (which the microcontroller has no knowledge of)
-                if last_position_x!=latest_position_x or last_position_y!=latest_position_y or last_position_z!=latest_position_z:
+                # wait until stage has stopped moving (which the microcontroller has no direct knowledge of)
+                movement_in_progress=last_position_x!=latest_position_x or last_position_y!=latest_position_y or last_position_z!=latest_position_z
+
+                timeoutinfo.move_done=movement_in_progress
+
+                if movement_in_progress:
                     last_position_x=latest_position_x
                     last_position_y=latest_position_y
                     last_position_z=latest_position_z
@@ -816,10 +838,14 @@ class Microcontroller(BaseModel):
             # (moving takes way longer than this short delay, so we are waiting this time anyway)
             await asyncio.sleep(5e-3)
 
-        await self._read_packets(until=read_packet,timeout_s=timeout_s)
-
-        if additional_delay is not None:
-            await asyncio.sleep(additional_delay)
+        try:
+            await self._read_packets(until=read_packet,timeout_s=timeout_s)
+        except MicrocontrollerTimeout as mte:
+            if mte.info is None:
+                mte.info=timeoutinfo
+            elif timeoutinfo is not None:
+                logger.debug(f"did not overwrite timeoutinfo {mte.info} with {timeoutinfo}")
+            raise mte
     
     async def _read_packets(
         self,
@@ -844,14 +870,16 @@ class Microcontroller(BaseModel):
 
         start_time=time.time()
 
+        last_packet:MicrocontrollerStatusPackage|None=None
+
         self.terminate_reading_received_packet_thread=False
         while not self.terminate_reading_received_packet_thread:
             # wait to connect and receive data
 
             # time out at loop iteration start
             if((wait_time_s:=(time.time()-start_time))>timeout_s):
-                logger.critical(f"timed out after {wait_time_s:.3f} with {timeout_s=}")
-                raise MicrocontrollerTimeout()
+                logger.critical(f"timed out after {wait_time_s:.3f} with {timeout_s=} {last_packet=}")
+                raise MicrocontrollerTimeout(info=None)
 
             if self.handle is None:
                 logger.warning("self.handle is None ")
@@ -945,13 +973,13 @@ class Microcontroller(BaseModel):
                                 cmd,
 
                                 # allow more time for a move command to finish
-                                timeout_s=10.0  if cmd.is_move_cmd else 1.0,
+                                timeout_s=5.0 if cmd.is_move_cmd else 1.0,
 
                                 # reset command also resets the command id to zero, so we need to ignore the command id then
                                 _ignore_cmd_id=cmd[1]==Command.reset()[1],
                             )
-                        except MicrocontrollerTimeout:
-                            pass
+                        except MicrocontrollerTimeout as mte:
+                            logger.warning(f"microcontroller timed out while waiting for a command to finish with info: {mte.info}")
 
                         break
 
@@ -961,7 +989,7 @@ class Microcontroller(BaseModel):
 
     def close(self):
         "close connection to device"
-        
+
         logger.debug("microcontroller - closing")
 
         if self.handle is not None:

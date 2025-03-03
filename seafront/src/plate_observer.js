@@ -1,8 +1,8 @@
 /**
  * r: row index
  * c: col index
- * w: well width (x size) in mm
- * h: well height (y size) in mm
+ * w: well width (y size) in mm
+ * h: well height (x size) in mm
  * pxm: x coordinate on plate in mm
  * pym: y coordinate on plate in mm
  * @typedef {{
@@ -41,8 +41,8 @@ function generateWellOverviewWells(){
                     r: r,
                     c: c,
                     text: well_text,
-                    w: plate.Well_size_x_mm,
-                    h: plate.Well_size_y_mm,
+                    w: plate.Well_size_y_mm,
+                    h: plate.Well_size_x_mm,
                     pxm: plate.Offset_A1_x_mm + c * plate.Well_distance_x_mm,
                     pym: plate.Offset_A1_y_mm + r * plate.Well_distance_y_mm
                 })

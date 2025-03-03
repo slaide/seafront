@@ -56,8 +56,14 @@ function config_store(){
                         if(!(config_store_modal_comment_element instanceof HTMLTextAreaElement)){throw new Error("")}
                         const comment=config_store_modal_comment_element.value
 
+                        const microscope_config_copy=JSON.parse(JSON.stringify(_p.getUnmanaged(microscope_config)))
+                        // remove the wells that are just used for display purposes
+                        microscope_config_copy.plate_wells=microscope_config_copy.plate_wells.filter(w=>w.col>0&&w.row>0)
+                        // and adjust the indices to be 0-indexed again (they are 1-indexed for displaying)
+                        microscope_config_copy.plate_wells.forEach(w=>{w.row--;w.col--})
+
                         const data={
-                            "config_file":_p.getUnmanaged(microscope_config),
+                            "config_file":microscope_config_copy,
                             "filename":filename,
                             "comment":comment,
                         }
