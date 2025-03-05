@@ -23,7 +23,7 @@
 
         <!-- dependencies -->
         <script src="https://cdn.plot.ly/plotly-2.29.1.min.js" charset="utf-8"></script>
-        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@0fc83171690cdb2c45705250b3543d2f0d376017/p2.js" charset="utf-8"></script>
+        <script src="https://cdn.jsdelivr.net/gh/slaide/web-pjs@7ff197b9b0736a83e87824c6ee73f5adb7e7bbdd/p2.js" charset="utf-8"></script>
 
         <!-- fundamental components -->
         <script src="src/docLinks.js"></script>
@@ -94,7 +94,7 @@
                             p:init="Plot.plot_init(element)"
                             p:init-vis="Plot.plot_fit(element,{init:true,isvisible:true})"
                         >
-                            <canvas id="view_latest_image" width=2500 height=2500 loading="lazy"></canvas>
+                            <canvas id="view_latest_image" plot-data='{"width":2500,"height":2500}' width=2500 height=2500 loading="lazy"></canvas>
                         </div>
 
                         <div id="live-view-x-axis-container">
@@ -114,7 +114,7 @@
                                         p:init="Plot.plot_init(element)"
                                         p:init-vis="Plot.plot_fit(element,{init:true,isvisible:true})"
                                     >
-                                        <canvas id="view_latest_image_{{channel.handle}}" width=2500 height=2500 loading="lazy"></canvas>
+                                        <canvas id="view_latest_image_{{channel.handle}}" plot-data='{"width":2500,"height":2500}' width=2500 height=2500 loading="lazy"></canvas>
                                     </div>
                                 </div>
                             </template>
@@ -466,39 +466,71 @@
                                     </div>
                                 </div>
 
+                                <script>/*browser renderers behave differently when scaling up sub-pixel size values*/const plot_scalefactor=100.0;</script>
+
                                 <div class="section" id="objective-position-on-plate-container">
                                     <p class="section-header col-span-1">Objective position overview</p>
                                     <link rel="stylesheet" href="css/plate_observer.css">
                                     <script src="src/plate_observer.js"></script>
                                     <div id="objective-position-on-plate" class="data plot-display"
-                                        style="--plate-well-font-size: var( --plate-{{WellplateType.fromHandle(microscope_config.wellplate_type).num_wells}}-font-size );"
+                                        style="--plate-well-font-size: calc( var( --plate-{{WellplateType.fromHandle(microscope_config.wellplate_type).num_wells}}-font-size ) * {{plot_scalefactor}});"
                                         p:init="Plot.plot_init(element)"
                                         p:init-vis="Plot.plot_fit(element)"
                                     >
                                         <!-- plate (outline) -->
-                                        <div class='data'
-                                            width='{{WellplateType.fromHandle(microscope_config.wellplate_type).Length_mm.toFixed(2)}}'
-                                            height='{{WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm.toFixed(2)}}'
-                                        ></div>
+                                        <div class='data plateclass'
+                                            plot-data='{
+                                                "x":0,
+                                                "y":0,
+                                                "width":{{WellplateType.fromHandle(microscope_config.wellplate_type).Length_mm.toFixed(2)
+                                                * plot_scalefactor}},
+                                                "height":{{WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm.toFixed(2)
+                                                    * plot_scalefactor}}
+                                            }'
 
-                                        <!-- wells -->
-                                        <template class="data" p:for="w of well_list">
-                                            <div class="cellclass vert-center-container whiteTextOnGreyBackground"
-                                                width='{{/*height in plate space is width in plot space*/ w.h}}'
-                                                height='{{/*width in plate space is height in plot space*/ w.w}}'
-                                                plot-x-min="{{w.pxm}}"
-                                                plot-y-min="{{ /* adjust y coordinate since plot origin is at bottom left and plate origin at top left (y axis is width of plate) */ WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm - w.pym - w.w }}"
-                                            >
-                                                {{w.text}}
-                                            </div>
-                                        </template>
+                                            width="{{WellplateType.fromHandle(microscope_config.wellplate_type).Length_mm.toFixed(2)
+                                                * plot_scalefactor}}"
+                                            height="{{WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm.toFixed(2)
+                                                * plot_scalefactor}}"
+                                        >
+                                            <!-- wells -->
+                                            <template class="data" p:for="w of well_list">
+                                                <div class="cellclass vert-center-container whiteTextOnGreyBackground"
+                                                    style='
+                                                        width:{{
+                                                            /*height in plate space is width in plot space*/
+                                                            w.h * plot_scalefactor
+                                                        }}px;
+                                                        height:{{
+                                                            /*width in plate space is height in plot space*/
+                                                            w.w * plot_scalefactor
+                                                        }}px;
+                                                        left:{{ w.pxm * plot_scalefactor }}px;
+                                                        top:{{ w.pym * plot_scalefactor }}px;
+                                                    '
+                                                >
+                                                    {{w.text}}
+                                                </div>
+                                            </template>
+                                        </div>
 
                                         <!-- objective -->
-                                        <div class="objectiveclass data" 
-                                            width='{{microscope_state.fov_size.x_mm}}'
-                                            height='{{microscope_state.fov_size.y_mm}}'
-                                            plot-x-min="{{microscope_state.pos.x_mm - (microscope_state.fov_size.x_mm)/2 }}"
-                                            plot-y-min="{{/* adjust y coordinate since plot origin is at bottom left and plate origin at top left (y axis is width of plate) */ WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm - (microscope_state.pos.y_mm - (microscope_state.fov_size.y_mm)/2) - (microscope_state.fov_size.y_mm)}}"
+                                        <div class="objectiveclass data"
+                                            plot-data='{
+                                                "x":{{/* microscope position is at center of fov, so we correct to corner of fov */
+                                                (microscope_state.pos.x_mm - (microscope_state.fov_size.x_mm)/2)
+                                                * plot_scalefactor}},
+                                                "y":{{(
+                                                    WellplateType.fromHandle(microscope_config.wellplate_type).Width_mm -
+                                                    /* microscope position is at center of fov, so we correct to corner of fov */
+                                                    ( microscope_state.pos.y_mm + (microscope_state.fov_size.y_mm) / 2 )
+                                                )
+                                                * plot_scalefactor}},
+                                                "width":{{microscope_state.fov_size.x_mm * plot_scalefactor}},
+                                                "height":{{microscope_state.fov_size.y_mm * plot_scalefactor}}
+                                            }'
+                                            width="{{microscope_state.fov_size.x_mm * plot_scalefactor}}"
+                                            height="{{microscope_state.fov_size.y_mm * plot_scalefactor}}"
                                         ></div>
                                     </div>
                                 </div>

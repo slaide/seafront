@@ -14,8 +14,10 @@
 
     border:1px solid var(--plot-item-border);
 
-    left:var(--left);
-    bottom:var(--bottom);
-    width:calc( var(--scale-x) * var(--width) );
-    height:calc( var(--scale-y) * var(--height) );
+    transform-origin: bottom left;
+    bottom:0;left:0;
+    width:var(--width);
+    height:var(--height);
+
+    transform: scaleX(var(--scale-x)) scaleY(var(--scale-y)) translateX(calc( var(--left) / var(--scale-x))) translateY( calc( -1 * var(--bottom) / var(--scale-y)));
 }

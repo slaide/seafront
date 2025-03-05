@@ -87,10 +87,12 @@ class PlotData extends PlotItemData{
      * @returns {PlotData}
      */
     static constructForElement(element){
-        let initial_x_min=parseFloat(element.getAttribute("plot-x-min")||"nan")
-        let initial_x_max=parseFloat(element.getAttribute("plot-x-max")||"nan")
-        let initial_y_min=parseFloat(element.getAttribute("plot-y-min")||"nan")
-        let initial_y_max=parseFloat(element.getAttribute("plot-y-max")||"nan")
+        let plot_data=JSON.parse(element.getAttribute("plot-data")||"{}")
+
+        let initial_x_min=plot_data.x||0
+        let initial_x_max=initial_x_min+(plot_data.width||1)
+        let initial_y_min=plot_data.y||0
+        let initial_y_max=initial_y_min+(plot_data.height||1)
 
         // if initial_x_min is nan, set to 0
         if(isNaN(initial_x_min)){
@@ -181,7 +183,7 @@ class Plot{
 
         requestAnimationFrame(Plot.intervalUpdateFunction)
     }
-    static plotUpdateInitHandle=setTimeout(Plot.intervalUpdateFunction,1e3/30)
+    static plotUpdateInitHandle=setTimeout(()=>requestAnimationFrame(Plot.intervalUpdateFunction),0)
 
     /**
      * callback to resize plot when element size changes
@@ -380,7 +382,7 @@ class Plot{
                     mutation.type==="attributes"
                     && mutation.attributeName!=null
                     && (
-                        ["width","height","plot-x-min","plot-x-max","plot-y-min","plot-x-max"]
+                        ["width","height","plot-data"]
                         .indexOf(mutation.attributeName) > -1
                     )
                 ){
@@ -475,7 +477,7 @@ class Plot{
         for(let child of plot_element.children){
             if(!(child instanceof HTMLElement)){continue}
 
-            let child_plot_data=PlotData.getFor(child)
+            const child_plot_data=PlotData.getFor(child)
 
             x_min=Math.min(x_min,child_plot_data.x_min)
             x_max=Math.max(x_max,child_plot_data.x_max)
@@ -489,14 +491,14 @@ class Plot{
 
         if(plot_native_aspect_ratio>current_axis_aspect_ratio){
             // if plot element is wider than the current x axis, increase x axis
-            let x_center=(x_max+x_min)/2
-            let x_range=(y_max-y_min)*plot_native_aspect_ratio
+            let x_center=x_min+(x_max-x_min)/2
+            let x_range=(x_max-x_min)/current_axis_aspect_ratio*plot_native_aspect_ratio
             x_min=x_center-x_range/2
             x_max=x_center+x_range/2
         }else{
             // if plot is taller than the current y axis, increase y axis
-            let y_center=(y_max+y_min)/2
-            let y_range=(x_max-x_min)/plot_native_aspect_ratio
+            let y_center=y_min+(y_max-y_min)/2
+            let y_range=(y_max-y_min)*current_axis_aspect_ratio/plot_native_aspect_ratio
             y_min=y_center-y_range/2
             y_max=y_center+y_range/2
         }

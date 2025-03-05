@@ -38,22 +38,25 @@ async function laser_autofocus_debug_measure(){
         name:"measured",
     }
 
-    console.log("starting autofocus debug measurements")
-
     const clear_z_backlash_distance_mm=40*1e-3
-    await immediate_move(1,"z",bottom_move_dist_um*1e-3,false)
-    await immediate_move(1,"z",-clear_z_backlash_distance_mm,false)
-    await immediate_move(1,"z",clear_z_backlash_distance_mm,false)
+    await immediate_move(1,"z",bottom_move_dist_um*1e-3)
+    await immediate_move(1,"z",-clear_z_backlash_distance_mm)
+    await immediate_move(1,"z",clear_z_backlash_distance_mm)
     for(let i=0;i<num_images;i++){
         if(i>0){
-            await immediate_move(1,"z",step_size_um*1e-3,false)
+            await immediate_move(1,"z",step_size_um*1e-3)
         }
-        var current_offset=await measureLaserAutofocusOffset()
-        if(current_offset==null)current_offset=NaN;
+
+        let current_offset=parseFloat("nan")
+        try{
+            const measured_offset=await measureLaserAutofocusOffset()
+
+            if(measured_offset!=null && isFinite(measured_offset))current_offset=measured_offset
+        }catch(e){}
+
         trace2.y[i]=current_offset
     }
-    await immediate_move(1,"z",bottom_move_dist_um*1e-3,false)
-    console.log("done with autofocus debug measurements")
+    await immediate_move(1,"z",bottom_move_dist_um*1e-3)
 
     const trace3={
         x:trace1.x,

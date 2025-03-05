@@ -6,7 +6,7 @@
  * @param {number} distance_mm 
  * @returns {Promise<{}>|null}
  */
-function immediate_move(sign,axis,distance_mm,async=true){
+function immediate_move(sign,axis,distance_mm){
     let data={
         axis:axis,
         distance_mm:sign*distance_mm
@@ -20,7 +20,7 @@ function immediate_move(sign,axis,distance_mm,async=true){
     }
 
     return new Promise((resolve,reject)=>{
-        new XHR(async)
+        new XHR(true)
             .onload((xhr)=>{
                 progress_indicator.stop()
                 
