@@ -2,7 +2,7 @@
 let laserautofocusdata=_p.manage({currentOffset:0.0})
 
 /**
- * @param{HTMLElement} element
+ * @param {HTMLElement} element
  */
 function laser_autofocus_initcheckbox(element){
     _p.onValueChangeCallback(()=>{
@@ -73,7 +73,7 @@ async function setLaserAutofocusReference(){
         .onload((xhr)=>{
             progress_indicator.stop()
             
-            /**@type{{status:string,calibration_data?:{x_reference:number,um_per_px:number,calibration_position:{x_pos_mm:number,y_pos_mm:number,z_pos_mm:number}}}}*/
+            /**@type {{status:string,calibration_data?:{x_reference:number,um_per_px:number,calibration_position:{x_pos_mm:number,y_pos_mm:number,z_pos_mm:number}}}}*/
             let response=JSON.parse(xhr.responseText)
 
             const autofocus_enabled_checkbox_element=document.getElementById("autofocus-enabled-checkbox")

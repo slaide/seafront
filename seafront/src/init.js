@@ -11,7 +11,7 @@ function range(n){
 }
 
 /**
- * @type{{
+ * @type {{
  * machine_name:string,
  * state:string,
  * is_in_loading_position:boolean,
@@ -43,20 +43,20 @@ let _initialMachoneConfigInfo={
 let microscope_state=_p.manage(_initialMachoneConfigInfo)
 
 let image_loading={in_progress:false}
-/**@type{{id:string|null,status_successful:boolean,ws:WebSocket|null}} */
+/**@type {{id:string|null,status_successful:boolean,ws:WebSocket|null}} */
 let last_acquisition={
     id:null,
     status_successful:true,
     ws:null,
 }
 let last_update_successful=true
-/** @type{number?} */
+/** @type {number?} */
 let loadTimer=null
-/** @type{Map<HTMLImageElement,{loaded:boolean}>} */
+/** @type {Map<HTMLImageElement,{loaded:boolean}>} */
 const element_image_load_state=new Map()
 
 /**
- * @type{Array<{load:function(CoreCurrentState):void,error:function():void}>}
+ * @type {Array<{load:function(CoreCurrentState):void,error:function():void}>}
  */
 let state_callbacks=[]
 /**
@@ -65,6 +65,21 @@ let state_callbacks=[]
  */
 function get_current_state(callbacks){
     state_callbacks.push(callbacks)
+}
+
+/**
+ * 
+ * @param {{width:number,height:number}} payload 
+ * @param {any} image_bytes 
+ * @returns {Promise<ImageData>}
+ */
+function image_data_to_imagedata(payload,image_bytes){
+    let worker=new Worker("src/image2imagedata_worker.js")
+    return new Promise((resolve, reject) => {
+        worker.onmessage = (e) => resolve(e.data);
+        worker.onerror = (e) => reject(e);
+        worker.postMessage({payload:payload,image_bytes:image_bytes});
+    });
 }
 
 /**
@@ -87,41 +102,10 @@ function fetch_image(channel_name){
             let payload=JSON.parse(event.data)
 
             ws.binaryType="arraybuffer"
-            ws.onmessage=event=>{
-                const rawbytes=new Uint8Array(event.data)
-                
-                let rgba=new Uint8ClampedArray()
-                if((rawbytes.length/(payload.width*payload.height))==1){
-                    const mono=rawbytes
+            ws.onmessage=async event=>{
+                const imagedata=await image_data_to_imagedata(payload,event.data)
 
-                    rgba=new Uint8ClampedArray(4*payload.width*payload.height)
-                    for(let i=0;i<mono.length;i++){
-                        // clamp happens inside the array
-                        const pix=mono[i]
-
-                        rgba[i*4+0]=pix
-                        rgba[i*4+1]=pix
-                        rgba[i*4+2]=pix
-                        rgba[i*4+3]=255
-                    }
-                }else{
-                    const mono=new Uint16Array(event.data)
-
-                    rgba=new Uint8ClampedArray(4*payload.width*payload.height)
-                    for(let i=0;i<mono.length;i++){
-                        // convert u16 to u8 by shifting
-                        // clamp happens inside the array
-                        const pix=(mono[i]>>8)
-
-                        rgba[i*4+0]=pix
-                        rgba[i*4+1]=pix
-                        rgba[i*4+2]=pix
-                        rgba[i*4+3]=255
-                    }
-                }
-                const imagedata=new ImageData(rgba,payload.width,payload.height)
-
-                // close websocket connection, it will stay open forever otherwise
+                // close websocket connection, otherwise it will stay open forever
                 ws.close()
 
                 resolve(imagedata)
@@ -137,20 +121,20 @@ function fetch_image(channel_name){
     })
 }
 
-/** @type{WebSocket?} */
+/** @type {WebSocket?} */
 let status_update_websocket=null
 let last_image={timestamp:0}
-/**@type{Map<string,ImageStoreInfo>} */
+/**@type {Map<string,ImageStoreInfo>} */
 class ChannelUpdater{
     constructor(){
-        /**@type{Map<string,ImageStoreInfo>} */
+        /**@type {Map<string,ImageStoreInfo>} */
         this.latest_channel_images=new Map()
-        /**@type{Map<string,{p:Promise<{img:ImageData,info:ImageStoreInfo}>,resolved:boolean}>} */
+        /**@type {Map<string,{p:Promise<{img:ImageData,info:ImageStoreInfo}>,resolved:boolean}>} */
         this.channel_update_in_progress=new Map()
     }
     /**
-     * @param{ImageStoreInfo}channel_data
-     * @returns{Promise<{img:ImageData,info:ImageStoreInfo}>}
+     * @param {ImageStoreInfo}channel_data
+     * @returns {Promise<{img:ImageData,info:ImageStoreInfo}>}
      */
     schedule(channel_data){
         const current_update=this.channel_update_in_progress.get(channel_data.channel.handle)
@@ -185,21 +169,19 @@ class ChannelUpdater{
 let channel_updater=new ChannelUpdater()
 
 /**
- * 
- * @param {ImageData} img 
- * @returns {number[]}
- */
-function calculate_histogram(img){
-    let ret=new Array(256)
-    for(let i=0;i<256;i++)ret[i]=0
-    // image data has 4 components
-    for(let i=0;i<img.data.length;i+=4){
-        ret[img.data[i]]++
-    }
-    return ret
+    * @param {ImageData} img 
+    * @returns {Promise<number[]>}
+    */
+function worker_calculate_histogram(img){
+    let worker=new Worker("src/histogram_worker.js")
+    return new Promise((resolve, reject) => {
+        worker.onmessage = (e) => resolve(e.data);
+        worker.onerror = (e) => reject(e);
+        worker.postMessage(img);
+    });
 }
 
-/**@type{Map<string,number>} */
+/**@type {Map<string,number>} */
 let last_channel_update_timestamps=new Map()
 /**
  * initiates the background update loop that handles more than just the position
@@ -218,8 +200,8 @@ function updateMicroscopePosition(){
         state_callbacks=[]
     }
 
-    /** @param{CoreCurrentState} data */
-    function onload(data){
+    /** @param {CoreCurrentState} data */
+    async function onload(data){
         if(!last_update_successful){
             message_open("info","recovered microscope position update")
             last_update_successful=true
@@ -241,11 +223,11 @@ function updateMicroscopePosition(){
         let channel_names=Object.keys(data.latest_imgs)
         if(data.latest_imgs!=null && channel_names.length>0){
             // default: pick first channel
-            /**@type{ImageStoreInfo|null} */
+            /**@type {ImageStoreInfo|null} */
             let latest_channel_info=data.latest_imgs[channel_names[0]]
 
             // remove histograms for channels that are no longer in the config
-            /**@type{number[]}*/const indicesToRemove = [];
+            /**@type {number[]}*/const indicesToRemove = [];
             if(!histogram_plot_element){console.error("histogram_plot_element not present");return}
             histogram_plot_element.data.forEach((trace, index) => {
                 if (!microscope_config.channels.find(c=>trace.name==c.handle && c.enabled)){
@@ -274,7 +256,7 @@ function updateMicroscopePosition(){
 
             // find channel with newest timestamp
             let timestamp=last_image.timestamp
-            for(let [channel_name,channel_index] of Object.keys(data.latest_imgs).map(/**@type{function(string,number):[string,number]}*/(v,i)=>[v,i])){
+            for(let [channel_name,channel_index] of Object.keys(data.latest_imgs).map(/**@type {function(string,number):[string,number]}*/(v,i)=>[v,i])){
                 const channel_data=data.latest_imgs[channel_name]
                 if(!channel_data)continue // unreachable, but type checker is not smart enough
 
@@ -293,7 +275,7 @@ function updateMicroscopePosition(){
                 if((last_channel_update_timestamps.get(channel_data.channel.handle)||0) < channel_timestamp){
                     last_channel_update_timestamps.set(channel_data.channel.handle,channel_timestamp)
 
-                    channel_updater.schedule(channel_data).then(data=>{
+                    channel_updater.schedule(channel_data).then(async data=>{
                         const latest_channel_image_canvas=document.getElementById("view_latest_image_"+data.info.channel.handle)
                         if(!(latest_channel_image_canvas instanceof HTMLCanvasElement)){
                             console.error("latest_channel_image_canvas",latest_channel_image_canvas,typeof latest_channel_image_canvas)
@@ -301,12 +283,19 @@ function updateMicroscopePosition(){
                         }else{
                             latest_channel_image_canvas.getContext("2d")?.putImageData(data.img,0,0)
 
-                            // takes 18-22ms on 3ghz rpi5
-                            let histo=calculate_histogram(data.img)
+                            let histogram_data=null
+                            try{
+                                const prom=worker_calculate_histogram(data.img)
+                                histogram_data=await prom
+                            }catch(e){
+                                console.error(e)
+                                return
+                            }
+                            let histo=histogram_data
 
                             // slightly wasteful, but nice to copy to other places
                             if(!histogram_plot_element){console.error("histogram_plot_element not present");return}
-                            /**@type{number[]}*/const indicesToRemove = [];
+                            /**@type {number[]}*/const indicesToRemove = [];
                             histogram_plot_element.data.forEach((trace, index) => {
                                 if (trace.name === channel_data.channel.handle) {
                                     indicesToRemove.push(index);
@@ -352,7 +341,7 @@ function updateMicroscopePosition(){
         let acquisition_progress_element=document.getElementById("acquisition-progress-bar")
         if(!acquisition_progress_element)/*page not finished loading*/return;//throw new Error("progress_element is null")
 
-        /**@param{number} percent */
+        /**@param {number} percent */
         function setAcquisitionProgressPercent(percent){
             if(!acquisition_progress_element)throw new Error("progress_element is null")
             acquisition_progress_element.style.setProperty(
@@ -432,8 +421,8 @@ function updateMicroscopePosition(){
                 let remaining_time_h=hours.toFixed(0)
 
                 /**
-                 * @param{string} s
-                 * @return{string}
+                 * @param {string} s
+                 * @return {string}
                  */
                 function pad_to_two_digits(s){
                     if(s.length<2){
@@ -550,8 +539,8 @@ class ImagingChannel{
     }
 
     /**
-     * @param{AcquisitionChannelConfig} py_obj
-     * @return{ImagingChannel}
+     * @param {AcquisitionChannelConfig} py_obj
+     * @return {ImagingChannel}
      */
     static from_python(py_obj){
         return new ImagingChannel(
@@ -603,12 +592,12 @@ function getConfigState(){
 }
 
 /**
- * @return{HardwareCapabilitiesResponse|null}
+ * @return {HardwareCapabilitiesResponse|null}
  */
 function get_hardware_capabilities(){
     return new XHR(false)
         .onload(function (xhr) {
-            /** @type{HardwareCapabilitiesResponse} */
+            /** @type {HardwareCapabilitiesResponse} */
             let data = JSON.parse(xhr.responseText)
             return data
         })
@@ -621,7 +610,7 @@ function get_hardware_capabilities(){
 function microscopeConfigGetDefault(){
     // TODO fetch this [default] from the server
 
-    /** @type{AcquisitionConfig} */
+    /** @type {AcquisitionConfig} */
     let ret={
         project_name: "",
         plate_name: "",
@@ -667,9 +656,19 @@ function microscopeConfigGetDefault(){
 }
 const microscope_config=_p.manage(microscopeConfigGetDefault())
 
+const objective={
+    fov_size_x_mm:0.9,
+    fov_size_y_mm:0.9,
+}
+
+const USER_INTERFACE_LIMITS={
+    grid_max_num_x:99,
+    grid_max_num_y:99,
+}
+
 /**
- * @param{string} handle
- * @returns{ConfigItem|null}
+ * @param {string} handle
+ * @returns {ConfigItem|null}
  * */
 function getMachineConfig(handle){
     if(!microscope_config.machine_config)return null;
@@ -762,7 +761,7 @@ function microscopeConfigOverride(new_config){
             return row*(currentPlateType.num_wells+3)+col
         }
 
-        /** @type{Map<number,WellIndex>} */
+        /** @type {Map<number,WellIndex>} */
         const currentWellLookup=new Map()
         for(let well of microscope_config.plate_wells){
             const index=getIndexFromRowCol(well.row,well.col)
@@ -923,8 +922,8 @@ class WellplateType{
     }
 
     /**
-     * @param{Wellplate} py_obj
-     * @return{WellplateType}
+     * @param {Wellplate} py_obj
+     * @return {WellplateType}
      */
     static from_python(py_obj){
         return new WellplateType(py_obj)
@@ -937,12 +936,12 @@ class WellplateType{
     /** get all plate specs from the server, and cache the result */
     static all_raw_plates=(get_hardware_capabilities()?.wellplate_types.map(WellplateType.from_python)||[])
 
-    /** @type{{name:string,num_wells:number,entries:WellplateType[]}[]?} */
+    /** @type {{name:string,num_wells:number,entries:WellplateType[]}[]?} */
     static _all=null
 
     static _handleToType=new Map()
 
-    /** @type{{name:string,num_wells:number,entries:WellplateType[]}[]} */
+    /** @type {{name:string,num_wells:number,entries:WellplateType[]}[]} */
     static get all(){
         if(WellplateType._all!=null){
             return WellplateType._all

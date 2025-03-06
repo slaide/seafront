@@ -1,12 +1,12 @@
 let message_last_id=0;
 
-/** @typedef{{text:string,id:number,level:"info"|"warn"|"error",level_string:string,timestamp:string}} Message */
+/** @typedef {{text:string,id:number,level:"info"|"warn"|"error",level_string:string,timestamp:string}} Message */
 
-/** @type{Message[]} */
+/** @type {Message[]} */
 let messages=_p.manage([])
 /**
- * @param{"warn"|"info"|"error"} level
- * @param{any} msg
+ * @param {"warn"|"info"|"error"} level
+ * @param {any} msg
  */
 function message_open(level,...msg){
     const current_time=new Date()
@@ -62,7 +62,7 @@ function message_open(level,...msg){
     message_last_id+=1
 }
 /**
- * @param{number} target_message_id
+ * @param {number} target_message_id
  */
 function message_close(target_message_id){
     let message_index=-1;
@@ -82,7 +82,7 @@ function message_close(target_message_id){
 }
 
 /**
- * @param{Message} message
+ * @param {Message} message
  */
 function message_get_class(message){
     if(message.level=="info"){
@@ -97,8 +97,8 @@ function message_get_class(message){
     throw Error("unknown level "+message.level)
 }
 /**
- * @param{Element} element
- * @param{Message} message
+ * @param {Element} element
+ * @param {Message} message
  */
 function message_init(element,message){
     element.classList.add(message_get_class(message))

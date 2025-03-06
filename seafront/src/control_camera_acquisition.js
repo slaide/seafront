@@ -1,6 +1,6 @@
 
 function start_streaming(){
-    /** @type{{machine_config:any,framerate_hz:number,channel:ImagingChannel?}}*/
+    /** @type {{machine_config:any,framerate_hz:number,channel:ImagingChannel?}}*/
     let data={
         machine_config:getConfigState(),
         framerate_hz:5,
@@ -38,7 +38,7 @@ function start_streaming(){
         .send("api/action/stream_channel_begin",data,"POST")
 }
 function stop_streaming(){
-    /** @type{{channel:ImagingChannel?}} */
+    /** @type {{channel:ImagingChannel?}} */
     let data={
         channel:null
     }

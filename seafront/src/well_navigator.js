@@ -15,8 +15,8 @@ class WellIndex{
         this.selected=selected
     }
     /**
-     * @param{AcquisitionWellSiteConfigurationSiteSelectionItem} py_obj
-     * @return{WellIndex}
+     * @param {AcquisitionWellSiteConfigurationSiteSelectionItem} py_obj
+     * @return {WellIndex}
      */
     static from_python(py_obj){
         return new WellIndex(py_obj.row,py_obj.col,py_obj.selected)
@@ -80,7 +80,7 @@ class WellIndex{
      * 
      * forbidden means not allowed to move to, either on immediate move or during acquisition
      * 
-     * @type{Set<WellIndex>}
+     * @type {Set<WellIndex>}
      */
     static forbidden_wells=new Set()
 
@@ -150,16 +150,19 @@ function initwellnavigator(){
     microscope_config.plate_wells.push(...new_plate_wells)
 }
 
-/** @type{{
- *      start: PlateWellConfig?,
- *      end: PlateWellConfig?,
- *      prev_state: Map<PlateWellConfig, boolean>?
- * }} */
+/**
+ * @type {{
+ *     start: PlateWellConfig?,
+ *     end: PlateWellConfig?,
+ *     prev_state: Map<PlateWellConfig, boolean>?
+ * }}
+ */
 let drag_info={
     start:null,
     end:null,
     prev_state:null,
 }
+
 function _wellPointer_update(){
     if(!(drag_info.start && drag_info.end && drag_info.prev_state))return
 

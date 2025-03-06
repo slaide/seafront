@@ -41,8 +41,8 @@ function start_acquisition(){
 }
 
 /**
- * @param{string} acq_id
- * @param{{load:(acq_stat:AcquisitionStatusOut)=>void,error:(xhr:XMLHttpRequest)=>void}?} cb
+ * @param {string} acq_id
+ * @param {{load:(acq_stat:AcquisitionStatusOut)=>void,error:(xhr:XMLHttpRequest)=>void}?} cb
  */
 function get_acquisition_info(acq_id,cb){
     const send_data={"acquisition_id":acq_id}
@@ -52,7 +52,7 @@ function get_acquisition_info(acq_id,cb){
 
     new XHR(false)
         .onload((xhr)=>{
-            /** @type{AcquisitionStatusOut} */
+            /** @type {AcquisitionStatusOut} */
             let progress=JSON.parse(xhr.responseText)
 
             if(cb&&cb.load){

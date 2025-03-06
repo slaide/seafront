@@ -1,7 +1,5 @@
-linkPlots
-
 /**
- * @param{InputEvent} event
+ * @param {InputEvent} event
  */
 function setGridViewCols(event){
 	if(!(event.target instanceof HTMLInputElement)){return}

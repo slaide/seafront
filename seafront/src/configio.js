@@ -1,12 +1,12 @@
 /**
- * @typedef{{filename:string,comment:string,timestamp:string,cell_line:string,plate_type:string}} ConfigFileInfo
+ * @typedef {{filename:string,comment:string,timestamp:string,cell_line:string,plate_type:string}} ConfigFileInfo
  */
 
-/** @type{ConfigFileInfo[]} */
+/** @type {ConfigFileInfo[]} */
 let files=_p.manage([])
 
 /**
- * @param{ConfigFileInfo} file_data
+ * @param {ConfigFileInfo} file_data
  */
 function load_remote_config(file_data){
     let data={config_file:file_data.filename}
@@ -23,9 +23,9 @@ function load_remote_config(file_data){
         .send("/api/acquisition/config_fetch",data,"POST")
 }
 
-/** @type{HTMLElement?} */
+/** @type {HTMLElement?} */
 let config_load_modal_element=null
-/** @type{HTMLElement?} */
+/** @type {HTMLElement?} */
 let config_store_modal_element=null
 
 function config_store(){

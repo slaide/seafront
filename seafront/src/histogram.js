@@ -28,7 +28,7 @@ function nrand(n,min_v,max_v){
     return out
 }
 
-/**@type{PlotlyLayout} */
+/**@type {PlotlyLayout} */
 const layout={
     autosize:true,
 
@@ -59,7 +59,7 @@ const layout={
     paper_bgcolor:"lightgrey"
 }
 
-/**@type{PlotlyConfig} */
+/**@type {PlotlyConfig} */
 const config={
     responsive: true,
     modeBarButtonsToRemove:[
@@ -73,7 +73,7 @@ const config={
 }
 
 const histogram_plot_element_id='histogram-panel'
-/** @ts-ignore @type{PlotlyHTMLElement|null} */
+/** @ts-ignore @type {PlotlyHTMLElement|null} */
 const histogram_plot_element = document.getElementById(histogram_plot_element_id);
 if(!histogram_plot_element){throw new Error("child is null")}
 
@@ -92,7 +92,7 @@ new ResizeObserver(function(){
  * 
  * ref https://plotly.com/javascript/plotlyjs-function-reference/
  * 
- * @ts-ignore @type{{
+ * @ts-ignore @type {{
  * newPlot:function(string,any[]?,PlotlyLayout?,PlotlyConfig?):void,
  * deleteTraces:function(PlotlyHTMLElement,number[]):void,
  * addTraces:function(PlotlyHTMLElement,PlotlyTrace):void,

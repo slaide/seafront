@@ -13,7 +13,7 @@ async function laser_autofocus_debug_measure(){
 
     console.log("run autofocus debug with num image",num_images,"total z um",total_z_um)
 
-    /**@type{{x:number[],y:number[],mode:string,name:string}}*/
+    /**@type {{x:number[],y:number[],mode:string,name:string}}*/
     const trace1={
         x:[],
         y:[],

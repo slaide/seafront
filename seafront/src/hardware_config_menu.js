@@ -84,7 +84,7 @@ function match_name(name){
     const ret=lowercasename.includes(lowercasemachine_value_filter)
     return ret
 }
-/** @type{ConfigItem[]} */
+/** @type {ConfigItem[]} */
 let filtered_machine_defaults=_p.manage([])
 
 /**

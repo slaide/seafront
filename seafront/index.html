@@ -320,12 +320,12 @@
                                     <p class="section-header col-span-5">Imaging Site Configuration (within Well) <a class="data" href="{{docLinks.siteConfig}}" target="_blank">Help</a></p>
 
                                     <label class="data" p:tooltip="number of x coordinates">num x</label>
-                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_x" p:on-input="updateGridMask()">
+                                    <input type="number" min="1" max="{{USER_INTERFACE_LIMITS.grid_max_num_x}}" value="1" step="1" class="data" p:bind="microscope_config.grid.num_x" p:on-input="updateGridMask()">
                                     <label class="data" p:tooltip="distance between x coordinates">delta x [mm]</label>
                                     <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_x_mm">
 
                                     <label class="data" p:tooltip="number of y coordinates">num y</label>
-                                    <input type="number" min="1" max="9" value="1" step="1" class="data" p:bind="microscope_config.grid.num_y" p:on-input="updateGridMask()">
+                                    <input type="number" min="1" max="{{USER_INTERFACE_LIMITS.grid_max_num_y}}" value="1" step="1" class="data" p:bind="microscope_config.grid.num_y" p:on-input="updateGridMask()">
                                     <label class="data" p:tooltip="distance between y coordinates">delta y [mm]</label>
                                     <input type="number" min="0.1" max="9" value="0.9" step="0.1" class="data" p:bind="microscope_config.grid.delta_y_mm">
 
@@ -342,10 +342,10 @@
                                     <script>
                                         /**
                                          * pad string s to at least length l by repeating leading char padchar
-                                         * @param{string} s
-                                         * @param{number} l
-                                         * @param{string} padchar - repeat this char leading s.length-l times
-                                         * @return{string}
+                                         * @param {string} s
+                                         * @param {number} l
+                                         * @param {string} padchar - repeat this char leading s.length-l times
+                                         * @return {string}
                                          */
                                         function padtoLength(s,l,padchar){
                                             let s_string=`${s}`
@@ -495,6 +495,22 @@
                                         >
                                             <!-- wells -->
                                             <template class="data" p:for="w of well_list">
+                                                <!--TODO: imaging sites (generated per well, but may be outside well area)-->
+                                                <template class="data" p:for="site of microscope_config.grid.mask">
+                                                    <div style="
+                                                        position:absolute;
+
+                                                        height:{{objective.fov_size_x_mm*plot_scalefactor}}px;
+                                                        width:{{objective.fov_size_y_mm*plot_scalefactor}}px;
+
+                                                        left:{{ (w.pxm+w.h/2+microscope_config.grid.delta_x_mm*((microscope_config.grid.num_x/2)-1-site.col)) * plot_scalefactor }}px;
+                                                        top:{{ (w.pym+w.w/2+microscope_config.grid.delta_y_mm*((microscope_config.grid.num_y/2)-1-site.row)) * plot_scalefactor }}px;
+                                                        z-index:2;
+
+                                                        background:black;
+                                                    "></div>
+                                                </template>
+                                                <!--well item-->
                                                 <div class="cellclass vert-center-container whiteTextOnGreyBackground"
                                                     style='
                                                         width:{{

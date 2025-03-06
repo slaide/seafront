@@ -1,12 +1,12 @@
-/** @type{HTMLElement?} */
+/** @type {HTMLElement?} */
 let modal_element=null
-/** @type{{title:string,extra_buttons:{title:string,onclick:()=>void}[]}} */
+/** @type {{title:string,extra_buttons:{title:string,onclick:()=>void}[]}} */
 let modal_data={
     title:"",
     extra_buttons:[]
 }
 
-/** @param body {string|HTMLElement} */
+/** @param {string|HTMLElement} body*/
 function modal_set_body(body){
     if(!modal_element) throw new Error("modal element not found")
 

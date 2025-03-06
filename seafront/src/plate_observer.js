@@ -15,7 +15,7 @@
  *      pym: number
  * }} PhysicalWellItemInformation
  */
-/** @type{PhysicalWellItemInformation[]} */
+/** @type {PhysicalWellItemInformation[]} */
 let well_list=_p.manage([])
 function generateWellOverviewWells(){
     // clear well_list
@@ -28,7 +28,7 @@ function generateWellOverviewWells(){
 
     // async DOM update
     setTimeout(()=>{
-        /** @type{PhysicalWellItemInformation[]} */
+        /** @type {PhysicalWellItemInformation[]} */
         let ret=[]
         
         for(let c of range(plate.Num_wells_x)){

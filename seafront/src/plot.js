@@ -173,7 +173,7 @@ class Plot{
 
     /**
      * central element containing references to all container update functions to have a single interval updater
-     * @type{function[]}
+     * @type {function[]}
      * */
     static containerUpdateFuncs=[]
     static intervalUpdateFunction=function(){
