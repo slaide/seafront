@@ -466,7 +466,7 @@
                                     </div>
                                 </div>
 
-                                <script>/*browser renderers behave differently when scaling up sub-pixel size values*/const plot_scalefactor=100.0;</script>
+                                <script>/*browser renderers behave differently when scaling up sub-pixel size values*/const plot_scalefactor=1000.0;</script>
 
                                 <div class="section" id="objective-position-on-plate-container">
                                     <p class="section-header col-span-1">Objective position overview</p>
@@ -497,18 +497,27 @@
                                             <template class="data" p:for="w of well_list">
                                                 <!--TODO: imaging sites (generated per well, but may be outside well area)-->
                                                 <template class="data" p:for="site of microscope_config.grid.mask">
-                                                    <div style="
-                                                        position:absolute;
+                                                    <div
+                                                        class="data"
+                                                        style="
+                                                            position:absolute;
+                                                            {{
+                                                                (
+                                                                    site.selected
+                                                                    /* too computationally intensive, and p:if is not currently reactive.. -- && microscope_config.plate_wells.find(pw=>pw.row==w.row&&pw.col==w.col)?.selected */
+                                                                )?'':'display:none;'
+                                                            }}
 
-                                                        height:{{objective.fov_size_x_mm*plot_scalefactor}}px;
-                                                        width:{{objective.fov_size_y_mm*plot_scalefactor}}px;
+                                                            height:{{objective.fov_size_x_mm*plot_scalefactor}}px;
+                                                            width:{{objective.fov_size_y_mm*plot_scalefactor}}px;
 
-                                                        left:{{ (w.pxm+w.h/2+microscope_config.grid.delta_x_mm*((microscope_config.grid.num_x/2)-1-site.col)) * plot_scalefactor }}px;
-                                                        top:{{ (w.pym+w.w/2+microscope_config.grid.delta_y_mm*((microscope_config.grid.num_y/2)-1-site.row)) * plot_scalefactor }}px;
-                                                        z-index:2;
+                                                            left:{{ (w.pxm + w.h/2 - microscope_config.grid.delta_x_mm * ((microscope_config.grid.num_x)/2) + microscope_config.grid.delta_x_mm * site.col) * plot_scalefactor }}px;
+                                                            top: {{ (w.pym + w.w/2 - microscope_config.grid.delta_y_mm * ((microscope_config.grid.num_y)/2) + microscope_config.grid.delta_y_mm * site.row) * plot_scalefactor }}px;
+                                                            z-index:2;
 
-                                                        background:black;
-                                                    "></div>
+                                                            background:black;
+                                                        "
+                                                    ></div>
                                                 </template>
                                                 <!--well item-->
                                                 <div class="cellclass vert-center-container whiteTextOnGreyBackground"
