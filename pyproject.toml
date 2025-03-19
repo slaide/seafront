@@ -6,7 +6,7 @@ authors=[
 ]
 dependencies = [
     "gxipy@git+https://github.com/slaide/daheng-imaging-gxipy", # camera API
-    "seaconfig@git+https://github.com/slaide/seafront-config@0a4f8ab6671d60f5293aaee189987260b1b383ff", # configuration file handling
+    "seaconfig@git+https://github.com/slaide/seafront-config@a61c79a1df4c98479c4c85ee7170dedc9ad01ead", # configuration file handling
     "pyserial==3.5", # for microcontroller communication
     "crc>=1.3,<1.4", # for basic microcontroller packet communication
     "pillow>=11.1,<11.2", # for image format conversion to store to disk/send to client for display
