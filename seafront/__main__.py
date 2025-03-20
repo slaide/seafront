@@ -1355,6 +1355,16 @@ def _no_comp_init(self,*args,**kwargs):
     return _orig_init(self,*args,**kwargs)
 websockets.server.WebSocketServerProtocol.__init__=_no_comp_init#type:ignore (websockets.server.WebSocketServerProtocol is deprecated, but still supported at the frozen package version)
 
+# allow cross origin requests
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 from .logger import logger
 @logger.catch
 def main():
