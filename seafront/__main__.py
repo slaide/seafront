@@ -32,6 +32,7 @@ _DEBUG_P2JS=True
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIWebSocketRoute
@@ -1140,11 +1141,11 @@ class Core:
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.debug(f"Validation error at {request.url}: {exc.errors()}",flush=True)
+    logger.debug(f"Validation error at {request.url}: {exc.errors()}")
 
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content=jsonable_encoder({"detail": exc.errors()}),
     )
 
 # -- fix issue in tp.Optional annotation with pydantic
