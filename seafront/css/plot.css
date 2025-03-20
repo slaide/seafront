@@ -19,5 +19,7 @@
     width:var(--width);
     height:var(--height);
 
-    transform: scaleX(var(--scale-x)) scaleY(var(--scale-y)) translateX(calc( var(--left) / var(--scale-x))) translateY( calc( -1 * var(--bottom) / var(--scale-y)));
+    will-change:transform;
+    contain: layout paint;
+    transform: scale(var(--scale-x), var(--scale-y)) translate(calc( var(--left) / var(--scale-x)), calc( -1 * var(--bottom) / var(--scale-y)));
 }
