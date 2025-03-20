@@ -21,38 +21,26 @@ the computer needs to be connected to the internet during setup.
 ```sh
 # instruction: unplug microscope
 
-# download code
+# download seafront
+cd ~
 git clone https://github.com/slaide/seafront
-cd seafront
 
-# install udev rule to enable communication with microscope
-cd install
-sudo bash teensyduino_udev_rules.sh
-sudo bash galaxy_camera_fix_usb_memory.sh # read this file for an additional comment
-cd ..
-
-# set up python environment
-cd python_env 
-bash install.sh
-cd ..
-source python_env/activate.sh
-
-# install python code and dependencies
-# (installs the camera api as dependency)
-python3 -m pip install .
+# set up python environment, install dependencies and seafront software
+cd ~/seafront
+bash install/all.sh
 
 # instruction: plug microscope power in, wait for motors to engage (makes a 'clonk' sound)
 # instruction: plug in microscope via usb (all cameras + microcontroller. i recommend using an external usb hub to simplify this.)
 
 # run software, via:
-python3 -m seafront
+bash run.sh
 
 # note: config file is now in ~/seafront/config.json (change and reload software to apply)
 ```
 
 example config file:
 ```
-$ cat seafront/config.json 
+$ cat ~/seafront/config.json
 {
     "main_camera_model": "MER2-1220-32U3M",
     "laser_autofocus_camera_model": "MER2-630-60U3M",
