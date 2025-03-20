@@ -22,7 +22,7 @@ function range(n){
  * latest_channel_images:Map<string,ImageStoreInfo>
  * }}
 */
-let _initialMachoneConfigInfo={
+let _initialMachineConfigInfo={
     machine_name:"",
     state:"idle",
     is_in_loading_position:false,
@@ -40,7 +40,7 @@ let _initialMachoneConfigInfo={
     latest_channel_images:new Map(),
 }
 // keep track of information sent from the microscope to indicate what status it is in
-let microscope_state=_p.manage(_initialMachoneConfigInfo)
+let microscope_state=_p.manage(_initialMachineConfigInfo)
 
 let image_loading={in_progress:false}
 /**@type {{id:string|null,status_successful:boolean,ws:WebSocket|null}} */
