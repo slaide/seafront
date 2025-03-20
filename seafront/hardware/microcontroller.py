@@ -886,11 +886,16 @@ class Microcontroller(BaseModel):
                 await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
 
-            serial_num_bytes_in_waiting=self.handle.in_waiting
-
-            if serial_num_bytes_in_waiting<FirmwareDefinitions.READ_PACKET_LENGTH:
+            if self.handle.in_waiting<FirmwareDefinitions.READ_PACKET_LENGTH:
                 await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
+
+            # skip all bytes except those in the last package, since parsing takes too long
+            # TODO make this fast enough to check all packet command ids, to not skip over the
+            # result of a command that finishes quickly
+            num_bytes_to_skip=(self.handle.in_waiting//FirmwareDefinitions.READ_PACKET_LENGTH)-1
+            if num_bytes_to_skip>0:
+                self.handle.read(num_bytes_to_skip*FirmwareDefinitions.READ_PACKET_LENGTH)
 
             packet=MicrocontrollerStatusPackage(self.handle.read(FirmwareDefinitions.READ_PACKET_LENGTH))
 
