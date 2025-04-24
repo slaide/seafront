@@ -1,0 +1,22 @@
+{
+    "venvPath": ".",
+    "venv": ".venv",
+    "include": [
+        "."
+    ],
+    "typeCheckingMode": "standard", // "strict",
+    "strict": [
+        // "**/*.py"
+    ],
+    "reportUnnecessaryComparison": "error",
+    "reportOptionalMemberAccess": "error",
+    "reportOptionalCall": "error",
+    "reportOptionalSubscript": "error",
+    "reportOptionalIterable": "error",
+    "reportUnnecessaryIsInstance": "error",
+    "reportUnnecessaryCast": "error",
+    "reportIncompatibleMethodOverride": "error",
+    "reportIncompatibleReturnType": "error",
+    "reportIncompatibleArgument": "error",
+    //"reportPrivateUsage": "error"
+}

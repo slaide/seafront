@@ -1,8 +1,6 @@
 from enum import Enum
 
-from pydantic import BaseModel, Field
-
-from ..server import commands as cmd
+from pydantic import BaseModel
 
 class CoreState(str,Enum):
     Idle="idle"

@@ -1,15 +1,13 @@
 import typing as tp
 import asyncio
 from enum import Enum
-import time
+import json
 
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
 import numpy as np
 
 import seaconfig as sc
-from seaconfig.acquisition import AcquisitionConfig
-from ..config.basics import ConfigItem, GlobalConfigHandler
-from ..hardware.camera import Camera, gxiapi
+from ..config.basics import GlobalConfigHandler
 from ..hardware import microcontroller as mc
 
 from ..hardware.adapter import AdapterState, Position
@@ -20,6 +18,7 @@ class ImageStoreEntry(BaseModel):
     """ utility class to store camera images with some metadata """
 
     _img: np.ndarray = PrivateAttr(...)#type:ignore
+
     pixel_format:str
 
     info:"ImageStoreInfo"
@@ -57,7 +56,7 @@ def error_internal(detail:str)->tp.NoReturn:
 def wellIsForbidden(well_name:str,plate_type:sc.Wellplate)->bool:
     """check if a well if forbidden, as indicated by global config"""
     g_config=GlobalConfigHandler.get_dict()
-    forbidden_wells_entry=g_config["forbidden_wells"]
+    forbidden_wells_entry=g_config.get("forbidden_wells")
     if forbidden_wells_entry is None:
         error_internal(detail="forbidden_wells entry not found in global config")
     
@@ -65,18 +64,19 @@ def wellIsForbidden(well_name:str,plate_type:sc.Wellplate)->bool:
     if not isinstance(forbidden_wells_str,str):
         error_internal(detail="forbidden_wells entry is not a string")
 
-    for s in forbidden_wells_str.split(";"):
-        num_wells,well_names=s.split(":")
-        if plate_type.Num_total_wells==int(num_wells):
-            for well in well_names.split(","):
+    forbidden_wells_dict:tp.Dict[str,tp.List[str]]=json.loads(forbidden_wells_str)
+    for num_wells_str,well_names in forbidden_wells_dict.items():
+        num_wells=int(num_wells_str)
+        if plate_type.Num_total_wells==num_wells:
+            for well in well_names:
                 if well==well_name:
                     return True
-                
+
     return False
 
 # command base class
 
-from typing import TypeVar, Generic, Type
+from typing import TypeVar, Generic
 from pydantic import BaseModel
 
 # Define a type variable for the return value
@@ -164,7 +164,7 @@ class ConfigFileInfo(BaseModel):
     timestamp:tp.Optional[str]
     comment:tp.Optional[str]
     cell_line:str
-    plate_type:str
+    plate_type:sc.Wellplate
 
 class ConfigListResponse(BaseModel):
     configs:tp.List[ConfigFileInfo]
@@ -232,11 +232,18 @@ class AcquisitionMetaInformation(BaseModel):
     total_num_images:int
     max_storage_size_images_GB:float
 
+class AcquisitionStatusStage(str,Enum):
+    RUNNING="running"
+    CANCELLED="cancelled"
+    COMPLETED="completed"
+    CRASHED="crashed"
+    SCHEDULED="scheduled"
+
 class AcquisitionStatusOut(BaseModel):
     """acquisition thread message out"""
 
     acquisition_id:str
-    acquisition_status:tp.Literal["running","cancelled","completed","crashed","scheduled"]
+    acquisition_status:AcquisitionStatusStage
     acquisition_progress:AcquisitionProgressStatus
 
     # some meta information about the acquisition, derived from configuration file
@@ -291,6 +298,7 @@ class ImageAcquiredResponse(BaseModel):
     """
 
     _img:np.ndarray = PrivateAttr(...)#type:ignore
+    _cambits:int=PrivateAttr(...)#type:ignore
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -332,6 +340,7 @@ class ChannelSnapshot(BaseModel,BaseCommand[ImageAcquiredResponse]):
 class ChannelSnapSelectionResult(BaseModel):
     channel_handles:tp.List[str]
     _images:tp.Dict[str,np.ndarray]=PrivateAttr(default_factory=dict)
+    
 class ChannelSnapSelection(BaseModel,BaseCommand[ChannelSnapSelectionResult]):
     """
     take a snapshot of all selected channels
@@ -383,7 +392,7 @@ class MoveToWell(BaseModel,BaseCommand[BasicSuccessResponse]):
     moves to center of target well (centers field of view). requires specification of plate type because measurements of plate types vary by manufacturer.
     """
 
-    plate_type:str
+    plate_type:sc.Wellplate
     well_name:str
 
     _ReturnValue:type=PrivateAttr(default=BasicSuccessResponse)

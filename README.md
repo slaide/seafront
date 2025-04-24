@@ -50,7 +50,7 @@ $ cat ~/seafront/config.json
     "calibration_offset_x_mm": 2.44,
     "calibration_offset_y_mm": 0.44,
     "calibration_offset_z_mm": 0.0,
-    "forbidden_wells": "96:;384:A01,A24,P01,P24;1536:"
+    "forbidden_wells": """{"384":["A01","A24","P01","P24"],"1536":[]}"""
 }
 ```
 - the `"<x>_camera_model"` name strings are passed to the camera api to connect to the camera, so they need to be specific!
@@ -63,11 +63,11 @@ $ cat ~/seafront/config.json
 - the `"calibration_offset_<x|y|z>"` should be _mostly_ correct. there can be minor deviations between microscope restarts, so there is 
 a setting in the seafront web interface to fine-tune the values used during acquisition, so the value in this config file does not 
 need to be changed all the time.
-- the `"forbidden_wells"` string has a specific format: because of hardware conflicts (the objective being able to crash into the
-XY-stage), there is a list of wells that the microscope is not allowed to enter. this list will depend on the objective used
-(an objective with a larger working distance from the bottom of the plate may not conflict with as many positions). the format is not
-json itself because I did not think about that when i implemented it (pull request welcome), so it is a semicolon separated list of
-`<num wells on plate>:<comma separated list of well names>`.
+- the `"forbidden_wells"` because of hardware conflicts (the objective being able to crash into the XY-stage), there is a list of 
+wells that the microscope is not allowed to enter. this list will depend on the objective used (an objective with a larger 
+working distance from the bottom of the plate may not conflict with as many positions).
+the format of this value is a json string, and plate types not in the list will have no forbidden wells associated.
+format is : {"< num wells on plate >:["< forbidden well name 0 >",...]"}
 
 # calibration
 

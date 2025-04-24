@@ -1,19 +1,11 @@
 {
-    /* disable pylance checking of local python installation files */
-    "python.analysis.exclude": [
-        "**/python_env/**"
-    ],
+    "editor.formatOnSave": true,
     "python.REPL.enableREPLSmartSend": false,
     "python.analysis.diagnosticMode": "workspace",
-    "python.analysis.typeCheckingMode": "standard",
-    /*defaultPath was used by an older version of the addon, defaultInterpreterPath is the new one*/
-    "python.defaultPath": "python_env/python-3.13.0/bin/python3.13",
-    /*pyright path*/
-    "python.pythonPath": "python_env/python-3.13.0/bin/python3.13",
-    /*pylance path*/
-    "python.defaultInterpreterPath": "python_env/python-3.13.0/bin/python3.13",
-    "python.analysis.extraPaths":[
+    "python.analysis.typeCheckingMode": "strict",
+    "python.defaultInterpreterPath": ".venv/bin/python3.13",
+    "python.analysis.extraPaths": [
         /* include this path for debugging where seaconfig is installed from a local path */
-        "../seafront-config"
+        "${workspaceFolder}/../seafront-config"
     ]
 }

@@ -97,7 +97,7 @@ class GlobalConfigHandler:
             "calibration_offset_x_mm":0.0,
             "calibration_offset_y_mm":0.0,
             "calibration_offset_z_mm":0.0,
-            "forbidden_wells":"96:;384:A01,A24,P01,P24;1536:",
+            "forbidden_wells": """{"1":[],"4":[],"96":[],"384":["A01","A24","P01","P24"],"1536":[]}""",
         }
 
     @staticmethod

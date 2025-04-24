@@ -1,15 +1,17 @@
+"use strict";
+
 /**
  * generate a random in range [_min_v_; _max_v_]
  * @param {number|null} min_v 
  * @param {number|null} max_v 
  * @returns 
  */
-function rand(min_v,max_v){
-    if(min_v==null){
-        min_v=0
+function rand(min_v, max_v) {
+    if (min_v == null) {
+        min_v = 0
     }
-    if(max_v==null){
-        max_v=1
+    if (max_v == null) {
+        max_v = 1
     }
     return Math.random() * (max_v - min_v) + min_v
 }
@@ -20,67 +22,79 @@ function rand(min_v,max_v){
  * @param {number} max_v 
  * @returns 
  */
-function nrand(n,min_v,max_v){
-    let out=[]
-    for(let i=0;i<n;i++){
-        out.push(Math.exp(rand(min_v,max_v)))
+function nrand(n, min_v, max_v) {
+    let out = []
+    for (let i = 0; i < n; i++) {
+        out.push(Math.exp(rand(min_v, max_v)))
     }
     return out
 }
 
 /**@type {PlotlyLayout} */
-const layout={
-    autosize:true,
+const layout = {
+    autosize: true,
 
     showlegend: true,
 
     yaxis: {
-        title:"relative frequency ( Log )",
+        title: "relative frequency ( Log )",
         type: 'log',
         autorange: true,
-        fixedrange:true,
+        fixedrange: true,
         // disable ticks
         showticklabels: false,
     },
-    xaxis:{
+    xaxis: {
         title: "relative intensity",
-        autorange:true,
-        fixedrange:true,
-        tickvals: [0,50,100,150,200,255],
-        ticktext: ["0","50","100","150","200","255"]
+        autorange: true,
+        fixedrange: true,
+        tickvals: [0, 50, 100, 150, 200, 255],
+        ticktext: ["0", "50", "100", "150", "200", "255"]
     },
 
     margin: {
-        t:20, // top margin for pan/zoom buttons
-        l:30, // reduced y axis margin
-        b:40, // bottom margin for x-axis title
+        t: 20, // top margin for pan/zoom buttons
+        l: 30, // reduced y axis margin
+        b: 40, // bottom margin for x-axis title
     },
-    plot_bgcolor:"lightgrey",
-    paper_bgcolor:"lightgrey"
+    plot_bgcolor: "lightgrey",
+    paper_bgcolor: "lightgrey"
 }
 
 /**@type {PlotlyConfig} */
-const config={
+const config = {
     responsive: true,
-    modeBarButtonsToRemove:[
+    modeBarButtonsToRemove: [
         'sendDataToCloud',
-        "zoom2d","pan2d","select2d","lasso2d",
-        "zoomIn2d","zoomOut2d",
-        "autoScale2d","resetScale2d"
+        "zoom2d", "pan2d", "select2d", "lasso2d",
+        "zoomIn2d", "zoomOut2d",
+        "autoScale2d", "resetScale2d"
     ],
-    showLink:false,
-    displaylogo:false,
+    showLink: false,
+    displaylogo: false,
 }
 
-const histogram_plot_element_id='histogram-panel'
-/** @ts-ignore @type {PlotlyHTMLElement|null} */
-const histogram_plot_element = document.getElementById(histogram_plot_element_id);
-if(!histogram_plot_element){throw new Error("child is null")}
+const histogram_plot_element_id = 'histogram-panel'
 
-new ResizeObserver(function(){
-    // @ts-ignore
-    Plotly.relayout(histogram_plot_element_id, {autosize: true});
-}).observe(histogram_plot_element)
+/**
+ * 
+ * @returns {PlotlyHTMLElement}
+ */
+function get_histogram_plot_element() {
+    /** @ts-ignore @type {PlotlyHTMLElement|null} */
+    const histogram_plot_element = document.getElementById(histogram_plot_element_id);
+    if (!histogram_plot_element) { throw new Error("child is null") }
+    return histogram_plot_element
+}
+
+window.addEventListener("load", () => {
+    const histogram_plot_element = get_histogram_plot_element()
+
+    new ResizeObserver(function () {
+        // @ts-ignore
+        Plotly.relayout(histogram_plot_element_id, { autosize: true });
+    }).observe(histogram_plot_element)
+})
 
 /**
  * @typedef{{title?:string,type?:("log"),autorange?:boolean,fixedrange?:boolean,showticklabels?:boolean,tickvals?:number[],ticktext?:string[]}} PlotlyAxis
@@ -98,6 +112,6 @@ new ResizeObserver(function(){
  * addTraces:function(PlotlyHTMLElement,PlotlyTrace):void,
  * }}
  */
-let Plotly=window.Plotly
+let Plotly = window.Plotly
 
 Plotly.newPlot(histogram_plot_element_id, [], layout, config)

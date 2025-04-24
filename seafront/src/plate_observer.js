@@ -1,3 +1,5 @@
+"use strict";
+
 /**
  * r: row index
  * c: col index
@@ -16,27 +18,24 @@
  * }} PhysicalWellItemInformation
  */
 /** @type {PhysicalWellItemInformation[]} */
-let well_list=_p.manage([])
-function generateWellOverviewWells(){
+let well_list = _p.manage([])
+function generateWellOverviewWells() {
     // clear well_list
-    well_list.length=0
+    well_list.length = 0
 
-    let plate=WellplateType.fromHandle(microscope_config.wellplate_type)
-    if(plate==null){
-        return
-    }
+    const plate = microscope_config.wellplate_type
 
     // async DOM update
-    setTimeout(()=>{
+    setTimeout(() => {
         /** @type {PhysicalWellItemInformation[]} */
-        let ret=[]
-        
-        for(let c of range(plate.Num_wells_x)){
-            for(let r of range(plate.Num_wells_y)){
-                // add 1 to row and column to account for headers
-                const index=new WellIndex(r+1,c+1)
+        let ret = []
 
-                const well_text=index.name
+        for (let c of range(plate.Num_wells_x)) {
+            for (let r of range(plate.Num_wells_y)) {
+                // add 1 to row and column to account for headers
+                const index = new WellIndex(r + 1, c + 1)
+
+                const well_text = index.name
                 ret.push({
                     r: r,
                     c: c,
@@ -50,11 +49,11 @@ function generateWellOverviewWells(){
         }
 
         well_list.push(...ret)
-    },0)    
+    }, 0)
 }
 
 // when page has loaded, generate well overview and register callback to update the view when the selected plate type changes
-window.addEventListener("DOMContentLoaded",function(){
+window.addEventListener("load", function () {
     generateWellOverviewWells()
-    _p.registerCallback(_p.getUnmanaged(microscope_config),generateWellOverviewWells,"wellplate_type")
+    _p.registerCallback(_p.getUnmanaged(microscope_config).wellplate_type, generateWellOverviewWells)//, "Model_id")
 })

@@ -79,7 +79,7 @@
     
     grid:AcquisitionWellSiteConfiguration,
 
-    wellplate_type:string,
+    wellplate_type:Wellplate,
     plate_wells:PlateWellConfig[],
 
     channels:AcquisitionChannelConfig[],
@@ -133,7 +133,7 @@
     Length_mm:number,
     Width_mm:number,
 
-    Well_shape:*
+    Well_edge_radius_mm:number
  * }} Wellplate
 
  * @typedef {{
