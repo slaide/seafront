@@ -801,6 +801,8 @@ class Core:
             g_config = GlobalConfigHandler.get_dict()
             pixel_format=g_config["main_camera_pixel_format"].strvalue
 
+            logger.debug(f"storing new image for {cmd.channel.handle}")
+
             await self._store_new_image(img=res._img, pixel_format=pixel_format, channel_config=cmd.channel)
 
         # Snap channel
@@ -1157,6 +1159,7 @@ class Core:
             ),
         )
         new_image_store_entry._img = img
+        logger.debug(f"stored new image for {channel_config.handle} at {time.time()}")
         self.latest_images[channel_config.handle] = new_image_store_entry
 
         return channel_config.name
@@ -1514,8 +1517,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # -- fix issue in tp.Optional annotation with pydantic
 # (from https://github.com/fastapi/fastapi/pull/9873#issuecomment-1997105091)
 
+type ApiSchema = dict[str, ApiSchema] | list[ApiSchema] | tp.Any
 
-def handle_anyof_nullable(schema: dict | list):
+def handle_anyof_nullable(schema: ApiSchema):
     """Recursively modifies the schema to handle anyOf with null for OpenAPI 3.0 compatibility."""
 
     if isinstance(schema, dict):
@@ -1523,17 +1527,20 @@ def handle_anyof_nullable(schema: dict | list):
             schema.items()
         ):  # Iterate over a copy to avoid modification errors
             if key == "anyOf" and isinstance(value, list):
-                non_null_types = [item for item in value if item.get("type") != "null"]
+                non_null_types = [item for item in value if item.get("type") != "null"] # type: ignore
                 if len(value) > len(non_null_types):  # Found 'null' in anyOf
                     if len(non_null_types) == 1:
-                        schema.update(non_null_types[0])  # Replace with non-null type
+                        # Replace with non-null type
+                        schema.update(non_null_types[0]) # type: ignore
                         schema["nullable"] = True
                         del schema[key]  # Remove anyOf
             else:
-                handle_anyof_nullable(value)
+                # if value is a schema:
+                if isinstance(value, (list,dict)):
+                    handle_anyof_nullable(value)
 
-    # elif isinstance(schema, list):
-    else:
+    elif isinstance(schema, list):
+        # this can lead to recursion under certain circumstances.. ???
         for item in schema:
             handle_anyof_nullable(item)
 
