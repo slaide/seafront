@@ -223,7 +223,7 @@ class AcquisitionProgressStatus(BaseModel):
 
     # estimated completion time information
     # estimation may be more complex than linear interpolation, hence done on server side
-    estimated_total_time_s:tp.Optional[float]
+    estimated_remaining_time_s:tp.Optional[float]
 
     # last image that was acquired
     last_image:tp.Optional[ImageStoreInfo]

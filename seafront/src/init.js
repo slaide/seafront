@@ -411,8 +411,7 @@ function updateMicroscopePosition() {
 
             acquisition_progress.time_since_start_s = "" + progress.acquisition_progress.time_since_start_s
 
-            // called estimated_total_time_s but actually contains the _remaining_ time in s
-            let remaining_time_s_total = progress.acquisition_progress.estimated_total_time_s
+            let remaining_time_s_total = progress.acquisition_progress.estimated_remaining_time_s
 
             if (remaining_time_s_total != null) {
                 let minutes = remaining_time_s_total % 3600
@@ -876,7 +875,7 @@ function initSelectedChannels() {
 }
 initSelectedChannels()
 
-const limits = {
+const limits = Object.freeze({
     illumination_percent: {
         min: 20,
         max: 100,
@@ -897,7 +896,7 @@ const limits = {
         max: 50,
         default: 0,
     }
-}
+});
 
 /**
  * technical specification of a micro well plate type

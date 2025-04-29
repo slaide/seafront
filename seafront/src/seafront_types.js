@@ -12,7 +12,7 @@
     start_time_iso:string,
     current_storage_usage_GB:number,
 
-    estimated_total_time_s:number|null,
+    estimated_remaining_time_s:number|null,
 
     last_image:ImageStoreInfo
  * }} AcquisitionProgressStatus

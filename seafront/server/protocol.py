@@ -291,7 +291,7 @@ class ProtocolGenerator(BaseModel):
                 time_since_start_s=0,
                 start_time_iso="scheduled",
                 current_storage_usage_GB=0,
-                estimated_total_time_s=0,
+                estimated_remaining_time_s=0,
                 last_image=None,
             ),
             acquisition_meta_information=AcquisitionMetaInformation(
@@ -627,13 +627,13 @@ class ProtocolGenerator(BaseModel):
 
                         time_since_start_s = time.time() - start_time
                         if num_images_acquired > 0:
-                            estimated_total_time_s = (
+                            estimated_remaining_time_s = (
                                 time_since_start_s
                                 * (self.num_images_total - num_images_acquired)
                                 / num_images_acquired
                             )
                         else:
-                            estimated_total_time_s = None
+                            estimated_remaining_time_s = None
 
                         logger.debug(
                             f"protocol - {num_images_acquired}/{self.num_images_total} images acquired"
@@ -651,7 +651,7 @@ class ProtocolGenerator(BaseModel):
                                 / (1024**3),
                                 # estimated completion time information
                                 # estimation may be more complex than linear interpolation, hence done on server side
-                                estimated_total_time_s=estimated_total_time_s,
+                                estimated_remaining_time_s=estimated_remaining_time_s,
                                 # last image that was acquired
                                 last_image=last_image_information,
                             ),
