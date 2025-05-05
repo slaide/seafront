@@ -405,23 +405,23 @@ function updateMicroscopePosition() {
             if (!acquisition_progress_element) throw new Error("progress_element is null")
 
             if (!last_acquisition.status_successful) {
-                message_open("info", "acquisition progress updated")
+                message_open("info", "acquisition progress updated");
             }
-            last_acquisition.status_successful = true
+            last_acquisition.status_successful = true;
 
-            acquisition_progress.time_since_start_s = "" + progress.acquisition_progress.time_since_start_s
+            acquisition_progress.time_since_start_s = "" + progress.acquisition_progress.time_since_start_s;
 
-            let remaining_time_s_total = progress.acquisition_progress.estimated_remaining_time_s
+            let remaining_time_s_total = progress.acquisition_progress.estimated_remaining_time_s;
 
             if (remaining_time_s_total != null) {
-                let minutes = remaining_time_s_total % 3600
-                let hours = (remaining_time_s_total - minutes) / 3600
-                let seconds = minutes % 60
-                minutes = (minutes - seconds) / 60
+                let minutes = remaining_time_s_total % 3600;
+                let hours = (remaining_time_s_total - minutes) / 3600;
+                let seconds = minutes % 60;
+                minutes = (minutes - seconds) / 60;
 
-                let remaining_time_s = seconds.toFixed(0)
-                let remaining_time_m = minutes.toFixed(0)
-                let remaining_time_h = hours.toFixed(0)
+                let remaining_time_s = seconds.toFixed(0);
+                let remaining_time_m = minutes.toFixed(0);
+                let remaining_time_h = hours.toFixed(0);
 
                 /**
                  * @param {string} s
@@ -429,38 +429,38 @@ function updateMicroscopePosition() {
                  */
                 function pad_to_two_digits(s) {
                     if (s.length < 2) {
-                        return "0" + s
+                        return "0" + s;
                     }
-                    return s
+                    return s;
                 }
 
-                let time_remain_estimate_msg_string = ""
+                let time_remain_estimate_msg_string = "";
                 if (remaining_time_s_total > 0) {
-                    time_remain_estimate_msg_string = "done in "
+                    time_remain_estimate_msg_string = "done in ";
                     if (hours > 0) {
-                        time_remain_estimate_msg_string += remaining_time_h + "h:"
+                        time_remain_estimate_msg_string += remaining_time_h + "h:";
                     }
                     if (minutes > 0) {
                         if (hours > 0) {
-                            time_remain_estimate_msg_string += pad_to_two_digits(remaining_time_m) + "m:"
+                            time_remain_estimate_msg_string += pad_to_two_digits(remaining_time_m) + "m:";
                         } else {
-                            time_remain_estimate_msg_string += remaining_time_m + "m:"
+                            time_remain_estimate_msg_string += remaining_time_m + "m:";
                         }
                     }
                     if (minutes > 0) {
-                        time_remain_estimate_msg_string += pad_to_two_digits(remaining_time_s) + "s"
+                        time_remain_estimate_msg_string += pad_to_two_digits(remaining_time_s) + "s";
                     } else {
-                        time_remain_estimate_msg_string += remaining_time_s + "s"
+                        time_remain_estimate_msg_string += remaining_time_s + "s";
                     }
                 }
-                acquisition_progress.estimated_time_remaining_msg = time_remain_estimate_msg_string
+                acquisition_progress.estimated_time_remaining_msg = time_remain_estimate_msg_string;
 
-                acquisition_progress.text = progress.acquisition_status + " - " + progress.message
+                acquisition_progress.text = progress.acquisition_status + " - " + progress.message;
                 setAcquisitionProgressPercent(
                     progress.acquisition_progress.current_num_images
                     / progress.acquisition_meta_information.total_num_images
                     * 100
-                )
+                );
             }
         }
     }
@@ -470,20 +470,20 @@ function updateMicroscopePosition() {
      * @returns {WebSocket}
      */
     if (status_update_websocket == null) {
-        const websocket_protocol = window.location.protocol == "https:" ? "wss:" : "ws:"
-        const websocket_url = websocket_protocol + "//" + window.location.host + "/ws/get_info/current_state"
-        const ws = new WebSocket(websocket_url)
+        const websocket_protocol = window.location.protocol == "https:" ? "wss:" : "ws:";
+        const websocket_url = websocket_protocol + "//" + window.location.host + "/ws/get_info/current_state";
+        const ws = new WebSocket(websocket_url);
 
-        let last_time = performance.now()
+        let last_time = performance.now();
         function request_update() {
-            ws.send("get_info/current_state")
+            ws.send("get_info/current_state");
 
-            const time_since_last_update_ms = performance.now() - last_time
+            const time_since_last_update_ms = performance.now() - last_time;
             if (time_since_last_update_ms > 300) {
                 // print informative message if the update delta time exceeds some arbitrary, but longer than expected, delta
                 console.log("time since last update:", time_since_last_update_ms, "ms (this is longer than expected, but may happen occasionally)")
             }
-            last_time = performance.now()
+            last_time = performance.now();
         }
 
         ws.onopen = () => {

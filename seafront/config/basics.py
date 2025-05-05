@@ -272,7 +272,7 @@ class GlobalConfigHandler:
                     name="laser autofocus warm up laser",
                     handle="laser_af_warm_up_laser",
                     value_kind="action",
-                    value="/api/action/laser_af_warm_up_laser",
+                    value="/api/action/laser_autofocus_warm_up_laser",
                 ),
 
                 # is calibrated flag

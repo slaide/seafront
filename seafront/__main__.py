@@ -914,7 +914,7 @@ class Core:
             methods=["POST"],
         )
         route_wrapper(
-            "/api/action/measure_displacement",
+            "/api/action/laser_autofocus_measure_displacement",
             CustomRoute(
                 handler=AutofocusMeasureDisplacement, tags=[RouteTag.ACTIONS.value]
             ),
@@ -929,12 +929,12 @@ class Core:
             methods=["POST"],
         )
         route_wrapper(
-            "/api/action/laser_af_calibrate",
+            "/api/action/laser_autofocus_calibrate",
             CustomRoute(handler=LaserAutofocusCalibrate, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
         route_wrapper(
-            "/api/action/laser_af_warm_up_laser",
+            "/api/action/laser_autofocus_warm_up_laser",
             CustomRoute(handler=AutofocusLaserWarmup, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
