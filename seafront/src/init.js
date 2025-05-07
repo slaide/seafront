@@ -643,7 +643,7 @@ function microscopeConfigGetDefault() {
             "Manufacturer": "Revvity",
             "Model_name": "PhenoPlate 384-well",
             "Model_id_manufacturer": "6057800",
-            "Model_id": "revvity-phenoplate-384",
+            "Model_id": "revvity-384-6057800",
             "Offset_A1_x_mm": 10.5,
             "Offset_A1_y_mm": 7.36,
             "Offset_bottom_mm": 0.32799999999999996,

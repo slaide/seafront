@@ -1067,7 +1067,7 @@ class Core:
         return BasicSuccessResponse()
 
     async def calibrate_stage_xy_here(
-        self, plate_model_id: str = "revvity-phenoplate-384"
+        self, plate_model_id: str = "revvity-384-6057800"
     ) -> BasicSuccessResponse:
         """
         set current xy position as reference
