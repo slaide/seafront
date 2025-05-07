@@ -60,7 +60,7 @@
  * @typedef {{
     name:string,
     handle:string,
-    value_kind:"number"|"text"|"option"|"action",
+    value_kind:"int"|"float"|"text"|"option"|"action",
     value:number|string,
     frozen:boolean,
     options:(ConfigItemOption[])|null

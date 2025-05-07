@@ -188,13 +188,13 @@ class GlobalConfigHandler:
             ConfigItem(
                 name="main camera image width [px]",
                 handle="main_camera_image_width_px",
-                value_kind="number",
+                value_kind="int",
                 value=2500,
             ),
             ConfigItem(
                 name="main camera image height [px]",
                 handle="main_camera_image_height_px",
-                value_kind="number",
+                value_kind="int",
                 value=2500,
             ),
             ConfigItem(
@@ -236,13 +236,13 @@ class GlobalConfigHandler:
                 ConfigItem(
                     name="laser autofocus exposure time [ms]",
                     handle="laser_autofocus_exposure_time_ms",
-                    value_kind="number",
+                    value_kind="float",
                     value=5.0,
                 ),
                 ConfigItem(
                     name="laser autofocus camera analog gain",
                     handle="laser_autofocus_analog_gain",
-                    value_kind="number",
+                    value_kind="float",
                     value=0.0,
                 ),
                 ConfigItem(
@@ -287,21 +287,21 @@ class GlobalConfigHandler:
                 ConfigItem(
                     name="laser autofocus calibration: x peak pos",
                     handle="laser_autofocus_calibration_x",
-                    value_kind="number",
+                    value_kind="float",
                     value=0.0,
                 ),
                 # calibrated um/px on sensor
                 ConfigItem(
                     name="laser autofocus calibration: um per px",
                     handle="laser_autofocus_calibration_umpx",
-                    value_kind="number",
+                    value_kind="float",
                     value=0.0,
                 ),
                 # z coordinate at time of calibration
                 ConfigItem(
                     name="laser autofocus calibration: ref z in mm",
                     handle="laser_autofocus_calibration_refzmm",
-                    value_kind="number",
+                    value_kind="float",
                     value=0.0,
                 ),
             ]
@@ -326,19 +326,19 @@ class GlobalConfigHandler:
             ConfigItem(
                 name="calibration offset x [mm]",
                 handle="calibration_offset_x_mm",
-                value_kind="number",
+                value_kind="float",
                 value=critical_machine_config["calibration_offset_x_mm"],
             ),
             ConfigItem(
                 name="calibration offset y [mm]",
                 handle="calibration_offset_y_mm",
-                value_kind="number",
+                value_kind="float",
                 value=critical_machine_config["calibration_offset_y_mm"],
             ),
             ConfigItem(
                 name="calibration offset z [mm]",
                 handle="calibration_offset_z_mm",
-                value_kind="number",
+                value_kind="float",
                 value=critical_machine_config["calibration_offset_z_mm"],
             ),
 

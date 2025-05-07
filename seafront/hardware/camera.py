@@ -382,7 +382,7 @@ class Camera:
                 def run_callback(img:gxiapi.RawImage):
                     nonlocal stop_acquisition
 
-                    if stop_acquisition or img is None:
+                    if stop_acquisition or img is None: # type: ignore
                         if self.acquisition_ongoing:
                             self.acquisition_ongoing=False
 

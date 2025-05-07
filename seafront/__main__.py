@@ -1104,19 +1104,19 @@ class Core:
                 "calibration_offset_x_mm": ConfigItem(
                     name="ignored",
                     handle="calibration_offset_x_mm",
-                    value_kind="number",
+                    value_kind="float",
                     value=ref_x_mm,
                 ),
                 "calibration_offset_y_mm": ConfigItem(
                     name="ignored",
                     handle="calibration_offset_y_mm",
-                    value_kind="number",
+                    value_kind="float",
                     value=ref_y_mm,
                 ),
                 "calibration_offset_z_mm": ConfigItem(
                     name="ignored",
                     handle="calibration_offset_z_mm",
-                    value_kind="number",
+                    value_kind="float",
                     value=ref_z_mm,
                 ),
             }
