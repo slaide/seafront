@@ -67,6 +67,9 @@ class GlobalConfigHandler:
 
     @staticmethod
     def add_config(config:AcquisitionConfig,filename:str,overwrite_on_conflict:bool=False):
+        if len(filename)==0:
+            raise ValueError("config filename must not be empty")
+
         filepath=(GlobalConfigHandler.home_acquisition_config_dir()/filename).with_suffix(".json")
         
         file_already_exists=filepath in GlobalConfigHandler.get_config_list()
