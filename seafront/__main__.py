@@ -76,6 +76,7 @@ from .server.commands import (
     LoadingPositionEnter,
     LoadingPositionLeave,
     MoveBy,
+    MoveTo,
     MoveToWell,
     SitePosition,
     StreamingStartedResponse,
@@ -99,8 +100,8 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 # file name utility code
 
 # precompile regex for performance
-name_validity_regex = re.compile(r"^[a-zA-Z0-9_\-]+$")
-
+name_validity_regex = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+""" name_validity_regex only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot """
 
 def generate_random_number_string(num_digits: int = 9) -> str:
     "used to generate new image handles"
@@ -363,6 +364,39 @@ class SquidError(Exception):
     def __init__(self, msg: str):
         super().__init__(msg)
 
+def name_check(name:str)->str|None:
+    """
+    check name for validity.
+    
+    returns None if valid, otherwise returns description of the error.
+
+    used to check plate name and project name for validity.
+    """
+    if len(name)==0:
+        return "name must not be empty"
+
+    if not name_validity_regex.match(name):
+        # from name_validity_regex doc:
+        return "name invalid. it only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot"
+
+    return None
+
+def filename_check(name:str)->str|None:
+    """
+    check filename for validity.
+    
+    returns None if valid, otherwise returns description of the error.
+
+    used to check config filename for validity.
+    """
+    if len(name)==0:
+        return "name must not be empty"
+
+    if not name_validity_regex.match(name):
+        # from name_validity_regex doc:
+        return "name invalid. it only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot"
+
+    return None
 
 class Core:
     """application core, contains server capabilities and microcontroller interaction"""
@@ -693,6 +727,11 @@ class Core:
         route_wrapper(
             "/api/action/move_by",
             CustomRoute(handler=MoveBy, tags=[RouteTag.ACTIONS.value]),
+            methods=["POST"],
+        )
+        route_wrapper(
+            "/api/action/move_to",
+            CustomRoute(handler=MoveTo, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
 
@@ -1048,6 +1087,10 @@ class Core:
         the optional comment provided is stored with the config file to quickly identify its purpose/function.
         """
 
+        filename_check_issue=filename_check(filename)
+        if filename_check_issue is not None:
+            error_internal(detail=f"failed storing config because filename contains an issue: {filename_check_issue}")
+
         config_file.timestamp = sc.datetime2str(dt.datetime.now(dt.timezone.utc))
 
         # get machine config
@@ -1314,20 +1357,16 @@ class Core:
             acquisition_id=acquisition_id,
         )
 
-        project_name_is_acceptable = len(
-            protocol.config_file.project_name
-        ) and name_validity_regex.match(protocol.config_file.project_name)
-        if not project_name_is_acceptable:
+        project_name_issue = name_check(protocol.config_file.project_name)
+        if project_name_issue is not None:
             error_internal(
-                detail="project name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes"
+                detail=f"project name is not acceptable: {project_name_issue}"
             )
 
-        plate_name_is_acceptable = len(
-            protocol.config_file.plate_name
-        ) > 0 and name_validity_regex.match(protocol.config_file.plate_name)
-        if not plate_name_is_acceptable:
+        plate_name_issue = name_check(protocol.config_file.plate_name)
+        if plate_name_issue is not None:
             error_internal(
-                detail="plate name is not acceptable: 1) must not be empty and 2) only contain alphanumeric characters, underscores, dashes"
+                detail=f"plate name is not acceptable: {plate_name_issue}"
             )
 
         if protocol.num_images_total == 0:

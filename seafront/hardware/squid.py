@@ -1231,9 +1231,9 @@ class SquidAdapter(BaseModel):
                                 latest_esimated_z_offset_mm * 1e3 / num_images
                             )
 
-                    except Exception:
+                    except Exception as e:
                         cmd.error_internal(
-                            detail="failed to measure displacement (got no signal): {str(e)}"
+                            detail=f"failed to measure displacement (got no signal): {str(e)}"
                         )
 
                     logger.debug("squid - used autofocus to measure displacement")

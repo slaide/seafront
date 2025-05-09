@@ -1,6 +1,6 @@
 [project]
 name="seafront"
-version="0.4.1"
+version="0.5.0"
 requires-python = ">=3.13"
 authors=[
     {name="Patrick Hennig",email="patrick.hennig@uu.se"}
