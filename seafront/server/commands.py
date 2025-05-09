@@ -379,8 +379,8 @@ class MoveTo(BaseModel,BaseCommand[BasicSuccessResponse]):
     these coordinates are internally adjusted to take the calibration into account
     """
 
-    x_mm:tp.Optional[float]
-    y_mm:tp.Optional[float]
+    x_mm:tp.Optional[float]=None
+    y_mm:tp.Optional[float]=None
     z_mm:tp.Optional[float]=None
 
     _ReturnValue:type=PrivateAttr(default=BasicSuccessResponse)
