@@ -1078,6 +1078,7 @@ class Core:
         self,
         config_file: sc.AcquisitionConfig,
         filename: str,
+        overwrite_on_conflict: None | bool = None,
         comment: None | str = None,
     ) -> BasicSuccessResponse:
         """
@@ -1102,7 +1103,7 @@ class Core:
 
         try:
             GlobalConfigHandler.add_config(
-                config_file, filename, overwrite_on_conflict=False
+                config_file, filename, overwrite_on_conflict=overwrite_on_conflict or False
             )
         except Exception as e:
             error_internal(detail=f"failed storing config to file because {e}")
