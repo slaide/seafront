@@ -611,7 +611,7 @@ class SquidAdapter(BaseModel):
         self,
         Z_MM_MOVEMENT_RANGE_MM: float = 0.3,
         Z_MM_BACKLASH_COUNTER: float = 40e-3,
-        NUM_Z_STEPS_CALIBRATE: int = 13,
+        NUM_Z_STEPS_CALIBRATE: int = 7,
         DEBUG_LASER_AF_CALIBRATION=bool(0),
         DEBUG_LASER_AF_SHOW_REGRESSION_FIT=bool(0),
         DEBUG_LASER_AF_SHOW_EVAL_FIT=True,
@@ -625,13 +625,6 @@ class SquidAdapter(BaseModel):
 
         with self.microcontroller.locked() as qmc:
             if qmc is None: error_internal("microcontroller is busy")
-
-            if DEBUG_LASER_AF_CALIBRATION:
-                Z_MM_MOVEMENT_RANGE_MM = 0.3
-                NUM_Z_STEPS_CALIBRATE = 13
-            else:
-                Z_MM_MOVEMENT_RANGE_MM = 0.05
-                NUM_Z_STEPS_CALIBRATE = 7
 
             g_config = GlobalConfigHandler.get_dict()
 
