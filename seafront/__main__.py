@@ -89,6 +89,8 @@ from .server.protocol import (
     make_unique_acquisition_id,
 )
 
+from .logger import logger
+
 # for debugging
 
 _DEBUG_P2JS = True
@@ -1023,8 +1025,13 @@ class Core:
 
                 plate_type = config.wellplate_type
 
+                project=config.project_name
+                platename=config.plate_name
+
             return ConfigFileInfo(
                 filename=filename,
+                project_name=project,
+                plate_name=platename,
                 timestamp=timestamp,
                 comment=comment,
                 cell_line=cell_line,
@@ -1787,23 +1794,19 @@ app.openapi = custom_openapi
 # -- end fix
 
 
-# disable compression of websocket connections..
-# because compression time is unpredictable:
+# --- begin disable websocket compression
+# because\ compression time is unpredictable:
 #    takes 70ms to send an all-white image, and 1400ms (twenty times as long !!!!) for all-black images, which are not a rare occurence in practice
-
 _orig_init = websockets.server.WebSocketServerProtocol.__init__  # type:ignore
-
-
 def _no_comp_init(self, *args, **kwargs):
     kwargs["extensions"] = []
     return _orig_init(self, *args, **kwargs)
+# (websockets.server.WebSocketServerProtocol is deprecated, but still supported at the frozen package version)
+websockets.server.WebSocketServerProtocol.__init__ = _no_comp_init  # type:ignore
+# --- end disable websocket compression
 
-
-websockets.server.WebSocketServerProtocol.__init__ = _no_comp_init  # type:ignore (websockets.server.WebSocketServerProtocol is deprecated, but still supported at the frozen package version)
-
-# allow cross origin requests
+# --- begin allow cross origin requests
 from fastapi.middleware.cors import CORSMiddleware
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1811,9 +1814,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-from .logger import logger
-
+# --- end allow cross origin requests
 
 @logger.catch
 def main():

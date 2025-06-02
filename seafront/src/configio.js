@@ -1,7 +1,15 @@
 "use strict";
 
 /**
- * @typedef {{filename:string,comment:string,timestamp:string,cell_line:string,plate_type:string}} ConfigFileInfo
+ * @typedef {{
+ * filename:string,
+ * project_name:string,
+ * plate_name:string,
+ * comment:string,
+ * timestamp:string,
+ * cell_line:string,
+ * plate_type:string,
+ * }} ConfigFileInfo
  */
 
 /** @type {ConfigFileInfo[]} */

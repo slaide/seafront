@@ -161,6 +161,8 @@ class ImageStoreInfo(BaseModel):
 
 class ConfigFileInfo(BaseModel):
     filename:str
+    project_name:str
+    plate_name:str
     timestamp:tp.Optional[str]
     comment:tp.Optional[str]
     cell_line:str
