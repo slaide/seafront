@@ -1377,6 +1377,18 @@ class Core:
 
                 logger.warning(f"command unhandled: {q_in_item}")
 
+        project_name_issue = name_check(config_file.project_name)
+        if project_name_issue is not None:
+            error_internal(
+                detail=f"project name is not acceptable: {project_name_issue}"
+            )
+
+        plate_name_issue = name_check(config_file.plate_name)
+        if plate_name_issue is not None:
+            error_internal(
+                detail=f"plate name is not acceptable: {plate_name_issue}"
+            )
+
         protocol = ProtocolGenerator(
             config_file=config_file,
             handle_q_in=handle_q_in,
@@ -1384,18 +1396,6 @@ class Core:
             acquisition_status=acquisition_status,
             acquisition_id=acquisition_id,
         )
-
-        project_name_issue = name_check(protocol.config_file.project_name)
-        if project_name_issue is not None:
-            error_internal(
-                detail=f"project name is not acceptable: {project_name_issue}"
-            )
-
-        plate_name_issue = name_check(protocol.config_file.plate_name)
-        if plate_name_issue is not None:
-            error_internal(
-                detail=f"plate name is not acceptable: {plate_name_issue}"
-            )
 
         if protocol.num_images_total == 0:
             error_detail = f"no images to acquire ({protocol.num_wells = },{protocol.num_sites = },{protocol.num_channels = },{protocol.num_channel_z_combinations = })"
