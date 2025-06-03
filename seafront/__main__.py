@@ -118,6 +118,13 @@ app.mount("/src", StaticFiles(directory="src"), name="static")
 # route tags to structure swagger interface (/docs,/redoc)
 
 
+import faulthandler
+import signal
+
+# Register handler so that, if you send SIGUSR1 to this process,
+# it will print all thread backtraces to stderr.
+faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
+
 class RouteTag(str, Enum):
     STATIC_FILES = "Static Files"
     ACTIONS = "Microscope Actions"
@@ -369,7 +376,7 @@ class SquidError(Exception):
 def name_check(name:str)->str|None:
     """
     check name for validity.
-    
+
     returns None if valid, otherwise returns description of the error.
 
     used to check plate name and project name for validity.
@@ -386,7 +393,7 @@ def name_check(name:str)->str|None:
 def filename_check(name:str)->str|None:
     """
     check filename for validity.
-    
+
     returns None if valid, otherwise returns description of the error.
 
     used to check config filename for validity.
@@ -735,6 +742,12 @@ class Core:
             "/api/action/move_to",
             CustomRoute(handler=MoveTo, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+        )
+
+        route_wrapper(
+            "/api/action/machine_config_flush",
+            CustomRoute(handler=self.machine_config_flush),
+            methods=["POST"]
         )
 
         # Register URL for start_acquisition
@@ -1280,6 +1293,13 @@ class Core:
 
         return True
 
+    def machine_config_flush(
+        self, machine_config: tp.List[ConfigItem]
+    ) -> BasicSuccessResponse:
+        GlobalConfigHandler.override(machine_config)
+
+        return BasicSuccessResponse()
+
     async def start_acquisition(
         self, config_file: sc.AcquisitionConfig
     ) -> AcquisitionStartResponse:
@@ -1534,7 +1554,7 @@ class Core:
         try:
             with self.squid.lock(blocking=True) as squid:
                 assert squid is not None
-                
+
                 squid.close()
         except:
             pass
