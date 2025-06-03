@@ -50,7 +50,10 @@ from ..logger import logger
 def error_internal(detail:str)->tp.NoReturn:
     """raise an HTTPException with specified detail """
     logger.debug(f"error_internal - {detail=}")
-    
+
+    import faulthandler
+    faulthandler.dump_traceback(all_threads=True)
+
     raise HTTPException(status_code=500,detail=detail)
 
 def wellIsForbidden(well_name:str,plate_type:sc.Wellplate)->bool:
@@ -59,7 +62,7 @@ def wellIsForbidden(well_name:str,plate_type:sc.Wellplate)->bool:
     forbidden_wells_entry=g_config.get("forbidden_wells")
     if forbidden_wells_entry is None:
         error_internal(detail="forbidden_wells entry not found in global config")
-    
+
     forbidden_wells_str=forbidden_wells_entry.value
     if not isinstance(forbidden_wells_str,str):
         error_internal(detail="forbidden_wells entry is not a string")
@@ -111,7 +114,7 @@ class BaseCommand(Generic[T]):
 
 class MC_getLastPosition(BaseModel,BaseCommand[mc.Position]):
     """ command class to retrieve core.mc.get_last_position """
-    
+
     _ReturnValue:type=PrivateAttr(default=mc.Position)
 
 class SitePosition(BaseModel):
@@ -199,7 +202,7 @@ class LaserAutofocusCalibrate(BaseModel,BaseCommand[LaserAutofocusCalibrationRes
         calculates the conversion factor between pixels and micrometers, and sets the reference for the laser autofocus signal
 
         the calibration process takes dozens of measurements of the laser autofocus signal at known z positions.
-        then it calculates the positions of the dots, and tracks them over time. this is expected to observe two dots, 
+        then it calculates the positions of the dots, and tracks them over time. this is expected to observe two dots,
         at constant distance to each other. one dot may only be visible for a subrange of the total z range, which is
         expected.
         one dot is known to be always visible, so its trajectory is used as reference data.
@@ -342,7 +345,7 @@ class ChannelSnapshot(BaseModel,BaseCommand[ImageAcquiredResponse]):
 class ChannelSnapSelectionResult(BaseModel):
     channel_handles:tp.List[str]
     _images:tp.Dict[str,np.ndarray]=PrivateAttr(default_factory=dict)
-    
+
 class ChannelSnapSelection(BaseModel,BaseCommand[ChannelSnapSelectionResult]):
     """
     take a snapshot of all selected channels
