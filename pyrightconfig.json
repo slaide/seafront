@@ -1,13 +1,11 @@
 {
     "venvPath": ".",
     "venv": ".venv",
-    "include": [
-        "."
-    ],
+
+    "include": ["."],
+    "pythonVersion": "3.13",
     "typeCheckingMode": "standard", // "strict",
-    "strict": [
-        // "**/*.py"
-    ],
+
     "reportUnnecessaryComparison": "error",
     "reportOptionalMemberAccess": "error",
     "reportOptionalCall": "error",
@@ -17,6 +15,6 @@
     "reportUnnecessaryCast": "error",
     "reportIncompatibleMethodOverride": "error",
     "reportIncompatibleReturnType": "error",
-    "reportIncompatibleArgument": "error",
+    "reportIncompatibleArgument": "error"
     //"reportPrivateUsage": "error"
 }

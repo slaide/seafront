@@ -11,7 +11,7 @@ from threading import Thread
 
 import seaconfig as sc
 import tifffile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from ..logger import logger
 from .commands import *
