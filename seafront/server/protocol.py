@@ -14,8 +14,9 @@ import tifffile
 from pydantic import BaseModel, Field, ConfigDict
 
 from ..logger import logger
-from .commands import *
-
+import commands as cmds
+from ..config import basics
+from ..hardware import microcontroller as mc
 
 class AsyncThreadPool(BaseModel):
     """
@@ -121,7 +122,7 @@ def make_unique_acquisition_id(length: tp.Literal[16, 32] = 16) -> str:
 
 
 async def store_image(
-    image_entry: ImageStoreEntry,
+    image_entry: cmds.ImageStoreEntry,
     img_compression_algorithm: tp.Literal["LZW", "zlib"],
     metadata: tp.Dict[str, str],
 ):
@@ -177,7 +178,7 @@ class ProtocolGenerator(BaseModel):
     config_file: sc.AcquisitionConfig
     handle_q_in: tp.Callable[[], None]
     plate: sc.Wellplate
-    acquisition_status: AcquisitionStatus
+    acquisition_status: cmds.AcquisitionStatus
 
     acquisition_id: str = Field(default_factory=make_unique_acquisition_id)
 
@@ -197,7 +198,7 @@ class ProtocolGenerator(BaseModel):
     max_storage_size_images_GB: float = -1
     project_output_path: path.Path = Field(default_factory=path.Path)
 
-    latest_channel_images: tp.Dict[str, ImageStoreEntry] = Field(default_factory=dict)
+    latest_channel_images: tp.Dict[str, cmds.ImageStoreEntry] = Field(default_factory=dict)
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
@@ -237,7 +238,7 @@ class ProtocolGenerator(BaseModel):
         )
         "offset of top left site from top left corner of the well, in y, in mm"
 
-        g_config = GlobalConfigHandler.get_dict()
+        g_config = basics.GlobalConfigHandler.get_dict()
 
         # calculate meta information about acquisition
         cam_img_width = g_config["main_camera_image_width_px"]
@@ -257,7 +258,7 @@ class ProtocolGenerator(BaseModel):
             case "mono12":
                 bytes_per_pixel = 2
             case _unexpected:
-                error_internal(
+                cmds.error_internal(
                     detail=f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}"
                 )
 
@@ -283,10 +284,10 @@ class ProtocolGenerator(BaseModel):
         with (self.project_output_path / "config.json").open("w") as file:
             file.write(self.config_file.json())
 
-        self.acquisition_status.last_status = AcquisitionStatusOut(
+        self.acquisition_status.last_status = cmds.AcquisitionStatusOut(
             acquisition_id=self.acquisition_id,
-            acquisition_status=AcquisitionStatusStage.SCHEDULED,
-            acquisition_progress=AcquisitionProgressStatus(
+            acquisition_status=cmds.AcquisitionStatusStage.SCHEDULED,
+            acquisition_progress=cmds.AcquisitionProgressStatus(
                 current_num_images=0,
                 time_since_start_s=0,
                 start_time_iso="scheduled",
@@ -294,7 +295,7 @@ class ProtocolGenerator(BaseModel):
                 estimated_remaining_time_s=0,
                 last_image=None,
             ),
-            acquisition_meta_information=AcquisitionMetaInformation(
+            acquisition_meta_information=cmds.AcquisitionMetaInformation(
                 total_num_images=self.num_images_total,
                 max_storage_size_images_GB=self.max_storage_size_images_GB,
             ),
@@ -307,7 +308,7 @@ class ProtocolGenerator(BaseModel):
         self,
     ) -> tp.Generator[
         # yielded types: None means done, str is returned on first iter, other types are BaseCommands
-        tp.Union[None, tp.Literal["ready"], BaseCommand],
+        tp.Union[None, tp.Literal["ready"], cmds.BaseCommand],
         # received types (at runtime must match return type of <yielded type>.run().ResultType)
         tp.Union[None, tp.Any],
         # generator return value
@@ -325,7 +326,7 @@ class ProtocolGenerator(BaseModel):
         # 10um
         UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM = 10e-3
 
-        g_config = GlobalConfigHandler.get_dict()
+        g_config = basics.GlobalConfigHandler.get_dict()
 
         # first yield indicates that this generator is ready to produce commands
         # the value from the consumer on the first yield is None
@@ -334,7 +335,7 @@ class ProtocolGenerator(BaseModel):
 
         logger.info("protocol - ready for execution")
 
-        yield EstablishHardwareConnection()
+        yield cmds.EstablishHardwareConnection()
 
         logger.info("protocol - established hardware connection")
 
@@ -347,7 +348,7 @@ class ProtocolGenerator(BaseModel):
         storage_usage_bytes = 0
 
         # get current z coordinate as z reference
-        last_position = yield MC_getLastPosition()
+        last_position = yield cmds.MC_getLastPosition()
         assert isinstance(last_position, mc.Position), f"{type(last_position)=}"
         reference_z_mm = last_position.z_pos_mm
 
@@ -356,8 +357,8 @@ class ProtocolGenerator(BaseModel):
         if self.config_file.autofocus_enabled and gconfig_refzmm_item is not None:
             reference_z_mm = gconfig_refzmm_item.floatvalue
 
-            res = yield MoveTo(x_mm=None, y_mm=None, z_mm=reference_z_mm)
-            assert isinstance(res, BasicSuccessResponse), f"{type(res)=}"
+            res = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=reference_z_mm)
+            assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
 
         # run acquisition:
 
@@ -392,8 +393,8 @@ class ProtocolGenerator(BaseModel):
                         + site.row * self.config_file.grid.delta_y_mm
                     )
 
-                    res = yield MoveTo(x_mm=site_x_mm, y_mm=site_y_mm)
-                    assert isinstance(res, BasicSuccessResponse), f"{type(res)=}"
+                    res = yield cmds.MoveTo(x_mm=site_x_mm, y_mm=site_y_mm)
+                    assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
 
                     logger.debug("protocol - moved to site")
 
@@ -413,13 +414,13 @@ class ProtocolGenerator(BaseModel):
                             )
 
                             # approach target offset
-                            res = yield AutofocusApproachTargetDisplacement(
+                            res = yield cmds.AutofocusApproachTargetDisplacement(
                                 target_offset_um=0,
                                 config_file=self.config_file,
                                 pre_approach_refz=False,
                             )
                             assert isinstance(
-                                res, AutofocusApproachTargetDisplacementResult
+                                res, cmds.AutofocusApproachTargetDisplacementResult
                             ), f"{type(res)=}"
 
                             logger.debug(
@@ -434,10 +435,10 @@ class ProtocolGenerator(BaseModel):
                                 math.fabs(res.uncompensated_offset_mm)
                                 > UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM
                             ):
-                                mres = yield MoveTo(
+                                mres = yield cmds.MoveTo(
                                     x_mm=None, y_mm=None, z_mm=reference_z_mm
                                 )
-                                assert isinstance(mres, BasicSuccessResponse), (
+                                assert isinstance(mres, cmds.BasicSuccessResponse), (
                                     f"{type(mres)=}"
                                 )
                                 logger.debug(
@@ -460,7 +461,7 @@ class ProtocolGenerator(BaseModel):
                             )
 
                         # reference for channel z offsets
-                        last_position = yield MC_getLastPosition()
+                        last_position = yield cmds.MC_getLastPosition()
                         assert isinstance(last_position, mc.Position), (
                             f"{type(last_position)=}"
                         )
@@ -468,8 +469,8 @@ class ProtocolGenerator(BaseModel):
 
                         logger.debug("autofocus performed")
                     else:
-                        res = yield MoveTo(x_mm=None, y_mm=None, z_mm=reference_z_mm)
-                        assert isinstance(res, BasicSuccessResponse), f"{type(res)=}"
+                        res = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=reference_z_mm)
+                        assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
 
                         logger.debug("approached reference z")
 
@@ -504,16 +505,16 @@ class ProtocolGenerator(BaseModel):
                     # sort in z
                     image_pos_z_list = sorted(image_pos_z_list, key=lambda v: v[1])
 
-                    res = yield MoveTo(
+                    res = yield cmds.MoveTo(
                         x_mm=None,
                         y_mm=None,
                         z_mm=image_pos_z_list[0][1] - Z_STACK_COUNTER_BACKLASH_MM,
                     )
-                    assert isinstance(res, BasicSuccessResponse), f"{type(res)=}"
-                    res = yield MoveTo(
+                    assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
+                    res = yield cmds.MoveTo(
                         x_mm=None, y_mm=None, z_mm=image_pos_z_list[0][1]
                     )
-                    assert isinstance(res, BasicSuccessResponse), f"{type(res)=}"
+                    assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
 
                     logger.debug("protocol - moved to z order bottom")
 
@@ -529,7 +530,7 @@ class ProtocolGenerator(BaseModel):
                         self.handle_q_in()
 
                         # move to channel offset
-                        last_position = yield MC_getLastPosition()
+                        last_position = yield cmds.MC_getLastPosition()
                         assert isinstance(last_position, mc.Position), (
                             f"{type(last_position)=}"
                         )
@@ -537,12 +538,12 @@ class ProtocolGenerator(BaseModel):
 
                         distance_z_to_move_mm = channel_z_mm - current_z_mm
                         if math.fabs(distance_z_to_move_mm) > DISPLACEMENT_THRESHOLD_MM:
-                            res = yield MoveTo(x_mm=None, y_mm=None, z_mm=channel_z_mm)
-                            assert isinstance(res, BasicSuccessResponse), (
+                            res = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=channel_z_mm)
+                            assert isinstance(res, cmds.BasicSuccessResponse), (
                                 f"{type(res)=}"
                             )
 
-                        last_position = yield MC_getLastPosition()
+                        last_position = yield cmds.MC_getLastPosition()
                         assert isinstance(last_position, mc.Position), (
                             f"{type(last_position)=}"
                         )
@@ -552,9 +553,9 @@ class ProtocolGenerator(BaseModel):
                         )
 
                         # snap image
-                        res = yield ChannelSnapshot(channel=channel)
-                        if not isinstance(res, ImageAcquiredResponse):
-                            error_internal(
+                        res = yield cmds.ChannelSnapshot(channel=channel)
+                        if not isinstance(res, cmds.ImageAcquiredResponse):
+                            cmds.error_internal(
                                 detail=f"failed to snap image at site {site} in well {well} (invalid result type {type(res)})"
                             )
 
@@ -563,14 +564,14 @@ class ProtocolGenerator(BaseModel):
                         # store image
                         image_storage_path = f"{str(self.project_output_path)}/{well.well_name}_s{site_index}_x{site.col + 1}_y{site.row + 1}_z{plane_index + 1}_{channel.handle}.tiff"
 
-                        image_store_entry = ImageStoreEntry(
+                        image_store_entry = cmds.ImageStoreEntry(
                             pixel_format=g_config["main_camera_pixel_format"].strvalue,
-                            info=ImageStoreInfo(
+                            info=cmds.ImageStoreInfo(
                                 channel=channel,
                                 width_px=res._img.shape[1],
                                 height_px=res._img.shape[0],
                                 timestamp=time.time(),
-                                position=SitePosition(
+                                position=cmds.SitePosition(
                                     well_name=well.well_name,
                                     site_x=site_x,
                                     site_y=site_y,
@@ -639,10 +640,10 @@ class ProtocolGenerator(BaseModel):
                             f"protocol - {num_images_acquired}/{self.num_images_total} images acquired"
                         )
 
-                        self.acquisition_status.last_status = AcquisitionStatusOut(
+                        self.acquisition_status.last_status = cmds.AcquisitionStatusOut(
                             acquisition_id=self.acquisition_id,
-                            acquisition_status=AcquisitionStatusStage.RUNNING,
-                            acquisition_progress=AcquisitionProgressStatus(
+                            acquisition_status=cmds.AcquisitionStatusStage.RUNNING,
+                            acquisition_progress=cmds.AcquisitionProgressStatus(
                                 # measureable progress
                                 current_num_images=num_images_acquired,
                                 time_since_start_s=time_since_start_s,
@@ -657,7 +658,7 @@ class ProtocolGenerator(BaseModel):
                             ),
                             # some meta information about the acquisition, derived from configuration file
                             # i.e. this is not updated during acquisition
-                            acquisition_meta_information=AcquisitionMetaInformation(
+                            acquisition_meta_information=cmds.AcquisitionMetaInformation(
                                 total_num_images=self.num_images_total,
                                 max_storage_size_images_GB=self.max_storage_size_images_GB,
                             ),

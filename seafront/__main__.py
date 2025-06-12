@@ -1569,8 +1569,6 @@ class Core:
 
 
 # handle validation errors with ability to print to terminal for debugging
-
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.debug(f"Validation error at {request.url}: {json.dumps(exc.errors(), indent=2, ensure_ascii=False)}")
