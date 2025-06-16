@@ -1,25 +1,23 @@
 # this code is written on top of the firmware specifications in github.com/hongquanli/octopi-research
 
+import asyncio
+import dataclasses
+import threading
 import time
 import typing as tp
-from enum import Enum
-import threading
-import dataclasses
-from dataclasses import dataclass
-from ..logger import logger
-import asyncio
-from functools import wraps
 from contextlib import contextmanager
-import traceback as tb
+from dataclasses import dataclass
+from enum import Enum
+from functools import wraps
 
-import serial
-import serial.tools.list_ports
 import crc
 import numpy as np
+import serial
+import serial.tools.list_ports
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
-
-from .adapter import Position as AdapterPosition
+from seafront.hardware.adapter import Position as AdapterPosition
+from seafront.logger import logger
 
 
 @dataclass
@@ -174,22 +172,19 @@ class FirmwareDefinitions:
     @staticmethod
     def mm_per_ustep_x() -> float:
         return FirmwareDefinitions.SCREW_PITCH_X_MM / (
-            FirmwareDefinitions.MICROSTEPPING_DEFAULT_X
-            * FirmwareDefinitions.FULLSTEPS_PER_REV_X
+            FirmwareDefinitions.MICROSTEPPING_DEFAULT_X * FirmwareDefinitions.FULLSTEPS_PER_REV_X
         )
 
     @staticmethod
     def mm_per_ustep_y() -> float:
         return FirmwareDefinitions.SCREW_PITCH_Y_MM / (
-            FirmwareDefinitions.MICROSTEPPING_DEFAULT_Y
-            * FirmwareDefinitions.FULLSTEPS_PER_REV_Y
+            FirmwareDefinitions.MICROSTEPPING_DEFAULT_Y * FirmwareDefinitions.FULLSTEPS_PER_REV_Y
         )
 
     @staticmethod
     def mm_per_ustep_z() -> float:
         return FirmwareDefinitions.SCREW_PITCH_Z_MM / (
-            FirmwareDefinitions.MICROSTEPPING_DEFAULT_Z
-            * FirmwareDefinitions.FULLSTEPS_PER_REV_Z
+            FirmwareDefinitions.MICROSTEPPING_DEFAULT_Z * FirmwareDefinitions.FULLSTEPS_PER_REV_Z
         )
 
     @staticmethod
@@ -205,10 +200,7 @@ class FirmwareDefinitions:
         else:
             return int(
                 value_mm
-                / (
-                    FirmwareDefinitions.STAGE_POS_SIGN_X
-                    * FirmwareDefinitions.mm_per_ustep_x()
-                )
+                / (FirmwareDefinitions.STAGE_POS_SIGN_X * FirmwareDefinitions.mm_per_ustep_x())
             )
 
     @staticmethod
@@ -224,10 +216,7 @@ class FirmwareDefinitions:
         else:
             return int(
                 value_mm
-                / (
-                    FirmwareDefinitions.STAGE_POS_SIGN_Y
-                    * FirmwareDefinitions.mm_per_ustep_y()
-                )
+                / (FirmwareDefinitions.STAGE_POS_SIGN_Y * FirmwareDefinitions.mm_per_ustep_y())
             )
 
     @staticmethod
@@ -243,10 +232,7 @@ class FirmwareDefinitions:
         else:
             return int(
                 value_mm
-                / (
-                    FirmwareDefinitions.STAGE_POS_SIGN_Z
-                    * FirmwareDefinitions.mm_per_ustep_z()
-                )
+                / (FirmwareDefinitions.STAGE_POS_SIGN_Z * FirmwareDefinitions.mm_per_ustep_z())
             )
 
 
@@ -302,10 +288,7 @@ class MicrocontrollerStatusPackage:
 
     def __str__(self):
         s = ", ".join(
-            [
-                f"{field.name}={getattr(self, field.name)!r}"
-                for field in dataclasses.fields(self)
-            ]
+            [f"{field.name}={getattr(self, field.name)!r}" for field in dataclasses.fields(self)]
             + [
                 f"x_pos_mm={self.pos.x_pos_mm}",
                 f"y_pos_mm={self.pos.y_pos_mm}",
@@ -580,7 +563,7 @@ class Command:
         return ret
 
     @staticmethod
-    def configure_actuators() -> tp.List["Command"]:
+    def configure_actuators() -> list["Command"]:
         rets = []
 
         # set lead screw pitch
@@ -630,9 +613,7 @@ class Command:
         return ret
 
     @staticmethod
-    def move_by_mm(
-        direction: tp.Literal["x", "y", "z"], distance_mm: float
-    ) -> tp.List["Command"]:
+    def move_by_mm(direction: tp.Literal["x", "y", "z"], distance_mm: float) -> list["Command"]:
         num_usteps = None
         command_name = None
         match direction:
@@ -800,7 +781,7 @@ class Command:
         led_color_r: float = 1.0,
         led_color_g: float = 1.0,
         led_color_b: float = 1.0,
-    ) -> tp.List["Command"]:
+    ) -> list["Command"]:
         """
         turn on illumination source, and set intensity
 
@@ -838,8 +819,8 @@ class Command:
 
     @staticmethod
     def illumination_end(
-        illumination_source: tp.Optional[ILLUMINATION_CODE] = None,
-    ) -> tp.List["Command"]:
+        illumination_source: ILLUMINATION_CODE | None = None,
+    ) -> list["Command"]:
         cmds = []
         if illumination_source is not None:
             cmd = Command()
@@ -879,15 +860,17 @@ class Command:
     def af_laser_illum_end() -> "Command":
         return Command.set_pin_level(pin=MCU_PINS.AF_LASER, level=0)
 
+
 def microcontroller_exclusive(f):
     "ensure exclusive access to certain code sections"
 
     @wraps(f)
-    def wrapper(self,*args,**kwargs):
+    def wrapper(self, *args, **kwargs):
         with self._lock:
-            return f(self,*args,**kwargs)
+            return f(self, *args, **kwargs)
 
     return wrapper
+
 
 class Microcontroller(BaseModel):
     device_info: SerialDeviceInfo
@@ -914,7 +897,7 @@ class Microcontroller(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @contextmanager
-    def locked(self,blocking:bool=True)->"tp.Iterator[tp.Self|None]":
+    def locked(self, blocking: bool = True) -> "tp.Iterator[tp.Self|None]":
         "convenience function to lock self for multiple function calls. yields none is lock cannot be acquired"
         if self._lock.acquire(blocking=blocking):
             try:
@@ -1004,9 +987,7 @@ class Microcontroller(BaseModel):
             if mte.info is None:
                 mte.info = timeoutinfo
             elif timeoutinfo is not None:
-                logger.debug(
-                    f"did not overwrite timeoutinfo {mte.info} with {timeoutinfo}"
-                )
+                logger.debug(f"did not overwrite timeoutinfo {mte.info} with {timeoutinfo}")
             raise mte
 
     async def _read_packets(
@@ -1059,9 +1040,7 @@ class Microcontroller(BaseModel):
                 self.handle.in_waiting // FirmwareDefinitions.READ_PACKET_LENGTH
             ) - 1
             if num_bytes_to_skip > 0:
-                self.handle.read(
-                    num_bytes_to_skip * FirmwareDefinitions.READ_PACKET_LENGTH
-                )
+                self.handle.read(num_bytes_to_skip * FirmwareDefinitions.READ_PACKET_LENGTH)
 
             packet = MicrocontrollerStatusPackage(
                 self.handle.read(FirmwareDefinitions.READ_PACKET_LENGTH)
@@ -1112,7 +1091,7 @@ class Microcontroller(BaseModel):
         return self.last_command_id
 
     @microcontroller_exclusive
-    async def send_cmd(self, cmd_in: tp.Union["Command", tp.List["Command"]]):
+    async def send_cmd(self, cmd_in: tp.Union["Command", list["Command"]]):
         "send command for execution. waits for command to complete if command type requires awaiting."
         if isinstance(cmd_in, list):
             cmds = cmd_in
@@ -1125,15 +1104,15 @@ class Microcontroller(BaseModel):
             cmd[-1] = self.crc_calculator.calculate_checksum(cmd.bytes[:-1])
 
             # keep track of illumination lock
-            acquired_illum_lock=False
+            acquired_illum_lock = False
             match cmd[1]:
                 case CommandName.TURN_ON_ILLUMINATION.value:
                     # overlapping illumination can cause all sorts of issues
                     if not self.illum.acquire(blocking=False):
                         raise RuntimeError("illumination already on")
 
-                    acquired_illum_lock=True
-                    
+                    acquired_illum_lock = True
+
                 case CommandName.TURN_OFF_ILLUMINATION.value:
                     # illumination is in undefined state upon startup
                     # and turning off does not damage anything, so we allow this
@@ -1142,7 +1121,7 @@ class Microcontroller(BaseModel):
                         # if we cannot acquire illumination, it is in use by another thread
                         raise RuntimeError("illumination currently controlled by another thread!")
 
-                    acquired_illum_lock=True
+                    acquired_illum_lock = True
 
             try:
                 if self.handle is None:

@@ -1,34 +1,32 @@
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
-import typing as tp
 import asyncio
 import math
 import threading
+import typing as tp
 from contextlib import contextmanager
 from functools import wraps
 
+import cv2
+import numpy as np
 import scipy  # to find peaks in a signal
 import scipy.ndimage  # for guassian blur
-from scipy import stats  # for linear regression
-from matplotlib import pyplot as plt
-import numpy as np
-import cv2
-from ..logger import logger
-
-from gxipy import gxiapi
-from .camera import Camera, AcquisitionMode
-from . import microcontroller as mc
 import seaconfig as sc
+from gxipy import gxiapi
+from matplotlib import pyplot as plt
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from scipy import stats  # for linear regression
 
-from ..config.basics import GlobalConfigHandler
-from ..server import commands as cmd
-from ..server.commands import (
-    T,
+from seafront.config.basics import GlobalConfigHandler
+from seafront.hardware import microcontroller as mc
+from seafront.hardware.adapter import AdapterState, CoreState
+from seafront.hardware.camera import AcquisitionMode, Camera
+from seafront.logger import logger
+from seafront.server import commands as cmd
+from seafront.server.commands import (
     BasicSuccessResponse,
     IlluminationEndAll,
+    T,
     error_internal,
 )
-
-from .adapter import AdapterState, CoreState
 
 # utility functions
 
@@ -48,7 +46,7 @@ def linear_regression(
     return slope, intercept  # type:ignore
 
 
-def _process_image(img: np.ndarray, camera: Camera) -> tp.Tuple[np.ndarray, int]:
+def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
     """
     center crop main camera image to target size
 
@@ -97,28 +95,28 @@ def _process_image(img: np.ndarray, camera: Camera) -> tp.Tuple[np.ndarray, int]
 
     image_file_pad_low = g_config["image_file_pad_low"]
     assert image_file_pad_low is not None
-    cambits=0
+    cambits = 0
 
     match camera.pixel_format:
         case gxiapi.GxPixelFormatEntry.MONO8:
-            cambits=8
+            cambits = 8
         case gxiapi.GxPixelFormatEntry.MONO10:
-            cambits=10
+            cambits = 10
         case gxiapi.GxPixelFormatEntry.MONO12:
-            cambits=12
+            cambits = 12
         case gxiapi.GxPixelFormatEntry.MONO14:
-            cambits=14
+            cambits = 14
         case gxiapi.GxPixelFormatEntry.MONO16:
-            cambits=16
+            cambits = 16
         case _:
-            assert False
+            raise ValueError(f"unsupported pixel format {camera.pixel_format}")
 
     if image_file_pad_low.boolvalue:
         # e.g. ret = ret << (16 - 12)
-        bytesPerPixel=ret.dtype.itemsize
-        bitsPerPixel=bytesPerPixel*8
-        if bitsPerPixel!=cambits:
-            ret=ret<<bitsPerPixel-cambits
+        bytes_per_pixel = ret.dtype.itemsize
+        bits_per_pixel = bytes_per_pixel * 8
+        if bits_per_pixel != cambits:
+            ret = ret << (bits_per_pixel - cambits)
 
     return ret, cambits
 
@@ -129,7 +127,7 @@ class Locked[T]:
         self.t = t
 
     @contextmanager
-    def __call__(self, blocking: bool = True) -> tp.Iterator[T|None]:
+    def __call__(self, blocking: bool = True) -> tp.Iterator[T | None]:
         if self.lock.acquire(blocking=blocking):
             try:
                 yield self.t
@@ -143,11 +141,12 @@ def squid_exclusive(f):
     "wrapper to ensure exclusive access to some code sections"
 
     @wraps(f)
-    def wrapper(self,*args,**kwargs):
+    def wrapper(self, *args, **kwargs):
         with self._lock:
-            return f(self,*args,**kwargs)
+            return f(self, *args, **kwargs)
 
     return wrapper
+
 
 class SquidAdapter(BaseModel):
     """interface to squid microscope"""
@@ -160,22 +159,24 @@ class SquidAdapter(BaseModel):
     is_connected: bool = False
     is_in_loading_position: bool = False
 
-    stream_callback: tp.Optional[tp.Callable[[tp.Union[np.ndarray, bool]], bool]] = (
-        Field(default=None)
-    )
+    stream_callback: tp.Callable[[np.ndarray | bool], bool] | None = Field(default=None)
 
-    last_state: tp.Optional[AdapterState] = None
+    last_state: AdapterState | None = None
 
-    _lock:threading.RLock=PrivateAttr(default_factory=threading.RLock)
+    _lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @contextmanager
-    def lock(self,blocking:bool=True)->tp.Iterator[tp.Self|None]:
+    def lock(self, blocking: bool = True) -> tp.Iterator[tp.Self | None]:
         "lock all hardware devices"
         if self._lock.acquire(blocking=blocking):
             try:
-                with self.main_camera(blocking=blocking), self.focus_camera(blocking=blocking), self.microcontroller.locked(blocking=blocking):
+                with (
+                    self.main_camera(blocking=blocking),
+                    self.focus_camera(blocking=blocking),
+                    self.microcontroller.locked(blocking=blocking),
+                ):
                     yield self
             finally:
                 self._lock.release()
@@ -194,9 +195,7 @@ class SquidAdapter(BaseModel):
             logger.critical("startup - no microcontrollers found.")
             abort_startup = True
         if len(cams) < 2:
-            logger.critical(
-                f"startup - found less than two cameras (found {len(cams)})"
-            )
+            logger.critical(f"startup - found less than two cameras (found {len(cams)})")
             abort_startup = True
 
         if abort_startup:
@@ -240,10 +239,17 @@ class SquidAdapter(BaseModel):
         if self.is_connected:
             return
 
-        with self.microcontroller.locked() as mc, self.main_camera() as main_camera, self.focus_camera() as focus_camera:
-            if mc is None: error_internal("microcontroller is busy")
-            if main_camera is None: error_internal("main camera is busy")
-            if focus_camera is None: error_internal("focus camera is busy")
+        with (
+            self.microcontroller.locked() as mc,
+            self.main_camera() as main_camera,
+            self.focus_camera() as focus_camera,
+        ):
+            if mc is None:
+                error_internal("microcontroller is busy")
+            if main_camera is None:
+                error_internal("main camera is busy")
+            if focus_camera is None:
+                error_internal("focus camera is busy")
 
             # small round trip because short disconnects from the cameras do not notify the cameras of the disconnect
             # so an attempted reconnect will throw an error indicating an existing connection
@@ -253,7 +259,6 @@ class SquidAdapter(BaseModel):
             self.close()
             self.is_connected = False
 
-
             try:
                 main_camera.open(device_type="main")
                 logger.debug("startup - connected to main cam")
@@ -261,12 +266,12 @@ class SquidAdapter(BaseModel):
                 logger.debug("startup - connected to focus cam")
                 mc.open()
                 logger.debug("startup - connected to microcontroller")
-            except gxiapi.OffLine:
+            except gxiapi.OffLine as e:
                 logger.critical("startup - camera offline")
-                raise DisconnectError()
-            except IOError:
+                raise DisconnectError() from e
+            except IOError as e:
                 logger.critical("startup - microcontroller offline")
-                raise DisconnectError()
+                raise DisconnectError() from e
 
             logger.info("startup - connection to hardware devices established")
             self.is_connected = True
@@ -280,10 +285,17 @@ class SquidAdapter(BaseModel):
         if not self.is_connected:
             return
 
-        with self.microcontroller.locked() as mc, self.main_camera() as main_camera, self.focus_camera() as focus_camera:
-            if mc is None: error_internal("microcontroller is busy")
-            if main_camera is None: error_internal("main camera is busy")
-            if focus_camera is None: error_internal("focus camera is busy")
+        with (
+            self.microcontroller.locked() as mc,
+            self.main_camera() as main_camera,
+            self.focus_camera() as focus_camera,
+        ):
+            if mc is None:
+                error_internal("microcontroller is busy")
+            if main_camera is None:
+                error_internal("main camera is busy")
+            if focus_camera is None:
+                error_internal("focus camera is busy")
 
             self.is_connected = False
 
@@ -311,7 +323,8 @@ class SquidAdapter(BaseModel):
         """perform homing maneuver"""
 
         with self.microcontroller.locked() as qmc:
-            if qmc is None: error_internal("microcontroller is busy")
+            if qmc is None:
+                error_internal("microcontroller is busy")
 
             try:
                 logger.info("starting stage calibration (by entering loading position)")
@@ -341,31 +354,21 @@ class SquidAdapter(BaseModel):
                     mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
                     mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL,  # this will turn off the led matrix
                 ]:
-                    await qmc.send_cmd(
-                        mc.Command.illumination_end(illum_src)
-                    )
+                    await qmc.send_cmd(mc.Command.illumination_end(illum_src))
 
                 logger.debug("calibrating xy stage")
 
                 # when starting up the microscope, the initial position is considered (0,0,0)
                 # even homing considers the limits, so before homing, we need to disable the limits
-                await qmc.send_cmd(
-                    mc.Command.set_limit_mm("z", -10.0, "lower")
-                )
-                await qmc.send_cmd(
-                    mc.Command.set_limit_mm("z", 10.0, "upper")
-                )
+                await qmc.send_cmd(mc.Command.set_limit_mm("z", -10.0, "lower"))
+                await qmc.send_cmd(mc.Command.set_limit_mm("z", 10.0, "upper"))
 
                 # move objective out of the way
                 await qmc.send_cmd(mc.Command.home("z"))
                 await qmc.send_cmd(mc.Command.set_zero("z"))
                 # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
-                await qmc.send_cmd(
-                    mc.Command.set_limit_mm("z", 0.0, "lower")
-                )
-                await qmc.send_cmd(
-                    mc.Command.set_limit_mm("z", 6.7, "upper")
-                )
+                await qmc.send_cmd(mc.Command.set_limit_mm("z", 0.0, "lower"))
+                await qmc.send_cmd(mc.Command.set_limit_mm("z", 6.7, "upper"))
                 # home x to set x reference
                 await qmc.send_cmd(mc.Command.home("x"))
                 await qmc.send_cmd(mc.Command.set_zero("x"))
@@ -386,10 +389,10 @@ class SquidAdapter(BaseModel):
 
                 logger.info("done initializing microscope")
 
-            except IOError:
+            except IOError as e:
                 logger.critical("lost connection to microcontroller")
                 self.close()
-                raise DisconnectError()
+                raise DisconnectError() from e
 
     async def snap_selected_channels(
         self, config_file: sc.AcquisitionConfig
@@ -406,7 +409,8 @@ class SquidAdapter(BaseModel):
             cmd.error_internal(detail="now allowed while in loading position")
 
         with self.microcontroller.locked() as qmc:
-            if qmc is None: error_internal("microcontroller is busy")
+            if qmc is None:
+                error_internal("microcontroller is busy")
 
             # get machine config
             if config_file.machine_config is not None:
@@ -423,13 +427,13 @@ class SquidAdapter(BaseModel):
             # if autofocus is available, measure and approach 0 in a loop up to 5 times
             try:
                 current_stage_position = await qmc.get_last_position()
-            except IOError:
+            except IOError as e:
                 self.close()
-                raise DisconnectError()
+                raise DisconnectError() from e
             reference_z_mm = current_stage_position.z_pos_mm
 
             if laf_is_calibrated is not None and laf_is_calibrated.boolvalue:
-                for i in range(5):
+                for _ in range(5):
                     displacement_measure_data = await self.execute(
                         cmd.AutofocusMeasureDisplacement(config_file=config_file)
                     )
@@ -440,25 +444,21 @@ class SquidAdapter(BaseModel):
                     if math.fabs(current_displacement_um) < 0.5:
                         break
 
-                    move_data = await self.execute(
-                        cmd.MoveBy(
-                            axis="z", distance_mm=-1e-3 * current_displacement_um
-                        )
+                    _ = await self.execute(
+                        cmd.MoveBy(axis="z", distance_mm=-1e-3 * current_displacement_um)
                     )
 
                 # then store current z coordinate as reference z
                 try:
-                    current_stage_position = (
-                        await qmc.get_last_position()
-                    )
-                except IOError:
+                    current_stage_position = await qmc.get_last_position()
+                except IOError as e:
                     self.close()
-                    raise DisconnectError()
+                    raise DisconnectError() from e
                 reference_z_mm = current_stage_position.z_pos_mm
 
             # then go through list of channels, and approach each channel with offset relative to reference z
             for channel in channels:
-                move_to_data = await self.execute(
+                _ = await self.execute(
                     cmd.MoveTo(
                         x_mm=None,
                         y_mm=None,
@@ -466,14 +466,12 @@ class SquidAdapter(BaseModel):
                     )
                 )
 
-                channel_snap_data = await self.execute(
-                    cmd.ChannelSnapshot(channel=channel)
-                )
+                _ = await self.execute(cmd.ChannelSnapshot(channel=channel))
 
             return cmd.BasicSuccessResponse()
 
     @property
-    def calibrated_stage_position(self) -> tp.Tuple[float, float, float]:
+    def calibrated_stage_position(self) -> tuple[float, float, float]:
         """
         return calibrated XY stage offset from GlobalConfigHandler in order (x_mm,y_mm)
         """
@@ -536,21 +534,18 @@ class SquidAdapter(BaseModel):
             error_internal("no signal found")
 
         # order by height
-        tallestpeaks_x = list(
-            sorted(peak_locations.tolist(), key=lambda x: float(I_1d[x]))
-        )
+        tallestpeaks_x = sorted(peak_locations.tolist(), key=lambda x: float(I_1d[x]))
         # pick top N
         tallestpeaks_x = tallestpeaks_x[-TOP_N_PEAKS:]
         # then order n tallest peaks by x
-        tallestpeaks_x = list(sorted(tallestpeaks_x))
+        tallestpeaks_x = sorted(tallestpeaks_x)
 
         # Find the rightmost (largest x) peak
         rightmost_peak: float = max(tallestpeaks_x)
 
         # Compute distances between consecutive peaks
         distances_between_peaks: list[float] = [
-            tallestpeaks_x[i + 1] - tallestpeaks_x[i]
-            for i in range(len(tallestpeaks_x) - 1)
+            tallestpeaks_x[i + 1] - tallestpeaks_x[i] for i in range(len(tallestpeaks_x) - 1)
         ]
 
         # Output rightmost peak and distances between consecutive peaks
@@ -581,9 +576,7 @@ class SquidAdapter(BaseModel):
 
         # get params to describe current signal
         res = await self.execute(
-            cmd.AutofocusSnap(
-                exposure_time_ms=conf_af_exp_ms, analog_gain=conf_af_exp_ag
-            )
+            cmd.AutofocusSnap(exposure_time_ms=conf_af_exp_ms, analog_gain=conf_af_exp_ag)
         )
         new_params = self._get_peak_coords(res._img)
         rightmost_x, interpeakdistances = new_params
@@ -593,7 +586,7 @@ class SquidAdapter(BaseModel):
         elif len(interpeakdistances) == 1:
             leftmost_x = rightmost_x - interpeakdistances[0]
         else:
-            assert False
+            raise ValueError(f"expected 0 or 1 peaks, got {len(interpeakdistances)}")
 
         if _leftmostxinsteadofestimatedz:
             return leftmost_x
@@ -624,7 +617,8 @@ class SquidAdapter(BaseModel):
             cmd.error_internal(detail="now allowed while in loading position")
 
         with self.microcontroller.locked() as qmc:
-            if qmc is None: error_internal("microcontroller is busy")
+            if qmc is None:
+                error_internal("microcontroller is busy")
 
             g_config = GlobalConfigHandler.get_dict()
 
@@ -644,20 +638,16 @@ class SquidAdapter(BaseModel):
                 start_z_mm: float = current_pos.z_pos_mm
 
                 # move down by half z range
-                if Z_MM_BACKLASH_COUNTER!=0:# is not None:
+                if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
                     await qmc.send_cmd(
                         mc.Command.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
                     )
-                    await qmc.send_cmd(
-                        mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER)
-                    )
+                    await qmc.send_cmd(mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER))
                 else:
-                    await qmc.send_cmd(
-                        mc.Command.move_by_mm("z", -half_z_mm)
-                    )
-            except IOError:
+                    await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
+            except IOError as e:
                 self.close()
-                raise DisconnectError()
+                raise DisconnectError() from e
 
             # Display each peak's height and width
             class CalibrationData(BaseModel):
@@ -667,9 +657,7 @@ class SquidAdapter(BaseModel):
             async def measure_dot_params():
                 # measure pos
                 res = await self.execute(
-                    cmd.AutofocusSnap(
-                        exposure_time_ms=conf_af_exp_ms, analog_gain=conf_af_exp_ag
-                    )
+                    cmd.AutofocusSnap(exposure_time_ms=conf_af_exp_ms, analog_gain=conf_af_exp_ag)
                 )
 
                 params = self._get_peak_coords(res._img)
@@ -681,27 +669,21 @@ class SquidAdapter(BaseModel):
                 if i > 0:
                     # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
                     try:
-                        await qmc.send_cmd(
-                            mc.Command.move_by_mm("z", z_step_mm)
-                        )
-                    except IOError:
+                        await qmc.send_cmd(mc.Command.move_by_mm("z", z_step_mm))
+                    except IOError as e:
                         self.close()
-                        raise DisconnectError()
+                        raise DisconnectError() from e
 
                 params = await measure_dot_params()
 
-                peak_info.append(
-                    CalibrationData(z_mm=-half_z_mm + i * z_step_mm, p=params)
-                )
+                peak_info.append(CalibrationData(z_mm=-half_z_mm + i * z_step_mm, p=params))
 
             # move to original position
             try:
-                await qmc.send_cmd(
-                    mc.Command.move_by_mm("z", -half_z_mm)
-                )
-            except IOError:
+                await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
+            except IOError as e:
                 self.close()
-                raise DisconnectError()
+                raise DisconnectError() from e
 
             class DomainInfo(BaseModel):
                 lowest_x: float
@@ -732,7 +714,7 @@ class SquidAdapter(BaseModel):
                 elif len(p_distances) == 1:
                     target_domain = two_peak_domain
                 else:
-                    assert False
+                    raise ValueError(f"expected 0 or 1 peaks, got {len(p_distances)}")
 
                 for x in new_distances:
                     target_domain.lowest_x = min(target_domain.lowest_x, x)
@@ -745,10 +727,10 @@ class SquidAdapter(BaseModel):
 
             # x is dot x
             # y is z coordinate
-            left_dot_x: tp.List[float] = []
-            left_dot_y: tp.List[float] = []
-            right_dot_x: tp.List[float] = []
-            right_dot_y: tp.List[float] = []
+            left_dot_x: list[float] = []
+            left_dot_y: list[float] = []
+            right_dot_x: list[float] = []
+            right_dot_y: list[float] = []
 
             for peak_y, peak_x in one_peak_domain.peak_xs:
                 left_dot_x.append(peak_x[0])
@@ -794,9 +776,7 @@ class SquidAdapter(BaseModel):
                     domain_x.extend(pz)
                     domain_y.extend(py)
 
-                plt.scatter(
-                    domain_x, domain_y, color="red", marker="x", label="two peak domain"
-                )
+                plt.scatter(domain_x, domain_y, color="red", marker="x", label="two peak domain")
 
                 # plot left dot regression
                 slope, intercept = left_dot_regression
@@ -831,25 +811,19 @@ class SquidAdapter(BaseModel):
                 num_z_steps_eval = 51
                 z_step_mm = Z_MM_MOVEMENT_RANGE_MM / (num_z_steps_eval - 1)
 
-                if Z_MM_BACKLASH_COUNTER!=0:# is not None:
+                if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
                     await qmc.send_cmd(
                         mc.Command.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
                     )
-                    await qmc.send_cmd(
-                        mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER)
-                    )
+                    await qmc.send_cmd(mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER))
                 else:
-                    await qmc.send_cmd(
-                        mc.Command.move_by_mm("z", -half_z_mm)
-                    )
+                    await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
 
                 approximated_z: list[tuple[float, float]] = []
                 for i in range(num_z_steps_eval):
                     if i > 0:
                         # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                        await qmc.send_cmd(
-                            mc.Command.move_by_mm("z", z_step_mm)
-                        )
+                        await qmc.send_cmd(mc.Command.move_by_mm("z", z_step_mm))
 
                     approx = await self._approximate_laser_af_z_offset_mm(
                         cmd.LaserAutofocusCalibrationData(
@@ -863,9 +837,7 @@ class SquidAdapter(BaseModel):
                     approximated_z.append((current_z_mm - start_z, approx))
 
                 # move to original position
-                await qmc.send_cmd(
-                    mc.Command.move_by_mm("z", -half_z_mm)
-                )
+                await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
 
                 plt.figure(figsize=(8, 6))
                 plt.scatter(
@@ -903,9 +875,9 @@ class SquidAdapter(BaseModel):
 
             try:
                 calibration_position = await qmc.get_last_position()
-            except IOError:
+            except IOError as e:
                 self.close()
-                raise DisconnectError()
+                raise DisconnectError() from e
 
             calibration_data = cmd.LaserAutofocusCalibrationData(
                 # calculate the conversion factor, based on lowest and highest measured position
@@ -915,16 +887,14 @@ class SquidAdapter(BaseModel):
                 calibration_position=calibration_position.pos,
             )
 
-            return cmd.LaserAutofocusCalibrationResponse(
-                calibration_data=calibration_data
-            )
+            return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)
 
     async def get_current_state(self) -> AdapterState:
         try:
             last_stage_position = await self.microcontroller.get_last_position()
-        except IOError:
+        except IOError as e:
             self.close()
-            raise DisconnectError()
+            raise DisconnectError() from e
 
         # supposed=real-calib
         x_pos_mm = self._pos_x_measured_to_real(last_stage_position.x_pos_mm)
@@ -945,7 +915,8 @@ class SquidAdapter(BaseModel):
 
     async def execute(self, command: cmd.BaseCommand[T]) -> T:
         with self.microcontroller.locked() as qmc:
-            if qmc is None: error_internal("microcontroller is busy")
+            if qmc is None:
+                error_internal("microcontroller is busy")
 
             try:
                 logger.debug(f"squid - executing {type(command).__qualname__}")
@@ -969,16 +940,14 @@ class SquidAdapter(BaseModel):
                             logger.info("squid - connect - calibrated stage")
 
                         except DisconnectError:
-                            error_message = (
-                                "hardware connection could not be established"
-                            )
+                            error_message = "hardware connection could not be established"
                             logger.critical(f"squid - connect - {error_message}")
                             error_internal(error_message)
 
                     logger.debug("squid - connected.")
 
                     result = BasicSuccessResponse()
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.LoadingPositionEnter):
                     if self.is_in_loading_position:
@@ -1005,7 +974,7 @@ class SquidAdapter(BaseModel):
                     logger.debug("squid - entered loading position")
 
                     result = cmd.BasicSuccessResponse()
-                    return result  # type:ignore (this type is correctly inferred at the call site, but here it is not)
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.LoadingPositionLeave):
                     if not self.is_in_loading_position:
@@ -1024,47 +993,33 @@ class SquidAdapter(BaseModel):
                     logger.debug("squid - left loading position")
 
                     result = cmd.BasicSuccessResponse()
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.MoveBy):
                     if self.is_in_loading_position:
-                        cmd.error_internal(
-                            detail="now allowed while in loading position"
-                        )
+                        cmd.error_internal(detail="now allowed while in loading position")
 
                     self.state = CoreState.Moving
 
-                    await qmc.send_cmd(
-                        mc.Command.move_by_mm(command.axis, command.distance_mm)
-                    )
+                    await qmc.send_cmd(mc.Command.move_by_mm(command.axis, command.distance_mm))
 
                     self.state = CoreState.Idle
 
                     logger.debug("squid - moved by")
 
-                    result = cmd.MoveByResult(
-                        moved_by_mm=command.distance_mm, axis=command.axis
-                    )
-                    return result  # type:ignore
+                    result = cmd.MoveByResult(moved_by_mm=command.distance_mm, axis=command.axis)
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.MoveTo):
                     if self.is_in_loading_position:
-                        cmd.error_internal(
-                            detail="now allowed while in loading position"
-                        )
+                        cmd.error_internal(detail="now allowed while in loading position")
 
                     if command.x_mm is not None and command.x_mm < 0:
-                        cmd.error_internal(
-                            detail=f"x coordinate out of bounds {command.x_mm = }"
-                        )
+                        cmd.error_internal(detail=f"x coordinate out of bounds {command.x_mm = }")
                     if command.y_mm is not None and command.y_mm < 0:
-                        cmd.error_internal(
-                            detail=f"y coordinate out of bounds {command.y_mm = }"
-                        )
+                        cmd.error_internal(detail=f"y coordinate out of bounds {command.y_mm = }")
                     if command.z_mm is not None and command.z_mm < 0:
-                        cmd.error_internal(
-                            detail=f"z coordinate out of bounds {command.z_mm = }"
-                        )
+                        cmd.error_internal(detail=f"z coordinate out of bounds {command.z_mm = }")
 
                     prev_state = self.state
                     self.state = CoreState.Moving
@@ -1072,9 +1027,7 @@ class SquidAdapter(BaseModel):
                     approach_x_before_y = True
 
                     if command.x_mm is not None and command.y_mm is not None:
-                        current_stage_position = (
-                            await qmc.get_last_position()
-                        )
+                        current_stage_position = await qmc.get_last_position()
 
                         # plate center is (very) rougly at x=61mm, y=40mm
                         # we have: start position, target position, and two possible edges to move across
@@ -1090,9 +1043,7 @@ class SquidAdapter(BaseModel):
                         edge1 = command.x_mm, current_stage_position.y_pos_mm
                         edge2 = current_stage_position.x_pos_mm, command.y_mm
 
-                        def dist(
-                            p1: tp.Tuple[float, float], p2: tp.Tuple[float, float]
-                        ) -> float:
+                        def dist(p1: tp.Tuple[float, float], p2: tp.Tuple[float, float]) -> float:
                             return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
 
                         approach_x_before_y = dist(edge1, center) < dist(edge2, center)
@@ -1106,9 +1057,7 @@ class SquidAdapter(BaseModel):
                                 cmd.error_internal(
                                     detail=f"calibrated x coordinate out of bounds {x_mm = }"
                                 )
-                            await qmc.send_cmd(
-                                mc.Command.move_to_mm("x", x_mm)
-                            )
+                            await qmc.send_cmd(mc.Command.move_to_mm("x", x_mm))
 
                         if command.y_mm is not None:
                             y_mm = self._pos_y_real_to_measured(command.y_mm)
@@ -1116,9 +1065,7 @@ class SquidAdapter(BaseModel):
                                 cmd.error_internal(
                                     detail=f"calibrated y coordinate out of bounds {y_mm = }"
                                 )
-                            await qmc.send_cmd(
-                                mc.Command.move_to_mm("y", y_mm)
-                            )
+                            await qmc.send_cmd(mc.Command.move_to_mm("y", y_mm))
                     else:
                         if command.y_mm is not None:
                             y_mm = self._pos_y_real_to_measured(command.y_mm)
@@ -1126,9 +1073,7 @@ class SquidAdapter(BaseModel):
                                 cmd.error_internal(
                                     detail=f"calibrated y coordinate out of bounds {y_mm = }"
                                 )
-                            await qmc.send_cmd(
-                                mc.Command.move_to_mm("y", y_mm)
-                            )
+                            await qmc.send_cmd(mc.Command.move_to_mm("y", y_mm))
 
                         if command.x_mm is not None:
                             x_mm = self._pos_x_real_to_measured(command.x_mm)
@@ -1136,9 +1081,7 @@ class SquidAdapter(BaseModel):
                                 cmd.error_internal(
                                     detail=f"calibrated x coordinate out of bounds {x_mm = }"
                                 )
-                            await qmc.send_cmd(
-                                mc.Command.move_to_mm("x", x_mm)
-                            )
+                            await qmc.send_cmd(mc.Command.move_to_mm("x", x_mm))
 
                     if command.z_mm is not None:
                         z_mm = self._pos_z_real_to_measured(command.z_mm)
@@ -1146,36 +1089,26 @@ class SquidAdapter(BaseModel):
                             cmd.error_internal(
                                 detail=f"calibrated z coordinate out of bounds {z_mm = }"
                             )
-                        await qmc.send_cmd(
-                            mc.Command.move_to_mm("z", z_mm)
-                        )
+                        await qmc.send_cmd(mc.Command.move_to_mm("z", z_mm))
 
                     self.state = prev_state
 
                     logger.debug("squid - moved to")
 
                     result = cmd.BasicSuccessResponse()
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.MoveToWell):
                     if self.is_in_loading_position:
-                        cmd.error_internal(
-                            detail="now allowed while in loading position"
-                        )
+                        cmd.error_internal(detail="now allowed while in loading position")
 
                     plate = command.plate_type
 
                     if cmd.wellIsForbidden(command.well_name, plate):
                         cmd.error_internal(detail="well is forbidden")
 
-                    x_mm = (
-                        plate.get_well_offset_x(command.well_name)
-                        + plate.Well_size_x_mm / 2
-                    )
-                    y_mm = (
-                        plate.get_well_offset_y(command.well_name)
-                        + plate.Well_size_y_mm / 2
-                    )
+                    x_mm = plate.get_well_offset_x(command.well_name) + plate.Well_size_x_mm / 2
+                    y_mm = plate.get_well_offset_y(command.well_name) + plate.Well_size_y_mm / 2
 
                     # move in 2d grid, no diagonals (slower, but safer)
                     res = await self.execute(cmd.MoveTo(x_mm=x_mm, y_mm=None))
@@ -1184,7 +1117,7 @@ class SquidAdapter(BaseModel):
                     logger.debug("squid - moved to well")
 
                     result = cmd.BasicSuccessResponse()
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusMeasureDisplacement):
                     if command.config_file.machine_config is not None:
@@ -1216,13 +1149,9 @@ class SquidAdapter(BaseModel):
                         num_images = 3 or command.override_num_images
                         for i in range(num_images):
                             latest_esimated_z_offset_mm = (
-                                await self._approximate_laser_af_z_offset_mm(
-                                    calib_params
-                                )
+                                await self._approximate_laser_af_z_offset_mm(calib_params)
                             )
-                            displacement_um += (
-                                latest_esimated_z_offset_mm * 1e3 / num_images
-                            )
+                            displacement_um += latest_esimated_z_offset_mm * 1e3 / num_images
 
                     except Exception as e:
                         cmd.error_internal(
@@ -1231,16 +1160,12 @@ class SquidAdapter(BaseModel):
 
                     logger.debug("squid - used autofocus to measure displacement")
 
-                    result = cmd.AutofocusMeasureDisplacementResult(
-                        displacement_um=displacement_um
-                    )
-                    return result  # type:ignore
+                    result = cmd.AutofocusMeasureDisplacementResult(displacement_um=displacement_um)
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusSnap):
                     if command.turn_laser_on:
-                        await qmc.send_cmd(
-                            mc.Command.af_laser_illum_begin()
-                        )
+                        await qmc.send_cmd(mc.Command.af_laser_illum_begin())
                         logger.debug("squid - autofocus - turned laser on")
 
                     channel_config = sc.AcquisitionChannelConfig(
@@ -1255,7 +1180,8 @@ class SquidAdapter(BaseModel):
                     )
 
                     with self.focus_camera() as focus_camera:
-                        if focus_camera is None: error_internal("focus camera is busy")
+                        if focus_camera is None:
+                            error_internal("focus camera is busy")
                         img = focus_camera.acquire_with_config(channel_config)
 
                     logger.debug("squid - autofocus - acquired image")
@@ -1264,9 +1190,7 @@ class SquidAdapter(BaseModel):
                         cmd.error_internal(detail="failed to acquire image")
 
                     if command.turn_laser_off:
-                        await qmc.send_cmd(
-                            mc.Command.af_laser_illum_end()
-                        )
+                        await qmc.send_cmd(mc.Command.af_laser_illum_end())
                         logger.debug("squid - autofocus - turned laser off")
 
                     result = cmd.AutofocusSnapResult(
@@ -1276,19 +1200,15 @@ class SquidAdapter(BaseModel):
 
                     # blur laser autofocus image to get rid of some noise
                     # img = scipy.ndimage.gaussian_filter(img, sigma=1.0) # this takes 5 times as long as cv2
-                    img = cv2.GaussianBlur(
-                        img, (3, 3), sigmaX=1.0, borderType=cv2.BORDER_DEFAULT
-                    )
+                    img = cv2.GaussianBlur(img, (3, 3), sigmaX=1.0, borderType=cv2.BORDER_DEFAULT)
                     logger.debug("squid - autofocus - applied blur to image")
 
                     result._img = img
                     result._channel = channel_config
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusLaserWarmup):
-                    await qmc.send_cmd(
-                        mc.Command.af_laser_illum_begin()
-                    )
+                    await qmc.send_cmd(mc.Command.af_laser_illum_begin())
 
                     # wait for the laser to warm up
                     await asyncio.sleep(command.warmup_time_s)
@@ -1298,7 +1218,7 @@ class SquidAdapter(BaseModel):
                     logger.debug("squid - warmed up autofocus laser")
 
                     result = cmd.BasicSuccessResponse()
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.IlluminationEndAll):
                     # make sure all illumination is off
@@ -1310,9 +1230,7 @@ class SquidAdapter(BaseModel):
                         mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
                         mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL,  # this will turn off the led matrix
                     ]:
-                        await qmc.send_cmd(
-                            mc.Command.illumination_end(illum_src)
-                        )
+                        await qmc.send_cmd(mc.Command.illumination_end(illum_src))
                         logger.debug(
                             f"squid - illumination end all - turned off illumination for {illum_src}"
                         )
@@ -1320,13 +1238,11 @@ class SquidAdapter(BaseModel):
                     logger.debug("squid - turned off all illumination")
 
                     ret = cmd.BasicSuccessResponse()
-                    return ret  # type:ignore
+                    return ret  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.ChannelSnapshot):
                     try:
-                        illum_code = mc.ILLUMINATION_CODE.from_handle(
-                            command.channel.handle
-                        )
+                        illum_code = mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
                     except Exception:
                         cmd.error_internal(
                             detail=f"invalid channel handle: {command.channel.handle}"
@@ -1341,20 +1257,17 @@ class SquidAdapter(BaseModel):
 
                     logger.debug("channel snap - before illum on")
                     await qmc.send_cmd(
-                        mc.Command.illumination_begin(
-                            illum_code, command.channel.illum_perc
-                        )
+                        mc.Command.illumination_begin(illum_code, command.channel.illum_perc)
                     )
 
                     with self.main_camera() as main_camera:
-                        if main_camera is None: error_internal("main camera is busy")
+                        if main_camera is None:
+                            error_internal("main camera is busy")
 
                         logger.debug("channel snap - before acq")
                         img = main_camera.acquire_with_config(command.channel)
                         logger.debug("channel snap - after acq")
-                        await qmc.send_cmd(
-                            mc.Command.illumination_end(illum_code)
-                        )
+                        await qmc.send_cmd(mc.Command.illumination_end(illum_code))
                         logger.debug("channel snap - after illum off")
                         if img is None:
                             logger.critical("failed to acquire image")
@@ -1363,14 +1276,14 @@ class SquidAdapter(BaseModel):
 
                         self.state = CoreState.Idle
 
-                        img,cambits = _process_image(img, camera=main_camera)
+                        img, cambits = _process_image(img, camera=main_camera)
 
                     logger.debug("squid - took channel snapshot")
 
                     result = cmd.ImageAcquiredResponse()
                     result._img = img
-                    result._cambits= cambits
-                    return result  # type:ignore
+                    result._cambits = cambits
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.ChannelSnapSelection):
                     channel_handles: tp.List[str] = []
@@ -1390,20 +1303,16 @@ class SquidAdapter(BaseModel):
 
                     logger.debug("squid - took snapshot in multiple channels")
 
-                    result = cmd.ChannelSnapSelectionResult(
-                        channel_handles=channel_handles
-                    )
+                    result = cmd.ChannelSnapSelectionResult(channel_handles=channel_handles)
                     result._images = channel_images
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.ChannelStreamBegin):
                     if self.stream_callback is not None:
                         cmd.error_internal(detail="already streaming")
 
                     try:
-                        illum_code = mc.ILLUMINATION_CODE.from_handle(
-                            command.channel.handle
-                        )
+                        illum_code = mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
                     except Exception:
                         cmd.error_internal(
                             detail=f"invalid channel handle: {command.channel.handle}"
@@ -1414,9 +1323,7 @@ class SquidAdapter(BaseModel):
                     self.state = CoreState.ChannelStream
 
                     await qmc.send_cmd(
-                        mc.Command.illumination_begin(
-                            illum_code, command.channel.illum_perc
-                        )
+                        mc.Command.illumination_begin(illum_code, command.channel.illum_perc)
                     )
 
                     # returns true if should stop
@@ -1439,15 +1346,17 @@ class SquidAdapter(BaseModel):
                             # camera must only be locked for specific image acquisition, not for the whole duration where an image may be acquired
                             # there is currently no way to solve this well.. (this current solution is quite brittle)
                             with self.main_camera() as main_camera:
-                                if main_camera is None: error_internal("main camera is busy")
-                                img_np,cambits = _process_image(img_np, camera=main_camera)
+                                if main_camera is None:
+                                    error_internal("main camera is busy")
+                                img_np, cambits = _process_image(img_np, camera=main_camera)
 
                             return forward_image_callback["callback"](img_np)
                         else:
                             return forward_image_callback["callback"](True)
 
                     with self.main_camera() as main_camera:
-                        if main_camera is None: error_internal("main camera is busy")
+                        if main_camera is None:
+                            error_internal("main camera is busy")
 
                         main_camera.acquire_with_config(
                             command.channel,
@@ -1459,21 +1368,18 @@ class SquidAdapter(BaseModel):
                     logger.debug("squid - channel stream begin")
 
                     result = cmd.StreamingStartedResponse(channel=command.channel)
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.ChannelStreamEnd):
                     with self.main_camera() as main_camera:
-                        if main_camera is None: error_internal("main camera is busy")
+                        if main_camera is None:
+                            error_internal("main camera is busy")
 
-                        if (self.stream_callback is None) or (
-                            not main_camera.acquisition_ongoing
-                        ):
+                        if (self.stream_callback is None) or (not main_camera.acquisition_ongoing):
                             cmd.error_internal(detail="not currently streaming")
 
                         try:
-                            illum_code = mc.ILLUMINATION_CODE.from_handle(
-                                command.channel.handle
-                            )
+                            illum_code = mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
                         except Exception:
                             cmd.error_internal(
                                 detail=f"invalid channel handle: {command.channel.handle}"
@@ -1482,9 +1388,7 @@ class SquidAdapter(BaseModel):
                         GlobalConfigHandler.override(command.machine_config)
 
                         self.stream_callback = None
-                        await qmc.send_cmd(
-                            mc.Command.illumination_end(illum_code)
-                        )
+                        await qmc.send_cmd(mc.Command.illumination_end(illum_code))
                         # cancel ongoing acquisition
                         main_camera.acquisition_ongoing = False
                         main_camera._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
@@ -1494,33 +1398,27 @@ class SquidAdapter(BaseModel):
                     logger.debug("squid - channel stream end")
 
                     result = cmd.BasicSuccessResponse()
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.LaserAutofocusCalibrate):
                     result = await self._laser_af_calibrate_here(**command.dict())
                     logger.debug("squid - calibrated laser autofocus")
-                    return result  # type:ignore
+                    return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusApproachTargetDisplacement):
 
                     async def _estimate_offset_mm():
                         res = await self.execute(
-                            cmd.AutofocusMeasureDisplacement(
-                                config_file=command.config_file
-                            )
+                            cmd.AutofocusMeasureDisplacement(config_file=command.config_file)
                         )
 
                         current_displacement_um = res.displacement_um
                         assert current_displacement_um is not None
 
-                        return (
-                            command.target_offset_um - current_displacement_um
-                        ) * 1e-3
+                        return (command.target_offset_um - current_displacement_um) * 1e-3
 
                     if self.is_in_loading_position:
-                        cmd.error_internal(
-                            detail="now allowed while in loading position"
-                        )
+                        cmd.error_internal(detail="now allowed while in loading position")
 
                     if self.state != CoreState.Idle:
                         cmd.error_internal(detail="cannot move while in non-idle state")
@@ -1528,12 +1426,8 @@ class SquidAdapter(BaseModel):
                     g_config = GlobalConfigHandler.get_dict()
 
                     # get autofocus calibration data
-                    conf_af_calib_x = g_config[
-                        "laser_autofocus_calibration_x"
-                    ].floatvalue
-                    conf_af_calib_umpx = g_config[
-                        "laser_autofocus_calibration_umpx"
-                    ].floatvalue
+                    conf_af_calib_x = g_config["laser_autofocus_calibration_x"].floatvalue
+                    conf_af_calib_umpx = g_config["laser_autofocus_calibration_umpx"].floatvalue
                     # autofocus_calib=LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx,x_reference=conf_af_calib_x,calibration_position=Position.zero())
 
                     # we are looking for a z coordinate where the measured dot_x is equal to this target_x.
@@ -1552,9 +1446,7 @@ class SquidAdapter(BaseModel):
                     initial_z = current_z
 
                     if command.pre_approach_refz:
-                        gconfig_refzmm_item = g_config.get(
-                            "laser_autofocus_calibration_refzmm"
-                        )
+                        gconfig_refzmm_item = g_config.get("laser_autofocus_calibration_refzmm")
                         if gconfig_refzmm_item is None:
                             cmd.error_internal(
                                 detail="laser_autofocus_calibration_refzmm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set"
@@ -1584,9 +1476,7 @@ class SquidAdapter(BaseModel):
                     try:
                         last_distance_estimate_mm = await _estimate_offset_mm()
                         logger.debug("autofocus - estimated offset")
-                        last_z_mm = (
-                            await qmc.get_last_position()
-                        ).z_pos_mm
+                        last_z_mm = (await qmc.get_last_position()).z_pos_mm
                         MAX_MOVEMENT_RANGE_MM = 0.3  # should be derived from the calibration data, but this value works fine in practice
                         if math.fabs(last_distance_estimate_mm) > MAX_MOVEMENT_RANGE_MM:
                             cmd.error_internal(
@@ -1602,73 +1492,56 @@ class SquidAdapter(BaseModel):
 
                             # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
                             # (since this indicates that we have moved away from the focal plane, which should not happen)
-                            if rep_i > 0 and math.fabs(
-                                last_distance_estimate_mm
-                            ) < math.fabs(distance_estimate_mm):
+                            if rep_i > 0 and math.fabs(last_distance_estimate_mm) < math.fabs(
+                                distance_estimate_mm
+                            ):
                                 # move back to last z, since that seemed like the better position to be in
-                                await qmc.send_cmd(
-                                    mc.Command.move_to_mm("z", last_z_mm)
-                                )
-                                logger.debug(
-                                    "autofocus - reset z to known good position"
-                                )
+                                await qmc.send_cmd(mc.Command.move_to_mm("z", last_z_mm))
+                                logger.debug("autofocus - reset z to known good position")
                                 # TODO unsure if this is the best approach. we cannot do better, but we also have not actually gotten close to the offset
                                 reached_threshold = True
                                 break
 
                             last_distance_estimate_mm = distance_estimate_mm
-                            last_z_mm = (
-                                await qmc.get_last_position()
-                            ).z_pos_mm
+                            last_z_mm = (await qmc.get_last_position()).z_pos_mm
 
                             # if movement distance is not worth compensating, stop
-                            if (
-                                math.fabs(distance_estimate_mm)
-                                < OFFSET_MOVEMENT_THRESHOLD_MM
-                            ):
+                            if math.fabs(distance_estimate_mm) < OFFSET_MOVEMENT_THRESHOLD_MM:
                                 reached_threshold = True
                                 break
 
-                            await qmc.send_cmd(
-                                mc.Command.move_by_mm("z", distance_estimate_mm)
-                            )
+                            await qmc.send_cmd(mc.Command.move_by_mm("z", distance_estimate_mm))
                             num_compensating_moves += 1
                             logger.debug("autofocus - refined z")
 
                     except Exception:
                         # if any interaction failed, attempt to reset z position to known somewhat-good position
-                        await qmc.send_cmd(
-                            mc.Command.move_to_mm("z", initial_z)
-                        )
+                        await qmc.send_cmd(mc.Command.move_to_mm("z", initial_z))
                         logger.debug("autofocus - reset z position")
                     finally:
                         self.state = old_state
 
-                    logger.debug(
-                        "squid - used autofocus to approach target displacement"
-                    )
+                    logger.debug("squid - used autofocus to approach target displacement")
 
                     res = cmd.AutofocusApproachTargetDisplacementResult(
                         num_compensating_moves=num_compensating_moves,
                         uncompensated_offset_mm=last_distance_estimate_mm,
                         reached_threshold=reached_threshold,
                     )
-                    return res  # type:ignore
+                    return res  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.MC_getLastPosition):
                     logger.debug("squid - fetching last stage position")
                     res = await qmc.get_last_position()
                     logger.debug("squid - fetched last stage position")
-                    return res  # type:ignore
+                    return res  # type: ignore[no-any-return]
 
                 else:
-                    cmd.error_internal(
-                        detail=f"Unsupported command type {type(command)}"
-                    )
+                    cmd.error_internal(detail=f"Unsupported command type {type(command)}")
 
-            except gxiapi.OffLine:
+            except gxiapi.OffLine as e:
                 logger.critical("squid - lost camera connection")
-                raise DisconnectError()
-            except IOError:
+                raise DisconnectError() from e
+            except IOError as e:
                 logger.critical("squid - lost connection to microcontroller")
-                raise DisconnectError()
+                raise DisconnectError() from e

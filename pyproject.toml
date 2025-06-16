@@ -1,6 +1,6 @@
 [project]
 name = "seafront"
-version = "0.5.7"
+version = "0.5.8"
 requires-python = ">=3.13"
 authors = [{ name = "Patrick Hennig", email = "patrick.hennig@uu.se" }]
 dependencies = [
