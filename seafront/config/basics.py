@@ -1,9 +1,27 @@
 import json
 import os
 from pathlib import Path
+import typing as tp
 
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
+from pydantic import BaseModel
 
+class CriticalMachineConfig(BaseModel):
+    microscope_name: str
+
+    main_camera_model: str
+
+    base_image_output_dir: str
+    calibration_offset_x_mm: float
+    calibration_offset_y_mm: float
+    calibration_offset_z_mm: float
+
+    forbidden_wells: str|None=None
+    "must be json-like string"
+
+    laser_autofocus_camera_model: str | None= None
+    "if laser_autofocus_available is yes, then this must be present"
+    laser_autofocus_available: tp.Literal["yes", "no"] | None = None
 
 class GlobalConfigHandler:
     _seafront_home: Path | None = None
@@ -12,7 +30,7 @@ class GlobalConfigHandler:
 
     @staticmethod
     def home() -> Path:
-        "get path to seafront home directory (fills the directory with default data if it does not exist)"
+        "get path to seafront home directory"
 
         if GlobalConfigHandler._seafront_home is not None:
             SEAFRONT_HOME = GlobalConfigHandler._seafront_home
@@ -30,35 +48,68 @@ class GlobalConfigHandler:
 
                 SEAFRONT_HOME = Path(home_dir) / "seafront"
 
+            # ensure home path exists
+            if not SEAFRONT_HOME.exists():
+                SEAFRONT_HOME.mkdir(parents=True)
+
+            # cache directory path
             GlobalConfigHandler._seafront_home = SEAFRONT_HOME
 
-        # ensure defaults paths exist
-        if not SEAFRONT_HOME.exists():
-            SEAFRONT_HOME.mkdir(parents=True)
+            # create default image output dir
+            DEFAULT_IMAGE_STORAGE_DIR = SEAFRONT_HOME / "images"
+            if not DEFAULT_IMAGE_STORAGE_DIR.exists():
+                DEFAULT_IMAGE_STORAGE_DIR.mkdir(parents=True)
 
-        DEFAULT_IMAGE_STORAGE_DIR = SEAFRONT_HOME / "images"
-        if not DEFAULT_IMAGE_STORAGE_DIR.exists():
-            DEFAULT_IMAGE_STORAGE_DIR.mkdir(parents=True)
-
-        _ = GlobalConfigHandler.home_acquisition_config_dir()
-        _ = GlobalConfigHandler.home_config()
+            # ensure config file is present in home
+            _ = GlobalConfigHandler.home_config()
+            # ensure default acquisition dir is present
+            _ = GlobalConfigHandler.home_acquisition_config_dir()
 
         return SEAFRONT_HOME
 
     @staticmethod
     def home_config() -> Path:
-        "get path to [default] machine config. create it if it does not exist."
+        """
+        get path to [default] machine config.
 
-        CONFIG_FILE_PATH = GlobalConfigHandler._seafront_home / "config.json"  # type: ignore
+        creates a default file if none is present.
+        """
+
+        CONFIG_FILE_PATH = GlobalConfigHandler.home() / "config.json"  # type: ignore
         if not CONFIG_FILE_PATH.exists():
             # create config file
             with CONFIG_FILE_PATH.open("w") as f:
-                json.dump(GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS(), f, indent=4)
+                json.dump(GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS().model_dump(), f, indent=4)
 
         return CONFIG_FILE_PATH
 
     @staticmethod
+    def store():
+        """
+        write current config to disk
+        """
+
+        CONFIG_FILE_PATH = GlobalConfigHandler.home_config()
+
+        assert GlobalConfigHandler._config_list is not None
+        critical_machine_config = GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS().model_dump()
+
+        with CONFIG_FILE_PATH.open("r") as config_file:
+            current_file_contents = json.load(config_file)
+
+        # store items from current config if their key is present in critical defaults
+        store_dict = {}
+        current_config = GlobalConfigHandler.get_dict()
+        for key in critical_machine_config.keys():
+            if key in current_config:
+                store_dict[key] = current_config[key].value
+
+        with CONFIG_FILE_PATH.open("w") as f:
+            json.dump(store_dict, f, indent=4)
+
+    @staticmethod
     def get_config_list() -> list[Path]:
+        "get list of all config files in home_acquisition_config_dir"
         ret = []
         for config_file in GlobalConfigHandler.home_acquisition_config_dir().glob("*.json"):
             ret.append(config_file)
@@ -85,27 +136,31 @@ class GlobalConfigHandler:
 
     @staticmethod
     def home_acquisition_config_dir() -> Path:
-        "get path to directory containing [user-defined] acquisition configurations"
+        """
+        get path to directory containing [user-defined] acquisition configurations
 
-        DEFAULT_CONFIG_STORAGE_DIR = GlobalConfigHandler._seafront_home / "acquisition_configs"  # type: ignore
+        will create the directory it not already present.
+        """
+
+        DEFAULT_CONFIG_STORAGE_DIR = GlobalConfigHandler.home() / "acquisition_configs"  # type: ignore
         if not DEFAULT_CONFIG_STORAGE_DIR.exists():
             DEFAULT_CONFIG_STORAGE_DIR.mkdir(parents=True)
 
         return DEFAULT_CONFIG_STORAGE_DIR
 
     @staticmethod
-    def CRITICAL_MACHINE_DEFAULTS():
-        return {
-            "main_camera_model": "MER2-1220-32U3M",
-            "laser_autofocus_camera_model": "MER2-630-60U3M",
-            "microscope_name": "unnamed HCS SQUID",
-            "base_image_output_dir": str(GlobalConfigHandler.home() / "images"),
-            "laser_autofocus_available": "yes",
-            "calibration_offset_x_mm": 0.0,
-            "calibration_offset_y_mm": 0.0,
-            "calibration_offset_z_mm": 0.0,
-            "forbidden_wells": """{"1":[],"4":[],"96":[],"384":["A01","A24","P01","P24"],"1536":[]}""",
-        }
+    def CRITICAL_MACHINE_DEFAULTS()->CriticalMachineConfig:
+        return CriticalMachineConfig(
+            main_camera_model= "MER2-1220-32U3M",
+            laser_autofocus_camera_model= "MER2-630-60U3M",
+            microscope_name= "unnamed HCS SQUID",
+            base_image_output_dir= str(GlobalConfigHandler.home() / "images"),
+            laser_autofocus_available= "yes",
+            calibration_offset_x_mm= 0.0,
+            calibration_offset_y_mm= 0.0,
+            calibration_offset_z_mm= 0.0,
+            forbidden_wells= """{"1":[],"4":[],"96":[],"384":["A01","A24","P01","P24"],"1536":[]}""",
+        )
 
     @staticmethod
     def _defaults() -> list[ConfigItem]:
@@ -115,8 +170,6 @@ class GlobalConfigHandler:
         these settings may be changed on the client side, for individual acquisitions
         (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
         """
-
-        SEAFRONT_HOME = GlobalConfigHandler.home()
 
         # load config file
         with GlobalConfigHandler.home_config().open("r") as f:
@@ -449,28 +502,6 @@ class GlobalConfigHandler:
                     GlobalConfigHandler._config_list.append(item)
                 else:
                     GlobalConfigHandler._config_list[index].override(item)
-
-    @staticmethod
-    def store():
-        """
-        write current config to disk
-        """
-
-        SEAFRONT_HOME = GlobalConfigHandler.home()
-        CONFIG_FILE_PATH = GlobalConfigHandler.home_config()
-
-        assert GlobalConfigHandler._config_list is not None
-        critical_machine_config = GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS()
-
-        # store items from current config if their key is present in critical defaults
-        store_dict = {}
-        current_config = GlobalConfigHandler.get_dict()
-        for key in critical_machine_config.keys():
-            if key in current_config:
-                store_dict[key] = current_config[key].value
-
-        with CONFIG_FILE_PATH.open("w") as f:
-            json.dump(store_dict, f, indent=4)
 
     @staticmethod
     def reset():
