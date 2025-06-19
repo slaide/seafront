@@ -1,6 +1,5 @@
 import json
 import os
-import typing as tp
 from pathlib import Path
 
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption

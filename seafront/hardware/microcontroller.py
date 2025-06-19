@@ -875,7 +875,7 @@ def microcontroller_exclusive(f):
 class Microcontroller(BaseModel):
     device_info: SerialDeviceInfo
 
-    handle: tp.Optional[serial.Serial] = None
+    handle: serial.Serial | None = None
     illum: threading.RLock = Field(default_factory=threading.RLock)
     """ lock on illumination control """
 
@@ -1172,7 +1172,7 @@ class Microcontroller(BaseModel):
         logger.debug("microcontroller - closed")
 
     @staticmethod
-    def get_all() -> tp.List["Microcontroller"]:
+    def get_all() -> list["Microcontroller"]:
         "get all available devices"
 
         ret = []

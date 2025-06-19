@@ -11,12 +11,13 @@ from threading import Thread
 
 import seaconfig as sc
 import tifffile
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from ..logger import logger
-import commands as cmds
-from ..config import basics
-from ..hardware import microcontroller as mc
+import seafront.server.commands as cmds
+from seafront.config import basics
+from seafront.hardware import microcontroller as mc
+from seafront.logger import logger
+
 
 class AsyncThreadPool(BaseModel):
     """
@@ -45,9 +46,9 @@ class AsyncThreadPool(BaseModel):
 
     workers: int = Field(default=1)
     """ Number of worker threads in the pool """
-    threads: tp.List[Thread] = Field(default_factory=list)
+    threads: list[Thread] = Field(default_factory=list)
     """ Running threads in the pool """
-    loops: tp.List[aio.AbstractEventLoop] = Field(default_factory=list)
+    loops: list[aio.AbstractEventLoop] = Field(default_factory=list)
     """ Event loops for each thread """
     roundrobin: int = Field(default=0)
     """ Next thread to run something in, for round-robin scheduling """
@@ -57,16 +58,14 @@ class AsyncThreadPool(BaseModel):
     # pydantics version of dataclass.__post_init__
     def model_post_init(self, __context):
         # initialize threads
-        for i in range(self.workers):
+        for _ in range(self.workers):
             loop = aio.new_event_loop()
             self.loops.append(loop)
             thread = Thread(target=loop.run_forever)
             thread.start()
             self.threads.append(thread)
 
-    def run(
-        self, target: "tp.Coroutine", worker: int | None = None
-    ) -> "ConcurrentFuture":
+    def run(self, target: "tp.Coroutine", worker: int | None = None) -> "ConcurrentFuture":
         """Run async future/coroutine in the thread pool
 
         :param target: the future/coroutine to execute
@@ -124,7 +123,7 @@ def make_unique_acquisition_id(length: tp.Literal[16, 32] = 16) -> str:
 async def store_image(
     image_entry: cmds.ImageStoreEntry,
     img_compression_algorithm: tp.Literal["LZW", "zlib"],
-    metadata: tp.Dict[str, str],
+    metadata: dict[str, str],
 ):
     """
     store img as .tiff file, with compression and some metadata
@@ -149,9 +148,7 @@ async def store_image(
     """
 
     image_storage_path = image_entry.info.storage_path
-    assert isinstance(image_storage_path, str), (
-        f"{image_entry.info.storage_path} is not str"
-    )
+    assert isinstance(image_storage_path, str), f"{image_entry.info.storage_path} is not str"
 
     # takes 70-250ms
     tifffile.imwrite(
@@ -198,7 +195,7 @@ class ProtocolGenerator(BaseModel):
     max_storage_size_images_GB: float = -1
     project_output_path: path.Path = Field(default_factory=path.Path)
 
-    latest_channel_images: tp.Dict[str, cmds.ImageStoreEntry] = Field(default_factory=dict)
+    latest_channel_images: dict[str, cmds.ImageStoreEntry] = Field(default_factory=dict)
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
@@ -221,10 +218,8 @@ class ProtocolGenerator(BaseModel):
         self.num_wells = len(self.plate_wells)
         self.num_sites = len(self.well_sites)
         self.num_channels = len(self.channels)
-        self.num_channel_z_combinations = sum((c.num_z_planes for c in self.channels))
-        self.num_images_total = (
-            self.num_wells * self.num_sites * self.num_channel_z_combinations
-        )
+        self.num_channel_z_combinations = sum(c.num_z_planes for c in self.channels)
+        self.num_images_total = self.num_wells * self.num_sites * self.num_channel_z_combinations
 
         # the grid is centered around the center of the well
         self.site_topleft_x_mm = (
@@ -263,9 +258,7 @@ class ProtocolGenerator(BaseModel):
                 )
 
         self.image_size_bytes = target_width * target_height * bytes_per_pixel
-        self.max_storage_size_images_GB = (
-            self.num_images_total * self.image_size_bytes / 1024**3
-        )
+        self.max_storage_size_images_GB = self.num_images_total * self.image_size_bytes / 1024**3
 
         base_storage_path_item = g_config["base_image_output_dir"]
         assert base_storage_path_item is not None
@@ -276,7 +269,7 @@ class ProtocolGenerator(BaseModel):
         self.project_output_path = (
             base_storage_path
             / self.config_file.project_name
-            / f"{str(self.config_file.plate_name)}_{sc.datetime2str(dt.datetime.now(dt.timezone.utc))}"
+            / f"{self.config_file.plate_name!s}_{sc.datetime2str(dt.datetime.now(dt.UTC))}"
         )
         self.project_output_path.mkdir(parents=True)
 
@@ -308,11 +301,9 @@ class ProtocolGenerator(BaseModel):
         self,
     ) -> tp.Generator[
         # yielded types: None means done, str is returned on first iter, other types are BaseCommands
-        tp.Union[None, tp.Literal["ready"], cmds.BaseCommand],
+        None | tp.Literal["ready"] | cmds.BaseCommand,
         # received types (at runtime must match return type of <yielded type>.run().ResultType)
-        tp.Union[None, tp.Any],
-        # generator return value
-        None,
+        None | tp.Any,
     ]:
         logger.info(
             f"protocol - initialised. acquiring {self.num_wells} wells, {self.num_sites} sites per well, {self.num_channel_z_combinations} channel+z combinations, i.e. {self.num_images_total} images, taking up to {self.max_storage_size_images_GB:.2f}GB"
@@ -341,7 +332,7 @@ class ProtocolGenerator(BaseModel):
 
         # counters on acquisition progress
         start_time = time.time()
-        start_time_iso_str = sc.datetime2str(dt.datetime.now(dt.timezone.utc))
+        start_time_iso_str = sc.datetime2str(dt.datetime.now(dt.UTC))
         last_image_information = None
 
         num_images_acquired = 0
@@ -364,9 +355,7 @@ class ProtocolGenerator(BaseModel):
 
         # for each timepoint, starting at 1
         for timepoint in range(1, self.config_file.grid.num_t + 1):
-            logger.info(
-                f"protocol - started timepoint {timepoint}/{self.config_file.grid.num_t}"
-            )
+            logger.info(f"protocol - started timepoint {timepoint}/{self.config_file.grid.num_t}")
 
             for well_index, well in enumerate(self.plate_wells):
                 # these are xy sites
@@ -375,9 +364,7 @@ class ProtocolGenerator(BaseModel):
                 )
 
                 for site_index, site in enumerate(self.well_sites):
-                    logger.info(
-                        f"protocol - handling site {site_index + 1}/{len(self.well_sites)}"
-                    )
+                    logger.info(f"protocol - handling site {site_index + 1}/{len(self.well_sites)}")
 
                     self.handle_q_in()
 
@@ -409,9 +396,7 @@ class ProtocolGenerator(BaseModel):
                         total_compensating_moves = 0
                         AUTOFOCUS_NUM_ATTEMPTS_MAX = 3
                         for autofocus_attempt_num in range(AUTOFOCUS_NUM_ATTEMPTS_MAX):
-                            logger.debug(
-                                f"protocol - autofocus attempt {autofocus_attempt_num}"
-                            )
+                            logger.debug(f"protocol - autofocus attempt {autofocus_attempt_num}")
 
                             # approach target offset
                             res = yield cmds.AutofocusApproachTargetDisplacement(
@@ -435,12 +420,8 @@ class ProtocolGenerator(BaseModel):
                                 math.fabs(res.uncompensated_offset_mm)
                                 > UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM
                             ):
-                                mres = yield cmds.MoveTo(
-                                    x_mm=None, y_mm=None, z_mm=reference_z_mm
-                                )
-                                assert isinstance(mres, cmds.BasicSuccessResponse), (
-                                    f"{type(mres)=}"
-                                )
+                                mres = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=reference_z_mm)
+                                assert isinstance(mres, cmds.BasicSuccessResponse), f"{type(mres)=}"
                                 logger.debug(
                                     f"protocol - autofocus done after exceeding uncompensated threshold: {res.uncompensated_offset_mm=:.4f} {UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM=:.4f}"
                                 )
@@ -450,9 +431,7 @@ class ProtocolGenerator(BaseModel):
                             # (may in practice be still offset, but at least we cannot do better than we have so far)
                             if res.num_compensating_moves == 0 or res.reached_threshold:
                                 autofocus_succeeded = True
-                                logger.debug(
-                                    f"protocol - autofocus done {res.reached_threshold=}"
-                                )
+                                logger.debug(f"protocol - autofocus done {res.reached_threshold=}")
                                 break
 
                         if res is not None:
@@ -462,9 +441,7 @@ class ProtocolGenerator(BaseModel):
 
                         # reference for channel z offsets
                         last_position = yield cmds.MC_getLastPosition()
-                        assert isinstance(last_position, mc.Position), (
-                            f"{type(last_position)=}"
-                        )
+                        assert isinstance(last_position, mc.Position), f"{type(last_position)=}"
                         reference_z_mm = last_position.z_pos_mm
 
                         logger.debug("autofocus performed")
@@ -480,9 +457,7 @@ class ProtocolGenerator(BaseModel):
                     # 3. move to lowest, start imaging while moving up
                     # 4. move to reference z again in preparation for next site
 
-                    image_pos_z_list: list[
-                        tuple[int, float, sc.AcquisitionChannelConfig]
-                    ] = []
+                    image_pos_z_list: list[tuple[int, float, sc.AcquisitionChannelConfig]] = []
                     for channel in self.channels:
                         channel_delta_z_mm = channel.delta_z_um * 1e-3
 
@@ -511,9 +486,7 @@ class ProtocolGenerator(BaseModel):
                         z_mm=image_pos_z_list[0][1] - Z_STACK_COUNTER_BACKLASH_MM,
                     )
                     assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
-                    res = yield cmds.MoveTo(
-                        x_mm=None, y_mm=None, z_mm=image_pos_z_list[0][1]
-                    )
+                    res = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=image_pos_z_list[0][1])
                     assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
 
                     logger.debug("protocol - moved to z order bottom")
@@ -531,22 +504,16 @@ class ProtocolGenerator(BaseModel):
 
                         # move to channel offset
                         last_position = yield cmds.MC_getLastPosition()
-                        assert isinstance(last_position, mc.Position), (
-                            f"{type(last_position)=}"
-                        )
+                        assert isinstance(last_position, mc.Position), f"{type(last_position)=}"
                         current_z_mm = last_position.z_pos_mm
 
                         distance_z_to_move_mm = channel_z_mm - current_z_mm
                         if math.fabs(distance_z_to_move_mm) > DISPLACEMENT_THRESHOLD_MM:
                             res = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=channel_z_mm)
-                            assert isinstance(res, cmds.BasicSuccessResponse), (
-                                f"{type(res)=}"
-                            )
+                            assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
 
                         last_position = yield cmds.MC_getLastPosition()
-                        assert isinstance(last_position, mc.Position), (
-                            f"{type(last_position)=}"
-                        )
+                        assert isinstance(last_position, mc.Position), f"{type(last_position)=}"
 
                         logger.debug(
                             f"protocol - moved to channel z (should be {channel_z_mm:.4f}mm, is {last_position.z_pos_mm:.4f}mm)"
@@ -562,7 +529,7 @@ class ProtocolGenerator(BaseModel):
                         logger.debug("protocol - took image snapshot")
 
                         # store image
-                        image_storage_path = f"{str(self.project_output_path)}/{well.well_name}_s{site_index}_x{site.col + 1}_y{site.row + 1}_z{plane_index + 1}_{channel.handle}.tiff"
+                        image_storage_path = f"{self.project_output_path!s}/{well.well_name}_s{site_index}_x{site.col + 1}_y{site.row + 1}_z{plane_index + 1}_{channel.handle}.tiff"
 
                         image_store_entry = cmds.ImageStoreEntry(
                             pixel_format=g_config["main_camera_pixel_format"].strvalue,
@@ -615,9 +582,7 @@ class ProtocolGenerator(BaseModel):
                         num_images_acquired += 1
                         # get storage size from filesystem because tiff compression may reduce size below size in memory
                         try:
-                            file_size_on_disk = (
-                                path.Path(image_storage_path).stat().st_size
-                            )
+                            file_size_on_disk = path.Path(image_storage_path).stat().st_size
                             storage_usage_bytes += file_size_on_disk
                         except:
                             # ignore any errors here, because this is not an essential feature
@@ -648,8 +613,7 @@ class ProtocolGenerator(BaseModel):
                                 current_num_images=num_images_acquired,
                                 time_since_start_s=time_since_start_s,
                                 start_time_iso=start_time_iso_str,
-                                current_storage_usage_GB=storage_usage_bytes
-                                / (1024**3),
+                                current_storage_usage_GB=storage_usage_bytes / (1024**3),
                                 # estimated completion time information
                                 # estimation may be more complex than linear interpolation, hence done on server side
                                 estimated_remaining_time_s=estimated_remaining_time_s,

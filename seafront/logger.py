@@ -16,7 +16,7 @@ logger.add(
     format="{time} | {level} | {file.path}:{line} | {message}",
 )
 
-logger.info(f"logger - opened logfile at {str(logfile_path)}")
+logger.info(f"logger - opened logfile at {logfile_path!s}")
 
 # combine all logs into a single file
 # $ ( zcat log.txt*.gz; cat log.txt ) | gzip > combined.log.gz

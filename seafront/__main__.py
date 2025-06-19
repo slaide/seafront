@@ -4,19 +4,22 @@
 
 import asyncio
 import datetime as dt
+import faulthandler
 import inspect
 import json
 import os
 import pathlib as path
 import random
 import re
+import signal
+import threading
 import time
 import traceback
 import typing as tp
+from concurrent.futures import Future as CCFuture
 from enum import Enum
 from functools import wraps
 from types import MethodType
-from concurrent.futures import Future as CCFuture
 
 # math and image dependencies
 import numpy as np
@@ -38,17 +41,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, create_model
 from pydantic.fields import FieldInfo
 from seaconfig.acquisition import AcquisitionConfig
-from contextlib import contextmanager
-import threading
 
-from .config.basics import ConfigItem, GlobalConfigHandler
-from .hardware.squid import DisconnectError, SquidAdapter
-from .server.commands import (
+from seafront.config.basics import ConfigItem, GlobalConfigHandler
+from seafront.hardware.squid import DisconnectError, SquidAdapter
+from seafront.logger import logger
+from seafront.server.commands import (
     AcquisitionCommand,
     AcquisitionStartResponse,
     AcquisitionStatus,
-    AcquisitionStatusStage,
     AcquisitionStatusOut,
+    AcquisitionStatusStage,
     AutofocusApproachTargetDisplacement,
     AutofocusLaserWarmup,
     AutofocusMeasureDisplacement,
@@ -83,13 +85,11 @@ from .server.commands import (
     error_internal,
     wellIsForbidden,
 )
-from .server.protocol import (
+from seafront.server.protocol import (
     AsyncThreadPool,
     ProtocolGenerator,
     make_unique_acquisition_id,
 )
-
-from .logger import logger
 
 # for debugging
 
@@ -105,6 +105,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 name_validity_regex = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
 """ name_validity_regex only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot """
 
+
 def generate_random_number_string(num_digits: int = 9) -> str:
     "used to generate new image handles"
     max_val: float = 10**num_digits
@@ -117,13 +118,10 @@ app.mount("/src", StaticFiles(directory="src"), name="static")
 
 # route tags to structure swagger interface (/docs,/redoc)
 
-
-import faulthandler
-import signal
-
 # Register handler so that, if you send SIGUSR1 to this process,
 # it will print all thread backtraces to stderr.
 faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
+
 
 class RouteTag(str, Enum):
     STATIC_FILES = "Static Files"
@@ -179,93 +177,92 @@ def get_hardware_capabilities() -> HardwareCapabilitiesResponse:
     these are the high-level configuration options that the user can select from
     """
 
+    default_channel_config = [
+        sc.AcquisitionChannelConfig(
+            name="Fluo 405 nm Ex",
+            handle="fluo405",
+            illum_perc=100,
+            exposure_time_ms=5.0,
+            analog_gain=0,
+            z_offset_um=0,
+            num_z_planes=1,
+            delta_z_um=1,
+        ),
+        sc.AcquisitionChannelConfig(
+            name="Fluo 488 nm Ex",
+            handle="fluo488",
+            illum_perc=100,
+            exposure_time_ms=5.0,
+            analog_gain=0,
+            z_offset_um=0,
+            num_z_planes=1,
+            delta_z_um=1,
+        ),
+        sc.AcquisitionChannelConfig(
+            name="Fluo 561 nm Ex",
+            handle="fluo561",
+            illum_perc=100,
+            exposure_time_ms=5.0,
+            analog_gain=0,
+            z_offset_um=0,
+            num_z_planes=1,
+            delta_z_um=1,
+        ),
+        sc.AcquisitionChannelConfig(
+            name="Fluo 638 nm Ex",
+            handle="fluo638",
+            illum_perc=100,
+            exposure_time_ms=5.0,
+            analog_gain=0,
+            z_offset_um=0,
+            num_z_planes=1,
+            delta_z_um=1,
+        ),
+        sc.AcquisitionChannelConfig(
+            name="Fluo 730 nm Ex",
+            handle="fluo730",
+            illum_perc=100,
+            exposure_time_ms=5.0,
+            analog_gain=0,
+            z_offset_um=0,
+            num_z_planes=1,
+            delta_z_um=1,
+        ),
+        sc.AcquisitionChannelConfig(
+            name="BF LED Full",
+            handle="bfledfull",
+            illum_perc=20,
+            exposure_time_ms=5.0,
+            analog_gain=0,
+            z_offset_um=0,
+            num_z_planes=1,
+            delta_z_um=1,
+        ),
+        sc.AcquisitionChannelConfig(
+            name="BF LED Right Half",
+            handle="bfledright",
+            illum_perc=20,
+            exposure_time_ms=5.0,
+            analog_gain=0,
+            z_offset_um=0,
+            num_z_planes=1,
+            delta_z_um=1,
+        ),
+        sc.AcquisitionChannelConfig(
+            name="BF LED Left Half",
+            handle="bfledleft",
+            illum_perc=20,
+            exposure_time_ms=5.0,
+            analog_gain=0,
+            z_offset_um=0,
+            num_z_planes=1,
+            delta_z_um=1,
+        ),
+    ]
+
     return HardwareCapabilitiesResponse(
         wellplate_types=sc.Plates,
-        main_camera_imaging_channels=[
-            c
-            for c in [
-                sc.AcquisitionChannelConfig(
-                    name="Fluo 405 nm Ex",
-                    handle="fluo405",
-                    illum_perc=100,
-                    exposure_time_ms=5.0,
-                    analog_gain=0,
-                    z_offset_um=0,
-                    num_z_planes=1,
-                    delta_z_um=1,
-                ),
-                sc.AcquisitionChannelConfig(
-                    name="Fluo 488 nm Ex",
-                    handle="fluo488",
-                    illum_perc=100,
-                    exposure_time_ms=5.0,
-                    analog_gain=0,
-                    z_offset_um=0,
-                    num_z_planes=1,
-                    delta_z_um=1,
-                ),
-                sc.AcquisitionChannelConfig(
-                    name="Fluo 561 nm Ex",
-                    handle="fluo561",
-                    illum_perc=100,
-                    exposure_time_ms=5.0,
-                    analog_gain=0,
-                    z_offset_um=0,
-                    num_z_planes=1,
-                    delta_z_um=1,
-                ),
-                sc.AcquisitionChannelConfig(
-                    name="Fluo 638 nm Ex",
-                    handle="fluo638",
-                    illum_perc=100,
-                    exposure_time_ms=5.0,
-                    analog_gain=0,
-                    z_offset_um=0,
-                    num_z_planes=1,
-                    delta_z_um=1,
-                ),
-                sc.AcquisitionChannelConfig(
-                    name="Fluo 730 nm Ex",
-                    handle="fluo730",
-                    illum_perc=100,
-                    exposure_time_ms=5.0,
-                    analog_gain=0,
-                    z_offset_um=0,
-                    num_z_planes=1,
-                    delta_z_um=1,
-                ),
-                sc.AcquisitionChannelConfig(
-                    name="BF LED Full",
-                    handle="bfledfull",
-                    illum_perc=20,
-                    exposure_time_ms=5.0,
-                    analog_gain=0,
-                    z_offset_um=0,
-                    num_z_planes=1,
-                    delta_z_um=1,
-                ),
-                sc.AcquisitionChannelConfig(
-                    name="BF LED Right Half",
-                    handle="bfledright",
-                    illum_perc=20,
-                    exposure_time_ms=5.0,
-                    analog_gain=0,
-                    z_offset_um=0,
-                    num_z_planes=1,
-                    delta_z_um=1,
-                ),
-                sc.AcquisitionChannelConfig(
-                    name="BF LED Left Half",
-                    handle="bfledleft",
-                    illum_perc=20,
-                    exposure_time_ms=5.0,
-                    analog_gain=0,
-                    z_offset_um=0,
-                    num_z_planes=1,
-                    delta_z_um=1,
-                ),
-            ]
-        ],
+        main_camera_imaging_channels=list(default_channel_config),
     )
 
 
@@ -293,13 +290,13 @@ class CoreLock(BaseModel):
     basic utility to generate a token that can be used to access mutating core functions (e.g. actions)
     """
 
-    _current_key: tp.Optional[str] = None
+    _current_key: str | None = None
     _key_gen_time = None
     """ timestamp when key was generated """
     _last_key_use = None
     """ timestamp of last key use """
 
-    def gen_key(self, invalidate_old: bool = False) -> tp.Optional[str]:
+    def gen_key(self, invalidate_old: bool = False) -> str | None:
         """
         generate a new key, if there is no currently valid key
 
@@ -346,20 +343,19 @@ class CoreLock(BaseModel):
 
 
 class CustomRoute(BaseModel):
-    handler: tp.Union[tp.Type[BaseCommand], tp.Callable]
-    tags: tp.List[str] = Field(default_factory=list)
+    handler: type[BaseCommand] | tp.Callable
+    tags: list[str] = Field(default_factory=list)
 
-    callback: tp.Optional[
-        tp.Union[
-            tp.Callable[[tp.Any, tp.Any], None],
-            tp.Callable[[tp.Any, tp.Any], tp.Coroutine[tp.Any, tp.Any, None]],
-        ]
-    ] = None
+    callback: (
+        None
+        | tp.Callable[[tp.Any, tp.Any], None]
+        | tp.Callable[[tp.Any, tp.Any], tp.Coroutine[tp.Any, tp.Any, None]]
+    ) = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-custom_route_handlers: tp.Dict[str, CustomRoute] = {}
+custom_route_handlers: dict[str, CustomRoute] = {}
 
 
 class SquidError(Exception):
@@ -373,7 +369,8 @@ class SquidError(Exception):
     def __init__(self, msg: str):
         super().__init__(msg)
 
-def name_check(name:str)->str|None:
+
+def name_check(name: str) -> str | None:
     """
     check name for validity.
 
@@ -381,7 +378,7 @@ def name_check(name:str)->str|None:
 
     used to check plate name and project name for validity.
     """
-    if len(name)==0:
+    if len(name) == 0:
         return "name must not be empty"
 
     if not name_validity_regex.match(name):
@@ -390,7 +387,8 @@ def name_check(name:str)->str|None:
 
     return None
 
-def filename_check(name:str)->str|None:
+
+def filename_check(name: str) -> str | None:
     """
     check filename for validity.
 
@@ -398,7 +396,7 @@ def filename_check(name:str)->str|None:
 
     used to check config filename for validity.
     """
-    if len(name)==0:
+    if len(name) == 0:
         return "name must not be empty"
 
     if not name_validity_regex.match(name):
@@ -406,6 +404,7 @@ def filename_check(name:str)->str|None:
         return "name invalid. it only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot"
 
     return None
+
 
 class Core:
     """application core, contains server capabilities and microcontroller interaction"""
@@ -422,11 +421,11 @@ class Core:
 
             return worker_loop
 
-        self.acqusition_eventloop=make_acquisition_event_loop()
+        self.acqusition_eventloop = make_acquisition_event_loop()
 
         self.squid = SquidAdapter.make()
 
-        self.acquisition_map: tp.Dict[str, AcquisitionStatus] = {}
+        self.acquisition_map: dict[str, AcquisitionStatus] = {}
         """ map containing information on past and current acquisitions """
 
         # set up routes to member functions
@@ -464,7 +463,8 @@ class Core:
                         try:
                             # ensure a connection is established, before running any other command
                             with self.squid.lock(blocking=False) as squid:
-                                if squid is None: error_internal("squid is busy")
+                                if squid is None:
+                                    error_internal("squid is busy")
                                 _ = await squid.execute(EstablishHardwareConnection())
                                 result = await squid.execute(instance)
                         except DisconnectError:
@@ -477,15 +477,11 @@ class Core:
                 elif inspect.iscoroutinefunction(target_func):
                     arg = request_data
                     result = await target_func(**request_data)
-                elif inspect.isfunction(target_func) or isinstance(
-                    target_func, MethodType
-                ):
+                elif inspect.isfunction(target_func) or isinstance(target_func, MethodType):
                     arg = request_data
                     result = target_func(**request_data)
                 else:
-                    raise TypeError(
-                        f"Unsupported target_func type: {type(target_func)}"
-                    )
+                    raise TypeError(f"Unsupported target_func type: {type(target_func)}")
 
                 if route.callback is not None:
                     if inspect.iscoroutinefunction(route.callback):
@@ -515,8 +511,7 @@ class Core:
                 # Case 2: target_func is a class, get return type of the 'run()' method if it exists
                 if inspect.isclass(target_func):
                     if hasattr(target_func, "run"):
-                        run_method = getattr(target_func, "run")
-                        return_type = inspect.signature(run_method).return_annotation
+                        return_type = inspect.signature(target_func.run).return_annotation
                         # print(f"returning {target_func.__name__}.run {return_type}")
                         return return_type
 
@@ -527,11 +522,9 @@ class Core:
             return_type = get_return_type()
 
             @wraps(target_func)
-            async def handler_logic_get(**kwargs: tp.Optional[tp.Any]) -> return_type:  # type: ignore
+            async def handler_logic_get(**kwargs: tp.Any | None) -> return_type:  # type: ignore
                 # Perform verification
-                if (
-                    not allow_while_acquisition_is_running
-                ) and self.acquisition_is_running:
+                if (not allow_while_acquisition_is_running) and self.acquisition_is_running:
                     return JSONResponse(
                         content={
                             "status": "error",
@@ -546,7 +539,7 @@ class Core:
                 # squid code expects rlock to function as expected, but fastapi serving two requests in parallel
                 # through async will technically run in the same thread, so rlock will function improperly.
                 # we start a new thread just to run this async code in it, to work around this issue.
-                result=await asyncio.to_thread(asyncio.run, callfunc(request_data))
+                result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
                 return result
 
             # Dynamically create a Pydantic model for the POST request body if the target function has parameters
@@ -568,16 +561,12 @@ class Core:
                 model_name = f"{target_func.__name__.capitalize()}RequestModel"
                 RequestModel = request_models.get(model_name)
                 if RequestModel is None:
-                    RequestModel = create_model(
-                        model_name, **model_fields, __base__=BaseModel
-                    )
+                    RequestModel = create_model(model_name, **model_fields, __base__=BaseModel)
                     request_models[model_name] = RequestModel
 
                 async def handler_logic_post(request_body: RequestModel):  # type:ignore
                     # Perform verification
-                    if (
-                        not allow_while_acquisition_is_running
-                    ) and self.acquisition_is_running:
+                    if (not allow_while_acquisition_is_running) and self.acquisition_is_running:
                         return JSONResponse(
                             content={
                                 "status": "error",
@@ -590,25 +579,21 @@ class Core:
                     if RequestModel and request_body:
                         request_body_as_toplevel_dict = dict()
                         for key in request_body.dict(exclude_unset=True).keys():
-                            request_body_as_toplevel_dict[key] = getattr(
-                                request_body, key
-                            )
+                            request_body_as_toplevel_dict[key] = getattr(request_body, key)
                         request_data.update(request_body_as_toplevel_dict)
 
                     # squid code expects rlock to function as expected, but fastapi serving two requests in parallel
                     # through async will technically run in the same thread, so rlock will function improperly.
                     # we start a new thread just to run this async code in it, to work around this issue.
                     logger.debug(f"about to start thread to generate answer {callfunc}")
-                    result=await asyncio.to_thread(asyncio.run, callfunc(request_data))
+                    result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
                     logger.debug("answer thread done")
                     return result
             else:
 
                 async def handler_logic_post():  # type:ignore
                     # Perform verification
-                    if (
-                        not allow_while_acquisition_is_running
-                    ) and self.acquisition_is_running:
+                    if (not allow_while_acquisition_is_running) and self.acquisition_is_running:
                         return JSONResponse(
                             content={
                                 "status": "error",
@@ -622,7 +607,7 @@ class Core:
                     # squid code expects rlock to function as expected, but fastapi serving two requests in parallel
                     # through async will technically run in the same thread, so rlock will function improperly.
                     # we start a new thread just to run this async code in it, to work around this issue.
-                    result=await asyncio.to_thread(asyncio.run, callfunc(request_data))
+                    result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
                     return result
 
             # copy annotation and fix return type
@@ -711,21 +696,21 @@ class Core:
                         await ws.send_json({})
                     else:
                         # downsample image for preview
-                        img_data=img._img
+                        img_data = img._img
 
                         await ws.send_json(
                             {
                                 "width": img_data.shape[1],
                                 "height": img_data.shape[0],
                                 "camera_bit_depth": img.bit_depth,
-                                "bit_depth": img_data.dtype.itemsize*8,
+                                "bit_depth": img_data.dtype.itemsize * 8,
                             }
                         )
 
                         # await downsample factor
-                        factor=int(await ws.receive_text())
+                        factor = int(await ws.receive_text())
 
-                        img_bytes = np.ascontiguousarray(img_data[::factor,::factor]).tobytes()
+                        img_bytes = np.ascontiguousarray(img_data[::factor, ::factor]).tobytes()
 
                         await ws.send_bytes(img_bytes)
 
@@ -747,7 +732,7 @@ class Core:
         route_wrapper(
             "/api/action/machine_config_flush",
             CustomRoute(handler=self.machine_config_flush),
-            methods=["POST"]
+            methods=["POST"],
         )
 
         # Register URL for start_acquisition
@@ -789,36 +774,28 @@ class Core:
                 while True:
                     # await message, but ignore its contents
                     args = await ws.receive_json()
-                    await ws.send_json(
-                        (await self.get_acquisition_status(**args)).json()
-                    )
+                    await ws.send_json((await self.get_acquisition_status(**args)).json())
             except WebSocketDisconnect:
                 pass
 
         # Retrieve config list
         route_wrapper(
             "/api/acquisition/config_list",
-            CustomRoute(
-                handler=self.get_config_list, tags=[RouteTag.ACQUISITION_CONTROLS.value]
-            ),
+            CustomRoute(handler=self.get_config_list, tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
         )
 
         # Fetch acquisition config
         route_wrapper(
             "/api/acquisition/config_fetch",
-            CustomRoute(
-                handler=self.config_fetch, tags=[RouteTag.ACQUISITION_CONTROLS.value]
-            ),
+            CustomRoute(handler=self.config_fetch, tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
         )
 
         # Save/load config
         route_wrapper(
             "/api/acquisition/config_store",
-            CustomRoute(
-                handler=self.config_store, tags=[RouteTag.ACQUISITION_CONTROLS.value]
-            ),
+            CustomRoute(handler=self.config_store, tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
         )
 
@@ -845,19 +822,23 @@ class Core:
             "store new laser autofocus image"
 
             g_config = GlobalConfigHandler.get_dict()
-            pixel_format=g_config["laser_autofocus_pixel_format"].strvalue
+            pixel_format = g_config["laser_autofocus_pixel_format"].strvalue
 
-            await self._store_new_image(img=res._img, pixel_format= pixel_format, channel_config=res._channel)
+            await self._store_new_image(
+                img=res._img, pixel_format=pixel_format, channel_config=res._channel
+            )
 
         async def write_image(cmd: ChannelSnapshot, res: ImageAcquiredResponse):
             "store new regular image"
 
             g_config = GlobalConfigHandler.get_dict()
-            pixel_format=g_config["main_camera_pixel_format"].strvalue
+            pixel_format = g_config["main_camera_pixel_format"].strvalue
 
             logger.debug(f"storing new image for {cmd.channel.handle}")
 
-            await self._store_new_image(img=res._img, pixel_format=pixel_format, channel_config=cmd.channel)
+            await self._store_new_image(
+                img=res._img, pixel_format=pixel_format, channel_config=cmd.channel
+            )
 
         # Snap channel
         route_wrapper(
@@ -870,19 +851,17 @@ class Core:
             methods=["POST"],
         )
 
-        async def write_images(
-            cmd: ChannelSnapSelection, res: ChannelSnapSelectionResult
-        ):
-            pixel_format=GlobalConfigHandler.get_dict()["main_camera_pixel_format"].strvalue
+        async def write_images(cmd: ChannelSnapSelection, res: ChannelSnapSelectionResult):
+            pixel_format = GlobalConfigHandler.get_dict()["main_camera_pixel_format"].strvalue
 
             for channel_handle, img in res._images.items():
-                channel = [
-                    c for c in cmd.config_file.channels if c.handle == channel_handle
-                ]
+                channel = [c for c in cmd.config_file.channels if c.handle == channel_handle]
                 if len(channel) != 1:
                     error_internal(f"{len(channel)=} != 1")
 
-                await self._store_new_image(img=img, pixel_format=pixel_format, channel_config=channel[0])
+                await self._store_new_image(
+                    img=img, pixel_format=pixel_format, channel_config=channel[0]
+                )
 
         route_wrapper(
             "/api/action/snap_selected_channels",
@@ -896,9 +875,7 @@ class Core:
 
         # Start streaming (i.e., acquire x images per sec, until stopped)
         self.image_store_threadpool = AsyncThreadPool()
-        stream_info: tp.Dict[str, None | sc.AcquisitionChannelConfig] = {
-            "channel": None
-        }
+        stream_info: dict[str, None | sc.AcquisitionChannelConfig] = {"channel": None}
 
         def handle_image(arg: np.ndarray | bool) -> bool:
             if isinstance(arg, bool):
@@ -911,15 +888,15 @@ class Core:
                 self.image_store_threadpool.run(
                     self._store_new_image(
                         img=img,
-                        pixel_format=GlobalConfigHandler.get_dict()["main_camera_pixel_format"].strvalue,
-                        channel_config=stream_info["channel"]
+                        pixel_format=GlobalConfigHandler.get_dict()[
+                            "main_camera_pixel_format"
+                        ].strvalue,
+                        channel_config=stream_info["channel"],
                     )
                 )
             return False
 
-        def register_stream_begin(
-            begin: ChannelStreamBegin, res: StreamingStartedResponse
-        ):
+        def register_stream_begin(begin: ChannelStreamBegin, res: StreamingStartedResponse):
             # register callback on microscope
             with self.squid.lock() as squid:
                 if squid is None:
@@ -969,9 +946,7 @@ class Core:
         )
         route_wrapper(
             "/api/action/laser_autofocus_measure_displacement",
-            CustomRoute(
-                handler=AutofocusMeasureDisplacement, tags=[RouteTag.ACTIONS.value]
-            ),
+            CustomRoute(handler=AutofocusMeasureDisplacement, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
         route_wrapper(
@@ -996,9 +971,7 @@ class Core:
         # Calibrate stage position
         route_wrapper(
             "/api/action/calibrate_stage_xy_here",
-            CustomRoute(
-                handler=self.calibrate_stage_xy_here, tags=[RouteTag.ACTIONS.value]
-            ),
+            CustomRoute(handler=self.calibrate_stage_xy_here, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
         )
 
@@ -1009,10 +982,10 @@ class Core:
             methods=["POST"],
         )
 
-        self.latest_images: tp.Dict[str, ImageStoreEntry] = {}
+        self.latest_images: dict[str, ImageStoreEntry] = {}
         "latest image acquired in each channel, key is channel handle"
 
-        #self.acquisition_future: asyncio.Future[None] | None = None
+        # self.acquisition_future: asyncio.Future[None] | None = None
         self.acquisition_future: CCFuture[None] | None = None
 
     def get_config_list(self) -> ConfigListResponse:
@@ -1022,7 +995,7 @@ class Core:
         these files are already stored on the machine, and can be loaded on request.
         """
 
-        def map_filepath_to_info(c: path.Path) -> tp.Optional[ConfigFileInfo]:
+        def map_filepath_to_info(c: path.Path) -> ConfigFileInfo | None:
             filename = c.name
             timestamp = None
             comment = None
@@ -1038,8 +1011,8 @@ class Core:
 
                 plate_type = config.wellplate_type
 
-                project=config.project_name
-                platename=config.plate_name
+                project = config.project_name
+                platename = config.plate_name
 
             return ConfigFileInfo(
                 filename=filename,
@@ -1108,11 +1081,13 @@ class Core:
         the optional comment provided is stored with the config file to quickly identify its purpose/function.
         """
 
-        filename_check_issue=filename_check(filename)
+        filename_check_issue = filename_check(filename)
         if filename_check_issue is not None:
-            error_internal(detail=f"failed storing config because filename contains an issue: {filename_check_issue}")
+            error_internal(
+                detail=f"failed storing config because filename contains an issue: {filename_check_issue}"
+            )
 
-        config_file.timestamp = sc.datetime2str(dt.datetime.now(dt.timezone.utc))
+        config_file.timestamp = sc.datetime2str(dt.datetime.now(dt.UTC))
 
         # get machine config
         if config_file.machine_config is not None:
@@ -1189,7 +1164,7 @@ class Core:
         return BasicSuccessResponse()
 
     async def _store_new_image(
-        self, img: np.ndarray, pixel_format:str, channel_config: sc.AcquisitionChannelConfig
+        self, img: np.ndarray, pixel_format: str, channel_config: sc.AcquisitionChannelConfig
     ) -> str:
         """
         store a new image, return the channel handle (into self.latest_images)
@@ -1274,9 +1249,7 @@ class Core:
                 acq.thread_is_running = not self.acquisition_future.done()
 
         if not acq.thread_is_running:
-            error_internal(
-                detail=f"acquisition with id {acquisition_id} is not running"
-            )
+            error_internal(detail=f"acquisition with id {acquisition_id} is not running")
 
         await acq.queue_in.put(AcquisitionCommand.CANCEL)
 
@@ -1293,9 +1266,7 @@ class Core:
 
         return True
 
-    def machine_config_flush(
-        self, machine_config: tp.List[ConfigItem]
-    ) -> BasicSuccessResponse:
+    def machine_config_flush(self, machine_config: list[ConfigItem]) -> BasicSuccessResponse:
         GlobalConfigHandler.override(machine_config)
 
         return BasicSuccessResponse()
@@ -1340,14 +1311,10 @@ class Core:
 
         for well in config_file.plate_wells:
             if well.selected and wellIsForbidden(well.well_name, plate):
-                error_internal(
-                    detail=f"well {well.well_name} is not allowed on this plate"
-                )
+                error_internal(detail=f"well {well.well_name} is not allowed on this plate")
 
         if config_file.autofocus_enabled:
-            laser_autofocus_is_calibrated_item = g_config.get(
-                "laser_autofocus_is_calibrated"
-            )
+            laser_autofocus_is_calibrated_item = g_config.get("laser_autofocus_is_calibrated")
 
             laser_autofocus_is_calibrated = (
                 laser_autofocus_is_calibrated_item is not None
@@ -1379,15 +1346,11 @@ class Core:
 
         project_name_issue = name_check(config_file.project_name)
         if project_name_issue is not None:
-            error_internal(
-                detail=f"project name is not acceptable: {project_name_issue}"
-            )
+            error_internal(detail=f"project name is not acceptable: {project_name_issue}")
 
         plate_name_issue = name_check(config_file.plate_name)
         if plate_name_issue is not None:
-            error_internal(
-                detail=f"plate name is not acceptable: {plate_name_issue}"
-            )
+            error_internal(detail=f"plate name is not acceptable: {plate_name_issue}")
 
         protocol = ProtocolGenerator(
             config_file=config_file,
@@ -1401,7 +1364,9 @@ class Core:
             error_detail = f"no images to acquire ({protocol.num_wells = },{protocol.num_sites = },{protocol.num_channels = },{protocol.num_channel_z_combinations = })"
 
             assert protocol.acquisition_status.last_status is not None
-            protocol.acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
+            protocol.acquisition_status.last_status.acquisition_status = (
+                AcquisitionStatusStage.CRASHED
+            )
             protocol.acquisition_status.last_status.message = error_detail
 
             error_internal(detail=error_detail)
@@ -1432,7 +1397,6 @@ class Core:
                     tp.Literal["disconnected"] | InternalErrorModel | AcquisitionStatusOut
                 ],
             ):
-
                 logger.debug("protocol - started. awaiting squid lock.")
 
                 with self.squid.lock() as squid:
@@ -1446,10 +1410,9 @@ class Core:
                         protocol_generator = protocol.generate()
 
                         # send none on first yield
-                        result=None
+                        result = None
                         # protocol generates None to indicate that protocol is finished
                         while (next_step := protocol_generator.send(result)) is not None:
-
                             logger.debug(f"protocol - next step {type(next_step)}")
                             if isinstance(next_step, str):
                                 result = None
@@ -1464,55 +1427,61 @@ class Core:
                                     protocol_generator.throw(e)
                                     # TODO what should we do here?! break?
 
-                                if result is not None and isinstance(
-                                    next_step, ChannelSnapshot
-                                ):
+                                if result is not None and isinstance(next_step, ChannelSnapshot):
                                     await self._store_new_image(
                                         img=result._img,
-                                        pixel_format=GlobalConfigHandler.get_dict()["main_camera_pixel_format"].strvalue,
-                                        channel_config=next_step.channel
+                                        pixel_format=GlobalConfigHandler.get_dict()[
+                                            "main_camera_pixel_format"
+                                        ].strvalue,
+                                        channel_config=next_step.channel,
                                     )
 
                         logger.debug("protocol done")
 
                         # finished regularly, set status accordingly (there must have been at least one image, so a status has been set)
                         assert acquisition_status.last_status is not None
-                        acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.COMPLETED
+                        acquisition_status.last_status.acquisition_status = (
+                            AcquisitionStatusStage.COMPLETED
+                        )
 
                     except HTTPException:
                         assert acquisition_status.last_status is not None
-                        acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CANCELLED
+                        acquisition_status.last_status.acquisition_status = (
+                            AcquisitionStatusStage.CANCELLED
+                        )
 
                     except DisconnectError:
                         await q_out.put("disconnected")
                         squid.close()
 
                         assert acquisition_status.last_status is not None
-                        acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
+                        acquisition_status.last_status.acquisition_status = (
+                            AcquisitionStatusStage.CRASHED
+                        )
                         acquisition_status.last_status.message = "hardware disconnect"
 
                     except Exception as e:
-                        logger.exception(
-                            f"error during acquisition {e}\n{traceback.format_exc()}"
-                        )
+                        logger.exception(f"error during acquisition {e}\n{traceback.format_exc()}")
 
                         full_error = traceback.format_exc()
                         await q_out.put(
                             InternalErrorModel(
-                                detail=f"acquisition thread failed because {str(e)}, more specifically: {full_error}"
+                                detail=f"acquisition thread failed because {e!s}, more specifically: {full_error}"
                             )
                         )
 
                         if acquisition_status.last_status is not None:
-                            acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
+                            acquisition_status.last_status.acquisition_status = (
+                                AcquisitionStatusStage.CRASHED
+                            )
 
                     finally:
                         # ensure no dangling image store task threads
                         protocol.image_store_pool.join()
 
             # wrap async execution in sync function
-            def sync_inner(q_in,q_out):
-                asyncio.run(inner(q_in,q_out))
+            def sync_inner(q_in, q_out):
+                asyncio.run(inner(q_in, q_out))
 
             # then run sync in a real thread, but async awaitable
             # (an async task, which would behave the same in practice, does NOT work with RLock, which is essential!)
@@ -1528,7 +1497,7 @@ class Core:
         self.acquisition_future = asyncio.run_coroutine_threadsafe(
             run_acquisition(queue_in, queue_out),
             # run coroutine in dedicated acquisition event loop
-            self.acqusition_eventloop
+            self.acqusition_eventloop,
         )
 
         acquisition_status.thread_is_running = True
@@ -1571,7 +1540,9 @@ class Core:
 # handle validation errors with ability to print to terminal for debugging
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.debug(f"Validation error at {request.url}: {json.dumps(exc.errors(), indent=2, ensure_ascii=False)}")
+    logger.debug(
+        f"Validation error at {request.url}: {json.dumps(exc.errors(), indent=2, ensure_ascii=False)}"
+    )
 
     return JSONResponse(
         status_code=422,
@@ -1584,24 +1555,23 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 type ApiSchema = dict[str, ApiSchema] | list[ApiSchema] | tp.Any
 
+
 def handle_anyof_nullable(schema: ApiSchema):
     """Recursively modifies the schema to handle anyOf with null for OpenAPI 3.0 compatibility."""
 
     if isinstance(schema, dict):
-        for key, value in list(
-            schema.items()
-        ):  # Iterate over a copy to avoid modification errors
+        for key, value in list(schema.items()):  # Iterate over a copy to avoid modification errors
             if key == "anyOf" and isinstance(value, list):
-                non_null_types = [item for item in value if item.get("type") != "null"] # type: ignore
+                non_null_types = [item for item in value if item.get("type") != "null"]  # type: ignore
                 if len(value) > len(non_null_types):  # Found 'null' in anyOf
                     if len(non_null_types) == 1:
                         # Replace with non-null type
-                        schema.update(non_null_types[0]) # type: ignore
+                        schema.update(non_null_types[0])  # type: ignore
                         schema["nullable"] = True
                         del schema[key]  # Remove anyOf
             else:
                 # if value is a schema:
-                if isinstance(value, (list,dict)):
+                if isinstance(value, (list, dict)):
                     handle_anyof_nullable(value)
 
     elif isinstance(schema, list):
@@ -1642,17 +1612,15 @@ def custom_openapi():
         # the json schema has a top level field called defs, which contains internal fields, which we
         # embed into the openapi schema here (the path replacement is separate from this)
         defs = model_schema.pop("$defs", {})
-        openapi_schema.setdefault("components", {}).setdefault("schemas", {}).update(
-            defs
-        )
+        openapi_schema.setdefault("components", {}).setdefault("schemas", {}).update(defs)
 
         # unsure if this works with the new code (written for 0.1, untested in 0.2)
         handle_anyof_nullable(model_schema)
 
         # finally, add the actual model we have handled to the openapi schema
-        openapi_schema.setdefault("components", {}).setdefault("schemas", {})[
-            t.__name__
-        ] = model_schema
+        openapi_schema.setdefault("components", {}).setdefault("schemas", {})[t.__name__] = (
+            model_schema
+        )
 
         return {"$ref": f"#/components/schemas/{t.__name__}"}
 
@@ -1683,7 +1651,7 @@ def custom_openapi():
 
         route_path: str = route.path  # type:ignore
 
-        tags: tp.List[str]
+        tags: list[str]
         if hasattr(route, "tags"):
             tags = route.tags  # type:ignore
         else:
@@ -1698,9 +1666,7 @@ def custom_openapi():
             "500": {
                 "description": "any failure mode",
                 "content": {
-                    "application/json": {
-                        "schema": register_pydantic_schema(InternalErrorModel)
-                    }
+                    "application/json": {"schema": register_pydantic_schema(InternalErrorModel)}
                 },
             },
         }
@@ -1719,12 +1685,8 @@ def custom_openapi():
                 # register
                 type_to_schema(customroute.handler)
 
-                responses["200"]["content"]["application/json"]["schema"] = (
-                    type_to_schema(
-                        customroute.handler.__private_attributes__[
-                            "_ReturnValue"
-                        ].default
-                    )
+                responses["200"]["content"]["application/json"]["schema"] = type_to_schema(
+                    customroute.handler.__private_attributes__["_ReturnValue"].default
                 )  # type:ignore
 
                 for name, field in customroute.handler.model_fields.items():
@@ -1771,9 +1733,7 @@ def custom_openapi():
 
             ret = sig.return_annotation
             if ret is not inspect.Signature.empty:
-                responses["200"]["content"]["application/json"]["schema"] = (
-                    type_to_schema(ret)
-                )
+                responses["200"]["content"]["application/json"]["schema"] = type_to_schema(ret)
 
         doc = endpoint.__doc__ or ""
         doc_lines = [docline.strip() for docline in doc.splitlines() if docline.strip()]
@@ -1784,7 +1744,7 @@ def custom_openapi():
             method = "get"
             responses["101"] = {"description": "switch protocol (to websocket)"}
         else:
-            method = list(route.methods)[0].lower()  # type:ignore
+            method = next(iter(route.methods)).lower()  # type:ignore
 
         if route_path not in openapi_schema["paths"]:
             openapi_schema["paths"][route_path] = {}
@@ -1816,15 +1776,20 @@ app.openapi = custom_openapi
 # because\ compression time is unpredictable:
 #    takes 70ms to send an all-white image, and 1400ms (twenty times as long !!!!) for all-black images, which are not a rare occurence in practice
 _orig_init = websockets.server.WebSocketServerProtocol.__init__  # type:ignore
+
+
 def _no_comp_init(self, *args, **kwargs):
     kwargs["extensions"] = []
     return _orig_init(self, *args, **kwargs)
+
+
 # (websockets.server.WebSocketServerProtocol is deprecated, but still supported at the frozen package version)
 websockets.server.WebSocketServerProtocol.__init__ = _no_comp_init  # type:ignore
 # --- end disable websocket compression
 
 # --- begin allow cross origin requests
 from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1833,6 +1798,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 # --- end allow cross origin requests
+
 
 @logger.catch
 def main():

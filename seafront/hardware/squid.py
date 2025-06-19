@@ -24,7 +24,6 @@ from seafront.server import commands as cmd
 from seafront.server.commands import (
     BasicSuccessResponse,
     IlluminationEndAll,
-    T,
     error_internal,
 )
 
@@ -520,8 +519,7 @@ class SquidAdapter(BaseModel):
         """
 
         # 8 bit signal -> max value 255
-        I = img
-        I_1d: np.ndarray = I.max(
+        I_1d: np.ndarray = img.max(
             axis=0
         )  # use max to avoid issues with noise (sum is another option, but prone to issues with noise)
         x = np.array(range(len(I_1d)))
@@ -635,7 +633,7 @@ class SquidAdapter(BaseModel):
 
             try:
                 current_pos = await qmc.get_last_position()
-                start_z_mm: float = current_pos.z_pos_mm
+                _start_z_mm: float = current_pos.z_pos_mm
 
                 # move down by half z range
                 if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
@@ -913,7 +911,7 @@ class SquidAdapter(BaseModel):
 
         return self.last_state
 
-    async def execute(self, command: cmd.BaseCommand[T]) -> T:
+    async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         with self.microcontroller.locked() as qmc:
             if qmc is None:
                 error_internal("microcontroller is busy")
@@ -1033,17 +1031,17 @@ class SquidAdapter(BaseModel):
                         # we have: start position, target position, and two possible edges to move across
 
                         center = 61.0, 40.0
-                        start = (
+                        _start = (
                             current_stage_position.x_pos_mm,
                             current_stage_position.y_pos_mm,
                         )
-                        target = command.x_mm, command.y_mm
+                        _target = command.x_mm, command.y_mm
 
                         # if edge1 is closer to center, then approach_x_before_y=True, else approach_x_before_y=False
                         edge1 = command.x_mm, current_stage_position.y_pos_mm
                         edge2 = current_stage_position.x_pos_mm, command.y_mm
 
-                        def dist(p1: tp.Tuple[float, float], p2: tp.Tuple[float, float]) -> float:
+                        def dist(p1: tuple[float, float], p2: tuple[float, float]) -> float:
                             return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
 
                         approach_x_before_y = dist(edge1, center) < dist(edge2, center)
@@ -1147,7 +1145,7 @@ class SquidAdapter(BaseModel):
                         displacement_um = 0
 
                         num_images = 3 or command.override_num_images
-                        for i in range(num_images):
+                        for _ in range(num_images):
                             latest_esimated_z_offset_mm = (
                                 await self._approximate_laser_af_z_offset_mm(calib_params)
                             )
@@ -1155,7 +1153,7 @@ class SquidAdapter(BaseModel):
 
                     except Exception as e:
                         cmd.error_internal(
-                            detail=f"failed to measure displacement (got no signal): {str(e)}"
+                            detail=f"failed to measure displacement (got no signal): {e!s}"
                         )
 
                     logger.debug("squid - used autofocus to measure displacement")
@@ -1286,8 +1284,8 @@ class SquidAdapter(BaseModel):
                     return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.ChannelSnapSelection):
-                    channel_handles: tp.List[str] = []
-                    channel_images: tp.Dict[str, np.ndarray] = {}
+                    channel_handles: list[str] = []
+                    channel_images: dict[str, np.ndarray] = {}
                     for channel in command.config_file.channels:
                         if not channel.enabled:
                             continue
