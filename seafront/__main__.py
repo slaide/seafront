@@ -42,7 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 from pydantic.fields import FieldInfo
 from seaconfig.acquisition import AcquisitionConfig
 
-from seafront.config.basics import ConfigItem, GlobalConfigHandler
+from seafront.config.basics import ConfigItem, GlobalConfigHandler, ServerConfig
 from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.logger import logger
 from seafront.server.commands import (
@@ -1805,10 +1805,13 @@ def main():
     logger.info("intializing core server")
     core = Core()
 
+    with GlobalConfigHandler.home_config().open("r") as f:
+        server_config=ServerConfig(**json.load(f))
+
     try:
         logger.info("starting http server")
         # Start FastAPI using uvicorn
-        uvicorn.run(app, host="127.0.0.1", port=5002)  # , log_level="debug")
+        uvicorn.run(app, host="127.0.0.1", port=server_config.port)  # , log_level="debug")
         logger.info("http server initialised")
 
     except Exception as e:

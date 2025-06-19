@@ -42,15 +42,20 @@ example config file:
 ```
 $ cat ~/seafront/config.json
 {
-    "main_camera_model": "MER2-1220-32U3M",
-    "laser_autofocus_camera_model": "MER2-630-60U3M",
-    "microscope_name": "HCS SQUID - dev env",
-    "base_image_output_dir": "/storageservermount/squidimages",
-    "laser_autofocus_available": "yes",
-    "calibration_offset_x_mm": 2.44,
-    "calibration_offset_y_mm": 0.44,
-    "calibration_offset_z_mm": 0.0,
-    "forbidden_wells": """{"384":["A01","A24","P01","P24"],"1536":[]}"""
+    "port": 5000,
+    "microscopes": [
+        {
+            "microscope_name": "unnamed HCS SQUID",
+            "main_camera_model": "MER2-1220-32U3M",
+            "base_image_output_dir": "/home/patrick/seafront/images",
+            "calibration_offset_x_mm": 2.44,
+            "calibration_offset_y_mm": 0.44,
+            "calibration_offset_z_mm": 0.0,
+            "forbidden_wells": "{\"1\":[],\"4\":[],\"96\":[],\"384\":[\"A01\",\"A24\",\"P01\",\"P24\"],\"1536\":[]}",
+            "laser_autofocus_camera_model": "MER2-630-60U3M",
+            "laser_autofocus_available": "yes"
+        }
+    ]
 }
 ```
 - the `"<x>_camera_model"` name strings are passed to the camera api to connect to the camera, so they need to be specific!

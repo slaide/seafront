@@ -1,10 +1,11 @@
 import json
 import os
-from pathlib import Path
 import typing as tp
+from pathlib import Path
 
+from pydantic import BaseModel, Field
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
-from pydantic import BaseModel
+
 
 class CriticalMachineConfig(BaseModel):
     microscope_name: str
@@ -16,12 +17,21 @@ class CriticalMachineConfig(BaseModel):
     calibration_offset_y_mm: float
     calibration_offset_z_mm: float
 
-    forbidden_wells: str|None=None
+    forbidden_wells: str | None = None
     "must be json-like string"
 
-    laser_autofocus_camera_model: str | None= None
+    laser_autofocus_camera_model: str | None = None
     "if laser_autofocus_available is yes, then this must be present"
     laser_autofocus_available: tp.Literal["yes", "no"] | None = None
+
+    # needs some post-init hook to check forbidden_wells for json-like-ness
+
+class ServerConfig(BaseModel):
+    port: int = 5000
+    microscopes: list[CriticalMachineConfig] = Field(
+        default_factory=lambda: [GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS()]
+    )
+
 
 class GlobalConfigHandler:
     _seafront_home: Path | None = None
@@ -79,14 +89,14 @@ class GlobalConfigHandler:
         if not CONFIG_FILE_PATH.exists():
             # create config file
             with CONFIG_FILE_PATH.open("w") as f:
-                json.dump(GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS().model_dump(), f, indent=4)
+                json.dump(ServerConfig().model_dump(), f, indent=4)
 
         return CONFIG_FILE_PATH
 
     @staticmethod
     def store():
         """
-        write current config to disk
+        write current global config to disk
         """
 
         CONFIG_FILE_PATH = GlobalConfigHandler.home_config()
@@ -96,16 +106,25 @@ class GlobalConfigHandler:
 
         with CONFIG_FILE_PATH.open("r") as config_file:
             current_file_contents = json.load(config_file)
+            server_config = ServerConfig(**current_file_contents)
 
-        # store items from current config if their key is present in critical defaults
+        # store critical config items from current config
         store_dict = {}
         current_config = GlobalConfigHandler.get_dict()
         for key in critical_machine_config.keys():
             if key in current_config:
                 store_dict[key] = current_config[key].value
 
+        store_config = CriticalMachineConfig(**store_dict)
+
+        # update target microscope config
+        for microscope_i, microscope_config in enumerate(server_config.microscopes):
+            if microscope_config.microscope_name == store_config.microscope_name:
+                server_config.microscopes[microscope_i] = store_config
+                break
+
         with CONFIG_FILE_PATH.open("w") as f:
-            json.dump(store_dict, f, indent=4)
+            json.dump(server_config.model_dump(), f, indent=4)
 
     @staticmethod
     def get_config_list() -> list[Path]:
@@ -149,17 +168,17 @@ class GlobalConfigHandler:
         return DEFAULT_CONFIG_STORAGE_DIR
 
     @staticmethod
-    def CRITICAL_MACHINE_DEFAULTS()->CriticalMachineConfig:
+    def CRITICAL_MACHINE_DEFAULTS() -> CriticalMachineConfig:
         return CriticalMachineConfig(
-            main_camera_model= "MER2-1220-32U3M",
-            laser_autofocus_camera_model= "MER2-630-60U3M",
-            microscope_name= "unnamed HCS SQUID",
-            base_image_output_dir= str(GlobalConfigHandler.home() / "images"),
-            laser_autofocus_available= "yes",
-            calibration_offset_x_mm= 0.0,
-            calibration_offset_y_mm= 0.0,
-            calibration_offset_z_mm= 0.0,
-            forbidden_wells= """{"1":[],"4":[],"96":[],"384":["A01","A24","P01","P24"],"1536":[]}""",
+            main_camera_model="MER2-1220-32U3M",
+            laser_autofocus_camera_model="MER2-630-60U3M",
+            microscope_name="unnamed HCS SQUID",
+            base_image_output_dir=str(GlobalConfigHandler.home() / "images"),
+            laser_autofocus_available="yes",
+            calibration_offset_x_mm=0.0,
+            calibration_offset_y_mm=0.0,
+            calibration_offset_z_mm=0.0,
+            forbidden_wells="""{"1":[],"4":[],"96":[],"384":["A01","A24","P01","P24"],"1536":[]}""",
         )
 
     @staticmethod
@@ -173,14 +192,18 @@ class GlobalConfigHandler:
 
         # load config file
         with GlobalConfigHandler.home_config().open("r") as f:
-            critical_machine_config = json.load(f)
+            server_config_json=json.load(f)
+            server_config = ServerConfig(**server_config_json)
+            if len(server_config.microscopes)==0:
+                raise ValueError("no microscope found in server config")
+            critical_machine_config: CriticalMachineConfig = server_config.microscopes[0]
 
         main_camera_attributes = [
             ConfigItem(
                 name="main camera model",
                 handle="main_camera_model",
                 value_kind="text",
-                value=critical_machine_config["main_camera_model"],
+                value=critical_machine_config.main_camera_model,
                 frozen=True,
             ),
             ConfigItem(
@@ -278,18 +301,21 @@ class GlobalConfigHandler:
             name="laser autofocus system available",
             handle="laser_autofocus_available",
             value_kind="option",
-            value=critical_machine_config["laser_autofocus_available"],
+            value=critical_machine_config.laser_autofocus_available or "no",
             options=ConfigItemOption.get_bool_options(),
             frozen=True,
         )
 
         if laser_autofocus_system_available_attribute.boolvalue:
+            if critical_machine_config.laser_autofocus_camera_model is None:
+                raise ValueError("laser autofocus available but no autofocus camera model provided")
+
             laser_autofocus_system_attributes = [
                 ConfigItem(
                     name="laser autofocus camera model",
                     handle="laser_autofocus_camera_model",
                     value_kind="text",
-                    value=critical_machine_config["laser_autofocus_camera_model"],
+                    value=critical_machine_config.laser_autofocus_camera_model,
                     frozen=True,
                 ),
                 ConfigItem(
@@ -371,7 +397,7 @@ class GlobalConfigHandler:
                 name="microscope name",
                 handle="microscope_name",
                 value_kind="text",
-                value=critical_machine_config["microscope_name"],
+                value=critical_machine_config.microscope_name,
                 frozen=True,
             ),
             ConfigItem(
@@ -384,19 +410,19 @@ class GlobalConfigHandler:
                 name="calibration offset x [mm]",
                 handle="calibration_offset_x_mm",
                 value_kind="float",
-                value=critical_machine_config["calibration_offset_x_mm"],
+                value=critical_machine_config.calibration_offset_x_mm,
             ),
             ConfigItem(
                 name="calibration offset y [mm]",
                 handle="calibration_offset_y_mm",
                 value_kind="float",
-                value=critical_machine_config["calibration_offset_y_mm"],
+                value=critical_machine_config.calibration_offset_y_mm,
             ),
             ConfigItem(
                 name="calibration offset z [mm]",
                 handle="calibration_offset_z_mm",
                 value_kind="float",
-                value=critical_machine_config["calibration_offset_z_mm"],
+                value=critical_machine_config.calibration_offset_z_mm,
             ),
             ConfigItem(
                 name="turn off all illumination",
@@ -408,7 +434,7 @@ class GlobalConfigHandler:
                 name="base output storage directory",
                 handle="base_image_output_dir",
                 value_kind="text",
-                value=critical_machine_config["base_image_output_dir"],
+                value=critical_machine_config.base_image_output_dir,
             ),
             # images with bit depth not a multiple of 8 (e.g. 12) use the lowest n bits of the bytes used to store them, which is an issue, because
             # most image file formats cannot handle bit depth that is not a multiple of 8. padding that data to preserve correct interpretation requires
@@ -426,7 +452,7 @@ class GlobalConfigHandler:
                 name="forbidden wells",
                 handle="forbidden_wells",
                 value_kind="text",
-                value=critical_machine_config["forbidden_wells"],
+                value=critical_machine_config.forbidden_wells or "{}",
             ),
             laser_autofocus_system_available_attribute,
             *laser_autofocus_system_attributes,
