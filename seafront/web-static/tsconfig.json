@@ -1,0 +1,33 @@
+{
+    "compilerOptions": {
+        "module": "System",
+        "target": "ES2023",
+        "checkJs": true,
+        "strict": true,
+        "allowJs": true,
+        "moduleResolution": "classic",
+        "baseUrl": ".",
+        "typeRoots": [
+            "./src/types"
+        ],
+        "paths": {
+            // specify paths for packages with names that do not cleanly resolve to
+            // some obvious path in types/
+            "three/addons/capabilities/WebGL": [
+                "src/types/three-webgl.d.ts"
+            ],
+            "three/addons/loaders/FontLoader": [
+                "src/types/three-fontloader.d.ts"
+            ],
+            "three/addons/utils/BufferGeometryUtils": [
+                "src/types/three-buffergeometryutils.d.ts"
+            ]
+        },
+        /* indicate that we do not want to emit compiled output files */
+        "noEmit": true
+    },
+    "include": [
+        "./**/*",
+        "src/types/**/*.d.ts"
+    ]
+}

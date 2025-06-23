@@ -1,0 +1,21 @@
+.tooltip {
+    z-index:5;
+    border-radius: 0.3em;
+    --tooltip-bgcolor:rgb(254, 254, 144);
+    --tooltip-boxshadow:rgba(54, 54, 54, 0.62);
+    background: var(--tooltip-bgcolor);
+    position: absolute;
+    padding: 0.5em 1em;
+    box-shadow:
+        /*x offset*/
+        0
+        /*y offset*/
+        0
+        /*blur radius*/
+        0.6em
+        /*extension length from center on every edge*/
+        0.6em var(--tooltip-boxshadow);
+}
+*[tooltip]{
+    cursor:help;
+}

@@ -1,0 +1,90 @@
+
+body{
+    font-size:0.9em;
+    font-family:Arial, Helvetica, sans-serif;
+
+    background:var(--strong-bg-color);
+    color:var(--text-color);
+    input,select,textarea{
+        background:var(--strong-bg-color);
+        color:var(--text-color);
+        border:1px solid var(--text-color);
+        border-radius:0.3em;
+    }
+    input::placeholder,textarea::placeholder{
+        font-style:italic;
+        color:var(--text-color);
+    }
+    input:not([type=checkbox]):not([disabled]),textarea:not([disabled]){
+        background:var(--strong-bg-color);
+        color:var(--text-color);
+        cursor:text;
+    }
+    input[type=checkbox]:not([disabled]),select:not([disabled]){
+        background:var(--strong-bg-color);
+        color:var(--text-color);
+        cursor:pointer;
+    }
+    input[disabled],select[disabled],textarea[disabled]{
+        background:var(--weak-bg-color);
+        color:var(--text-color);
+        cursor:not-allowed;
+    }
+    button{
+        background:var(--weak-bg-color);
+        color:var(--text-color);
+        border:1px solid var(--text-color);
+        border-radius:0.4em;
+    }
+    button[disabled]{
+        text-decoration:line-through;
+    }
+    button:not([disabled]):hover{
+        cursor:pointer;
+        background:var(--strong-bg-color);
+        font-style: italic;
+    }
+
+    .tabs{
+        --tabs-header-border-color:var(--text-color);
+        /*--tabs-header-bg-color:lightgrey;*/
+    }
+
+    scrollbar-color: var(--scrollbar-innercolor) var(--scrollbar-outercolor);
+}
+body.theme-light{
+    .tooltip{
+        --tooltip-bgcolor:rgb(254, 254, 144);
+        --tooltip-boxshadow:rgba(54, 54, 54, 0.62);
+    }
+    .tabs{
+        --tabs-header-bg-color:lightgrey;
+    }
+
+    --scrollbar-innercolor:var(--text-color);
+    --scrollbar-outercolor:var(--strong-bg-color);
+
+    --strong-bg-color:rgb(246, 246, 246);
+    --weak-bg-color:rgb(222, 222, 222);
+    --text-color:black;
+
+    --highlight-color:lightblue;
+}
+body.theme-dark{
+    .tooltip{
+        --tooltip-bgcolor:rgb(197, 156, 43);
+        --tooltip-boxshadow:rgba(207, 207, 207, 0.62);
+    }
+    .tabs{
+        --tabs-header-bg-color:rgb(101, 101, 101);
+    }
+
+    --scrollbar-innercolor:var(--text-color);
+    --scrollbar-outercolor:var(--strong-bg-color);
+
+    --strong-bg-color:black;
+    --weak-bg-color:rgb(54, 54, 54);
+    --text-color:rgb(236, 236, 236);
+
+    --highlight-color:rgb(24, 87, 108);
+}

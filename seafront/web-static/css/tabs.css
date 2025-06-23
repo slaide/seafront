@@ -1,0 +1,65 @@
+.tabs {
+    display: grid;
+
+    grid-template-rows: min-content auto;
+    grid-template-areas:
+        "tabheader"
+        "tabbodies";
+
+    height:100%;
+    width:100%;
+    overflow:hidden;
+
+    --tabs-header-border-color:black;
+    --tabs-header-bg-color:lightgrey;
+
+    .tabbar {
+        display: grid;
+
+        grid-area:tabheader;
+
+        grid-auto-flow: column;
+        justify-content: start;
+        gap: 0 1em;
+
+        overflow-x: auto;
+        overflow-y: hidden;
+
+        --border-size: 1px;
+
+        .tabheader.active {
+            border: var(--border-size) solid var(--tabs-header-border-color);
+        }
+
+        .tabheader {
+            display: inline-block;
+            cursor: pointer;
+
+            padding: 0.1em 0.6em;
+            background: var(--tabs-header-bg-color);
+
+            border-radius: 0.5em 0.5em 0 0;
+
+            /*keep element size consistent with .active*/
+            border: var(--border-size) solid transparent;
+        }
+
+        border-bottom: 1px solid var(--tabs-header-border-color);
+    }
+
+    .tab{
+        overflow-x: hidden;
+        /*width should be maximized*/
+        width:100%;
+        /*but height is whatever the tab container believes is appropriate*/
+        height:default;
+    }
+
+    .tab:not(.hidden) {
+        grid-area:tabbodies;
+    }
+
+    .tab.hidden {
+        display: none;
+    }
+}

@@ -99,29 +99,11 @@ _DEBUG_P2JS = True
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# file name utility code
-
-# precompile regex for performance
-name_validity_regex = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
-""" name_validity_regex only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot """
-
-
-def generate_random_number_string(num_digits: int = 9) -> str:
-    "used to generate new image handles"
-    max_val: float = 10**num_digits
-    max_val -= 2
-    return f"{(int(random.random() * max_val) + 1):0{num_digits}d}"
-
+# create server enty point
 
 app = FastAPI(debug=False)
-app.mount("/src", StaticFiles(directory="src"), name="static")
 
-# route tags to structure swagger interface (/docs,/redoc)
-
-# Register handler so that, if you send SIGUSR1 to this process,
-# it will print all thread backtraces to stderr.
-faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
-
+# setup tags for /docs structure
 
 class RouteTag(str, Enum):
     STATIC_FILES = "Static Files"
@@ -149,20 +131,23 @@ openapi_tags = [
     },
 ]
 
+# register static file paths (for front end)
 
 @app.get("/", tags=[RouteTag.STATIC_FILES.value])
 async def index():
-    return FileResponse("index.html")
+    return FileResponse("web-static/index.html")
 
+app.mount("/css", StaticFiles(directory="web-static/css"), name="web-css")
+app.mount("/src", StaticFiles(directory="web-static/src"), name="web-src")
+app.mount("/resources", StaticFiles(directory="web-static/resources"), name="web-resources")
 
-@app.get("/css/{path:path}", tags=[RouteTag.STATIC_FILES.value])
-async def send_css(path: str):
-    return FileResponse(f"css/{path}")
+# Register handler so that, if you send SIGUSR1 to this process,
+# it will print all thread backtraces to stderr.
+faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
 
-
-@app.get("/src/{path:path}", tags=[RouteTag.STATIC_FILES.value])
-async def send_js(path: str):
-    return FileResponse(f"src/{path}")
+# precompile regex for performance
+name_validity_regex = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+""" name_validity_regex only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot """
 
 
 @app.api_route(

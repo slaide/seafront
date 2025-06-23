@@ -1,0 +1,12 @@
+*:not(button):not(input):not(textarea):not(select){
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+body {
+    label {
+        height: min-content;
+        width: max-content;
+    }
+}

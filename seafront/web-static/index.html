@@ -1,0 +1,1752 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#317EFB" />
+
+        <title>Seafront GUI v2</title>
+
+        <link rel="stylesheet" href="/css/reset.css" />
+        <!-- importing plotly as module fails, so we do this instead -->
+        <script src="https://cdn.jsdelivr.net/npm/plotly.js@3.0/dist/plotly.min.js"></script>
+        <script type="importmap">
+            {
+                "imports": {
+                    "alpine": "https://esm.run/alpinejs@3.14",
+
+                    "three": "https://esm.run/three@0.176",
+                    "three/addons/capabilities/WebGL": "https://cdn.jsdelivr.net/npm/three@0.176/examples/jsm/capabilities/WebGL.min.js",
+                    "three/addons/loaders/FontLoader": "https://cdn.jsdelivr.net/npm/three@0.176/examples/jsm/loaders/FontLoader.min.js",
+                    "three/addons/utils/BufferGeometryUtils": "https://cdn.jsdelivr.net/npm/three@0.176/examples/jsm/utils/BufferGeometryUtils.min.js",
+
+                    "platenavigator": "/src/platenavigator.js",
+                    "numberinput": "/src/numberinput.js",
+                    "microscope_setup": "/src/microscope_setup.js",
+                    "channelview": "/src/channelview.js",
+                    "tooltip": "/src/tooltip.js",
+                    "tabs": "/src/tabs.js",
+                    "histogram": "/src/histogram.js"
+                }
+            }
+        </script>
+
+        <script src="/src/init.js" type="module"></script>
+
+        <style>
+            .fullwidth {
+                width: 100%;
+            }
+
+            .clickable {
+                cursor: pointer;
+            }
+
+            .noselect {
+                user-select: none;
+            }
+
+            .scrolly {
+                overflow-y: auto;
+            }
+            label[disabled] {
+                text-decoration: line-through;
+                text-decoration-thickness: 2px;
+            }
+        </style>
+
+        <link href="/css/tooltip.css" rel="stylesheet" />
+        <link href="/css/tabs.css" rel="stylesheet" />
+    </head>
+
+    <body x-data="microscope_state" x-init="await manualInit()">
+        <link rel="stylesheet" href="/css/theme.css" />
+
+        <style>
+            .section > :first-child {
+                background: var(--highlight-color);
+                text-align: center;
+            }
+            .section > :not(:first-child) {
+                padding: 0.3em;
+            }
+        </style>
+
+        <link href="/css/loadingscreen.css" rel="stylesheet" />
+        <div
+            id="loadingscreen"
+            x-effect="if(initDone)$el.style.display='none';"
+        >
+            <div id="loadingscreentext">Loading Seafront ...</div>
+        </div>
+
+        <template x-if="initDone">
+            <div id="content">
+                <style>
+                    #content {
+                        width: 100vw;
+                        height: 100vh;
+                        overflow: hidden hidden;
+
+                        display: grid;
+                        grid-template:
+                            "a b" 1fr
+                            "f f" auto
+                            / 2fr 1fr;
+
+                        #leftcol,
+                        #rightcol {
+                            width: auto;
+                            overflow-x: hidden;
+
+                            height: 100%;
+                            overflow-y: hidden;
+                        }
+                    }
+                </style>
+                <div id="leftcol" style="grid-area: a">
+                    <div x-init="initTabs($el)" id="image-views">
+                        <style>
+                            #image-views {
+                                height: 100%;
+                                display: grid;
+                                grid-template-rows: min-content 1fr;
+
+                                .tab {
+                                    overflow: auto;
+                                    height: auto;
+                                }
+                            }
+                        </style>
+
+                        <div tabname="Plate View">
+                            <div
+                                id="plate"
+                                style="width: 100%; aspect-ratio: 3/2"
+                                x-init="initPlateNavigator($el)"
+                            ></div>
+                            <p>
+                                <span>Legend:</span>
+                                <span
+                                    x-bind:style="`background:#${matWellColor.toString(16).padStart(6,'0')}A0;`"
+                                    >Well</span
+                                >
+                                <span
+                                    x-bind:style="`background:#${matSiteColor.toString(16).padStart(6,'0')}A0;`"
+                                    >Site</span
+                                >
+                                <span
+                                    x-bind:style="`background:#${matFovColor.toString(16).padStart(6,'0')}D0;`"
+                                    >Current FOV</span
+                                >
+                            </p>
+                        </div>
+                        <div tabname="Channel View" style="position: relative">
+                            <div>
+                                <label>Columns</label>
+                                <input
+                                    type="number"
+                                    is="number-input"
+                                    min="1"
+                                    max="4"
+                                    step="1"
+                                    x-model.number="channelViewNumCols"
+                                    x-init="registerNumberInput($el)"
+                                />
+                                <button
+                                    @click="if(channelViewNumCols<4)channelViewNumCols++"
+                                >
+                                    +
+                                </button>
+                                <button
+                                    @click="if(channelViewNumCols>1)channelViewNumCols--"
+                                >
+                                    -
+                                </button>
+                            </div>
+                            <canvas
+                                id="c"
+                                x-init="initChannelView($el);$watch('theme',()=>view.setClearColorFromBody())"
+                            ></canvas>
+                            <style>
+                                #c {
+                                    position: fixed;
+
+                                    /*position and size will be changed later*/
+                                    left: 0;
+                                    top: 0;
+                                    width: 100%;
+                                    height: 100%;
+
+                                    display: block;
+                                    z-index: -1;
+                                }
+
+                                #grid-container {
+                                    display: grid;
+                                    --num-cols: 3;
+                                    grid-template-columns: repeat(
+                                        var(--num-cols),
+                                        1fr
+                                    );
+
+                                    .channel-box-image {
+                                        aspect-ratio: 1;
+                                        border: 1px solid var(--highlight-color);
+                                    }
+                                }
+                                .channel-display-channelname {
+                                    text-align: center;
+                                    font-weight: bold;
+                                }
+                            </style>
+                            <div
+                                id="grid-container"
+                                x-bind:style="`--num-cols:${channelViewNumCols};`"
+                            >
+                                <!--div x-html="cached_channel_image.get('fluo405').info.timestamp"></div-->
+                                <template
+                                    x-for="channel in microscope_config.channels.filter(c=>c.enabled)"
+                                    :key="channel.handle"
+                                >
+                                    <div
+                                        class="channel-box"
+                                        x-bind:channelhandle="channel.handle"
+                                    >
+                                        <div
+                                            class="channel-display-channelname"
+                                            x-bind:id="`channel-display-${channel.handle}`"
+                                            x-text="channel.name"
+                                        ></div>
+                                        <div
+                                            x-effect="updateChannelCache($el)"
+                                            class="channel-box-image"
+                                            x-bind:id="`channelview-item-${channel.handle}`"
+                                        ></div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                        <div tabname="Protocols">
+                            <div style="padding: 0.3em">
+                                <label>Save current config as (Filename)</label>
+                                <input
+                                    x-model="configStore_filename"
+                                    type="text"
+                                    placeholder="filename"
+                                />
+                                <button @click="storeConfig">Save</button>
+                                <label
+                                    x-init="enabletooltip($el)"
+                                    tooltip="overwrite if file with this name already exists?"
+                                    >overwrite?</label
+                                >
+                                <input
+                                    type="checkbox"
+                                    x-model.boolean="configStore_overwrite_on_conflict"
+                                />
+                            </div>
+                            <div>
+                                <div id="protocol-container">
+                                    <style>
+                                        #protocol-container {
+                                            display: grid;
+                                            grid-template-columns:
+                                                5em /* load button */
+                                                10em /* project */
+                                                10em /* plate */
+                                                30em /* comment */
+                                                6em /* cell line */
+                                                14em /* plate type */
+                                                14em /* timestamp */
+                                                15em /* filename */;
+                                            gap: 0.5em 0.3em;
+                                        }
+                                    </style>
+
+                                    <div style="display: contents">
+                                        <div
+                                            x-init="enabletooltip($el)"
+                                            tooltip="case insensitive filter"
+                                        >
+                                            Filter By
+                                        </div>
+                                        <input
+                                            type="text"
+                                            x-model="protol_list_filters.project_name"
+                                            placeholder="project"
+                                        />
+                                        <input
+                                            type="text"
+                                            x-model="protol_list_filters.plate_name"
+                                            placeholder="plate"
+                                        />
+                                        <input
+                                            type="text"
+                                            x-model="protol_list_filters.comment"
+                                            placeholder="comment"
+                                        />
+                                        <input
+                                            type="text"
+                                            x-model="protol_list_filters.cell_line"
+                                            placeholder="cell line"
+                                        />
+                                        <input
+                                            type="text"
+                                            x-model="protol_list_filters.plate_type"
+                                            placeholder="plate type"
+                                        />
+                                        <div><!--timestamp--></div>
+                                        <input
+                                            type="text"
+                                            x-model="protol_list_filters.filename"
+                                            placeholder="filename"
+                                        />
+                                    </div>
+
+                                    <div></div>
+                                    <div><b>Project Name</b></div>
+                                    <div><b>Plate Name</b></div>
+                                    <div><b>Comment</b></div>
+                                    <div><b>Cell Line[s</b>]</div>
+                                    <div><b>Plate Type</b></div>
+                                    <div><b>Timestamp</b></div>
+                                    <div><b>Filename</b></div>
+
+                                    <template
+                                        x-for="protocol in filtered_protocol_list"
+                                        :key="protocol.filename"
+                                    >
+                                        <div style="display: contents">
+                                            <div>
+                                                <button
+                                                    @click="await loadConfig(protocol);$nextTick(()=>{configIsStored=true;});"
+                                                >
+                                                    Load
+                                                </button>
+                                            </div>
+                                            <div
+                                                x-text="protocol.project_name"
+                                            ></div>
+                                            <div
+                                                x-text="protocol.plate_name"
+                                            ></div>
+                                            <div
+                                                x-text="protocol.comment"
+                                            ></div>
+                                            <div
+                                                x-text="protocol.cell_line"
+                                            ></div>
+
+                                            <div
+                                                x-init="enabletooltip($el)"
+                                                x-bind:tooltip="`
+												Manufacturer: ${protocol.plate_type.Manufacturer}
+												Model Name: ${protocol.plate_type.Model_name}
+												Model ID: ${protocol.plate_type.Model_id}
+											`.trimLeft().replaceAll('\n','<br>')"
+                                                x-text="protocol.plate_type.Model_id"
+                                            ></div>
+
+                                            <div
+                                                x-text="protocol.timestamp"
+                                            ></div>
+                                            <div
+                                                x-text="protocol.filename"
+                                            ></div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <div>
+                                <button
+                                    @click="protocol_list=(await getConfigList()).configs"
+                                >
+                                    refresh list
+                                </button>
+                            </div>
+                        </div>
+                        <div tabname="Machine Config">
+                            <div>
+                                <label>filter handles</label>
+                                <input
+                                    type="text"
+                                    x-model="machineConfigHandleFilter"
+                                    placeholder="filter handles containing this"
+                                />
+                                <button @click="machineConfigReset">
+                                    reset all values
+                                </button>
+                                <button @click="machineConfigFlush">
+                                    flush local to server
+                                </button>
+                            </div>
+                            <table>
+                                <tr>
+                                    <th>frozen</th>
+                                    <th>handle</th>
+                                    <th>value</th>
+                                    <th>kind</th>
+                                    <th>name</th>
+                                </tr>
+                                <template
+                                    x-for="config in microscope_config.machine_config.toSorted((a,b)=>(a.handle<b.handle)?-1:1)"
+                                    :key="config.handle"
+                                >
+                                    <tr
+                                        x-show="config.handle.indexOf(machineConfigHandleFilter)>=0"
+                                    >
+                                        <td>
+                                            <input
+                                                x-bind:id="`machineconfig-${config.handle}-frozen`"
+                                                type="checkbox"
+                                                x-model.boolean="config.frozen"
+                                                x-init="disableElement($el,()=>(config.frozen||config.value_kind=='action'))"
+                                            />
+                                        </td>
+                                        <td>
+                                            <label
+                                                x-bind:for="`machineconfig-${config.handle}-frozen`"
+                                                x-text="config.handle"
+                                            ></label>
+                                        </td>
+                                        <td>
+                                            <template
+                                                x-if="config.value_kind=='int'"
+                                            >
+                                                <input
+                                                    type="number"
+                                                    step="1"
+                                                    x-model.number="config.value"
+                                                    is="number-input"
+                                                    x-init="registerNumberInput($el)"
+                                                    x-effect="disableElement($el,()=>config.frozen)"
+                                                />
+                                            </template>
+                                            <template
+                                                x-if="config.value_kind=='float'"
+                                            >
+                                                <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    x-model.number="config.value"
+                                                    is="number-input"
+                                                    x-init="registerNumberInput($el)"
+                                                    x-effect="disableElement($el,()=>config.frozen)"
+                                                />
+                                            </template>
+                                            <template
+                                                x-if="config.value_kind=='text'"
+                                            >
+                                                <textarea
+                                                    rows="3"
+                                                    wrap="soft"
+                                                    x-model="config.value"
+                                                    x-effect="disableElement($el,()=>config.frozen)"
+                                                ></textarea>
+                                            </template>
+                                            <template
+                                                x-if="config.value_kind=='action'"
+                                            >
+                                                <button
+                                                    x-text="config.value"
+                                                    @click="await runMachineConfigAction(config)"
+                                                ></button>
+                                            </template>
+                                            <template
+                                                x-if="config.value_kind=='option'"
+                                            >
+                                                <select
+                                                    x-model="config.value"
+                                                    x-init="$el.value=config.value"
+                                                    x-effect="disableElement($el,()=>config.frozen)"
+                                                >
+                                                    <template
+                                                        x-for="option in config.options"
+                                                        :key="option.handle"
+                                                    >
+                                                        <optgroup
+                                                            x-bind:label="option.name"
+                                                        >
+                                                            <option
+                                                                x-bind:value="option.handle"
+                                                                x-text="option.handle"
+                                                            ></option>
+                                                        </optgroup>
+                                                    </template>
+                                                </select>
+                                            </template>
+                                        </td>
+                                        <td x-text="config.value_kind"></td>
+                                        <td x-text="config.name"></td>
+                                    </tr>
+                                </template>
+                            </table>
+                        </div>
+                        <div tabname="Advanced">
+                            <div>
+                                <label>num steps</label
+                                ><input
+                                    type="number"
+                                    x-model.number="laserAutofocusDebug_numz"
+                                    step="2"
+                                    min="3"
+                                    max="99"
+                                />
+                                <label>delta z [um]</label
+                                ><input
+                                    type="number"
+                                    x-model.number="laserAutofocusDebug_totalz_um"
+                                    step="10"
+                                    min="20"
+                                    max="500"
+                                />
+                                <button
+                                    @click="buttons_laserAutofocusDebugMeasurement"
+                                >
+                                    measure
+                                </button>
+
+                                <div
+                                    style="width: 100%"
+                                    x-effect="updateLaserAutofocusDebugMeasurementDisplay($el)"
+                                    x-init="initLaserAutofocusDebugMeasurementDisplay($el)"
+                                ></div>
+
+                                <div>
+                                    <button
+                                        @click="button_laserAutofocusGetLatestImage"
+                                    >
+                                        fetch laser autofocus image
+                                    </button>
+                                    <canvas
+                                        style="width: 100%"
+                                        x-init="latestLaserAutofocusImageCanvas=$el"
+                                    ></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <style>
+                    #acquisitioncontroltab {
+                        height: 100%;
+                        overflow-y: auto;
+                    }
+                </style>
+                <div id="rightcol" style="grid-area: b">
+                    <div x-init="initTabs($el)">
+                        <div
+                            id="acquisitioncontroltab"
+                            tabname="Acquisition Control"
+                        >
+                            <div class="section">
+                                <div>Acquisition Basics</div>
+                                <div>
+                                    <div id="names" class="scrolly">
+                                        <style>
+                                            #names {
+                                                display: grid;
+                                                grid-template:
+                                                    " l-proj  v-proj" auto
+                                                    " l-plate v-plate" auto
+                                                    " l-cell  v-cell" auto
+                                                    / auto 1fr;
+                                                gap: 0.3em 1em;
+                                            }
+                                        </style>
+                                        <label> Project Name</label
+                                        ><input
+                                            type="text"
+                                            placeholder="Name of the project"
+                                            x-model="microscope_config.project_name"
+                                        />
+                                        <label> Plate Name</label
+                                        ><input
+                                            type="text"
+                                            placeholder="Name/Identifier of the plate"
+                                            x-model="microscope_config.plate_name"
+                                        />
+                                        <label> Cell Line[s]</label
+                                        ><input
+                                            type="text"
+                                            placeholder="Cell lines[s] used on the plate"
+                                            x-model="microscope_config.cell_line"
+                                        />
+                                        <label> Comment</label
+                                        ><textarea
+                                            placeholder="description of the plate to understand its purpose."
+                                            x-model="microscope_config.comment"
+                                        ></textarea>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="section">
+                                <div>Site Configuration</div>
+                                <div>
+                                    <div id="grid-config" class="scrolly">
+                                        <style>
+                                            #grid-config {
+                                                display: grid;
+                                                grid-template:
+                                                    " l-n-x       v-n-x l-d-x       v-d-x   v-d-x   v-d-x   v-d-x   v-d-x   v-d-x" auto
+                                                    " l-n-y       v-n-y l-d-y       v-d-y   v-d-y   v-d-y   v-d-y   v-d-y   v-d-y" auto
+                                                    " l-n-t       v-n-t l-d-t       l-d-t-h v-d-t-h l-d-t-m v-d-t-m l-d-t-s v-d-t-s" auto
+                                                    / auto auto auto auto auto auto auto auto auto;
+                                                gap: 0.3em 1em;
+
+                                                label {
+                                                    height: min-content;
+                                                    width: max-content;
+                                                }
+                                            }
+                                        </style>
+                                        <label style="grid-area: l-n-x"
+                                            >num x</label
+                                        >
+                                        <input
+                                            style="grid-area: v-n-x"
+                                            type="number"
+                                            min="1"
+                                            max="999"
+                                            step="1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.num_x"
+                                        />
+
+                                        <label style="grid-area: l-d-x"
+                                            >delta x [mm]</label
+                                        >
+                                        <input
+                                            style="grid-area: v-d-x"
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_x==1)"
+                                            type="number"
+                                            min="0.1"
+                                            max="999"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.delta_x_mm"
+                                        />
+
+                                        <label style="grid-area: l-n-y"
+                                            >num y</label
+                                        >
+                                        <input
+                                            style="grid-area: v-n-y"
+                                            type="number"
+                                            min="1"
+                                            max="999"
+                                            step="1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.num_y"
+                                        />
+
+                                        <label style="grid-area: l-d-y"
+                                            >delta y [mm]</label
+                                        >
+                                        <input
+                                            style="grid-area: v-d-y"
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_y==1)"
+                                            type="number"
+                                            min="0.1"
+                                            max="999"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.delta_y_mm"
+                                        />
+
+                                        <label style="grid-area: l-n-t"
+                                            >num t</label
+                                        >
+                                        <input
+                                            style="grid-area: v-n-t"
+                                            type="number"
+                                            min="1"
+                                            max="9999"
+                                            step="1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.num_t"
+                                        />
+
+                                        <label style="grid-area: l-d-t"
+                                            >delta t</label
+                                        >
+                                        <label style="grid-area: l-d-t-h"
+                                            >h</label
+                                        >
+                                        <input
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
+                                            style="grid-area: v-d-t-h"
+                                            type.number="number"
+                                            min="0"
+                                            max="999"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model="microscope_config.grid.delta_t.h"
+                                        />
+                                        <label style="grid-area: l-d-t-m"
+                                            >m</label
+                                        >
+                                        <input
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
+                                            style="grid-area: v-d-t-m"
+                                            type.number="number"
+                                            min="0"
+                                            max="59.9"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model="microscope_config.grid.delta_t.m"
+                                        />
+                                        <label style="grid-area: l-d-t-s"
+                                            >s</label
+                                        >
+                                        <input
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
+                                            style="grid-area: v-d-t-s"
+                                            type.number="number"
+                                            min="0"
+                                            max="59.9"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model="microscope_config.grid.delta_t.s"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="section">
+                                <div>Wellplate Configuration</div>
+                                <div>
+                                    <div id="well-selector" class="scrolly">
+                                        <style>
+                                            #well-selector {
+                                                display: grid;
+                                                grid-template: "p" auto "w" auto / auto;
+                                                gap: 0.3em;
+                                            }
+                                        </style>
+                                        <script>
+                                            function checkDefaultPlateType(
+                                                el,
+                                                plate,
+                                                microscope_config,
+                                            ) {
+                                                if (
+                                                    plate.Model_id ==
+                                                    microscope_config
+                                                        .wellplate_type.Model_id
+                                                ) {
+                                                    el.setAttribute(
+                                                        "selected",
+                                                        "",
+                                                    );
+                                                }
+                                            }
+                                        </script>
+
+                                        <div id="plate-type-selector">
+                                            <style>
+                                                #plate-type-selector {
+                                                    display: grid;
+                                                    grid-template: "l s" auto / auto 1fr;
+                                                    gap: 0.3em;
+                                                }
+                                            </style>
+                                            <label>Well plate Type</label>
+                                            <select
+                                                id="platetype"
+                                                @change="await updatePlate($el.value)"
+                                                x-init="await updatePlate(microscope_config.wellplate_type.Model_id,true)"
+                                            >
+                                                <template
+                                                    x-for="plategroup in plateinfo.plategroups"
+                                                    :key="plategroup.label"
+                                                >
+                                                    <optgroup
+                                                        x-bind:label="plategroup.label"
+                                                    >
+                                                        <template
+                                                            x-for="plate in plategroup.plates"
+                                                            :key="plate.Model_id"
+                                                        >
+                                                            <option
+                                                                x-init="checkDefaultPlateType($el,plate,microscope_config)"
+                                                                x-bind:value="plate.Model_id"
+                                                                x-text="`${plate.Manufacturer} ${plate.Model_id_manufacturer} ( ${plate.Model_name} )`"
+                                                            ></option>
+                                                        </template>
+                                                    </optgroup>
+                                                </template>
+                                            </select>
+                                        </div>
+
+                                        <style>
+                                            /* 1 slide holder */
+                                            #wellcontainer.wellsx1,
+    									/* 4 slide holder */
+    									#wellcontainer.wellsx4 {
+                                                .well {
+                                                    font-size: 2em;
+                                                }
+                                            }
+                                            /* 96 well plate */
+                                            #wellcontainer.wellsx12 {
+                                                .well {
+                                                    font-size: 1.5em;
+                                                }
+                                            }
+                                            /* 384 well plate */
+                                            #wellcontainer.wellsx24 {
+                                                .well {
+                                                    font-size: 1.2em;
+                                                }
+                                            }
+                                            #wellcontainer.wellsx48 {
+                                                .well {
+                                                    font-size: 0.56em;
+                                                }
+                                            }
+                                            #wellcontainer {
+                                                display: grid;
+                                                border: 1px solid
+                                                    var(--text-color);
+
+                                                /*first column is well header which can have any size, all other wells must have equal size*/
+                                                grid-template-columns: auto repeat(
+                                                        var(--numcols),
+                                                        1fr
+                                                    );
+
+                                                .well {
+                                                    font-family: monospace;
+                                                }
+
+                                                .well:not(.wellheader) {
+                                                    aspect-ratio: var(
+                                                        --well-aspect-ratio
+                                                    );
+                                                }
+
+                                                .well.selected {
+                                                    background: var(
+                                                        --highlight-color
+                                                    );
+                                                }
+
+                                                .well:hover:not(.wellheader) {
+                                                    background: lightgrey;
+                                                }
+                                            }
+                                        </style>
+                                        <div
+                                            id="wellcontainer"
+                                            x-bind:class="`wellsx${microscope_config.wellplate_type.Num_wells_x}`"
+                                            x-bind:style="`
+									--numcols:${microscope_config.wellplate_type.Num_wells_x};
+									--well-aspect-ratio:${microscope_config.wellplate_type.Well_size_x_mm/microscope_config.wellplate_type.Well_size_y_mm}
+									`"
+                                            @mouseleave="endSelectionRange(null)"
+                                        >
+                                            <style>
+                                                .well {
+                                                    display: grid;
+                                                    justify-items: center;
+                                                    span {
+                                                        height: min-content;
+                                                        display: inline-block;
+                                                        position: relative;
+                                                        top: 50%;
+                                                        transform: translateY(
+                                                            -50%
+                                                        );
+                                                    }
+                                                }
+                                                .inselection {
+                                                    background: red;
+                                                }
+                                            </style>
+                                            <template
+                                                x-for="well in microscope_config.plate_wells"
+                                                :key="`c${well.col}r${well.row}`"
+                                            >
+                                                <div
+                                                    x-init="if((well.col>=0) && (well.row>=0)){enabletooltip($el)}"
+                                                    x-bind:tooltip="`Well ${wellName(well)}`"
+                                                    class="well noselect"
+                                                    x-bind:class="`${well.selected?'selected':''} ${(well.col>=0 && well.row>=0)?'clickable':'wellheader'}`"
+                                                    @mousedown="setStartSelectedWell(event,well)"
+                                                    @mouseenter="selectionContinue(event,well)"
+                                                    @mouseup="endSelectionRange(well)"
+                                                    @dblclick="await buttons_wellcontainer_dblclick(well)"
+                                                >
+                                                    <span
+                                                        x-text="(!((well.col>=0) && (well.row>=0)))?wellText(well):''"
+                                                    ></span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                        <div x-text="selectionRangeText"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div tabname="Lighting and Focus">
+                            <div class="section">
+                                <div>Channel Configuration</div>
+                                <div>
+                                    <div id="channelgrid" class="scrolly">
+                                        <style>
+                                            #channelgrid {
+                                                display: grid;
+                                                grid-template-columns:
+                                                    repeat(3, max-content)
+                                                    5em 5em 5em 5em 4em 7em;
+
+                                                .channel-config-header {
+                                                    text-align: center;
+                                                }
+
+                                                /* x padding here is present inside the row container, but y padding
+                                                is NOT, so y padding is added inside the row container instead*/
+                                                gap: 0 0.4em;
+
+                                                .channel-config-row-name {
+                                                    font-weight: bold;
+                                                    display: grid;
+                                                    align-items: center;
+
+                                                    background: var(
+                                                        --weak-bg-color
+                                                    );
+                                                    padding-right: 0.5em;
+                                                    border-right: 1px solid
+                                                        var(--text-color);
+                                                }
+                                            }
+                                        </style>
+
+                                        <p
+                                            class="channel-config-header"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`
+    										Indicates if the channel should be imaged during acqusition.
+
+    										When checked, this channel will be imaged.
+    									`.trimLeft().replaceAll('\n','<br>')"
+                                        >
+                                            ?
+                                        </p>
+                                        <p
+                                            class="channel-config-header channel-config-row-name"
+                                        >
+                                            Channel
+                                        </p>
+                                        <p class="channel-config-header"></p>
+                                        <p
+                                            class="channel-config-header"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`
+    										exposure time in milliseconds.
+
+    										range: ${limits.imaging_exposure_time_ms.min} - ${limits.imaging_exposure_time_ms.max} ( in steps of ${limits.imaging_exposure_time_ms.step})
+    										`.trimLeft().replaceAll('\n','<br>')"
+                                        >
+                                            Exp. [ms]
+                                        </p>
+                                        <p
+                                            class="channel-config-header"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`
+    										analog gain in decibels.
+
+    										range: ${limits.imaging_analog_gain_db.min} - ${limits.imaging_analog_gain_db.max} ( in steps of ${limits.imaging_analog_gain_db.step})
+    										`.trimLeft().replaceAll('\n','<br>')"
+                                        >
+                                            Gain [dB]
+                                        </p>
+                                        <p
+                                            class="channel-config-header"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`
+    										z offset (from focus reference) in micrometers.
+
+    										range: ${limits.imaging_focus_offset_um.min} - ${limits.imaging_focus_offset_um.max} ( in steps of ${limits.imaging_focus_offset_um.step})
+    										`.trimLeft().replaceAll('\n','<br>')"
+                                        >
+                                            Off. [um]
+                                        </p>
+                                        <p
+                                            class="channel-config-header"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`
+    										illumination strength as percent of maximum.
+
+    										range: ${limits.imaging_illum_perc.min} - ${limits.imaging_illum_perc.max} ( in steps of ${limits.imaging_illum_perc.step})
+    										`.trimLeft().replaceAll('\n','<br>')"
+                                        >
+                                            Pow. [%]
+                                        </p>
+                                        <p
+                                            class="channel-config-header"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`
+    										number of z planes.
+
+    										range: ${limits.imaging_number_z_planes.min} - ${limits.imaging_number_z_planes.max} ( in steps of ${limits.imaging_number_z_planes.step})
+    										`.trimLeft().replaceAll('\n','<br>')"
+                                        >
+                                            num z
+                                        </p>
+                                        <p
+                                            class="channel-config-header"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`
+    										distance between z planes in um.
+
+    										range: ${limits.imaging_delta_z_um.min} - ${limits.imaging_delta_z_um.max} ( in steps of ${limits.imaging_delta_z_um.step})
+    										`.trimLeft().replaceAll('\n','<br>')"
+                                        >
+                                            delta z [um]
+                                        </p>
+
+                                        <style>
+                                            .channel-config-row-container {
+                                                background: var(
+                                                    --strong-bg-color
+                                                );
+
+                                                display: grid;
+                                                grid-column: 1 / -1; /* span full width of parent grid */
+                                                grid-template-columns: subgrid; /* inherit columns from .parent */
+                                                grid-template-rows: subgrid; /* inherit rows from .parent */
+                                                gap: inherit;
+                                                /* see #channelgrid for comment on padding */
+                                                padding: 0.2em 0;
+
+                                                * {
+                                                    box-sizing: content-box;
+                                                }
+                                            }
+                                            .channel-config-row-container:hover {
+                                                background: lightcoral;
+                                            }
+                                            .channel-config-row-name {
+                                                /* stretch label to full row height*/
+                                                display: block;
+                                                height: 100%;
+
+                                                /* make it stick to the left edge while scrolling, to always be visible */
+                                                position: sticky;
+                                                left: 0;
+
+                                                /* inherit background color from parent (would otherwise be transparent and mess with position:sticky; display */
+                                                background: inherit;
+                                            }
+                                        </style>
+
+                                        <template
+                                            x-for="channel in microscope_config.channels"
+                                            :key="channel.handle"
+                                        >
+                                            <div
+                                                class="channel-config-row-container"
+                                            >
+                                                <input
+                                                    x-bind:id="`${channel.handle}-enabled`"
+                                                    type="checkbox"
+                                                    x-model.boolean="channel.enabled"
+                                                />
+                                                <div
+                                                    class="channel-config-row-name"
+                                                >
+                                                    <label
+                                                        x-bind:for="`${channel.handle}-enabled`"
+                                                        x-text="channel.name"
+                                                        x-effect="disableElement($el,()=>!channel.enabled)"
+                                                    ></label>
+                                                </div>
+                                                <button
+                                                    @click="Actions.snapChannel({channel})"
+                                                    @mouseenter="channel_makeVisible(channel.handle);"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                >
+                                                    snap
+                                                </button>
+
+                                                <input
+                                                    type="number"
+                                                    min="limits.imaging_exposure_time_ms.min"
+                                                    step="limits.imaging_exposure_time_ms.step"
+                                                    max="limits.imaging_exposure_time_ms.max"
+                                                    placeholder="5"
+                                                    x-model.number="channel.exposure_time_ms"
+                                                    x-init="registerNumberInput($el)"
+                                                    is="number-input"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                />
+
+                                                <input
+                                                    type="number"
+                                                    min="limits.imaging_analog_gain_db.min"
+                                                    step="limits.imaging_analog_gain_db.step"
+                                                    max="limits.imaging_analog_gain_db.max"
+                                                    placeholder="0"
+                                                    x-model.number="channel.analog_gain"
+                                                    x-init="registerNumberInput($el)"
+                                                    is="number-input"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                />
+
+                                                <input
+                                                    type="number"
+                                                    min="limits.imaging_focus_offset_um.min"
+                                                    step="limits.imaging_focus_offset_um.step"
+                                                    max="limits.imaging_focus_offset_um.max"
+                                                    placeholder="0"
+                                                    x-model.number="channel.z_offset_um"
+                                                    x-init="registerNumberInput($el)"
+                                                    is="number-input"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                />
+
+                                                <input
+                                                    type="number"
+                                                    min="limits.imaging_illum_perc.min"
+                                                    step="limits.imaging_illum_perc.step"
+                                                    max="limits.imaging_illum_perc.max"
+                                                    placeholder="100"
+                                                    x-model.number="channel.illum_perc"
+                                                    is="number-input"
+                                                    x-init="registerNumberInput($el),$nextTick(()=>$dispatch('blur'))"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                />
+
+                                                <input
+                                                    type="number"
+                                                    min="limits.imaging_number_z_planes.min"
+                                                    step="limits.imaging_number_z_planes.step"
+                                                    max="limits.imaging_number_z_planes.max"
+                                                    placeholder="1"
+                                                    x-model.number="channel.num_z_planes"
+                                                    is="number-input"
+                                                    x-init="registerNumberInput($el)"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                />
+
+                                                <input
+                                                    type="number"
+                                                    min="limits.imaging_delta_z_um.min"
+                                                    step="limits.imaging_delta_z_um.step"
+                                                    max="limits.imaging_delta_z_um.max"
+                                                    placeholder="3"
+                                                    x-model.number="channel.delta_z_um"
+                                                    is="number-input"
+                                                    x-init="registerNumberInput($el)"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                />
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="section">
+                                <div>Live Acquisition</div>
+                                <div>
+                                    <div
+                                        id="live-acquisition-controls"
+                                        class="scrolly"
+                                    >
+                                        <style>
+                                            #live-acquisition-controls {
+                                                display: grid;
+                                                grid-template-columns: repeat(
+                                                    6,
+                                                    auto
+                                                );
+                                                gap: 0 0.6em;
+                                            }
+                                        </style>
+
+                                        <label
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`
+										Live Acquisition controls.
+
+										Live Acquisition is the process where a number of acquisition are performed each second until stopped.
+										The number of images per second (i.e. the framerate) can be controlled using the respective input value.
+
+										Note that this may quickly bleach your sample!
+									`.trimLeft().replaceAll('\n','<br>')"
+                                            >Live Acq.</label
+                                        >
+                                        <button @click="buttons_startStreaming">
+                                            start
+                                        </button>
+                                        <button @click="buttons_endStreaming">
+                                            stop
+                                        </button>
+                                        <select
+                                            id="live-channel-selection"
+                                            x-model="actionInput.live_acquisition_channelhandle"
+                                            x-init="$nextTick(()=>{actionInput.live_acquisition_channelhandle = $el.value})"
+                                        >
+                                            <optgroup label="Fluorescence">
+                                                <template
+                                                    x-for="channel in microscope_config.channels"
+                                                    :key="channel.handle"
+                                                >
+                                                    <template
+                                                        x-if="channel.enabled && channel.handle[0]=='f'"
+                                                    >
+                                                        <option
+                                                            x-bind:value="channel.handle"
+                                                            x-text="channel.name"
+                                                        ></option>
+                                                    </template>
+                                                </template>
+                                            </optgroup>
+                                            <optgroup label="Brightfield">
+                                                <template
+                                                    x-for="channel in microscope_config.channels"
+                                                    :key="channel.handle"
+                                                >
+                                                    <template
+                                                        x-if="channel.enabled && channel.handle[0]=='b'"
+                                                    >
+                                                        <option
+                                                            x-bind:value="channel.handle"
+                                                            x-text="channel.name"
+                                                        ></option>
+                                                    </template>
+                                                </template>
+                                            </optgroup>
+                                        </select>
+                                        <label>framerate</label>
+                                        <input
+                                            type="number"
+                                            placeholder="5"
+                                            min="1"
+                                            max="10"
+                                            step="0.1"
+                                            x-model.number="actionInput.live_acquisition_framerate"
+                                            is="number-input"
+                                            x-init="enabletooltip($el),registerNumberInput($el)"
+                                            x-bind:tooltip="`
+										live acquisition framerate
+
+										range: ${$el.min} - ${$el.max} (in steps of ${$el.step})
+										`.trimLeft().replaceAll('\n','<br>')"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="section">
+                                <div>Laser Autofocus</div>
+                                <div>
+                                    <div
+                                        id="laser-autofocus-controls"
+                                        class="scrolly"
+                                    >
+                                        <style>
+                                            #laser-autofocus-controls {
+                                                display: grid;
+                                                grid-template-columns: repeat(
+                                                    3,
+                                                    auto
+                                                );
+                                                gap: 0.3em;
+                                            }
+                                        </style>
+                                        <label>Reference</label>
+                                        <span
+                                            x-text="laserAutofocusReferenceText"
+                                        ></span>
+                                        <button
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`calibrate laser autofocus here, i.e. retain this level of focus on the cells.`"
+                                            @click="buttons_calibrateLaserAutofocusHere"
+                                        >
+                                            Set here
+                                        </button>
+
+                                        <label
+                                            >Offset from reference [um]</label
+                                        >
+                                        <span
+                                            x-text="laserAutofocusOffsetText"
+                                        ></span>
+                                        <button
+                                            @click="button_laserAutofocusMeasureOffset"
+                                        >
+                                            Measure
+                                        </button>
+
+                                        <label
+                                            x-init="enabletooltip($el)"
+                                            tooltip="target offset from reference."
+                                            >Target Offset [um]</label
+                                        >
+                                        <input
+                                            type="number"
+                                            x-model.number="laserAutofocusTargetOffsetUM"
+                                        />
+                                        <button
+                                            @click="button_laserAutofocusMoveToTargetOffset"
+                                        >
+                                            Move
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="section">
+                                <div>Histogram</div>
+                                <div
+                                    style="width: 100%"
+                                    x-init="makeHistogram($el)"
+                                    x-effect="updateHistogram($el)"
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="bottom-bar">
+                    <style>
+                        #bottom-bar {
+                            border-top: 1px solid var(--text-color);
+                            grid-area: f;
+
+                            gap: 0 1em;
+                            display: grid;
+                            grid-template:
+                                "server-label     server-text     other-1 other-3 acquisition" 1fr
+                                "microscope-label microscope-text other-2 other-4 acquisition" 1fr
+                                / min-content 20em auto auto 1fr;
+                        }
+                    </style>
+                    <label style="grid-area: server-label">
+                        <span>Server:</span>
+                        <style>
+                            .connection-indicator {
+                                display: inline-block;
+                                aspect-ratio: 1/1;
+                                height: 1.2em;
+                                border-radius: 50%;
+                            }
+                            .connection-indicator.connected {
+                                background-color: #2ace1b;
+                            }
+                            .connection-indicator:not(.connected) {
+                                background-color: #e74c3c;
+                            }
+                        </style>
+                        <span
+                            x-bind:class="`connection-indicator ${isConnectedToServer?'connected':''}`"
+                            x-bind:tooltip="`this web interface ${isConnectedToServer?'is':'is NOT'} currently connected to the server at ${server_url} `"
+                            x-init="enabletooltip($el)"
+                            >&nbsp;</span
+                        >
+                    </label>
+                    <input
+                        style="grid-area: server-text"
+                        type="text"
+                        x-model="server_url_input"
+                        @keydown="(ev)=>{if(ev.key=='Enter'){$dispatch('blur')}}"
+                        x-init="$nextTick(()=>{server_url_input=server_url;$dispatch('blur')})"
+                        @blur="status_reconnect(server_url_input)"
+                    />
+
+                    <label style="grid-area: microscope-label"
+                        >Microscope:</label
+                    >
+                    <span
+                        style="grid-area: microscope-text"
+                        x-text="getMachineConfigItem('microscope_name')?.value??'(none)'"
+                    ></span>
+
+                    <div style="grid-area: other-1">
+                        <label for="tooltips-enabled-checkbox"
+                            >tooltips enabled?</label
+                        >
+                        <input
+                            id="tooltips-enabled-checkbox"
+                            type="checkbox"
+                            x-model.boolean="tooltipConfig.enabled"
+                        />
+                    </div>
+
+                    <div style="grid-area: other-2">
+                        <label>theme</label>
+                        <select
+                            x-model="theme"
+                            x-init="$nextTick(()=>{
+							console.log(`current theme is ${theme}`)
+							changeTheme()
+						})"
+                            @change="changeTheme($el,$event)"
+                        >
+                            <template
+                                x-for="themeoption in themes"
+                                :key="themeoption"
+                            >
+                                <option
+                                    x-bind:value="themeoption"
+                                    x-text="themeoption"
+                                ></option>
+                            </template>
+                        </select>
+                    </div>
+
+                    <div style="grid-area: other-3">
+                        <label>protocol saved?</label>
+                        <input
+                            type="checkbox"
+                            x-model.boolean="configIsStored"
+                            disabled
+                            x-effect="const c=JSON.stringify(microscope_config);configIsStored=false;"
+                        />
+                    </div>
+
+                    <div style="grid-area: other-4">
+                        <style>
+                            .popup {
+                                position: absolute;
+                                top: 0;
+                                left: 0;
+                                background: var(--strong-bg-color);
+                                z-index: 1;
+                                transform: translateY(-100%) translateX(-50%);
+                                width: 35em;
+                                padding: 0.5em;
+                                border: 1px solid var(--text-color);
+                                border-radius: 1em;
+                            }
+                        </style>
+                        <script>
+                            /**
+                             * @param {HTMLElement} el
+                             */
+                            function registerContainedPopup(el) {
+                                const target_popups =
+                                    el.getElementsByClassName("popup");
+                                if (target_popups.length != 1) throw ``;
+                                const target_popup = target_popups[0];
+
+                                makeInvisible(target_popup);
+                                el.addEventListener("mouseenter", () => {
+                                    makeVisible(target_popup);
+                                });
+                                el.addEventListener("mouseleave", () => {
+                                    makeInvisible(target_popup);
+                                });
+                            }
+                            function makeVisible(el) {
+                                const parentRect =
+                                    el.parentElement.getBoundingClientRect();
+
+                                el.style.setProperty(
+                                    "top",
+                                    `${parentRect.top}px`,
+                                );
+                                el.style.setProperty(
+                                    "left",
+                                    `${parentRect.left + parentRect.width / 2}px`,
+                                );
+                                el.style.setProperty("display", "block");
+                            }
+                            function makeInvisible(el) {
+                                el.style.setProperty("display", "none");
+                            }
+                        </script>
+
+                        <div x-init="registerContainedPopup($el)">
+                            <span>
+                                <!-- from https://stackoverflow.com/a/18367765 -->
+                                <span
+                                    style="
+                                        display: inline-block;
+                                        transform: rotate(45deg);
+                                    "
+                                    >&#9906;</span
+                                >
+                                objective position
+                            </span>
+                            <div id="objective-position-popup" class="popup">
+                                <div id="objective-position" class="scrolly">
+                                    <style>
+                                        #objective-position {
+                                            width: 100%;
+
+                                            display: grid;
+                                            grid-template:
+                                                " t   t   m   m   llp " auto
+                                                " lx  vx  mv  ms  lpe " auto
+                                                " ly  vy  mp  mp  lpl " auto
+                                                " lz  vz  mm  mm  lpi " auto
+                                                / 1fr 1fr 1fr 1fr auto;
+                                            gap: 0 1em;
+
+                                            span {
+                                                height: min-content;
+                                                width: max-content;
+                                            }
+                                        }
+                                    </style>
+
+                                    <span style="grid-area: lx">x [mm]</span>
+                                    <span
+                                        style="grid-area: vx"
+                                        x-text="state.adapter_state?.stage_position.x_pos_mm.toFixed(3)"
+                                    ></span>
+                                    <span style="grid-area: ly">y [mm]</span>
+                                    <span
+                                        style="grid-area: vy"
+                                        x-text="state.adapter_state?.stage_position.y_pos_mm.toFixed(3)"
+                                    ></span>
+                                    <span style="grid-area: lz">z [um]</span>
+                                    <span
+                                        style="grid-area: vz"
+                                        x-text="(state.adapter_state?.stage_position.z_pos_mm*1e3).toFixed(1)"
+                                    ></span>
+
+                                    <label style="grid-area: m">Move By:</label>
+                                    <select
+                                        x-model="moveByAxis"
+                                        style="grid-area: ms"
+                                    >
+                                        <option value="x">x [mm]</option>
+                                        <option value="y">y [mm]</option>
+                                        <option value="z" selected>
+                                            z [um]
+                                        </option>
+                                    </select>
+                                    <input
+                                        style="grid-area: mv"
+                                        type="number"
+                                        is="number-input"
+                                        step="0.1"
+                                        min="0.1"
+                                        x-bind:max="1000"
+                                        x-init="registerNumberInput($el)"
+                                        x-model.number="moveByDistance"
+                                    />
+                                    <button
+                                        style="grid-area: mp"
+                                        @click="stageMoveBy('+')"
+                                    >
+                                        +
+                                    </button>
+                                    <button
+                                        style="grid-area: mm"
+                                        @click="stageMoveBy('-')"
+                                    >
+                                        -
+                                    </button>
+
+                                    <label style="grid-area: llp"
+                                        >Loading Position</label
+                                    >
+                                    <button
+                                        style="grid-area: lpe"
+                                        x-effect="disableElement($el,()=>state?.adapter_state.is_in_loading_position??true)"
+                                        @click="await Actions.enterLoadingPosition()"
+                                    >
+                                        Enter
+                                    </button>
+                                    <button
+                                        style="grid-area: lpl"
+                                        x-effect="disableElement($el,()=>!(state?.adapter_state.is_in_loading_position??false))"
+                                        @click="await Actions.leaveLoadingPosition()"
+                                    >
+                                        Leave
+                                    </button>
+                                    <input
+                                        style="grid-area: lpi"
+                                        type="checkbox"
+                                        x-init="enabletooltip($el)"
+                                        x-bind:tooltip="`stage is in loading position? ${state?.adapter_state.is_in_loading_position}`"
+                                        disabled
+                                        x-effect="$el.checked=state?.adapter_state.is_in_loading_position??false"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        style="grid-area: acquisition"
+                        id="acquisition-progress-container"
+                    >
+                        <style>
+                            #acquisition-progress-container {
+                                display: grid;
+                                grid-template-columns: auto 1fr auto auto;
+                            }
+                            #acquisition-progress-bar {
+                                margin: 0.4em;
+                                padding: 0.4em;
+
+                                border: 1px solid var(--text-color);
+                                --progress-color: var(--highlight-color);
+                                --bg-color: var(--strong-bg-color);
+                                --progress: 20%;
+                                background: linear-gradient(
+                                    to right,
+                                    var(--bg-color),
+                                    var(--progress-color) 0%,
+                                    var(--progress-color) var(--progress),
+                                    var(--bg-color) var(--progress),
+                                    var(--bg-color) 100%
+                                );
+                            }
+                            .center-content {
+                                display: grid;
+                                position: relative;
+                                * {
+                                    display: block;
+                                    height: min-content;
+                                    position: relative;
+                                    top: 50%;
+                                    transform: translateY(-50%);
+                                }
+                            }
+                        </style>
+                        <div style="font-size: 1.6em" class="center-content">
+                            <span>Acquisition</span>
+                        </div>
+                        <div
+                            id="acquisition-progress-bar"
+                            x-init="registerContainedPopup($el)"
+                            x-bind:style="`--progress:${current_acquisition_progress_percent}%;`"
+                        >
+                            <span>
+                                <span
+                                    x-text="`${latest_acquisition_status?.acquisition_status??'not running'}`"
+                                ></span>
+                                <span>|</span>
+                                <span>Progress</span>
+                                <span
+                                    x-text="`${current_acquisition_progress_percent.toFixed(2)}%`"
+                                ></span>
+                                <span>|</span>
+                                <span>Done in</span>
+                                <span
+                                    x-text="`${(()=>{
+								let remaining_s=latest_acquisition_status?.acquisition_progress.estimated_remaining_time_s ?? 0.0;
+								const remaining_h=Math.floor(remaining_s/3600);
+								const remaining_m=Math.floor((remaining_s-remaining_h*3600)/60);
+								remaining_s=remaining_s-remaining_h*3600-remaining_m*60;
+
+								const ret=`${remaining_h.toFixed(0)}h ${remaining_m.toFixed(0)}m ${remaining_s.toFixed(0)}s`;
+								return ret;
+							})()}`"
+                                ></span>
+                            </span>
+
+                            <div class="popup">
+                                <div
+                                    style="
+                                        display: grid;
+                                        grid-template-columns: auto auto;
+                                    "
+                                >
+                                    <label>current acquisition:</label
+                                    ><span
+                                        x-text="state.current_acquisition_id??'none'"
+                                    ></span>
+
+                                    <label>Total number of images:</label
+                                    ><span x-text="num_images"></span>
+                                    <label>last acquisition id</label
+                                    ><span
+                                        x-text="latest_acquisition_status?.acquisition_id??''"
+                                    ></span>
+                                    <label>progress status</label
+                                    ><span
+                                        x-text="latest_acquisition_status?.acquisition_status??''"
+                                    ></span>
+                                    <label>progress message</label
+                                    ><span
+                                        x-text="latest_acquisition_status?.message??''"
+                                    ></span>
+                                    <label>comment</label
+                                    ><span
+                                        x-text="latest_acquisition_status?.acquisition_config.comment??''"
+                                    ></span>
+                                    <label>num images (acquired / total)</label
+                                    ><span
+                                        x-text="`${latest_acquisition_status?.acquisition_progress.current_num_images??''} / ${latest_acquisition_status?.acquisition_meta_information.total_num_images??''}`"
+                                    ></span>
+                                    <label>time [s] (elapsed / remaining)</label
+                                    ><span
+                                        x-text="`${latest_acquisition_status?.acquisition_progress.time_since_start_s.toFixed(1)??''} / ${latest_acquisition_status?.acquisition_progress.estimated_remaining_time_s.toFixed(1)??''}`"
+                                    ></span>
+                                    <label
+                                        >storage [GB] (occupied / max
+                                        total)</label
+                                    ><span
+                                        x-text="`${latest_acquisition_status?.acquisition_progress.current_storage_usage_GB.toFixed(2)??''} / ${latest_acquisition_status?.acquisition_meta_information.max_storage_size_images_GB.toFixed(2)??''}`"
+                                    ></span>
+                                </div>
+                            </div>
+                        </div>
+                        <button
+                            style="font-size: 1.7em"
+                            x-init="
+							const getLatestStatus=async ()=>{
+								const current_acquisition_id=state.current_acquisition_id;
+
+								// stop fetching updates if no acquisition is currently running
+								if(current_acquisition_id==null){
+									return;
+								}
+
+								const status=await acquisition_status({acquisition_id:current_acquisition_id});
+								latest_acquisition_status=status;
+
+								// if acquisition is completed, do not schedule new update
+								// (wait for value to change to trigger a new update)
+								if(status.acquisition_status=='completed'){
+									return;
+								}
+
+								const status_element=document.getElementById('acquisition-status');
+								if(status_element){
+									status_element.innerHTML=JSON.stringify(status,null,2).replace('\n ','<br>&nbsp;');
+								}
+
+								$nextTick(getLatestStatus);
+							};
+							if(state.current_acquisition_id!=null)getLatestStatus();
+							$watch('state.current_acquisition_id',async ()=>{
+								await getLatestStatus();
+							});
+						"
+                            x-effect="disableElement($el,()=>{
+							return state.current_acquisition_id!=null;
+						})"
+                            @click="await acquisition_start({ config_file: microscope_config })"
+                        >
+                            Start
+                        </button>
+                        <button
+                            style="font-size: 1.7em"
+                            x-effect="disableElement($el,()=>{
+							return state.current_acquisition_id==null;
+						})"
+                            @click="await acquisition_stop({ acquisition_id: state.current_acquisition_id })"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </body>
+</html>
