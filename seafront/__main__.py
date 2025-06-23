@@ -9,7 +9,6 @@ import inspect
 import json
 import os
 import pathlib as path
-import random
 import re
 import signal
 import threading
@@ -90,10 +89,6 @@ from seafront.server.protocol import (
     ProtocolGenerator,
     make_unique_acquisition_id,
 )
-
-# for debugging
-
-_DEBUG_P2JS = True
 
 # Set the working directory to the script's directory as reference for static file paths
 
@@ -414,13 +409,6 @@ class Core:
         """ map containing information on past and current acquisitions """
 
         # set up routes to member functions
-
-        if _DEBUG_P2JS:
-
-            def sendp2():
-                return FileResponse("../../web-pjs/p2.js")
-
-            app.add_api_route("/p2.js", sendp2, methods=["GET"])
 
         # store request_models for re-use (works around issues with fastapi)
         request_models = dict()
