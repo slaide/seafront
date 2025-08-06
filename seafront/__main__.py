@@ -32,6 +32,7 @@ import websockets.server
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIWebSocketRoute
 from fastapi.staticfiles import StaticFiles
@@ -411,17 +412,19 @@ class Core:
         # set up routes to member functions
 
         # store request_models for re-use (works around issues with fastapi)
-        request_models = dict()
+        request_models = {}
 
         # Utility function to wrap the shared logic by including handlers for GET requests
         def route_wrapper(
             path: str,
             route: CustomRoute,
-            methods: list[str] = ["GET"],
+            methods: list[str] | None = None,
             allow_while_acquisition_is_running: bool = True,
             summary: str | None = None,
             **kwargs_static,
         ):
+            if methods is None:
+                methods = ["GET"]
             custom_route_handlers[path] = route
 
             target_func = route.handler
@@ -550,7 +553,7 @@ class Core:
 
                     request_data = kwargs_static.copy()
                     if RequestModel and request_body:
-                        request_body_as_toplevel_dict = dict()
+                        request_body_as_toplevel_dict = {}
                         for key in request_body.dict(exclude_unset=True).keys():
                             request_body_as_toplevel_dict[key] = getattr(request_body, key)
                         request_data.update(request_body_as_toplevel_dict)
@@ -1544,7 +1547,7 @@ def handle_anyof_nullable(schema: ApiSchema):
                         del schema[key]  # Remove anyOf
             else:
                 # if value is a schema:
-                if isinstance(value, (list, dict)):
+                if isinstance(value, list | dict):
                     handle_anyof_nullable(value)
 
     elif isinstance(schema, list):
@@ -1761,8 +1764,6 @@ websockets.server.WebSocketServerProtocol.__init__ = _no_comp_init  # type:ignor
 # --- end disable websocket compression
 
 # --- begin allow cross origin requests
-from fastapi.middleware.cors import CORSMiddleware
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

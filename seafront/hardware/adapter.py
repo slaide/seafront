@@ -1,7 +1,9 @@
 from enum import Enum
+
 from pydantic import BaseModel
 
-class CoreState(str,Enum):
+
+class CoreState(str, Enum):
     Idle="idle"
     ChannelSnap="channel_snap"
     ChannelStream="channel_stream"
