@@ -1,4 +1,13 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "pyright",
+#   "ruff",
+# ]
+# ///
+
 """
 Script to run type checking and linting on the codebase using uv.
 This script runs pyright for type checking and ruff for linting via uv run, checking only the 'seafront' directory.
