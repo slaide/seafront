@@ -94,8 +94,8 @@ Object.assign(window, { checkMapSquidRequest });
 
 document.addEventListener("alpine:init", () => {
     Alpine.data("microscope_state", () => ({
-        /** url to microscope (hardware) server */
-        server_url: "http://127.0.0.1:5002",
+        /** url to microscope (hardware) server (default to same origin as gui) */
+        server_url: window.location.origin,
 
         tooltipConfig,
 
@@ -588,7 +588,7 @@ document.addEventListener("alpine:init", () => {
                     const image_cache_outdated =
                         /*no image in cache*/ cached_image == null ||
                         /* cached image older than latest image */ channel_info.timestamp >
-                            cached_image.info.timestamp;
+                        cached_image.info.timestamp;
 
                     //console.log(`${channel_handle} image_cache_outdated? ${image_cache_outdated} (${channel_info.timestamp} ${cached_image?.info.timestamp})`)
                     if (!image_cache_outdated) {
@@ -1848,7 +1848,7 @@ document.addEventListener("alpine:init", () => {
                         realz_um: current_real_offset_mm * 1e3,
                         measuredz_um: res.displacement_um,
                     });
-                } catch (e) {}
+                } catch (e) { }
             }
             // 3) restore z (by moving to ref)
             await this.Actions.moveTo({ z_mm: refz_mm });
@@ -2115,7 +2115,7 @@ document.addEventListener("alpine:init", () => {
                 // generate new wells in the dom
                 if (
                     this.plateNumWells(newplate) !=
-                        this.plateNumWells(oldplate) ||
+                    this.plateNumWells(oldplate) ||
                     force_override
                 ) {
                     const new_wells = this.createPlateWells(newplate);
