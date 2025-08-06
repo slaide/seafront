@@ -25,6 +25,28 @@ the computer needs to be connected to the internet during setup.
 cd ~
 git clone https://github.com/slaide/seafront
 
+# clone daheng imaging sdk repo (required for camera support)
+cd ~
+git clone https://github.com/slaide/daheng-imaging-gxipy
+
+# install daheng imaging sdk (architecture will be detected automatically)
+cd ~/daheng-imaging-gxipy/install_sdk
+
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    cd linux-x86
+    bash install.run
+elif [ "$ARCH" = "aarch64" ]; then
+    cd linux-arm64
+    bash install.run
+else
+    echo "Unsupported architecture: $ARCH"
+    echo "Please check the available install scripts in install_sdk/"
+    exit 1
+fi
+
+cd ~
+
 # set up python environment, install dependencies and seafront software
 cd ~/seafront
 bash install/all.sh
