@@ -83,3 +83,8 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["seafront"]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.402",
+]
