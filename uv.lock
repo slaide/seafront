@@ -565,7 +565,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15,<1.16" },
     { name = "seaconfig", git = "https://github.com/slaide/seafront-config?rev=v6.0.4" },
     { name = "tifffile", specifier = "==2025.1.10" },
-    { name = "toupcam", git = "https://github.com/slaide/toupcam-sdk?rev=v1.0.1" },
+    { name = "toupcam", git = "https://github.com/slaide/toupcam-sdk?rev=v1.0.2" },
     { name = "types-pillow", marker = "extra == 'dev'" },
     { name = "types-pyserial", marker = "extra == 'dev'" },
     { name = "uvicorn", specifier = ">=0.34,<0.35" },
@@ -618,7 +618,7 @@ wheels = [
 [[package]]
 name = "toupcam"
 version = "1.0.0"
-source = { git = "https://github.com/slaide/toupcam-sdk?rev=v1.0.1#eafb895fe9b9b5fea3691f2a76fbeeb5ee6e6b24" }
+source = { git = "https://github.com/slaide/toupcam-sdk?rev=v1.0.2#1e70d76349b5c2e9e9d783bbd0efc71c16d5d3bb" }
 
 [[package]]
 name = "types-pillow"

@@ -3,6 +3,7 @@
     "venv": ".venv",
 
     "include": ["."],
+    "stubPath": "stubs",
     "pythonVersion": "3.13",
     "typeCheckingMode": "standard", // "strict",
 
