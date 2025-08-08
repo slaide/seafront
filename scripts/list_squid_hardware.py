@@ -86,11 +86,11 @@ def main():
                 print(f"  📷 {driver_name}: ❌ {status['error']}")
             else:
                 print(f"  📷 {driver_name}: ✅ OK (0 cameras)")
-        
+
         if microcontroller_error:
             print(f"  🔌 Microcontroller: ❌ {microcontroller_error}")
         else:
-            print(f"  🔌 Microcontroller: ✅ OK (0 devices)")
+            print("  🔌 Microcontroller: ✅ OK (0 devices)")
 
         print()
         print("Common solutions:")
@@ -114,41 +114,36 @@ def main():
         for i, camera in enumerate(all_cameras, 1):
             vendor = camera.vendor_name
             driver_name = vendor_to_driver.get(vendor, "unknown")
-            
+
             # Handle different camera types with their specific information
             if vendor == "Daheng Imaging":
                 print(f"  {i}. Driver: {driver_name}")
                 print(f"     Vendor: {vendor}")
-                print(f"     Model: {camera.model_name} (Product Model)")
+                print(f"     Model: {camera.model_name}")
                 print(f"     Serial: {camera.sn}")
-                print(f"     API Index: {camera.index}")
             elif vendor == "ToupTek":
                 # For ToupCam cameras, access the original device info
                 if hasattr(camera, '_original_device') and camera._original_device:
                     device = camera._original_device
                     display_name = device.displayname if hasattr(device, 'displayname') else "Unknown Display Name"
-                    
+
                     print(f"  {i}. Driver: {driver_name}")
                     print(f"     Vendor: {vendor}")
                     print(f"     Display Name: {display_name}")
                     print(f"     Serial: {camera.sn}")
-                    print(f"     API Index: {camera.index}")
                 else:
                     # Fallback to basic info
                     print(f"  {i}. Driver: {driver_name}")
                     print(f"     Vendor: {vendor}")
                     print(f"     Model: {camera.model_name}")
                     print(f"     Serial: {camera.sn}")
-                    print(f"     API Index: {camera.index}")
             else:
                 # Generic fallback for other camera types
                 print(f"  {i}. Driver: {driver_name}")
                 print(f"     Vendor: {vendor}")
                 print(f"     Model: {camera.model_name}")
                 print(f"     Serial: {camera.sn}")
-                if hasattr(camera, 'index'):
-                    print(f"     API Index: {camera.index}")
-            
+
             # Add empty line between camera entries
             if i < len(all_cameras):
                 print()
@@ -158,7 +153,7 @@ def main():
     if all_microcontrollers:
         print("🔌 SQUID Microcontrollers:")
         print()
-        
+
         for i, mc in enumerate(all_microcontrollers, 1):
             print(f"  {i}. {mc.device_info.description}")
             print(f"     Device: {mc.device_info.device}")
@@ -166,7 +161,7 @@ def main():
                 print(f"     Serial: {mc.device_info.serial_number}")
             if hasattr(mc.device_info, 'manufacturer') and mc.device_info.manufacturer:
                 print(f"     Manufacturer: {mc.device_info.manufacturer}")
-            
+
             # Add empty line between microcontroller entries
             if i < len(all_microcontrollers):
                 print()
@@ -180,7 +175,7 @@ def main():
         else:
             camera_count = len(status["cameras"])
             print(f"  📷 {driver_name}: ✅ OK ({camera_count} camera{'s' if camera_count != 1 else ''})")
-    
+
     if microcontroller_error:
         print(f"  🔌 Microcontroller: ❌ {microcontroller_error}")
     else:

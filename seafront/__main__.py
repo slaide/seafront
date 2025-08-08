@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # system deps
-
+import argparse
 import asyncio
 import datetime as dt
 import faulthandler
@@ -28,7 +28,6 @@ import seaconfig as sc
 
 # http server dependencies
 import uvicorn
-import websockets.server
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -245,9 +244,6 @@ def get_hardware_capabilities() -> HardwareCapabilitiesResponse:
         wellplate_types=sc.Plates,
         main_camera_imaging_channels=list(default_channel_config),
     )
-
-
-GlobalConfigHandler.reset()
 
 
 @app.api_route(
@@ -1748,20 +1744,9 @@ app.openapi = custom_openapi
 # -- end fix
 
 
-# --- begin disable websocket compression
-# because\ compression time is unpredictable:
+# --- websocket compression disabled via uvicorn configuration
+# compression time is unpredictable:
 #    takes 70ms to send an all-white image, and 1400ms (twenty times as long !!!!) for all-black images, which are not a rare occurence in practice
-_orig_init = websockets.server.WebSocketServerProtocol.__init__  # type:ignore
-
-
-def _no_comp_init(self, *args, **kwargs):
-    kwargs["extensions"] = []
-    return _orig_init(self, *args, **kwargs)
-
-
-# (websockets.server.WebSocketServerProtocol is deprecated, but still supported at the frozen package version)
-websockets.server.WebSocketServerProtocol.__init__ = _no_comp_init  # type:ignore
-# --- end disable websocket compression
 
 # --- begin allow cross origin requests
 app.add_middleware(
@@ -1776,16 +1761,58 @@ app.add_middleware(
 
 @logger.catch
 def main():
-    logger.info("intializing core server")
-    core = Core()
-
+    # Load server config to get available microscopes and port for help message
     with GlobalConfigHandler.home_config().open("r") as f:
-        server_config=ServerConfig(**json.load(f))
+        server_config = ServerConfig(**json.load(f))
+
+    available_microscopes = [m.microscope_name for m in server_config.microscopes]
+    microscope_list = ", ".join(f'"{name}"' for name in available_microscopes)
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Seafront Microscope Server")
+    parser.add_argument(
+        "--microscope",
+        type=str,
+        help=f"Name of microscope configuration to use. Available: {microscope_list} (defaults to first)"
+    )
+    args = parser.parse_args()
+
+    if len(server_config.microscopes) == 0:
+        logger.critical("No microscope configurations found in config file")
+        return
+
+    # Determine which microscope to use
+    selected_microscope = None
+    if args.microscope:
+        # Find microscope by name
+        matching_microscopes = [m for m in server_config.microscopes if m.microscope_name == args.microscope]
+        if len(matching_microscopes) == 0:
+            available_names = [m.microscope_name for m in server_config.microscopes]
+            logger.critical(f"Microscope '{args.microscope}' not found. Available: {available_names}")
+            return
+        selected_microscope = matching_microscopes[0]
+    else:
+        # Default to first microscope
+        selected_microscope = server_config.microscopes[0]
+
+    # Log startup information
+    logger.info(f"🔬 Selected microscope: {selected_microscope.microscope_name}")
+    logger.info(f"📷 Main camera: {selected_microscope.main_camera_model} (driver: {selected_microscope.main_camera_driver})")
+    if selected_microscope.laser_autofocus_available == "yes" and selected_microscope.laser_autofocus_camera_model:
+        logger.info(f"🎯 Autofocus camera: {selected_microscope.laser_autofocus_camera_model} (driver: {selected_microscope.laser_autofocus_camera_driver})")
+    logger.info(f"🌐 Server port: {server_config.port}")
+
+    logger.info(f"initializing core server with microscope: {selected_microscope.microscope_name}")
+
+    # Initialize global config with selected microscope
+    GlobalConfigHandler.reset(selected_microscope.microscope_name)
+
+    core = Core()
 
     try:
         logger.info("starting http server")
-        # Start FastAPI using uvicorn
-        uvicorn.run(app, host="127.0.0.1", port=server_config.port)  # , log_level="debug")
+        # Start FastAPI using uvicorn with websocket compression disabled
+        uvicorn.run(app, host="127.0.0.1", port=server_config.port, ws_per_message_deflate=False)  # , log_level="debug")
         logger.info("http server initialised")
 
     except Exception as e:

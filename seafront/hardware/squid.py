@@ -15,10 +15,10 @@ from matplotlib import pyplot as plt
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from scipy import stats  # for linear regression
 
-from seafront.config.basics import GlobalConfigHandler
+from seafront.config.basics import GlobalConfigHandler, CameraDriver
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, CoreState
-from seafront.hardware.camera import AcquisitionMode, Camera
+from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier
 from seafront.logger import logger
 from seafront.server import commands as cmd
 from seafront.server.commands import (
@@ -187,7 +187,7 @@ class SquidAdapter(BaseModel):
         g_dict = GlobalConfigHandler.get_dict()
 
         microcontrollers = mc.Microcontroller.get_all()
-        cams = Camera.get_all()
+        cams = get_all_cameras()
 
         abort_startup = False
         if len(microcontrollers) == 0:
@@ -202,25 +202,67 @@ class SquidAdapter(BaseModel):
             logger.critical(f"startup - {error_msg}")
             raise RuntimeError(error_msg)
 
+        # Get camera configuration
         main_camera_model_name = g_dict["main_camera_model"].value
+        main_camera_driver = g_dict["main_camera_driver"].value
+        focus_camera_model_name = g_dict["laser_autofocus_camera_model"].value
+        focus_camera_driver = g_dict["laser_autofocus_camera_driver"].value
+
+        # Validate camera drivers
+        valid_drivers = tp.get_args(CameraDriver)  # Get valid values from the Literal type
+        if main_camera_driver not in valid_drivers:
+            error_msg = f"invalid main camera driver '{main_camera_driver}'. Valid drivers: {valid_drivers}"
+            logger.critical(f"startup - {error_msg}")
+            cmd.error_internal(detail=error_msg)
+            
+        if focus_camera_driver not in valid_drivers:
+            error_msg = f"invalid focus camera driver '{focus_camera_driver}'. Valid drivers: {valid_drivers}"
+            logger.critical(f"startup - {error_msg}")
+            cmd.error_internal(detail=error_msg)
+
+        # Find cameras matching the model names to get their serial numbers
         _main_cameras = [c for c in cams if c.model_name == main_camera_model_name]
         if len(_main_cameras) == 0:
             error_msg = f"no camera with model name {main_camera_model_name} found"
             logger.critical(f"startup - {error_msg}")
             cmd.error_internal(detail=error_msg)
 
-        main_camera = _main_cameras[0]
-
-        focus_camera_model_name = g_dict["laser_autofocus_camera_model"].value
         _focus_cameras = [c for c in cams if c.model_name == focus_camera_model_name]
         if len(_focus_cameras) == 0:
             error_msg = f"no camera with model name {focus_camera_model_name} found"
             logger.critical(f"startup - {error_msg}")
             cmd.error_internal(detail=error_msg)
 
-        focus_camera = _focus_cameras[0]
+        # Create camera opening requests with driver information
+        main_camera_request = CameraOpenRequest(
+            driver=main_camera_driver,
+            galaxy=GalaxyCameraIdentifier(
+                sn=_main_cameras[0].sn,
+                vendor_name=_main_cameras[0].vendor_name,
+                model_name=_main_cameras[0].model_name
+            ) if main_camera_driver == "galaxy" else None,
+            toupcam=ToupCamIdentifier(
+                id=_main_cameras[0].sn  # Use SN as ID for now
+            ) if main_camera_driver == "toupcam" else None
+        )
+        
+        focus_camera_request = CameraOpenRequest(
+            driver=focus_camera_driver,
+            galaxy=GalaxyCameraIdentifier(
+                sn=_focus_cameras[0].sn,
+                vendor_name=_focus_cameras[0].vendor_name,
+                model_name=_focus_cameras[0].model_name
+            ) if focus_camera_driver == "galaxy" else None,
+            toupcam=ToupCamIdentifier(
+                id=_focus_cameras[0].sn  # Use SN as ID for now
+            ) if focus_camera_driver == "toupcam" else None
+        )
 
         microcontroller = microcontrollers[0]
+
+        # Get camera instances using the new system (unopened)
+        main_camera = camera_open(main_camera_request)
+        focus_camera = camera_open(focus_camera_request)
 
         squid = SquidAdapter(
             main_camera=Locked(main_camera),

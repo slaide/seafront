@@ -69,18 +69,21 @@ $ cat ~/seafront/config.json
         {
             "microscope_name": "unnamed HCS SQUID",
             "main_camera_model": "MER2-1220-32U3M",
+            "main_camera_driver": "galaxy",
             "base_image_output_dir": "/home/patrick/seafront/images",
             "calibration_offset_x_mm": 2.44,
             "calibration_offset_y_mm": 0.44,
             "calibration_offset_z_mm": 0.0,
             "forbidden_wells": "{\"1\":[],\"4\":[],\"96\":[],\"384\":[\"A01\",\"A24\",\"P01\",\"P24\"],\"1536\":[]}",
             "laser_autofocus_camera_model": "MER2-630-60U3M",
+            "laser_autofocus_camera_driver": "galaxy",
             "laser_autofocus_available": "yes"
         }
     ]
 }
 ```
 - the `"<x>_camera_model"` name strings are passed to the camera api to connect to the camera, so they need to be specific!
+- the `"<x>_camera_driver"` specifies which camera api to use (`"galaxy"` for Daheng cameras, `"toupcam"` for ToupTek cameras).
 - the `"microscope_name"` can be any string, and will be passed as metadata.
 - the `"base_image_output_dir"` is the parent container of the directories where the images are actually stored.
     the path of an image after acquisition is: 
@@ -157,6 +160,23 @@ should also be clear enough to support someone new to microscopy in their micros
 this also means that broken functionality is a bug, but unclear or ambiguous functionality is also considered a bug (like missing 
 documentation), since it can stop someone from effectively performing their work with this software.
 layout improvements _may_ be considered a bug, including color choice, depending on their impact on the workflow.
+
+# development scripts
+
+a few utility scripts are available in the `scripts/` directory for development and troubleshooting:
+
+## scripts/check.py
+runs type checking (pyright) and linting (ruff) on the codebase. use this before committing changes.
+```bash
+uv run python3 ./scripts/check.py
+```
+
+## scripts/list_squid_cameras.py
+lists all available SQUID microscope cameras from supported vendors (Galaxy/Daheng and ToupCam). useful for verifying camera detection and troubleshooting hardware setup issues.
+```bash
+uv run python3 ./scripts/list_squid_cameras.py
+```
+shows detailed driver status and provides diagnostic information when no cameras are found.
 
 # notes
 

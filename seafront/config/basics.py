@@ -6,11 +6,14 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
+CameraDriver = tp.Literal["galaxy", "toupcam"]
+
 
 class CriticalMachineConfig(BaseModel):
     microscope_name: str
 
     main_camera_model: str
+    main_camera_driver: CameraDriver = "galaxy"
 
     base_image_output_dir: str
     calibration_offset_x_mm: float
@@ -22,6 +25,7 @@ class CriticalMachineConfig(BaseModel):
 
     laser_autofocus_camera_model: str | None = None
     "if laser_autofocus_available is yes, then this must be present"
+    laser_autofocus_camera_driver: CameraDriver = "galaxy"
     laser_autofocus_available: tp.Literal["yes", "no"] | None = None
 
     # needs some post-init hook to check forbidden_wells for json-like-ness
@@ -182,7 +186,7 @@ class GlobalConfigHandler:
         )
 
     @staticmethod
-    def _defaults() -> list[ConfigItem]:
+    def _defaults(microscope_name: str | None = None) -> list[ConfigItem]:
         """
         get a list of all the low level machine settings
 
@@ -196,7 +200,19 @@ class GlobalConfigHandler:
             server_config = ServerConfig(**server_config_json)
             if len(server_config.microscopes)==0:
                 raise ValueError("no microscope found in server config")
-            critical_machine_config: CriticalMachineConfig = server_config.microscopes[0]
+
+            # Select microscope by name or default to first
+            critical_machine_config: CriticalMachineConfig
+            if microscope_name is not None:
+                # Find microscope by name
+                matching_microscopes = [m for m in server_config.microscopes if m.microscope_name == microscope_name]
+                if len(matching_microscopes) == 0:
+                    available_names = [m.microscope_name for m in server_config.microscopes]
+                    raise ValueError(f"microscope '{microscope_name}' not found. Available: {available_names}")
+                critical_machine_config = matching_microscopes[0]
+            else:
+                # Default to first microscope
+                critical_machine_config = server_config.microscopes[0]
 
         main_camera_attributes = [
             ConfigItem(
@@ -204,6 +220,23 @@ class GlobalConfigHandler:
                 handle="main_camera_model",
                 value_kind="text",
                 value=critical_machine_config.main_camera_model,
+                frozen=True,
+            ),
+            ConfigItem(
+                name="main camera driver",
+                handle="main_camera_driver",
+                value_kind="option",
+                value=critical_machine_config.main_camera_driver,
+                options=[
+                    ConfigItemOption(
+                        name="Galaxy (Daheng)",
+                        handle="galaxy",
+                    ),
+                    ConfigItemOption(
+                        name="ToupCam",
+                        handle="toupcam",
+                    ),
+                ],
                 frozen=True,
             ),
             ConfigItem(
@@ -316,6 +349,23 @@ class GlobalConfigHandler:
                     handle="laser_autofocus_camera_model",
                     value_kind="text",
                     value=critical_machine_config.laser_autofocus_camera_model,
+                    frozen=True,
+                ),
+                ConfigItem(
+                    name="laser autofocus camera driver",
+                    handle="laser_autofocus_camera_driver",
+                    value_kind="option",
+                    value=critical_machine_config.laser_autofocus_camera_driver,
+                    options=[
+                        ConfigItemOption(
+                            name="Galaxy (Daheng)",
+                            handle="galaxy",
+                        ),
+                        ConfigItemOption(
+                            name="ToupCam",
+                            handle="toupcam",
+                        ),
+                    ],
                     frozen=True,
                 ),
                 ConfigItem(
@@ -462,13 +512,13 @@ class GlobalConfigHandler:
         return ret
 
     @staticmethod
-    def get() -> list[ConfigItem]:
+    def get(microscope_name: str | None = None) -> list[ConfigItem]:
         """
         get list of all global config items
         """
 
         if GlobalConfigHandler._config_list is None:
-            GlobalConfigHandler.reset()
+            GlobalConfigHandler.reset(microscope_name)
         ret = GlobalConfigHandler._config_list
         assert ret is not None
 
@@ -530,5 +580,5 @@ class GlobalConfigHandler:
                     GlobalConfigHandler._config_list[index].override(item)
 
     @staticmethod
-    def reset():
-        GlobalConfigHandler._config_list = GlobalConfigHandler._defaults()
+    def reset(microscope_name: str | None = None):
+        GlobalConfigHandler._config_list = GlobalConfigHandler._defaults(microscope_name)

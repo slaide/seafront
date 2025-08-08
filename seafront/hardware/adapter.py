@@ -9,6 +9,7 @@ class CoreState(str, Enum):
     ChannelStream="channel_stream"
     LoadingPosition="loading_position"
     Moving="moving"
+    Disconnected="disconnected"
 
 class Position(BaseModel):
     x_pos_mm:float
