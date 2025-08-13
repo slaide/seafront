@@ -195,7 +195,6 @@ declare global {
     type MachineConfigFlushResponse = BasicSuccessResponse;
 
     type StreamBeginRequest = {
-        framerate_hz: float;
         channel: AcquisitionChannelConfig;
 
         machine_config?: MachineConfigItem[];

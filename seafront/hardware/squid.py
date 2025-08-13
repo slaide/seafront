@@ -8,9 +8,10 @@ from functools import wraps
 import cv2
 import numpy as np
 import scipy  # to find peaks in a signal
-import scipy.ndimage  # for guassian blur
+# import scipy.ndimage  # for guassian blur
 import seaconfig as sc
-from gxipy import gxiapi
+# from gxipy import gxiapi
+from gxipy.gxiapi import OffLine as GalaxyCameraOffline
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from scipy import stats  # for linear regression
@@ -97,15 +98,15 @@ def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
     cambits = 0
 
     match camera.pixel_format:
-        case gxiapi.GxPixelFormatEntry.MONO8:
+        case "mono8":
             cambits = 8
-        case gxiapi.GxPixelFormatEntry.MONO10:
+        case "mono10":
             cambits = 10
-        case gxiapi.GxPixelFormatEntry.MONO12:
+        case "mono12":
             cambits = 12
-        case gxiapi.GxPixelFormatEntry.MONO14:
+        case "mono14":
             cambits = 14
-        case gxiapi.GxPixelFormatEntry.MONO16:
+        case "mono16":
             cambits = 16
         case _:
             raise ValueError(f"unsupported pixel format {camera.pixel_format}")
@@ -159,10 +160,17 @@ class SquidAdapter(BaseModel):
     is_in_loading_position: bool = False
 
     stream_callback: tp.Callable[[np.ndarray | bool], bool] | None = Field(default=None)
+    """
+    call with either:
+        image, then return if should stop or not
+        or call with bool, which indicates if should stop (return value then ignored)
+    """
 
     last_state: AdapterState | None = None
 
     _lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
+    _stop_streaming_flag: bool = PrivateAttr(default=False)
+    "indicate that streaming should stop, without locking hardware"
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -235,7 +243,7 @@ class SquidAdapter(BaseModel):
 
         # Create camera opening requests with driver information
         main_camera_request = CameraOpenRequest(
-            driver=main_camera_driver,
+            driver=main_camera_driver, # type: ignore
             galaxy=GalaxyCameraIdentifier(
                 sn=_main_cameras[0].sn,
                 vendor_name=_main_cameras[0].vendor_name,
@@ -247,7 +255,7 @@ class SquidAdapter(BaseModel):
         )
         
         focus_camera_request = CameraOpenRequest(
-            driver=focus_camera_driver,
+            driver=focus_camera_driver, # type: ignore
             galaxy=GalaxyCameraIdentifier(
                 sn=_focus_cameras[0].sn,
                 vendor_name=_focus_cameras[0].vendor_name,
@@ -307,7 +315,7 @@ class SquidAdapter(BaseModel):
                 logger.debug("startup - connected to focus cam")
                 mc.open()
                 logger.debug("startup - connected to microcontroller")
-            except gxiapi.OffLine as e:
+            except GalaxyCameraOffline as e:
                 logger.critical("startup - camera offline")
                 raise DisconnectError() from e
             except IOError as e:
@@ -954,6 +962,16 @@ class SquidAdapter(BaseModel):
         return self.last_state
 
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
+        # Handle ChannelStreamEnd without locking to avoid deadlock
+        if isinstance(command, cmd.ChannelStreamEnd):
+            if self.stream_callback is None:
+                cmd.error_internal(detail="not currently streaming")
+
+            self._stop_streaming_flag = True
+            logger.debug("squid - requested stream stop")
+            result = cmd.BasicSuccessResponse()
+            return result  # type: ignore[no-any-return]
+
         with self.microcontroller.locked() as qmc:
             if qmc is None:
                 error_internal("microcontroller is busy")
@@ -1305,10 +1323,16 @@ class SquidAdapter(BaseModel):
                             error_internal("main camera is busy")
 
                         logger.debug("channel snap - before acq")
-                        img = main_camera.acquire_with_config(command.channel)
-                        logger.debug("channel snap - after acq")
-                        await qmc.send_cmd(mc.Command.illumination_end(illum_code))
-                        logger.debug("channel snap - after illum off")
+
+                        # even if acqusition fails, ensure light is turned off again!
+                        try:
+                            img = main_camera.acquire_with_config(command.channel)
+                        finally:
+                            logger.debug("channel snap - after acq")
+
+                            await qmc.send_cmd(mc.Command.illumination_end(illum_code))
+                            logger.debug("channel snap - after illum off")
+
                         if img is None:
                             logger.critical("failed to acquire image")
                             self.state = CoreState.Idle
@@ -1367,21 +1391,36 @@ class SquidAdapter(BaseModel):
                     )
 
                     # returns true if should stop
-                    forward_image_callback = {}
+                    class ForwardImageCallback(tp.TypedDict):
+                        callback:tp.Callable[[np.ndarray|bool],bool]|None
 
-                    def forward_image(img: gxiapi.RawImage) -> bool:
+                    forward_image_callback = ForwardImageCallback(callback=None)
+
+                    self._stop_streaming_flag = False  # Reset flag
+
+                    def forward_image(img: np.ndarray) -> bool:
+                        # Check for stop request first - do cleanup if needed
+                        if self._stop_streaming_flag:
+                            # Do cleanup: turn off illumination, reset camera state
+                            try:
+                                asyncio.run(qmc.send_cmd(mc.Command.illumination_end(illum_code)))
+                            except Exception:
+                                pass  # Best effort cleanup
+                            
+                            self.state = CoreState.Idle
+                            self.stream_callback = None
+                            logger.debug("squid - channel stream end")
+                            
+                            # Notify callback that streaming stopped
+                            if forward_image_callback["callback"] is not None:
+                                forward_image_callback["callback"](True)
+                            
+                            return True  # Stop streaming
+                        
                         if self.stream_callback is not None:
                             forward_image_callback["callback"] = self.stream_callback
 
-                            match img.get_status():
-                                case gxiapi.GxFrameStatusList.INCOMPLETE:
-                                    cmd.error_internal(detail="incomplete frame")
-                                case gxiapi.GxFrameStatusList.SUCCESS:
-                                    pass
-
-                            img_np = img.get_numpy_array()
-                            assert img_np is not None
-                            img_np = img_np.copy()
+                            img_np = img.copy()
 
                             # camera must only be locked for specific image acquisition, not for the whole duration where an image may be acquired
                             # there is currently no way to solve this well.. (this current solution is quite brittle)
@@ -1392,7 +1431,10 @@ class SquidAdapter(BaseModel):
 
                             return forward_image_callback["callback"](img_np)
                         else:
-                            return forward_image_callback["callback"](True)
+                            if forward_image_callback["callback"] is not None:
+                                forward_image_callback["callback"](True)
+
+                            return True
 
                     with self.main_camera() as main_camera:
                         if main_camera is None:
@@ -1402,42 +1444,11 @@ class SquidAdapter(BaseModel):
                             command.channel,
                             mode="until_stop",
                             callback=forward_image,
-                            target_framerate_hz=command.framerate_hz,
                         )
 
                     logger.debug("squid - channel stream begin")
 
                     result = cmd.StreamingStartedResponse(channel=command.channel)
-                    return result  # type: ignore[no-any-return]
-
-                elif isinstance(command, cmd.ChannelStreamEnd):
-                    with self.main_camera() as main_camera:
-                        if main_camera is None:
-                            error_internal("main camera is busy")
-
-                        if (self.stream_callback is None) or (not main_camera.acquisition_ongoing):
-                            cmd.error_internal(detail="not currently streaming")
-
-                        try:
-                            illum_code = mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
-                        except Exception:
-                            cmd.error_internal(
-                                detail=f"invalid channel handle: {command.channel.handle}"
-                            )
-
-                        GlobalConfigHandler.override(command.machine_config)
-
-                        self.stream_callback = None
-                        await qmc.send_cmd(mc.Command.illumination_end(illum_code))
-                        # cancel ongoing acquisition
-                        main_camera.acquisition_ongoing = False
-                        main_camera._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
-
-                    self.state = CoreState.Idle
-
-                    logger.debug("squid - channel stream end")
-
-                    result = cmd.BasicSuccessResponse()
                     return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.LaserAutofocusCalibrate):
@@ -1579,7 +1590,7 @@ class SquidAdapter(BaseModel):
                 else:
                     cmd.error_internal(detail=f"Unsupported command type {type(command)}")
 
-            except gxiapi.OffLine as e:
+            except GalaxyCameraOffline as e:
                 logger.critical("squid - lost camera connection")
                 raise DisconnectError() from e
             except IOError as e:

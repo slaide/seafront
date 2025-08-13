@@ -1,11 +1,5 @@
 {
-    "editor.formatOnSave": true,
-    "python.REPL.enableREPLSmartSend": false,
-    "python.analysis.diagnosticMode": "workspace",
-    "python.analysis.typeCheckingMode": "strict",
-    "python.defaultInterpreterPath": ".venv/bin/python3.13",
-    "python.analysis.extraPaths": [
-        /* include this path for debugging where seaconfig is installed from a local path */
-        "${workspaceFolder}/../seafront-config"
-    ]
+    "python.pythonPath": "/home/patrick/code/seafront-new/.venv/bin/python",
+    "python.defaultInterpreterPath": "/home/patrick/code/seafront-new/.venv/bin/python",
+    "pylance.insidersChannel": "off"
 }

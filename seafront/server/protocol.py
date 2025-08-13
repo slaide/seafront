@@ -252,6 +252,11 @@ class ProtocolGenerator(BaseModel):
                 bytes_per_pixel = 2
             case "mono12":
                 bytes_per_pixel = 2
+            case "mono14":
+                bytes_per_pixel = 2
+            case "mono16":
+                bytes_per_pixel = 2
+
             case _unexpected:
                 cmds.error_internal(
                     detail=f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}"

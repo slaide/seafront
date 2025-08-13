@@ -1164,7 +1164,7 @@
                                             #live-acquisition-controls {
                                                 display: grid;
                                                 grid-template-columns: repeat(
-                                                    6,
+                                                    4,
                                                     auto
                                                 );
                                                 gap: 0 0.6em;
@@ -1177,7 +1177,6 @@
 										Live Acquisition controls.
 
 										Live Acquisition is the process where a number of acquisition are performed each second until stopped.
-										The number of images per second (i.e. the framerate) can be controlled using the respective input value.
 
 										Note that this may quickly bleach your sample!
 									`.trimLeft().replaceAll('\n','<br>')"
@@ -1225,22 +1224,6 @@
                                                 </template>
                                             </optgroup>
                                         </select>
-                                        <label>framerate</label>
-                                        <input
-                                            type="number"
-                                            placeholder="5"
-                                            min="1"
-                                            max="10"
-                                            step="0.1"
-                                            x-model.number="actionInput.live_acquisition_framerate"
-                                            is="number-input"
-                                            x-init="enabletooltip($el),registerNumberInput($el)"
-                                            x-bind:tooltip="`
-										live acquisition framerate
-
-										range: ${$el.min} - ${$el.max} (in steps of ${$el.step})
-										`.trimLeft().replaceAll('\n','<br>')"
-                                        />
                                     </div>
                                 </div>
                             </div>

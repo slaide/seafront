@@ -288,7 +288,7 @@ class GlobalConfigHandler:
                 name="main camera pixel format",
                 handle="main_camera_pixel_format",
                 value_kind="option",
-                value="mono12",
+                value="mono8",
                 options=[
                     ConfigItemOption(
                         name="8 Bit",
@@ -297,6 +297,10 @@ class GlobalConfigHandler:
                     ConfigItemOption(
                         name="12 Bit",
                         handle="mono12",
+                    ),
+                    ConfigItemOption(
+                        name="16 Bit",
+                        handle="mono16",
                     ),
                 ],
             ),

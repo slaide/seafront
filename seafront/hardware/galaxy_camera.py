@@ -18,10 +18,10 @@ class GalaxyCamera(Camera):
     device_manager = gxiapi.DeviceManager()
 
     @staticmethod
-    def get_all() -> list["GalaxyCamera"]:
+    def get_all() -> list["Camera"]:
         dev_num, dev_info_list = GalaxyCamera.device_manager.update_all_device_list()
 
-        ret = []
+        ret:tp.List["Camera"] = []
 
         if dev_num > 0:
             assert dev_info_list is not None
@@ -149,19 +149,23 @@ class GalaxyCamera(Camera):
 
         # set pixel format
         self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO8)
-        self.pixel_format = gxiapi.GxPixelFormatEntry.MONO8
+        self.pixel_format = "mono8"
 
         self.is_streaming = False
         self.acq_mode = None
-        self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
+        self.set_acquisition_mode_trigger()
 
         # turning stream on takes 25ms for continuous mode, 20ms for single frame mode
         self.is_streaming = True
         self.handle.stream_on()
 
+    def set_acquisition_mode_trigger(self):
+        self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
+
     def _set_acquisition_mode(
         self,
         acq_mode: AcquisitionMode,
+
         with_cb: tp.Callable[[gxiapi.RawImage], None] | None = None,
         continuous_target_fps: float | None = None,
     ):
@@ -198,12 +202,10 @@ class GalaxyCamera(Camera):
                 # disable trigger
                 self.handle.TriggerMode.set(gxiapi.GxSwitchEntry.OFF)
 
-                # limit framerate
-                self.handle.AcquisitionFrameRateMode.set(gxiapi.GxSwitchEntry.ON)
-                if continuous_target_fps is not None:
-                    self.handle.AcquisitionFrameRate.set(continuous_target_fps)
+                def galaxy_fwd_image(img:gxiapi.RawImage):
+                    with_cb(img)
 
-                self.handle.data_stream[0].register_capture_callback(with_cb)
+                self.handle.data_stream[0].register_capture_callback(galaxy_fwd_image)
 
         # set acquisition mode
         self.handle.AcquisitionMode.set(gxiapi.GxAcquisitionModeEntry.CONTINUOUS)
@@ -264,8 +266,7 @@ class GalaxyCamera(Camera):
         self,
         config: AcquisitionChannelConfig,
         mode: tp.Literal["once", "until_stop"] = "once",
-        callback: tp.Callable[[gxiapi.RawImage], bool] | None = None,
-        target_framerate_hz: float = 5.0,
+        callback: tp.Callable[[np.ndarray], bool] | None = None,
     ) -> np.ndarray | None:
         """
         acquire image with given configuration
@@ -313,24 +314,24 @@ class GalaxyCamera(Camera):
         # and only pause streaming to change it, if necessary
         match pixel_format:
             case "mono8":
-                if self.pixel_format != gxiapi.GxPixelFormatEntry.MONO8:
+                if self.pixel_format != "mono8":
                     logger.debug("camera - perf warning - changing pixel format to mono8")
                     self.handle.stream_off()
-                    self.pixel_format = gxiapi.GxPixelFormatEntry.MONO8
+                    self.pixel_format = "mono8"
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO8)
                     self.handle.stream_on()
             case "mono10":
-                if self.pixel_format != gxiapi.GxPixelFormatEntry.MONO10:
+                if self.pixel_format != "mono10":
                     logger.debug("camera - perf warning - changing pixel format to mono10")
                     self.handle.stream_off()
-                    self.pixel_format = gxiapi.GxPixelFormatEntry.MONO10
+                    self.pixel_format = "mono10"
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO10)
                     self.handle.stream_on()
             case "mono12":
-                if self.pixel_format != gxiapi.GxPixelFormatEntry.MONO12:
+                if self.pixel_format != "mono12":
                     logger.debug("camera - perf warning - changing pixel format to mono12")
                     self.handle.stream_off()
-                    self.pixel_format = gxiapi.GxPixelFormatEntry.MONO12
+                    self.pixel_format = "mono12"
                     self.handle.PixelFormat.set(gxiapi.GxPixelFormatEntry.MONO12)
                     self.handle.stream_on()
             case _:
@@ -393,7 +394,10 @@ class GalaxyCamera(Camera):
                         case gxiapi.GxFrameStatusList.SUCCESS:
                             pass
 
-                    stop_acquisition = callback(img)
+                    img_np = img.get_numpy_array()
+                    assert img_np is not None
+
+                    stop_acquisition = callback(img_np)
 
                     if stop_acquisition:
                         if self.acquisition_ongoing:
@@ -401,14 +405,7 @@ class GalaxyCamera(Camera):
 
                         return
 
-                # adjust target framerate for acquisition overhead
-                # ... this is not quite right, but yields better results than no adjustment
-                s_per_frame = 1.0 / target_framerate_hz
-                target_framerate_hz = 1.0 / (
-                    s_per_frame - max(20 - config.exposure_time_ms, 0) * 1e-3
-                )
                 self._set_acquisition_mode(
                     AcquisitionMode.CONTINUOUS,
                     with_cb=run_callback,
-                    continuous_target_fps=target_framerate_hz,
                 )

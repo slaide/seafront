@@ -1186,6 +1186,8 @@ document.addEventListener("alpine:init", () => {
          * @returns  {Promise<AcquisitionStartResponse>}
          */
         async acquisition_start(body) {
+            await this.machineConfigFlush();
+
             // make deep copy first
             /** @type {AcquisitionStartRequest} */
             const body_copy = cloneObject(body);
@@ -1364,14 +1366,16 @@ document.addEventListener("alpine:init", () => {
                  * @returns {Promise<ChannelSnapshotResponse>}
                  */
                 snapChannel: (body) => {
-                    return fetch(`${this.server_url}/api/action/snap_channel`, {
-                        method: "POST",
-                        body: JSON.stringify(body),
-                        headers: [["Content-Type", "application/json"]],
-                    }).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<ChannelSnapshotResponse,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
-                        return check(v);
+                    return this.machineConfigFlush().then(()=>{
+                        return fetch(`${this.server_url}/api/action/snap_channel`, {
+                            method: "POST",
+                            body: JSON.stringify(body),
+                            headers: [["Content-Type", "application/json"]],
+                        }).then((v) => {
+                            /** @ts-ignore @type {CheckMapSquidRequestFn<ChannelSnapshotResponse,InternalErrorModel>} */
+                            const check = checkMapSquidRequest;
+                            return check(v);
+                        })
                     });
                 },
 
@@ -1415,7 +1419,9 @@ document.addEventListener("alpine:init", () => {
                  * @param {StreamBeginRequest} body
                  * @returns {Promise<StreamingStartedResponse>}
                  */
-                streamBegin: (body) => {
+                streamBegin: async (body) => {
+                    await this.machineConfigFlush();
+
                     return fetch(
                         `${this.server_url}/api/action/stream_channel_begin`,
                         {
@@ -1452,7 +1458,9 @@ document.addEventListener("alpine:init", () => {
                  * @param {LaserAutofocusCalibrateRequest} body
                  * @returns {Promise<LaserAutofocusCalibrateResponse>}
                  */
-                laserAutofocusCalibrate: (body) => {
+                laserAutofocusCalibrate: async (body) => {
+                    await this.machineConfigFlush();
+
                     return fetch(
                         `${this.server_url}/api/action/laser_autofocus_calibrate`,
                         {
@@ -1476,7 +1484,9 @@ document.addEventListener("alpine:init", () => {
                  * @param {LaserAutofocusMoveToTargetOffsetRequest} body
                  * @returns {Promise<LaserAutofocusMoveToTargetOffsetResponse>}
                  */
-                laserAutofocusMoveToTargetOffset: (body) => {
+                laserAutofocusMoveToTargetOffset: async (body) => {
+                    await this.machineConfigFlush();
+
                     return fetch(
                         `${this.server_url}/api/action/laser_autofocus_move_to_target_offset`,
                         {
@@ -1500,7 +1510,9 @@ document.addEventListener("alpine:init", () => {
                  * @param {LaserAutofocusMeasureDisplacementRequest} body
                  * @returns {Promise<LaserAutofocusMeasureDisplacementResponse>}
                  */
-                laserAutofocusMeasureDisplacement: (body) => {
+                laserAutofocusMeasureDisplacement: async (body) => {
+                    await this.machineConfigFlush();
+
                     return fetch(
                         `${this.server_url}/api/action/laser_autofocus_measure_displacement`,
                         {
@@ -1523,7 +1535,9 @@ document.addEventListener("alpine:init", () => {
                  * @param {LaserAutofocusSnapRequest} body
                  * @returns {Promise<LaserAutofocusSnapResponse>}
                  */
-                laserAutofocusSnap: (body) => {
+                laserAutofocusSnap: async (body) => {
+                    await this.machineConfigFlush();
+
                     return fetch(
                         `${this.server_url}/api/action/snap_reflection_autofocus`,
                         {
@@ -1596,7 +1610,6 @@ document.addEventListener("alpine:init", () => {
 
             /** @type {StreamBeginRequest} */
             const body = {
-                framerate_hz: this.actionInput.live_acquisition_framerate,
                 channel: target_channel,
             };
 
@@ -1611,7 +1624,7 @@ document.addEventListener("alpine:init", () => {
                     return check(v);
                 })
                 .then((v) => {
-                    console.log(v);
+                    console.log("started streaming",v);
                     return v;
                 });
         },
@@ -1647,7 +1660,6 @@ document.addEventListener("alpine:init", () => {
                     return check(v);
                 })
                 .then((v) => {
-                    console.log(v);
                     return v;
                 });
         },
@@ -1680,7 +1692,6 @@ document.addEventListener("alpine:init", () => {
                     return check(v);
                 })
                 .then((v) => {
-                    console.log(v);
                     return v;
                 });
         },
@@ -1691,7 +1702,6 @@ document.addEventListener("alpine:init", () => {
         */
         actionInput: {
             live_acquisition_channelhandle: "",
-            live_acquisition_framerate: 5.0,
         },
 
         /** @type {'x'|'y'|'z'} */

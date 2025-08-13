@@ -1,6 +1,6 @@
 [project]
 name = "seafront"
-version = "1.0.0"
+version = "1.1.0"
 requires-python = ">=3.13"
 authors = [{ name = "Patrick Hennig", email = "patrick.hennig@uu.se" }]
 dependencies = [
@@ -88,3 +88,6 @@ known-first-party = ["seafront"]
 dev = [
     "pyright>=1.1.402",
 ]
+
+[tool.setuptools.package-data]
+toupcam = ["web-static"]

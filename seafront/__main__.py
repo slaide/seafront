@@ -329,6 +329,13 @@ class CustomRoute(BaseModel):
         | tp.Callable[[tp.Any, tp.Any], tp.Coroutine[tp.Any, tp.Any, None]]
     ) = None
 
+    require_hardware_lock:bool=True
+    """
+    not all commands require a hardware lock (i.e. do not strictly require hardware connection either)"
+
+    e.g. streamend (just sets a flag)
+    """
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
@@ -432,15 +439,19 @@ class Core:
                     instance = target_func(**request_data)
                     arg = instance
                     if isinstance(instance, BaseCommand):
-                        try:
-                            # ensure a connection is established, before running any other command
-                            with self.squid.lock(blocking=False) as squid:
-                                if squid is None:
-                                    error_internal("squid is busy")
-                                _ = await squid.execute(EstablishHardwareConnection())
-                                result = await squid.execute(instance)
-                        except DisconnectError:
-                            error_internal("hardware disconnected")
+                        if route.require_hardware_lock:
+                            try:
+                                # ensure a connection is established, before running any other command
+                                with self.squid.lock(blocking=False) as squid:
+                                    if squid is None:
+                                        error_internal("squid is busy")
+                                    _ = await squid.execute(EstablishHardwareConnection())
+                                    result = await squid.execute(instance)
+                            except DisconnectError:
+                                error_internal("hardware disconnected")
+                        else:
+                            _ = await self.squid.execute(EstablishHardwareConnection())
+                            result = await self.squid.execute(instance)
                     else:
                         raise AttributeError(
                             f"Provided class {target_func} {type(target_func)=} is no BaseCommand"
@@ -879,14 +890,6 @@ class Core:
                 # store channel info, to be used inside the streaming callback to store the images in the server properly
                 stream_info["channel"] = begin.channel
 
-        def register_stream_end(a: ChannelStreamEnd, b: BasicSuccessResponse):
-            with self.squid.lock() as squid:
-                # TODO not sure how to handle this... authorize with a key on stream begin?
-                if squid is None:
-                    error_internal(detail="squid is busy")
-
-                squid.stream_callback = None
-
         route_wrapper(
             "/api/action/stream_channel_begin",
             CustomRoute(
@@ -901,7 +904,7 @@ class Core:
             CustomRoute(
                 handler=ChannelStreamEnd,
                 tags=[RouteTag.ACTIONS.value],
-                callback=register_stream_end,
+                require_hardware_lock=False,
             ),
             methods=["POST"],
         )

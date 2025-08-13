@@ -381,12 +381,6 @@ class ChannelStreamBegin(BaseModel, BaseCommand[StreamingStartedResponse]):
     the callback is called with the value True if it is requested to stop (it should then also return True)
     """
 
-    framerate_hz: float = Field(
-        ...,
-        title="Framerate [hz]",
-        description="target acquisition framerate (i.e. number of images to take per second, while streaming)",
-    )
-    "target acquisition framerate (i.e. number of images to take per second, while streaming)"
     channel: sc.AcquisitionChannelConfig = Field(
         ..., title="Channel", description="channel configuration to use for streaming"
     )
