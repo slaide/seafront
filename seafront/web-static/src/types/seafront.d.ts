@@ -11,6 +11,21 @@ declare global {
         detail: string;
     };
 
+    // Frontend version - uses '__none__' string for filter_handle when no filter selected
+    type AcquisitionChannelConfigFrontend = {
+        name: string;
+        handle: string;
+        analog_gain: float;
+        exposure_time_ms: float;
+        illum_perc: float;
+        num_z_planes: int;
+        z_offset_um: float;
+        enabled: boolean;
+        filter_handle?: string; // '__none__' or actual filter handle
+        delta_z_um?: float;
+    };
+
+    // Backend version - uses null for filter_handle when no filter selected
     type AcquisitionChannelConfig = {
         name: string;
         handle: string;
@@ -20,6 +35,8 @@ declare global {
         num_z_planes: int;
         z_offset_um: float;
         enabled: boolean;
+        filter_handle?: string | null; // null or actual filter handle
+        delta_z_um?: float;
     };
 
     type ChannelInfo = {
@@ -73,6 +90,23 @@ declare global {
         col: int;
         selected: boolean;
     };
+    // Frontend version with frontend channel config
+    type AcquisitionConfigFrontend = {
+        project_name: string;
+        plate_name: string;
+        cell_line: string;
+        plate_wells: PlateWellConfig[];
+        grid: AcquisitionWellSiteConfiguration;
+        autofocus_enabled: boolean;
+        comment: string | null;
+        machine_config: MachineConfigItem[];
+        wellplate_type: Wellplate;
+        timestamp: string | null;
+        channels: AcquisitionChannelConfigFrontend[];
+        spec_version?: Version;
+    };
+
+    // Backend version with backend channel config  
     type AcquisitionConfig = {
         project_name: string;
         plate_name: string;
@@ -183,6 +217,14 @@ declare global {
     type MoveToWellResponse = BasicSuccessResponse;
 
     type ImageAcquiredResponse = {};
+    
+    // Frontend request types
+    type ChannelSnapshotRequestFrontend = {
+        channel: AcquisitionChannelConfigFrontend;
+        machine_config?: MachineConfigItem[];
+    };
+    
+    // Backend request types
     type ChannelSnapshotRequest = {
         channel: AcquisitionChannelConfig;
         machine_config?: MachineConfigItem[];
@@ -194,9 +236,13 @@ declare global {
     };
     type MachineConfigFlushResponse = BasicSuccessResponse;
 
+    type StreamBeginRequestFrontend = {
+        channel: AcquisitionChannelConfigFrontend;
+        machine_config?: MachineConfigItem[];
+    };
+    
     type StreamBeginRequest = {
         channel: AcquisitionChannelConfig;
-
         machine_config?: MachineConfigItem[];
     };
     type StreamingStartedResponse = {
@@ -204,6 +250,11 @@ declare global {
     };
     type StreamBeginResponse = StreamingStartedResponse;
 
+    type StreamEndRequestFrontend = {
+        channel: AcquisitionChannelConfigFrontend;
+        machine_config?: MachineConfigItem[];
+    };
+    
     type StreamEndRequest = {
         channel: AcquisitionChannelConfig;
         machine_config?: MachineConfigItem[];
@@ -291,6 +342,10 @@ declare global {
         file: AcquisitionConfig;
     };
 
+    type AcquisitionStartRequestFrontend = {
+        config_file: AcquisitionConfigFrontend;
+    };
+    
     type AcquisitionStartRequest = {
         config_file: AcquisitionConfig;
     };

@@ -6,7 +6,7 @@ import asyncio
 import datetime as dt
 import faulthandler
 import inspect
-import json
+import json, json5
 import os
 import pathlib as path
 import re
@@ -259,7 +259,20 @@ def get_machine_defaults() -> list[ConfigItem]:
     (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
     """
 
-    return GlobalConfigHandler.get()
+    config_items = GlobalConfigHandler.get()
+    
+    # Convert JSON5 strings to standard JSON for browser compatibility
+    for item in config_items:
+        if item.handle in ['channels', 'filters'] and item.value_kind == 'text':
+            try:
+                # Parse JSON5 and re-serialize as standard JSON
+                parsed_data = json5.loads(item.value)
+                item.value = json.dumps(parsed_data)
+            except Exception as e:
+                # If parsing fails, leave the original value
+                print(f"Warning: Failed to convert {item.handle} from JSON5 to JSON: {e}")
+    
+    return config_items
 
 
 class CoreLock(BaseModel):
@@ -1766,7 +1779,7 @@ app.add_middleware(
 def main():
     # Load server config to get available microscopes and port for help message
     with GlobalConfigHandler.home_config().open("r") as f:
-        server_config = ServerConfig(**json.load(f))
+        server_config = ServerConfig(**json5.load(f))
 
     available_microscopes = [m.microscope_name for m in server_config.microscopes]
     microscope_list = ", ".join(f'"{name}"' for name in available_microscopes)

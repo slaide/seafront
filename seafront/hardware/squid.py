@@ -1,4 +1,6 @@
 import asyncio
+import json
+import json5
 import math
 import threading
 import typing as tp
@@ -16,7 +18,7 @@ from matplotlib import pyplot as plt
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from scipy import stats  # for linear regression
 
-from seafront.config.basics import GlobalConfigHandler, CameraDriver
+from seafront.config.basics import GlobalConfigHandler, CameraDriver, ChannelConfig, FilterConfig
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, CoreState
 from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier
@@ -154,6 +156,9 @@ class SquidAdapter(BaseModel):
     main_camera: Locked[Camera]
     focus_camera: Locked[Camera]
     microcontroller: mc.Microcontroller
+    
+    channels: list[ChannelConfig]
+    filters: list[FilterConfig]
 
     state: CoreState = CoreState.Idle
     is_connected: bool = False
@@ -211,10 +216,10 @@ class SquidAdapter(BaseModel):
             raise RuntimeError(error_msg)
 
         # Get camera configuration
-        main_camera_model_name = g_dict["main_camera_model"].value
-        main_camera_driver = g_dict["main_camera_driver"].value
-        focus_camera_model_name = g_dict["laser_autofocus_camera_model"].value
-        focus_camera_driver = g_dict["laser_autofocus_camera_driver"].value
+        main_camera_model_name = g_dict["main_camera_model"].strvalue
+        main_camera_driver = g_dict["main_camera_driver"].strvalue
+        focus_camera_model_name = g_dict["laser_autofocus_camera_model"].strvalue
+        focus_camera_driver = g_dict["laser_autofocus_camera_driver"].strvalue
 
         # Validate camera drivers
         valid_drivers = tp.get_args(CameraDriver)  # Get valid values from the Literal type
@@ -272,10 +277,28 @@ class SquidAdapter(BaseModel):
         main_camera = camera_open(main_camera_request)
         focus_camera = camera_open(focus_camera_request)
 
+        # Extract and parse channel and filter configurations (JSON-encoded strings)
+        channels_json = g_dict["channels"].strvalue
+        filters_json = g_dict["filters"].strvalue
+        
+        # Parse JSON strings and convert to config objects
+        channels_data = json5.loads(channels_json)
+        filters_data = json5.loads(filters_json)
+        
+        if channels_data is None:
+            raise ValueError("Parsed channels configuration is None - invalid JSON structure")
+        if filters_data is None:
+            raise ValueError("Parsed filters configuration is None - invalid JSON structure")
+        
+        channel_configs = [ChannelConfig(**ch) for ch in channels_data] #type: ignore
+        filter_configs = [FilterConfig(**f) for f in filters_data] #type: ignore
+
         squid = SquidAdapter(
             main_camera=Locked(main_camera),
             focus_camera=Locked(focus_camera),
             microcontroller=microcontroller,
+            channels=channel_configs,
+            filters=filter_configs,
         )
 
         # do NOT connect yet
@@ -374,6 +397,7 @@ class SquidAdapter(BaseModel):
         with self.microcontroller.locked() as qmc:
             if qmc is None:
                 error_internal("microcontroller is busy")
+                return # unreachable but satisfies the type checker
 
             try:
                 logger.info("starting stage calibration (by entering loading position)")
@@ -389,19 +413,24 @@ class SquidAdapter(BaseModel):
                 logger.debug("initializing microcontroller")
                 await qmc.send_cmd(mc.Command.initialize())
                 logger.debug("done initializing microcontroller")
-                logger.debug("configure_actuators")
-                await qmc.send_cmd(mc.Command.configure_actuators())
-                logger.debug("done configuring actuators")
+
+                if True:
+                    # disable for testing (new firmware should have better defaults)
+                    logger.debug("configure_actuators")
+                    await qmc.send_cmd(mc.Command.configure_actuators())
+                    logger.debug("done configuring actuators")
 
                 logger.info("ensuring illumination is off")
                 # make sure all illumination is off
                 for illum_src in [
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL,  # this will turn off the led matrix
+                    # turn off all fluorescence LEDs
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT11,
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT12,
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT13,
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT14,
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT15,
+                    # this will turn off the led matrix
+                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL,
                 ]:
                     await qmc.send_cmd(mc.Command.illumination_end(illum_src))
 
@@ -435,6 +464,19 @@ class SquidAdapter(BaseModel):
 
                 # and move objective up, slightly
                 await qmc.send_cmd(mc.Command.move_by_mm("z", 1))
+
+                # Initialize filter wheel with homing sequence (matching Squid behavior)
+                logger.info("initializing filter wheel...")
+                try:
+                    await qmc.filter_wheel_init()
+                    logger.info("configuring filter wheel actuator...")
+                    await qmc.filter_wheel_configure_actuator()
+                    logger.info("performing filter wheel homing...")
+                    await qmc.filter_wheel_home()
+                    logger.info("✓ Filter wheel initialized, configured, and homed")
+                except Exception as e:
+                    logger.warning(f"Filter wheel initialization/configuration/homing failed: {e}")
+                    logger.info("Continuing with microscope initialization...")
 
                 logger.info("done initializing microscope")
 
@@ -1279,19 +1321,18 @@ class SquidAdapter(BaseModel):
                     return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.IlluminationEndAll):
-                    # make sure all illumination is off
-                    for illum_src in [
-                        mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM,
-                        mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM,
-                        mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM,
-                        mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM,
-                        mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM,
-                        mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL,  # this will turn off the led matrix
-                    ]:
-                        await qmc.send_cmd(mc.Command.illumination_end(illum_src))
-                        logger.debug(
-                            f"squid - illumination end all - turned off illumination for {illum_src}"
-                        )
+                    # Turn off all configured illumination sources
+                    for channel_config in self.channels:
+                        try:
+                            illum_src = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+                            await qmc.send_cmd(mc.Command.illumination_end(illum_src))
+                            logger.debug(
+                                f"squid - illumination end all - turned off illumination for {channel_config.name} (slot {channel_config.source_slot})"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to turn off illumination for channel {channel_config.name} (slot {channel_config.source_slot}): {e}"
+                            )
 
                     logger.debug("squid - turned off all illumination")
 
@@ -1299,12 +1340,27 @@ class SquidAdapter(BaseModel):
                     return ret  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.ChannelSnapshot):
-                    try:
-                        illum_code = mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
-                    except Exception:
+                    # Find channel config by handle and get illumination code from source slot
+                    channel_config = None
+                    for ch in self.channels:
+                        if ch.handle == command.channel.handle:
+                            channel_config = ch
+                            break
+                    
+                    if channel_config is None:
                         cmd.error_internal(
-                            detail=f"invalid channel handle: {command.channel.handle}"
+                            detail=f"Channel handle '{command.channel.handle}' not found in channel configuration"
                         )
+                    
+                    try:
+                        illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+                    except Exception as e:
+                        cmd.error_internal(
+                            detail=f"Invalid illumination source slot {channel_config.source_slot} for channel {command.channel.handle}: {e}"
+                        )
+
+                    # Debug output for channel and filter selection
+                    logger.debug(f"channel snap - using channel '{channel_config.name}' (handle: {channel_config.handle}, illumination slot: {channel_config.source_slot})")
 
                     GlobalConfigHandler.override(command.machine_config)
 
@@ -1312,6 +1368,30 @@ class SquidAdapter(BaseModel):
                         cmd.error_internal(detail="already streaming")
 
                     self.state = CoreState.ChannelSnap
+
+                    # Handle filter wheel positioning if filter is specified
+                    if command.channel.filter_handle is not None:
+                        # Find filter config by handle
+                        filter_config = None
+                        for f in self.filters:
+                            if f.handle == command.channel.filter_handle:
+                                filter_config = f
+                                break
+                        
+                        if filter_config is None:
+                            cmd.error_internal(
+                                detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
+                            )
+                        
+                        try:
+                            logger.debug(f"channel snap - using filter '{filter_config.name}' (handle: {filter_config.handle}, wheel position: {filter_config.slot})")
+                            await qmc.filter_wheel_set_position(filter_config.slot)
+                        except Exception as e:
+                            cmd.error_internal(
+                                detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
+                            )
+                    else:
+                        logger.debug("channel snap - no filter specified for this channel")
 
                     logger.debug("channel snap - before illum on")
                     await qmc.send_cmd(
@@ -1375,16 +1455,50 @@ class SquidAdapter(BaseModel):
                     if self.stream_callback is not None:
                         cmd.error_internal(detail="already streaming")
 
-                    try:
-                        illum_code = mc.ILLUMINATION_CODE.from_handle(command.channel.handle)
-                    except Exception:
+                    # Find channel config by handle and get illumination code from source slot
+                    channel_config = None
+                    for ch in self.channels:
+                        if ch.handle == command.channel.handle:
+                            channel_config = ch
+                            break
+                    
+                    if channel_config is None:
                         cmd.error_internal(
-                            detail=f"invalid channel handle: {command.channel.handle}"
+                            detail=f"Channel handle '{command.channel.handle}' not found in channel configuration"
+                        )
+                    
+                    try:
+                        illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+                    except Exception as e:
+                        cmd.error_internal(
+                            detail=f"Invalid illumination source slot {channel_config.source_slot} for channel {command.channel.handle}: {e}"
                         )
 
                     GlobalConfigHandler.override(command.machine_config)
 
                     self.state = CoreState.ChannelStream
+
+                    # Handle filter wheel positioning if filter is specified
+                    if command.channel.filter_handle is not None:
+                        # Find filter config by handle
+                        filter_config = None
+                        for f in self.filters:
+                            if f.handle == command.channel.filter_handle:
+                                filter_config = f
+                                break
+
+                        if filter_config is None:
+                            cmd.error_internal(
+                                detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
+                            )
+                        
+                        try:
+                            logger.debug(f"channel stream - setting filter wheel to position {filter_config.slot} ({filter_config.name})")
+                            await qmc.filter_wheel_set_position(filter_config.slot)
+                        except Exception as e:
+                            cmd.error_internal(
+                                detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
+                            )
 
                     await qmc.send_cmd(
                         mc.Command.illumination_begin(illum_code, command.channel.illum_perc)

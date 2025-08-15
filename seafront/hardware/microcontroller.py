@@ -70,6 +70,8 @@ SerialDeviceInfo = tp.Any
 
 
 class HOME_OR_ZERO:
+    HOME_POSITIVE = 0  # motor moves along the positive direction (MCU coordinates)
+    HOME_NEGATIVE = 1  # motor moves along the negative direction (MCU coordinates)  
     ZERO = 2
 
 
@@ -97,7 +99,21 @@ class FirmwareDefinitions:
     AXIS_Y: int = 1
     AXIS_Z: int = 2
     AXIS_THETA: int = 3
-    AXIS_XY: int = 4
+    AXIS_XY: int = 4  # Note: firmware uses AXES_XY = 4
+    AXIS_W: int = 5   # Filter wheel axis
+    
+    # Filter wheel configuration (W axis)
+    SCREW_PITCH_W_MM: float = 1.0
+    MICROSTEPPING_DEFAULT_W: int = 64
+    FULLSTEPS_PER_REV_W: int = 200
+    STAGE_MOVEMENT_SIGN_W: int = 1
+    FILTERWHEEL_MAX_INDEX: int = 8
+    FILTERWHEEL_MIN_INDEX: int = 1
+    FILTERWHEEL_OFFSET_MM: float = 0.008  # Offset applied after homing
+    
+    # Filter wheel motor parameters (from Squid _def.py)
+    W_MOTOR_I_HOLD: float = 0.5
+    MAX_ACCELERATION_W_mm: float = 300.0
 
     # TODO
     SCREW_PITCH_X_MM: float = 2.54
@@ -144,6 +160,7 @@ class FirmwareDefinitions:
     X_MOTOR_RMS_CURRENT_mA: int = 1000
     Y_MOTOR_RMS_CURRENT_mA: int = 1000
     Z_MOTOR_RMS_CURRENT_mA: int = 500
+    W_MOTOR_RMS_CURRENT_mA: int = 1900
 
     # these 3 values must be in range [0.0;1.0]
     X_MOTOR_I_HOLD: float = 0.25
@@ -153,6 +170,7 @@ class FirmwareDefinitions:
     MAX_VELOCITY_X_mm: float = 40.0
     MAX_VELOCITY_Y_mm: float = 40.0
     MAX_VELOCITY_Z_mm: float = 2.0
+    MAX_VELOCITY_W_mm: float = 3.19
 
     MAX_ACCELERATION_X_mm: float = 500.0
     MAX_ACCELERATION_Y_mm: float = 500.0
@@ -185,6 +203,12 @@ class FirmwareDefinitions:
     def mm_per_ustep_z() -> float:
         return FirmwareDefinitions.SCREW_PITCH_Z_MM / (
             FirmwareDefinitions.MICROSTEPPING_DEFAULT_Z * FirmwareDefinitions.FULLSTEPS_PER_REV_Z
+        )
+
+    @staticmethod
+    def mm_per_ustep_w() -> float:
+        return FirmwareDefinitions.SCREW_PITCH_W_MM / (
+            FirmwareDefinitions.MICROSTEPPING_DEFAULT_W * FirmwareDefinitions.FULLSTEPS_PER_REV_W
         )
 
     @staticmethod
@@ -235,6 +259,13 @@ class FirmwareDefinitions:
                 / (FirmwareDefinitions.STAGE_POS_SIGN_Z * FirmwareDefinitions.mm_per_ustep_z())
             )
 
+    @staticmethod
+    def mm_to_ustep_w(value_mm: float) -> int:
+        return int(
+            value_mm
+            / (FirmwareDefinitions.STAGE_MOVEMENT_SIGN_W * FirmwareDefinitions.mm_per_ustep_w())
+        )
+
 
 @dataclass(init=False)
 class MicrocontrollerStatusPackage:
@@ -252,6 +283,14 @@ class MicrocontrollerStatusPackage:
 
     last_cmd_id: int
     exec_status: int
+    """
+        COMPLETED_WITHOUT_ERRORS = 0
+        IN_PROGRESS = 1
+        CMD_CHECKSUM_ERROR = 2
+        CMD_INVALID = 3
+        CMD_EXECUTION_ERROR = 4
+    """
+
     x_pos_usteps: int
     y_pos_usteps: int
     z_pos_usteps: int
@@ -303,6 +342,7 @@ class CommandName(int, Enum):
     MOVE_Y = 1
     MOVE_Z = 2
     MOVE_THETA = 3
+    MOVE_W = 4
     HOME_OR_ZERO = 5
     MOVETO_X = 6
     MOVETO_Y = 7
@@ -322,6 +362,7 @@ class CommandName(int, Enum):
     SEND_HARDWARE_TRIGGER = 30
     SET_STROBE_DELAY = 31
     SET_PIN_LEVEL = 41
+    INITFILTERWHEEL = 253
     INITIALIZE = 254
     RESET = 255
 
@@ -357,37 +398,38 @@ class ILLUMINATION_CODE(int, Enum):
 
     ILLUMINATION_SOURCE_LED_EXTERNAL_FET = 20
 
-    ILLUMINATION_SOURCE_405NM = 11
-    ILLUMINATION_SOURCE_488NM = 12
-    ILLUMINATION_SOURCE_638NM = 13
-    ILLUMINATION_SOURCE_561NM = 14
-    ILLUMINATION_SOURCE_730NM = 15
+    ILLUMINATION_SOURCE_FLUOSLOT11 = 11
+    ILLUMINATION_SOURCE_FLUOSLOT12 = 12
+    ILLUMINATION_SOURCE_FLUOSLOT13 = 13
+    ILLUMINATION_SOURCE_FLUOSLOT14 = 14
+    ILLUMINATION_SOURCE_FLUOSLOT15 = 15
 
     @property
     def is_led_matrix(self) -> bool:
         return self.value <= 6
 
     @staticmethod
-    def from_handle(handle: str) -> "ILLUMINATION_CODE":
-        match handle:
-            case "fluo405":
-                return ILLUMINATION_CODE.ILLUMINATION_SOURCE_405NM
-            case "fluo488":
-                return ILLUMINATION_CODE.ILLUMINATION_SOURCE_488NM
-            case "fluo561":
-                return ILLUMINATION_CODE.ILLUMINATION_SOURCE_561NM
-            case "fluo638":
-                return ILLUMINATION_CODE.ILLUMINATION_SOURCE_638NM
-            case "fluo730":
-                return ILLUMINATION_CODE.ILLUMINATION_SOURCE_730NM
-            case "bfledfull":
-                return ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL
-            case "bfledleft":
-                return ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_LEFT_HALF
-            case "bfledright":
-                return ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_RIGHT_HALF
-            case _:
-                raise ValueError(f"unknown handle {handle}")
+    def from_slot(slot: int) -> "ILLUMINATION_CODE":
+        """
+        Convert a hardware light source ID to ILLUMINATION_CODE enum for type safety.
+        
+        The slot parameter corresponds to the physical hardware light source identifier
+        that the microcontroller uses to control illumination. This method provides
+        type-safe mapping from integer slot IDs to the ILLUMINATION_CODE enum.
+        
+        Args:
+            slot: Hardware light source ID (e.g. 11 for 405nm laser, 0 for LED array full)
+            
+        Returns:
+            ILLUMINATION_CODE enum value corresponding to the hardware slot
+            
+        Raises:
+            ValueError: If slot is not a valid ILLUMINATION_CODE value
+        """
+        try:
+            return ILLUMINATION_CODE(slot)
+        except ValueError:
+            raise ValueError(f"Invalid illumination source slot: {slot}")
 
 
 @dataclass
@@ -589,7 +631,7 @@ class Command:
         return rets
 
     @staticmethod
-    def home(direction: tp.Literal["x", "y", "z"]) -> "Command":
+    def home(direction: tp.Literal["x", "y", "z", "w"]) -> "Command":
         ret = Command()
         ret[1] = CommandName.HOME_OR_ZERO.value
         match direction:
@@ -605,6 +647,10 @@ class Command:
                 ret[2] = FirmwareDefinitions.AXIS_Z
                 # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
                 ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z + 1) / 2)
+            case "w":
+                ret[2] = FirmwareDefinitions.AXIS_W
+                # Use default W homing direction based on STAGE_MOVEMENT_SIGN_W
+                ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_W + 1) / 2)
             case _:
                 raise RuntimeError("invalid direction " + direction)
 
@@ -859,6 +905,41 @@ class Command:
     @staticmethod
     def af_laser_illum_end() -> "Command":
         return Command.set_pin_level(pin=MCU_PINS.AF_LASER, level=0)
+    
+    @staticmethod
+    def filter_wheel_init() -> "Command":
+        cmd = Command()
+        cmd[1] = CommandName.INITFILTERWHEEL.value
+        return cmd
+
+    @staticmethod
+    def move_w_usteps(usteps: int) -> list["Command"]:
+        """
+        Move filter wheel by the specified number of microsteps
+        Similar to move_by_mm but for W axis (filter wheel)
+        """
+        rets = []
+        usteps_remaining = usteps
+        MAX_USTEPS = 2**31 - 1
+        while np.abs(usteps_remaining) > 0:
+            partial_usteps = max(min(usteps_remaining, MAX_USTEPS), -MAX_USTEPS)
+            usteps_remaining -= partial_usteps
+
+            partial_usteps = twos_complement(partial_usteps, 4)
+            # partial_usteps=10
+
+            ret = Command()
+            ret.is_move_cmd = False
+
+            ret[1] = CommandName.MOVE_W.value
+            ret[2] = (partial_usteps >> (8 * 3)) & 0xFF
+            ret[3] = (partial_usteps >> (8 * 2)) & 0xFF
+            ret[4] = (partial_usteps >> (8 * 1)) & 0xFF
+            ret[5] = (partial_usteps >> (8 * 0)) & 0xFF
+
+            rets.append(ret)
+
+        return rets
 
 
 def microcontroller_exclusive(f):
@@ -891,6 +972,9 @@ class Microcontroller(BaseModel):
 
     terminate_reading_received_packet_thread: bool = False
     last_position: Position = Field(default_factory=lambda: Position(0, 0, 0))
+    
+    # Filter wheel state
+    filter_wheel_position: int = Field(default=FirmwareDefinitions.FILTERWHEEL_MIN_INDEX)
 
     baudrate: int = 2_000_000
 
@@ -1170,6 +1254,98 @@ class Microcontroller(BaseModel):
             self.handle = None
 
         logger.debug("microcontroller - closed")
+
+    @microcontroller_exclusive
+    async def filter_wheel_set_position(self, position: int):
+        """
+        Set the filter wheel to the specified position.
+        Position should be between FILTERWHEEL_MIN_INDEX and FILTERWHEEL_MAX_INDEX.
+        This is the main public interface for filter wheel control.
+        """
+        if not (FirmwareDefinitions.FILTERWHEEL_MIN_INDEX <= position <= FirmwareDefinitions.FILTERWHEEL_MAX_INDEX):
+            raise ValueError(f"Position {position} out of range [{FirmwareDefinitions.FILTERWHEEL_MIN_INDEX}, {FirmwareDefinitions.FILTERWHEEL_MAX_INDEX}]")
+            
+        if position != self.filter_wheel_position:
+            # Calculate movement needed
+            delta_positions = position - self.filter_wheel_position
+            distance_per_position = FirmwareDefinitions.SCREW_PITCH_W_MM / (
+                FirmwareDefinitions.FILTERWHEEL_MAX_INDEX - FirmwareDefinitions.FILTERWHEEL_MIN_INDEX + 1
+            )
+            distance_mm = delta_positions * distance_per_position
+            
+            # Convert to microsteps and move
+            usteps = FirmwareDefinitions.mm_to_ustep_w(distance_mm)
+            move_commands = Command.move_w_usteps(usteps)
+            
+            await self.send_cmd(move_commands)
+            
+            # Update internal position tracking
+            self.filter_wheel_position = position
+
+    @microcontroller_exclusive  
+    async def filter_wheel_init(self):
+        """Initialize the filter wheel"""
+        await self.send_cmd(Command.filter_wheel_init())
+        
+    @microcontroller_exclusive
+    async def filter_wheel_configure_actuator(self):
+        """Configure the filter wheel (W axis) motor parameters before homing"""
+        # Configure W axis leadscrew pitch
+        cmd = Command()
+        cmd[1] = CommandName.SET_LEAD_SCREW_PITCH.value
+        cmd[2] = FirmwareDefinitions.AXIS_W
+        cmd[3] = (int(FirmwareDefinitions.SCREW_PITCH_W_MM * 1e3) >> 8 * 1) & 0xFF
+        cmd[4] = (int(FirmwareDefinitions.SCREW_PITCH_W_MM * 1e3) >> 8 * 0) & 0xFF
+        await self.send_cmd(cmd)
+
+        # Configure W axis motor driver (microstepping and current)
+        cmd = Command()
+        cmd[1] = CommandName.CONFIGURE_STEPPER_DRIVER.value
+        cmd[2] = FirmwareDefinitions.AXIS_W
+        cmd[3] = FirmwareDefinitions.MICROSTEPPING_DEFAULT_W
+        cmd[4] = (FirmwareDefinitions.W_MOTOR_RMS_CURRENT_mA >> 8 * 1) & 0xFF
+        cmd[5] = (FirmwareDefinitions.W_MOTOR_RMS_CURRENT_mA >> 8 * 0) & 0xFF
+        cmd[6] = int(FirmwareDefinitions.W_MOTOR_I_HOLD * 255)
+        await self.send_cmd(cmd)
+
+        # Configure W axis max velocity and acceleration
+        cmd = Command()
+        cmd[1] = CommandName.SET_MAX_VELOCITY_ACCELERATION.value
+        cmd[2] = FirmwareDefinitions.AXIS_W
+        cmd[3] = (int(FirmwareDefinitions.MAX_VELOCITY_W_mm * 100) >> 8 * 1) & 0xFF
+        cmd[4] = (int(FirmwareDefinitions.MAX_VELOCITY_W_mm * 100) >> 8 * 0) & 0xFF
+        cmd[5] = (int(FirmwareDefinitions.MAX_ACCELERATION_W_mm * 10) >> 8 * 1) & 0xFF
+        cmd[6] = (int(FirmwareDefinitions.MAX_ACCELERATION_W_mm * 10) >> 8 * 0) & 0xFF
+        await self.send_cmd(cmd)
+
+    @microcontroller_exclusive
+    async def filter_wheel_home(self):
+        """
+        Home the filter wheel to establish reference position.
+        
+        This performs the complete homing sequence similar to Squid:
+        1. Home the W axis using limit switches
+        2. Apply small offset to move away from limit 
+        3. Reset position tracking to minimum index
+        
+        The send_cmd() method automatically waits for completion with appropriate timeout.
+        """
+        # Home the W axis - this moves to the physical limit switch
+        # The home command is marked as a move command so send_cmd will wait for completion
+        await self.send_cmd(Command.home("w"))
+        
+        # Apply small offset to move away from the limit switch 
+        # This matches SQUID_FILTERWHEEL_OFFSET from the original Squid code
+        offset_usteps = FirmwareDefinitions.mm_to_ustep_w(FirmwareDefinitions.FILTERWHEEL_OFFSET_MM)
+        move_commands = Command.move_w_usteps(offset_usteps)
+        await self.send_cmd(move_commands)
+        
+        # Reset position tracking to minimum index (position 1)
+        self.filter_wheel_position = FirmwareDefinitions.FILTERWHEEL_MIN_INDEX
+        
+    def filter_wheel_get_position(self) -> int:
+        """Get the current filter wheel position (non-blocking)"""
+        return self.filter_wheel_position
 
     @staticmethod
     def get_all() -> list["Microcontroller"]:

@@ -60,7 +60,7 @@ bash run.sh
 # note: config file is now in ~/seafront/config.json (change and reload software to apply)
 ```
 
-example config file:
+example config file (json5 supported):
 ```
 $ cat ~/seafront/config.json
 {
@@ -74,10 +74,16 @@ $ cat ~/seafront/config.json
             "calibration_offset_x_mm": 2.44,
             "calibration_offset_y_mm": 0.44,
             "calibration_offset_z_mm": 0.0,
-            "forbidden_wells": "{\"1\":[],\"4\":[],\"96\":[],\"384\":[\"A01\",\"A24\",\"P01\",\"P24\"],\"1536\":[]}",
+            "forbidden_wells": "{                 '1': [],                 '4': [],                 '96': [],                 '384': ['A01', 'A24', 'P01', 'P24'],                 '1536': []             }",
+
+            "laser_autofocus_available": "yes",
             "laser_autofocus_camera_model": "MER2-630-60U3M",
             "laser_autofocus_camera_driver": "galaxy",
-            "laser_autofocus_available": "yes"
+
+            "channels": "[                 {'name': 'Fluo 405 nm Ex', 'handle': 'fluo405', 'source_slot': 11},                 {'name': 'Fluo 488 nm Ex', 'handle': 'fluo488', 'source_slot': 12},                 {'name': 'Fluo 561 nm Ex', 'handle': 'fluo561', 'source_slot': 14},                 {'name': 'Fluo 638 nm Ex', 'handle': 'fluo638', 'source_slot': 13},                 {'name': 'Fluo 730 nm Ex', 'handle': 'fluo730', 'source_slot': 15},                 {'name': 'BF LED Full', 'handle': 'bfledfull', 'source_slot': 0},                 {'name': 'BF LED Left Half', 'handle': 'bfledleft', 'source_slot': 1},                 {'name': 'BF LED Right Half', 'handle': 'bfledright', 'source_slot': 2}             ]",
+
+            "filter_wheel_available": "yes",
+            "filters": "[                 {'name': 'Basic Filter', 'handle': 'slot1', 'slot': 1},                 {'name': '609nm Filter', 'handle': 'slot2', 'slot': 2},                 {'name': '540nm Filter', 'handle': 'slot3', 'slot': 3},                 {'name': '434nm Filter', 'handle': 'slot4', 'slot': 4},                 {'name': 'No Filter', 'handle': 'nofilter5', 'slot': 5}             ]"
         }
     ]
 }

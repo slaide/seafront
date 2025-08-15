@@ -903,7 +903,7 @@
                                                 display: grid;
                                                 grid-template-columns:
                                                     repeat(3, max-content)
-                                                    5em 5em 5em 5em 4em 7em;
+                                                    5em 5em 5em 5em 4em 7em 8em;
 
                                                 .channel-config-header {
                                                     text-align: center;
@@ -1010,6 +1010,17 @@
     										`.trimLeft().replaceAll('\n','<br>')"
                                         >
                                             delta z [um]
+                                        </p>
+                                        <p
+                                            class="channel-config-header"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`
+    										Filter wheel selection for this channel.
+
+    										Select 'None' for no filter movement, or choose a specific filter to position the filter wheel before imaging.
+    										`.trimLeft().replaceAll('\n','<br>')"
+                                        >
+                                            Filter
                                         </p>
 
                                         <style>
@@ -1147,6 +1158,32 @@
                                                     x-init="registerNumberInput($el)"
                                                     x-effect="disableElement($el,()=>!channel.enabled)"
                                                 />
+
+                                                <select
+                                                    x-model="channel.filter_handle"
+                                                    x-effect="disableElement($el,()=>!channel.enabled || !isFilterWheelAvailable)"
+                                                >
+                                                    <template
+                                                        x-for="filterOption in filterOptions.filter(f => !f.isGroup)"
+                                                        :key="filterOption.handle"
+                                                    >
+                                                        <option
+                                                            x-bind:value="filterOption.handle"
+                                                            x-text="filterOption.name"
+                                                        ></option>
+                                                    </template>
+                                                    <template
+                                                        x-for="filterOption in filterOptions.filter(f => f.isGroup)"
+                                                        :key="filterOption.handle"
+                                                    >
+                                                        <optgroup x-bind:label="filterOption.groupLabel">
+                                                            <option
+                                                                x-bind:value="filterOption.handle"
+                                                                x-text="filterOption.name"
+                                                            ></option>
+                                                        </optgroup>
+                                                    </template>
+                                                </select>
                                             </div>
                                         </template>
                                     </div>

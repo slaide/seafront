@@ -1,4 +1,5 @@
 import json
+import json5
 import os
 import typing as tp
 from pathlib import Path
@@ -7,6 +8,26 @@ from pydantic import BaseModel, Field
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
 CameraDriver = tp.Literal["galaxy", "toupcam"]
+
+
+class ChannelConfig(BaseModel):
+    """Configuration for a single imaging channel"""
+    name: str
+    "Display name for the channel (e.g. 'Fluo 405 nm Ex')"
+    handle: str
+    "Internal handle for the channel (e.g. 'fluo405')"
+    source_slot: int
+    "Illumination source slot number (e.g. 11 for ILLUMINATION_SOURCE_SLOT_11)"
+
+
+class FilterConfig(BaseModel):
+    """Configuration for a single filter wheel position"""
+    name: str
+    "Display name for the filter (e.g. 'DAPI Filter')"
+    handle: str
+    "Internal handle for the filter (e.g. 'dapi')"
+    slot: int
+    "Filter wheel slot position (1-8)"
 
 
 class CriticalMachineConfig(BaseModel):
@@ -23,10 +44,18 @@ class CriticalMachineConfig(BaseModel):
     forbidden_wells: str | None = None
     "must be json-like string"
 
+    laser_autofocus_available: tp.Literal["yes", "no"] | None = None
     laser_autofocus_camera_model: str | None = None
     "if laser_autofocus_available is yes, then this must be present"
     laser_autofocus_camera_driver: CameraDriver = "galaxy"
-    laser_autofocus_available: tp.Literal["yes", "no"] | None = None
+    
+    filter_wheel_available: tp.Literal["yes", "no"] | None = None
+
+    channels: str = Field(default="[]")
+    "Available imaging channels with their illumination source slots (JSON-encoded string)"
+    
+    filters: str = Field(default="[]")
+    "Available filters with their wheel positions (JSON-encoded string)"
 
     # needs some post-init hook to check forbidden_wells for json-like-ness
 
@@ -109,7 +138,7 @@ class GlobalConfigHandler:
         critical_machine_config = GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS().model_dump()
 
         with CONFIG_FILE_PATH.open("r") as config_file:
-            current_file_contents = json.load(config_file)
+            current_file_contents = json5.load(config_file)
             server_config = ServerConfig(**current_file_contents)
 
         # store critical config items from current config
@@ -173,16 +202,38 @@ class GlobalConfigHandler:
 
     @staticmethod
     def CRITICAL_MACHINE_DEFAULTS() -> CriticalMachineConfig:
+        # Default channel configuration with traditional illumination sources using proper constructors
+        default_channels = [
+            ChannelConfig(name="Fluo 405 nm Ex", handle="fluo405", source_slot=11),
+            ChannelConfig(name="Fluo 488 nm Ex", handle="fluo488", source_slot=12), 
+            ChannelConfig(name="Fluo 561 nm Ex", handle="fluo561", source_slot=14),
+            ChannelConfig(name="Fluo 638 nm Ex", handle="fluo638", source_slot=13),
+            ChannelConfig(name="Fluo 730 nm Ex", handle="fluo730", source_slot=15),
+            ChannelConfig(name="BF LED Full", handle="bfledfull", source_slot=0),
+            ChannelConfig(name="BF LED Left Half", handle="bfledleft", source_slot=1),
+            ChannelConfig(name="BF LED Right Half", handle="bfledright", source_slot=2)
+        ]
+        
+        # Default filter configuration - empty by default since filter wheel is optional
+        default_filters = []
+        
+        # Convert to JSON strings for storage
+        channels_json = json.dumps([ch.model_dump() for ch in default_channels])
+        filters_json = json.dumps([f.model_dump() for f in default_filters])
+        
         return CriticalMachineConfig(
             main_camera_model="MER2-1220-32U3M",
             laser_autofocus_camera_model="MER2-630-60U3M",
             microscope_name="unnamed HCS SQUID",
             base_image_output_dir=str(GlobalConfigHandler.home() / "images"),
             laser_autofocus_available="yes",
+            filter_wheel_available="no",
             calibration_offset_x_mm=0.0,
             calibration_offset_y_mm=0.0,
             calibration_offset_z_mm=0.0,
             forbidden_wells="""{"1":[],"4":[],"96":[],"384":["A01","A24","P01","P24"],"1536":[]}""",
+            channels=channels_json,
+            filters=filters_json,
         )
 
     @staticmethod
@@ -196,7 +247,7 @@ class GlobalConfigHandler:
 
         # load config file
         with GlobalConfigHandler.home_config().open("r") as f:
-            server_config_json=json.load(f)
+            server_config_json=json5.load(f)
             server_config = ServerConfig(**server_config_json)
             if len(server_config.microscopes)==0:
                 raise ValueError("no microscope found in server config")
@@ -343,6 +394,15 @@ class GlobalConfigHandler:
             frozen=True,
         )
 
+        filter_wheel_system_available_attribute = ConfigItem(
+            name="filter wheel system available",
+            handle="filter_wheel_available",
+            value_kind="option",
+            value=critical_machine_config.filter_wheel_available or "no",
+            options=ConfigItemOption.get_bool_options(),
+            frozen=True,
+        )
+
         if laser_autofocus_system_available_attribute.boolvalue:
             if critical_machine_config.laser_autofocus_camera_model is None:
                 raise ValueError("laser autofocus available but no autofocus camera model provided")
@@ -446,6 +506,19 @@ class GlobalConfigHandler:
         else:
             laser_autofocus_system_attributes = []
 
+        if filter_wheel_system_available_attribute.boolvalue:
+            filter_wheel_system_attributes = [
+                ConfigItem(
+                    name="filter wheel configuration",
+                    handle="filters",
+                    value_kind="text", 
+                    value=critical_machine_config.filters,
+                    frozen=True,
+                ),
+            ]
+        else:
+            filter_wheel_system_attributes = []
+
         ret = [
             ConfigItem(
                 name="microscope name",
@@ -508,8 +581,17 @@ class GlobalConfigHandler:
                 value_kind="text",
                 value=critical_machine_config.forbidden_wells or "{}",
             ),
+            ConfigItem(
+                name="imaging channels configuration",
+                handle="channels",
+                value_kind="text",
+                value=critical_machine_config.channels,
+                frozen=True,
+            ),
             laser_autofocus_system_available_attribute,
+            filter_wheel_system_available_attribute,
             *laser_autofocus_system_attributes,
+            *filter_wheel_system_attributes,
             *main_camera_attributes,
         ]
 

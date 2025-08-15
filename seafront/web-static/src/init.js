@@ -666,7 +666,7 @@ document.addEventListener("alpine:init", () => {
             }
             return this._plateinfo;
         },
-        /** @type {AcquisitionConfig|null} */
+        /** @type {AcquisitionConfigFrontend|null} */
         _microscope_config: null,
         get microscope_config() {
             if (!this._microscope_config) {
@@ -678,6 +678,108 @@ document.addEventListener("alpine:init", () => {
         /** a copy of this is required often, but non-trivial to construct, so the utility is provided here. */
         get microscope_config_copy() {
             return cloneObject(this.microscope_config);
+        },
+
+        /**
+         * Parse available filters from machine config
+         * @returns {Array<{name: string, handle: string, slot: number}>}
+         */
+        get availableFilters() {
+            const filtersConfigItem = this.getMachineConfigItem('filters');
+            if (!filtersConfigItem || !filtersConfigItem.value) {
+                return [];
+            }
+            
+            try {
+                if(!(typeof filtersConfigItem.value == "string")){
+                    throw `invalid type of filter config`;
+                }
+                const filtersData = JSON.parse(filtersConfigItem.value);
+
+                const ret=Array.isArray(filtersData) ? filtersData : [];
+                return ret;
+            } catch (error) {
+                console.warn('Failed to parse filters configuration:', error);
+                return [];
+            }
+        },
+
+        /**
+         * Check if filter wheel is available
+         * @returns {boolean}
+         */
+        get isFilterWheelAvailable() {
+            const filterWheelConfigItem = this.getMachineConfigItem('filter_wheel_available');
+            return filterWheelConfigItem?.value === 'yes';
+        },
+
+        /**
+         * Get filter options for select dropdown (includes None option and grouped filters)
+         * @returns {Array<{name: string, handle: string, isGroup?: boolean, groupLabel?: string}>}
+         */
+        get filterOptions() {
+            /** @type {{name:string,handle:string,isGroup:boolean,groupLabel?:string}[]} */
+            const options = [{ name: 'Unspecified', handle: '__none__', isGroup: false }];
+            
+            // Add each filter as a group with slot label
+            this.availableFilters.forEach(f => {
+                options.push({
+                    name: f.name,
+                    handle: f.handle,
+                    isGroup: true,
+                    groupLabel: `Slot ${f.slot}`
+                });
+            });
+            
+            return options;
+        },
+
+        /**
+         * Convert frontend channel to backend channel format
+         * @param {AcquisitionChannelConfigFrontend} frontendChannel
+         * @returns {AcquisitionChannelConfig}
+         */
+        convertChannelToBackend(frontendChannel) {
+            return {
+                ...frontendChannel,
+                filter_handle: frontendChannel.filter_handle === '__none__' ? null : frontendChannel.filter_handle
+            };
+        },
+
+        /**
+         * Convert frontend acquisition config to backend format
+         * @param {AcquisitionConfigFrontend} frontendConfig
+         * @returns {AcquisitionConfig}
+         */
+        convertAcquisitionConfigToBackend(frontendConfig) {
+            return {
+                ...frontendConfig,
+                channels: frontendConfig.channels.map(channel => this.convertChannelToBackend(channel))
+            };
+        },
+
+        /**
+         * Convert frontend channel snapshot request to backend format
+         * @param {ChannelSnapshotRequestFrontend} frontendRequest
+         * @returns {ChannelSnapshotRequest}
+         */
+        convertChannelSnapshotRequestToBackend(frontendRequest) {
+            return {
+                ...frontendRequest,
+                channel: this.convertChannelToBackend(frontendRequest.channel)
+            };
+        },
+
+        /**
+         * Convert frontend stream request to backend format
+         * @param {StreamBeginRequestFrontend | StreamEndRequestFrontend} frontendRequest
+         * @returns {StreamBeginRequest | StreamEndRequest}
+         */
+        convertStreamRequestToBackend(frontendRequest) {
+            return {
+                ...frontendRequest,
+                channel: this.convertChannelToBackend(frontendRequest.channel)
+            };
         },
 
         /** used to filter the machine config list */
@@ -1182,24 +1284,27 @@ document.addEventListener("alpine:init", () => {
          * rpc to api/acquisition/start
          *
          * internally clones the body.
-         * @param {AcquisitionStartRequest} body
+         * @param {AcquisitionStartRequestFrontend} body
          * @returns  {Promise<AcquisitionStartResponse>}
          */
         async acquisition_start(body) {
             await this.machineConfigFlush();
 
-            // make deep copy first
-            /** @type {AcquisitionStartRequest} */
-            const body_copy = cloneObject(body);
-
+            // Convert frontend format to backend format
+            const backend_config = this.convertAcquisitionConfigToBackend(body.config_file);
+            
             // mutate copy (to fix some errors we introduce in the interface)
             // 1) remove wells that are unselected or invalid
-            body_copy.config_file.plate_wells =
-                body_copy.config_file.plate_wells.filter(
-                    (w) => w.selected && w.col >= 0 && w.row >= 0,
-                );
+            backend_config.plate_wells = backend_config.plate_wells.filter(
+                (w) => w.selected && w.col >= 0 && w.row >= 0,
+            );
 
-            const body_str = JSON.stringify(body_copy, null, 2);
+            /** @type {AcquisitionStartRequest} */
+            const backend_body = {
+                config_file: backend_config
+            };
+
+            const body_str = JSON.stringify(backend_body, null, 2);
 
             // console.log("acquisition start body:",body_str);
             return fetch(`${this.server_url}/api/acquisition/start`, {
@@ -1362,14 +1467,17 @@ document.addEventListener("alpine:init", () => {
 
                 /**
                  *
-                 * @param {ChannelSnapshotRequest} body
+                 * @param {ChannelSnapshotRequestFrontend} body
                  * @returns {Promise<ChannelSnapshotResponse>}
                  */
                 snapChannel: (body) => {
                     return this.machineConfigFlush().then(()=>{
+                        // Convert frontend format to backend format
+                        const backend_body = this.convertChannelSnapshotRequestToBackend(body);
+                        
                         return fetch(`${this.server_url}/api/action/snap_channel`, {
                             method: "POST",
-                            body: JSON.stringify(body),
+                            body: JSON.stringify(backend_body),
                             headers: [["Content-Type", "application/json"]],
                         }).then((v) => {
                             /** @ts-ignore @type {CheckMapSquidRequestFn<ChannelSnapshotResponse,InternalErrorModel>} */
@@ -1416,17 +1524,20 @@ document.addEventListener("alpine:init", () => {
                     });
                 },
                 /**
-                 * @param {StreamBeginRequest} body
+                 * @param {StreamBeginRequestFrontend} body
                  * @returns {Promise<StreamingStartedResponse>}
                  */
                 streamBegin: async (body) => {
                     await this.machineConfigFlush();
 
+                    // Convert frontend format to backend format
+                    const backend_body = this.convertStreamRequestToBackend(body);
+
                     return fetch(
                         `${this.server_url}/api/action/stream_channel_begin`,
                         {
                             method: "POST",
-                            body: JSON.stringify(body),
+                            body: JSON.stringify(backend_body),
                             headers: [["Content-Type", "application/json"]],
                         },
                     ).then((v) => {
@@ -1436,15 +1547,18 @@ document.addEventListener("alpine:init", () => {
                     });
                 },
                 /**
-                 * @param {StreamEndRequest} body
+                 * @param {StreamEndRequestFrontend} body
                  * @returns {Promise<StreamEndResponse>}
                  */
                 streamEnd: (body) => {
+                    // Convert frontend format to backend format
+                    const backend_body = this.convertStreamRequestToBackend(body);
+
                     return fetch(
                         `${this.server_url}/api/action/stream_channel_end`,
                         {
                             method: "POST",
-                            body: JSON.stringify(body),
+                            body: JSON.stringify(backend_body),
                             headers: [["Content-Type", "application/json"]],
                         },
                     ).then((v) => {
