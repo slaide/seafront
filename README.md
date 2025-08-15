@@ -177,12 +177,45 @@ runs type checking (pyright) and linting (ruff) on the codebase. use this before
 uv run python3 ./scripts/check.py
 ```
 
-## scripts/list_squid_cameras.py
-lists all available SQUID microscope cameras from supported vendors (Galaxy/Daheng and ToupCam). useful for verifying camera detection and troubleshooting hardware setup issues.
+## scripts/list_squid_hardware.py  
+comprehensive hardware listing script that shows all available SQUID microscope hardware including cameras, microcontrollers, and other peripherals. provides detailed information needed for configuration.
 ```bash
-uv run python3 ./scripts/list_squid_cameras.py
+uv run python3 ./scripts/list_squid_hardware.py
 ```
-shows detailed driver status and provides diagnostic information when no cameras are found.
+
+**Important**: when configuring camera models in your `~/seafront/config.json`:
+- **Galaxy cameras**: use the `Model` field from the hardware listing output
+- **ToupCam cameras**: use the `Display Name` field from the hardware listing output
+
+For example, if the hardware listing shows:
+```
+1. Driver: galaxy
+   Vendor: Daheng Imaging
+   Model: MER2-1220-32U3M
+   Serial: ABC123
+
+2. Driver: toupcam
+   Vendor: ToupTek
+   Display Name: ITR3CMOS26000KMA
+   Serial: DEF456
+```
+
+Then your config should use:
+- `"main_camera_model": "MER2-1220-32U3M"` for Galaxy cameras  
+- `"main_camera_model": "ITR3CMOS26000KMA"` for ToupCam cameras
+
+## scripts/test_filter_wheel_hardware.py
+hardware test script specifically for filter wheel functionality. performs complete microcontroller initialization and cycles through all filter wheel positions (1-8) to verify proper operation.
+```bash
+uv run python3 ./scripts/test_filter_wheel_hardware.py
+```
+useful for:
+- verifying filter wheel hardware after installation
+- diagnosing filter wheel positioning issues
+- testing microcontroller communication
+- validating filter wheel initialization sequence
+
+the script provides detailed logging of each step including movement calculations, command generation, and position verification.
 
 # notes
 
