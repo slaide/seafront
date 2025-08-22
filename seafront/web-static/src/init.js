@@ -1499,6 +1499,29 @@ document.addEventListener("alpine:init", () => {
                 },
 
                 /**
+                 * Snap all selected channels with autofocus and z-offsets
+                 * @returns {Promise<ChannelSnapSelectionResult>}
+                 */
+                snapAllChannels: () => {
+                    return this.machineConfigFlush().then(() => {
+                        // Create acquisition config with current microscope config
+                        const body = {
+                            config_file: this.microscope_config
+                        };
+                        
+                        return fetch(`${this.server_url}/api/action/snap_selected_channels`, {
+                            method: "POST",
+                            body: JSON.stringify(body),
+                            headers: [["Content-Type", "application/json"]],
+                        }).then((v) => {
+                            /** @ts-ignore @type {CheckMapSquidRequestFn<ChannelSnapSelectionResult,InternalErrorModel>} */
+                            const check = checkMapSquidRequest;
+                            return check(v);
+                        });
+                    });
+                },
+
+                /**
                  *
                  * @returns {Promise<EnterLoadingPositionResponse>}
                  */

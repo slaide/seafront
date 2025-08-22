@@ -2,11 +2,23 @@
 Mock microscope implementation for testing and development.
 
 This module provides a MockMicroscope class that behaves like a real microscope
-but finishes operations instantly and doesn't communicate with any actual hardware.
+but doesn't communicate with any actual hardware.
+
+Features:
+- Realistic movement simulation at 4cm/s speed based on actual distance
+- Realistic imaging delays (exposure time + 10ms overhead)
+- Concurrent usage protection (prevents operations during streaming)
+- Synthetic image generation with proper exposure time and gain scaling
+- Channel-specific image patterns (brightfield vs fluorescence)
+- Loading position simulation at coordinates (0, 0, 0)
+
+Environment Variables:
+- MOCK_NO_DELAYS=1: Disable realistic delays for faster testing (default: delays enabled)
 """
 
 import asyncio
 import json5
+import os
 import threading
 import time
 import typing as tp
@@ -46,6 +58,79 @@ class MockMicroscope(Microscope):
     _streaming_stop_event: threading.Event = PrivateAttr(default_factory=threading.Event)
     _streaming_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _latest_images: dict[str, cmd.ImageStoreEntry] = PrivateAttr(default_factory=dict)
+    
+    @property
+    def _realistic_delays_enabled(self) -> bool:
+        """Check if realistic delays should be simulated (default: True, disable with MOCK_NO_DELAYS=1)"""
+        return os.environ.get("MOCK_NO_DELAYS", "0").lower() not in ("1", "true", "yes")
+    
+    async def _simulate_gradual_movement(self, target_x_mm: float | None = None, target_y_mm: float | None = None, target_z_mm: float | None = None) -> None:
+        """Simulate realistic movement with gradual position updates (4cm/s)"""
+        # Get current real positions
+        start_x = self._pos_x_measured_to_real(self._current_position.x_pos_mm)
+        start_y = self._pos_y_measured_to_real(self._current_position.y_pos_mm)  
+        start_z = self._pos_z_measured_to_real(self._current_position.z_pos_mm)
+        
+        # Use current position if target not specified
+        final_x = target_x_mm if target_x_mm is not None else start_x
+        final_y = target_y_mm if target_y_mm is not None else start_y
+        final_z = target_z_mm if target_z_mm is not None else start_z
+        
+        # If delays disabled, move instantly to final position
+        if not self._realistic_delays_enabled:
+            self._current_position.x_pos_mm = self._pos_x_real_to_measured(final_x)
+            self._current_position.y_pos_mm = self._pos_y_real_to_measured(final_y)
+            self._current_position.z_pos_mm = self._pos_z_real_to_measured(final_z)
+            return
+        
+        # Calculate 3D distance
+        dx = final_x - start_x
+        dy = final_y - start_y
+        dz = final_z - start_z
+        distance_mm = (dx**2 + dy**2 + dz**2)**0.5
+        
+        # Convert to cm and calculate time at 4cm/s
+        distance_cm = distance_mm / 10.0
+        movement_time_s = distance_cm / 4.0  # 4 cm/s
+        
+        # Add minimum time for acceleration/deceleration (50ms)
+        total_time_s = max(0.05, movement_time_s)
+        
+        logger.debug(f"Mock movement: {distance_mm:.1f}mm distance, {total_time_s:.3f}s duration")
+        
+        # Update position gradually during movement
+        update_interval_s = 0.02  # Update every 20ms for smooth movement
+        num_steps = max(1, int(total_time_s / update_interval_s))
+        
+        for step in range(num_steps):
+            # Calculate interpolation factor (0.0 to 1.0)
+            progress = (step + 1) / num_steps
+            
+            # Interpolate position
+            current_x = start_x + dx * progress
+            current_y = start_y + dy * progress  
+            current_z = start_z + dz * progress
+            
+            # Update measured position (this is what get_current_state() sees)
+            self._current_position.x_pos_mm = self._pos_x_real_to_measured(current_x)
+            self._current_position.y_pos_mm = self._pos_y_real_to_measured(current_y)
+            self._current_position.z_pos_mm = self._pos_z_real_to_measured(current_z)
+            
+            # Wait for next update (or finish if last step)
+            if step < num_steps - 1:
+                await asyncio.sleep(update_interval_s)
+            else:
+                # Final step - sleep remaining time
+                remaining_time = total_time_s - (step * update_interval_s)
+                if remaining_time > 0:
+                    await asyncio.sleep(remaining_time)
+    
+    async def _delay_for_imaging(self, exposure_time_ms: float) -> None:
+        """Simulate realistic imaging delay (exposure time + overhead)"""
+        if self._realistic_delays_enabled:
+            # Imaging takes exposure time + 10ms overhead (readout, processing, etc.)
+            total_time_s = (exposure_time_ms + 10.0) / 1000.0
+            await asyncio.sleep(total_time_s)
     
     @contextmanager
     def lock(self, blocking: bool = True) -> tp.Iterator[tp.Self | None]:
@@ -374,45 +459,110 @@ class MockMicroscope(Microscope):
             
         elif isinstance(command, cmd.LoadingPositionEnter):
             logger.info("Mock microscope: entering loading position")
+            
+            # Check if streaming is active
+            if self.stream_callback is not None:
+                cmd.error_internal(detail="already streaming")
+            
+            # Simulate gradual movement to loading position (0, 0, 0)
+            await self._simulate_gradual_movement(target_x_mm=0.0, target_y_mm=0.0, target_z_mm=0.0)
+            
             self.is_in_loading_position = True
             return cmd.BasicSuccessResponse()  # type: ignore
             
         elif isinstance(command, cmd.LoadingPositionLeave):
             logger.info("Mock microscope: leaving loading position") 
+            
+            # Check if streaming is active
+            if self.stream_callback is not None:
+                cmd.error_internal(detail="already streaming")
+            
+            # Move to center of plate (127.8mm width, ~80mm height)
+            plate_center_x = 127.8 / 2.0  # 63.9mm
+            plate_center_y = 80.0 / 2.0   # 40.0mm
+            current_z = self._pos_z_measured_to_real(self._current_position.z_pos_mm)
+            
+            await self._simulate_gradual_movement(target_x_mm=plate_center_x, target_y_mm=plate_center_y, target_z_mm=current_z)
             self.is_in_loading_position = False
             return cmd.BasicSuccessResponse()  # type: ignore
             
         elif isinstance(command, cmd.MoveTo):
             logger.info(f"Mock microscope: moving to ({command.x_mm}, {command.y_mm}, {command.z_mm})")
-            if command.x_mm is not None:
-                self._current_position.x_pos_mm = self._pos_x_real_to_measured(command.x_mm)
-            if command.y_mm is not None:
-                self._current_position.y_pos_mm = self._pos_y_real_to_measured(command.y_mm)
-            if command.z_mm is not None:
-                self._current_position.z_pos_mm = self._pos_z_real_to_measured(command.z_mm)
+            
+            # Check if streaming is active
+            if self.stream_callback is not None:
+                cmd.error_internal(detail="already streaming")
+            
+            # Calculate target position (use current position for unspecified axes)
+            target_x = command.x_mm if command.x_mm is not None else self._pos_x_measured_to_real(self._current_position.x_pos_mm)
+            target_y = command.y_mm if command.y_mm is not None else self._pos_y_measured_to_real(self._current_position.y_pos_mm)
+            target_z = command.z_mm if command.z_mm is not None else self._pos_z_measured_to_real(self._current_position.z_pos_mm)
+            
+            # Simulate gradual movement with real-time position updates
+            await self._simulate_gradual_movement(target_x_mm=target_x, target_y_mm=target_y, target_z_mm=target_z)
             return cmd.BasicSuccessResponse()  # type: ignore
             
         elif isinstance(command, cmd.MoveBy):
             logger.info(f"Mock microscope: moving {command.axis} by {command.distance_mm}mm")
+            
+            # Check if streaming is active
+            if self.stream_callback is not None:
+                cmd.error_internal(detail="already streaming")
+            
+            # Calculate target position after relative movement
+            current_x = self._pos_x_measured_to_real(self._current_position.x_pos_mm)
+            current_y = self._pos_y_measured_to_real(self._current_position.y_pos_mm)  
+            current_z = self._pos_z_measured_to_real(self._current_position.z_pos_mm)
+            
             if command.axis == "x":
-                self._current_position.x_pos_mm += command.distance_mm
+                target_x = current_x + command.distance_mm
+                target_y = current_y
+                target_z = current_z
             elif command.axis == "y":
-                self._current_position.y_pos_mm += command.distance_mm
+                target_x = current_x
+                target_y = current_y + command.distance_mm
+                target_z = current_z
             elif command.axis == "z":
-                self._current_position.z_pos_mm += command.distance_mm
+                target_x = current_x
+                target_y = current_y  
+                target_z = current_z + command.distance_mm
+            else:
+                target_x = current_x
+                target_y = current_y
+                target_z = current_z
+            
+            # Simulate gradual movement with real-time position updates
+            await self._simulate_gradual_movement(target_x_mm=target_x, target_y_mm=target_y, target_z_mm=target_z)
             return cmd.MoveByResult(axis=command.axis, moved_by_mm=command.distance_mm)  # type: ignore
             
         elif isinstance(command, cmd.MoveToWell):
             logger.info(f"Mock microscope: moving to well {command.well_name}")
-            # Mock well position calculation
-            well_x = command.plate_type.get_well_offset_x(command.well_name)
-            well_y = command.plate_type.get_well_offset_y(command.well_name)
-            self._current_position.x_pos_mm = self._pos_x_real_to_measured(well_x)
-            self._current_position.y_pos_mm = self._pos_y_real_to_measured(well_y)
+            
+            # Check if streaming is active
+            if self.stream_callback is not None:
+                cmd.error_internal(detail="already streaming")
+            
+            # Calculate well center position (offset + half well size)
+            well_x = command.plate_type.get_well_offset_x(command.well_name) + command.plate_type.Well_size_x_mm / 2
+            well_y = command.plate_type.get_well_offset_y(command.well_name) + command.plate_type.Well_size_y_mm / 2
+            
+            # Current Z position doesn't change for well moves
+            current_z = self._pos_z_measured_to_real(self._current_position.z_pos_mm)
+            
+            # Simulate gradual movement with real-time position updates
+            await self._simulate_gradual_movement(target_x_mm=well_x, target_y_mm=well_y, target_z_mm=current_z)
             return cmd.BasicSuccessResponse()  # type: ignore
             
         elif isinstance(command, cmd.ChannelSnapshot):
             logger.info(f"Mock microscope: snapping channel {command.channel.handle}")
+            
+            # Check if streaming is active
+            if self.stream_callback is not None:
+                cmd.error_internal(detail="already streaming")
+            
+            # Simulate imaging delay based on exposure time
+            await self._delay_for_imaging(command.channel.exposure_time_ms)
+            
             # Find matching channel config
             matching_configs = [ch for ch in self.channels if ch.handle == command.channel.handle]
             if not matching_configs:
@@ -460,6 +610,14 @@ class MockMicroscope(Microscope):
             
         elif isinstance(command, cmd.AutofocusSnap):
             logger.info("Mock microscope: taking autofocus snapshot")
+            
+            # Check if streaming is active
+            if self.stream_callback is not None:
+                cmd.error_internal(detail="already streaming")
+            
+            # Simulate imaging delay (autofocus typically uses shorter exposure ~5ms)
+            await self._delay_for_imaging(5.0)
+            
             # Generate mock autofocus image (smaller, grayscale)
             synthetic_img = np.random.randint(0, 65536, (256, 256), dtype=np.uint16)
             result = cmd.AutofocusSnapResult(width_px=256, height_px=256)
@@ -468,10 +626,37 @@ class MockMicroscope(Microscope):
             
         elif isinstance(command, cmd.ChannelSnapSelection):
             logger.info("Mock microscope: snapping selected channels")
-            # Mock channel selection - return success with mock images  
-            # Extract channel handles from config_file
-            channel_handles = [ch.handle for ch in command.config_file.channels]
-            return cmd.ChannelSnapSelectionResult(channel_handles=channel_handles)  # type: ignore
+            
+            # Check if streaming is active
+            if self.stream_callback is not None:
+                cmd.error_internal(detail="already streaming")
+            
+            channel_handles: list[str] = []
+            channel_images: dict[str, np.ndarray] = {}
+            
+            for channel in command.config_file.channels:
+                if not channel.enabled:
+                    continue
+                
+                # Create individual ChannelSnapshot command for each enabled channel
+                cmd_snap = cmd.ChannelSnapshot(
+                    channel=channel,
+                    machine_config=command.config_file.machine_config or [],
+                )
+                
+                # Execute the individual channel snapshot (reuses existing logic)
+                res = await self.execute(cmd_snap)
+                
+                # Store the generated image
+                channel_images[channel.handle] = res._img
+                channel_handles.append(channel.handle)
+            
+            logger.info(f"Mock microscope: snapped {len(channel_handles)} channels")
+            
+            # Create result with generated images
+            result = cmd.ChannelSnapSelectionResult(channel_handles=channel_handles)
+            result._images = channel_images
+            return result  # type: ignore
             
         elif isinstance(command, cmd.ChannelStreamBegin):
             logger.info(f"Mock microscope: starting stream for channel {command.channel.handle}")

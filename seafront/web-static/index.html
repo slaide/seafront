@@ -1193,6 +1193,27 @@
                             </div>
 
                             <div class="section">
+                                <div>Quick Capture</div>
+                                <div>
+                                    <button 
+                                        @click="Actions.snapAllChannels()"
+                                        x-init="enabletooltip($el)"
+                                        x-bind:tooltip="`
+                                            Snap all enabled channels with their configured settings.
+                                            
+                                            This will:
+                                            • Run laser autofocus if enabled and calibrated
+                                            • Move to each channel's Z-offset
+                                            • Capture images with the configured exposure and gain
+                                            • Display results in the interface
+                                        `.trimLeft().replaceAll('\n','<br>')"
+                                    >
+                                        Snap All Channels
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="section">
                                 <div>
                                     Live Acquisition
                                     <span 

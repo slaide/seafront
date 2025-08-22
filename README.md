@@ -131,18 +131,17 @@ Channels define the available imaging modalities and their illumination sources.
 
 The software automatically detects LED matrix vs laser sources and applies appropriate control methods. See [Power Calibration](#power-calibration-for-illumination-sources) for details on calibrated illumination control.
 
-### mock microscope for development and testing
+### mock microscope
 
-Seafront includes a mock microscope implementation for development, testing, and demonstration purposes. The mock microscope:
+Mock microscope implementation simulates hardware operations without physical devices.
 
-- **Simulates all hardware operations** without requiring actual microscope hardware
-- **Returns instantly** from all operations (no waiting for motors, cameras, etc.)
-- **Generates synthetic images** with realistic cellular and fluorescent patterns
-- **Maintains realistic state** transitions and position tracking
-- **Supports all commands** that the real SQUID microscope supports
-- **Realistic camera behavior** with proper exposure time and analog gain (dB) scaling
-- **Dynamic streaming** with continuous frame generation at realistic framerates (6 FPS)
-- **Channel-specific image patterns** (brightfield cellular structures vs fluorescent spots)
+Features:
+- Simulates hardware operations without physical microscope
+- Generates synthetic images with channel-specific patterns
+- Supports all microscope commands
+- Exposure time and analog gain scaling
+- Streaming at 6 FPS
+- Movement simulation at 4cm/s with position updates
 
 #### enabling mock mode
 
@@ -166,15 +165,21 @@ Add `"microscope_type": "mock"` to your microscope configuration:
 }
 ```
 
-**Note**: When using mock mode, camera and microcontroller fields are ignored since no real hardware is used.
+Camera and microcontroller fields are ignored in mock mode.
 
-#### use cases
+#### timing control
 
-- **Development**: Test software changes without microscope hardware
-- **CI/CD**: Run automated tests in continuous integration environments  
-- **Demonstrations**: Show software functionality without hardware setup
-- **Training**: Allow users to learn the interface safely
-- **Debugging**: Isolate software issues from hardware problems
+Environment variable `MOCK_NO_DELAYS`:
+- `MOCK_NO_DELAYS=1`: Instant operations
+- Default: Realistic delays (4cm/s movement, exposure time delays)
+
+```bash
+# Instant operations
+MOCK_NO_DELAYS=1 uv run python -m seafront
+
+# Realistic timing (default)  
+uv run python -m seafront
+```
 
 ### additional parameters
 
