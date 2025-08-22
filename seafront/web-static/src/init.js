@@ -135,7 +135,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         themes: ["light", "dark"],
-        theme: "light",
+        theme: localStorage.getItem("seafront-theme") || "light",
         changeTheme() {
             // apply theme to document body
             const el = document.body;
@@ -150,6 +150,9 @@ document.addEventListener("alpine:init", () => {
 
             // apply new theme
             el.classList.add(`theme-${this.theme}`);
+            
+            // save theme to localStorage
+            localStorage.setItem("seafront-theme", this.theme);
         },
 
         /**

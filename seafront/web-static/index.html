@@ -1458,8 +1458,10 @@
                         <select
                             x-model="theme"
                             x-init="$nextTick(()=>{
-							console.log(`current theme is ${theme}`)
-							changeTheme()
+							$nextTick(()=>{
+								console.log(`current theme is ${theme}`)
+								changeTheme()
+							})
 						})"
                             @change="changeTheme($el,$event)"
                         >
@@ -1470,6 +1472,7 @@
                                 <option
                                     x-bind:value="themeoption"
                                     x-text="themeoption"
+                                    x-bind:selected="themeoption === theme"
                                 ></option>
                             </template>
                         </select>
