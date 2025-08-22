@@ -1287,7 +1287,7 @@ class SquidAdapter(BaseModel):
                     logger.debug("squid - autofocus - acquired image")
                     if img is None:
                         self.state = CoreState.Idle
-                        cmd.error_internal(detail="failed to acquire image")
+                        cmd.error_internal(detail="laser autofocus camera acquisition returned no image data")
 
                     if command.turn_laser_off:
                         await qmc.send_cmd(mc.Command.af_laser_illum_end())
@@ -1414,9 +1414,10 @@ class SquidAdapter(BaseModel):
                             logger.debug("channel snap - after illum off")
 
                         if img is None:
-                            logger.critical("failed to acquire image")
+                            errmsg="main imaging camera acquisition did not return image data"
+                            logger.critical(errmsg)
                             self.state = CoreState.Idle
-                            cmd.error_internal(detail="failed to acquire image")
+                            cmd.error_internal(detail=errmsg)
 
                         self.state = CoreState.Idle
 
