@@ -796,7 +796,7 @@ document.addEventListener("alpine:init", () => {
         server_url_input: "",
         /**
          *
-         * @param {string?} url
+         * @param {string?} [url=undefined]
          * @returns
          */
         status_reconnect(url) {
