@@ -207,6 +207,8 @@ class CoreCurrentState(BaseModel):
     adapter_state: AdapterState
     latest_imgs: dict[str, ImageStoreInfo]
     current_acquisition_id: str | None
+    is_streaming: bool
+    "True if live streaming/acquisition is currently active"
 
 
 class BasicSuccessResponse(BaseModel):

@@ -1195,10 +1195,14 @@ class Core:
         except DisconnectError:
             error_internal("hardware disconnect")
 
+        # Check if streaming is currently active by looking at the stream callback
+        is_streaming = self.microscope.stream_callback is not None
+
         return CoreCurrentState(
             adapter_state=microscope_adapter_state,
             latest_imgs={key: entry.info for key, entry in self.latest_images.items()},
             current_acquisition_id=current_acquisition_id,
+            is_streaming=is_streaming,
         )
 
     async def cancel_acquisition(self, acquisition_id: str) -> BasicSuccessResponse:

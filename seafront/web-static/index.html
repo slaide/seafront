@@ -1193,7 +1193,16 @@
                             </div>
 
                             <div class="section">
-                                <div>Live Acquisition</div>
+                                <div>
+                                    Live Acquisition
+                                    <span 
+                                        x-show="isStreaming" 
+                                        class="streaming-indicator"
+                                        x-transition.opacity.duration.300ms
+                                    >
+                                        ● STREAMING
+                                    </span>
+                                </div>
                                 <div>
                                     <div
                                         id="live-acquisition-controls"
@@ -1208,6 +1217,20 @@
                                                 );
                                                 gap: 0 0.6em;
                                             }
+                                            
+                                            .streaming-indicator {
+                                                color: #ff4444;
+                                                font-weight: bold;
+                                                font-size: 0.9em;
+                                                margin-left: 10px;
+                                                animation: pulse 1.5s infinite;
+                                                text-shadow: 0 0 4px rgba(255, 68, 68, 0.6);
+                                            }
+                                            
+                                            @keyframes pulse {
+                                                0%, 100% { opacity: 1; }
+                                                50% { opacity: 0.6; }
+                                            }
                                         </style>
 
                                         <label
@@ -1221,10 +1244,16 @@
 									`.trimLeft().replaceAll('\n','<br>')"
                                             >Live Acq.</label
                                         >
-                                        <button @click="buttons_startStreaming">
+                                        <button 
+                                            @click="buttons_startStreaming"
+                                            :disabled="isStreaming"
+                                        >
                                             start
                                         </button>
-                                        <button @click="buttons_endStreaming">
+                                        <button 
+                                            @click="buttons_endStreaming"
+                                            :disabled="!isStreaming"
+                                        >
                                             stop
                                         </button>
                                         <select

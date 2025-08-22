@@ -51,16 +51,17 @@ declare global {
     /**
      * microscope state, combines actual microscope telemetry with UI state
      */
-    type MicroscopeState = {
+    type CoreCurrentState = {
         adapter_state: {
             is_in_loading_position: boolean;
             state: "idle";
             stage_position: AdapterPosition;
         };
-        current_acquisition_id: string | undefined;
         latest_imgs: {
             [channel_handle: string]: ChannelInfo;
         };
+        current_acquisition_id: string | undefined;
+        is_streaming: boolean;
     };
     type Version = {
         major: int;

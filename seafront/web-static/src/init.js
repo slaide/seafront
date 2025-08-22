@@ -564,7 +564,7 @@ document.addEventListener("alpine:init", () => {
         },
         /**
          *
-         * @param {MicroscopeState} data
+         * @param {CoreCurrentState} data
          */
         async updateMicroscopeStatus(data) {
             const timestamps = [];
@@ -576,6 +576,11 @@ document.addEventListener("alpine:init", () => {
             // console.log(`updateMicroscopeStatus with`, timestamps)
             // update state with data from 'data' object
             this.state = data;
+            
+            // Sync streaming state from server
+            if (data.is_streaming !== undefined) {
+                this.isStreaming = data.is_streaming;
+            }
 
             if (this._numOpenWebsockets < 1 && this.state.latest_imgs != null) {
                 for (const [channel_handle, channel_info] of Object.entries(
@@ -643,9 +648,9 @@ document.addEventListener("alpine:init", () => {
             await this.plateNavigator.loadPlate(microscope_config, plate);
         },
 
-        /** @type {MicroscopeState|{}} */
+        /** @type {CoreCurrentState|{}} */
         _state: {},
-        /** @returns {MicroscopeState} */
+        /** @returns {CoreCurrentState} */
         get state() {
             if (Object.keys(this._state).length == 0) {
                 throw `bug in state`;
@@ -654,7 +659,7 @@ document.addEventListener("alpine:init", () => {
             return this._state;
         },
         /**
-         * @param {MicroscopeState} newstate
+         * @param {CoreCurrentState} newstate
          */
         set state(newstate) {
             /** @ts-ignore */
@@ -1745,7 +1750,13 @@ document.addEventListener("alpine:init", () => {
                 })
                 .then((v) => {
                     console.log("started streaming",v);
+                    this.isStreaming = true;
                     return v;
+                })
+                .catch((error) => {
+                    console.error("failed to start streaming", error);
+                    this.isStreaming = false;
+                    throw error;
                 });
         },
         /**
@@ -1780,6 +1791,8 @@ document.addEventListener("alpine:init", () => {
                     return check(v);
                 })
                 .then((v) => {
+                    console.log("stopped streaming", v);
+                    this.isStreaming = false;
                     return v;
                 });
         },
@@ -1823,6 +1836,9 @@ document.addEventListener("alpine:init", () => {
         actionInput: {
             live_acquisition_channelhandle: "",
         },
+
+        /** Track if live streaming is currently active */
+        isStreaming: false,
 
         /** @type {'x'|'y'|'z'} */
         moveByAxis: "z",
