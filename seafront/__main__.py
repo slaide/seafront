@@ -1866,6 +1866,7 @@ def main():
                 headers={'Content-Type': 'application/json'},
                 method='POST'
             )
+
             with urllib.request.urlopen(req, timeout=30) as response:
                 if response.status == 200:
                     logger.info("hardware connection established")
@@ -1874,7 +1875,6 @@ def main():
         except Exception as e:
             logger.warning(f"failed to establish hardware connection at startup: {e}")
 
-    import threading
     connection_thread = threading.Thread(target=establish_hardware_connection, daemon=True)
     connection_thread.start()
 

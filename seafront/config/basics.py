@@ -10,6 +10,25 @@ from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 CameraDriver = tp.Literal["galaxy", "toupcam"]
 
 
+class PowerCalibration(BaseModel):
+    """Power calibration data for an illumination source"""
+    dac_percent: list[float]
+    "DAC percentage values (0-100)"
+    optical_power_mw: list[float]
+    "Corresponding optical power in milliwatts (used for calibration curve generation)"
+    
+    def validate_data(self) -> None:
+        """Validate that calibration data is consistent"""
+        if len(self.dac_percent) != len(self.optical_power_mw):
+            raise ValueError("DAC percent and optical power arrays must have same length")
+        if len(self.dac_percent) < 2:
+            raise ValueError("Calibration data must have at least 2 points")
+        if not all(0 <= p <= 100 for p in self.dac_percent):
+            raise ValueError("DAC percent values must be between 0 and 100")
+        if not all(p >= 0 for p in self.optical_power_mw):
+            raise ValueError("Optical power values must be non-negative")
+
+
 class ChannelConfig(BaseModel):
     """Configuration for a single imaging channel"""
     name: str
@@ -18,6 +37,17 @@ class ChannelConfig(BaseModel):
     "Internal handle for the channel (e.g. 'fluo405')"
     source_slot: int
     "Illumination source slot number (e.g. 11 for ILLUMINATION_SOURCE_SLOT_11)"
+    use_power_calibration: bool = False
+    "Whether to use power calibration for this channel"
+    power_calibration: PowerCalibration | None = None
+    "Power calibration data (required if use_power_calibration is True)"
+    
+    def validate_calibration(self) -> None:
+        """Validate that calibration settings are consistent"""
+        if self.use_power_calibration and self.power_calibration is None:
+            raise ValueError(f"Channel {self.handle}: use_power_calibration=True but no power_calibration provided")
+        if self.power_calibration is not None:
+            self.power_calibration.validate_data()
 
 
 class FilterConfig(BaseModel):
@@ -202,6 +232,12 @@ class GlobalConfigHandler:
 
     @staticmethod
     def CRITICAL_MACHINE_DEFAULTS() -> CriticalMachineConfig:
+        # Example power calibration for brightfield LED - non-linear response
+        bfled_calibration = PowerCalibration(
+            dac_percent=[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
+            optical_power_mw=[0.0, 0.2, 0.8, 1.8, 3.2, 5.0, 7.2, 9.8, 12.8, 16.2, 20.0, 24.2, 28.8, 33.8, 39.2, 45.0, 51.2, 57.8, 64.8, 72.2, 80.0]
+        )
+        
         # Default channel configuration with traditional illumination sources using proper constructors
         default_channels = [
             ChannelConfig(name="Fluo 405 nm Ex", handle="fluo405", source_slot=11),
@@ -209,7 +245,8 @@ class GlobalConfigHandler:
             ChannelConfig(name="Fluo 561 nm Ex", handle="fluo561", source_slot=14),
             ChannelConfig(name="Fluo 638 nm Ex", handle="fluo638", source_slot=13),
             ChannelConfig(name="Fluo 730 nm Ex", handle="fluo730", source_slot=15),
-            ChannelConfig(name="BF LED Full", handle="bfledfull", source_slot=0),
+            ChannelConfig(name="BF LED Full", handle="bfledfull", source_slot=0, 
+                         use_power_calibration=True, power_calibration=bfled_calibration),
             ChannelConfig(name="BF LED Left Half", handle="bfledleft", source_slot=1),
             ChannelConfig(name="BF LED Right Half", handle="bfledright", source_slot=2)
         ]

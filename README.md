@@ -80,7 +80,25 @@ $ cat ~/seafront/config.json
             "laser_autofocus_camera_model": "MER2-630-60U3M",
             "laser_autofocus_camera_driver": "galaxy",
 
-            "channels": "[                 {'name': 'Fluo 405 nm Ex', 'handle': 'fluo405', 'source_slot': 11},                 {'name': 'Fluo 488 nm Ex', 'handle': 'fluo488', 'source_slot': 12},                 {'name': 'Fluo 561 nm Ex', 'handle': 'fluo561', 'source_slot': 14},                 {'name': 'Fluo 638 nm Ex', 'handle': 'fluo638', 'source_slot': 13},                 {'name': 'Fluo 730 nm Ex', 'handle': 'fluo730', 'source_slot': 15},                 {'name': 'BF LED Full', 'handle': 'bfledfull', 'source_slot': 0},                 {'name': 'BF LED Left Half', 'handle': 'bfledleft', 'source_slot': 1},                 {'name': 'BF LED Right Half', 'handle': 'bfledright', 'source_slot': 2}             ]",
+            "channels": "[
+                {
+                    'name': 'Fluo 405 nm Ex', 
+                    'handle': 'fluo405', 
+                    'source_slot': 11,
+                    'use_power_calibration': false,
+                    'power_calibration': null
+                },
+                {
+                    'name': 'BF LED Full', 
+                    'handle': 'bfledfull', 
+                    'source_slot': 0,
+                    'use_power_calibration': true,
+                    'power_calibration': {
+                        'dac_percent': [0, 25, 50, 75, 100],
+                        'optical_power_mw': [0.0, 5.0, 20.0, 45.0, 80.0]
+                    }
+                }
+            ]",
 
             "filter_wheel_available": "yes",
             "filters": "[                 {'name': 'Basic Filter', 'handle': 'slot1', 'slot': 1},                 {'name': '609nm Filter', 'handle': 'slot2', 'slot': 2},                 {'name': '540nm Filter', 'handle': 'slot3', 'slot': 3},                 {'name': '434nm Filter', 'handle': 'slot4', 'slot': 4},                 {'name': 'No Filter', 'handle': 'nofilter5', 'slot': 5}             ]"
@@ -104,6 +122,84 @@ wells that the microscope is not allowed to enter. this list will depend on the 
 working distance from the bottom of the plate may not conflict with as many positions).
 the format of this value is a json string, and plate types not in the list will have no forbidden wells associated.
 format is : {"< num wells on plate >:["< forbidden well name 0 >",...]"}
+
+## power calibration for illumination sources
+
+Seafront supports calibrated power control for illumination sources to compensate for non-linear response curves (especially important for LED sources). This ensures consistent optical power output regardless of the underlying hardware characteristics.
+
+### configuration
+
+Power calibration is configured per-channel in the `channels` configuration. Each channel can optionally include calibration data:
+
+```json
+{
+  "name": "BF LED Full",
+  "handle": "bfledfull", 
+  "source_slot": 0,
+  "use_power_calibration": true,
+  "power_calibration": {
+    "dac_percent": [0, 25, 50, 75, 100],
+    "optical_power_mw": [0.0, 5.0, 20.0, 45.0, 80.0]
+  }
+}
+```
+
+**Parameters:**
+- `use_power_calibration`: Set to `true` to enable calibrated power control, `false` for linear scaling
+- `power_calibration`: Calibration data with matching arrays of DAC percentages and measured optical power
+- `dac_percent`: DAC output percentages (0-100) used during calibration measurement
+- `optical_power_mw`: Corresponding measured optical power in milliwatts
+
+### how it works
+
+1. **Without calibration**: 25% intensity request → 25% DAC output → unpredictable optical power
+2. **With calibration**: 25% intensity request → lookup table interpolation → correct DAC output → 25% of maximum measured optical power
+
+**Important**: Users still request intensity as percentages (0-100%), but the calibration ensures these percentages correspond to consistent optical power output.
+
+For the example above, requesting 25% intensity would:
+- Look up 25% of max measured power (80.0 mW) = 20.0 mW target  
+- Find that 20.0 mW requires 50% DAC output (from calibration data)
+- Send 50% to the hardware instead of 25%
+- Achieve consistent 20.0 mW optical output (25% of max)
+
+### hardware behavior
+
+**LED Matrix Sources** (brightfield LEDs, slots 0-6):
+- Power is controlled via RGB brightness values
+- Calibration adjusts RGB intensity sent to hardware
+- Uses `SET_ILLUMINATION_LED_MATRIX` microcontroller command
+
+**Regular Sources** (lasers, slots 11-15): 
+- Power is controlled via intensity percentage
+- Calibration adjusts intensity percentage sent to hardware  
+- Uses `SET_ILLUMINATION` microcontroller command
+
+### creating calibration data
+
+1. Set up your illumination source with a power meter
+2. Measure optical power at different DAC settings (0%, 25%, 50%, 75%, 100%)
+3. Record the DAC percentage and corresponding optical power in mW
+4. Add the calibration data to your channel configuration
+5. Set `use_power_calibration: true` for that channel
+6. Restart seafront to load the new calibration
+
+**Example measurement process:**
+```
+DAC 0%  → measure power → 0.0 mW
+DAC 25% → measure power → 5.0 mW  
+DAC 50% → measure power → 20.0 mW
+DAC 75% → measure power → 45.0 mW
+DAC 100% → measure power → 80.0 mW
+```
+
+### benefits
+
+- **Consistent intensity meaning**: 25% intensity always means 25% of maximum optical power, regardless of hardware non-linearity  
+- **Hardware compensation**: Automatically adjusts for non-linear LED/laser response curves
+- **Predictable results**: Same intensity percentage produces same optical power across acquisitions
+- **User-friendly interface**: Still use familiar percentage interface, but with calibrated output
+- **Per-channel flexibility**: Enable calibration only for sources that need it
 
 # calibration
 

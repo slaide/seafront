@@ -22,6 +22,7 @@ from seafront.config.basics import GlobalConfigHandler, CameraDriver, ChannelCon
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, CoreState
 from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier
+from seafront.hardware.illumination import IlluminationController
 from seafront.logger import logger
 from seafront.server import commands as cmd
 from seafront.server.commands import (
@@ -156,6 +157,7 @@ class SquidAdapter(BaseModel):
     main_camera: Locked[Camera]
     focus_camera: Locked[Camera]
     microcontroller: mc.Microcontroller
+    illumination_controller: IlluminationController
     
     channels: list[ChannelConfig]
     filters: list[FilterConfig]
@@ -293,10 +295,14 @@ class SquidAdapter(BaseModel):
         channel_configs = [ChannelConfig(**ch) for ch in channels_data] #type: ignore
         filter_configs = [FilterConfig(**f) for f in filters_data] #type: ignore
 
+        # Initialize illumination controller with channel configurations
+        illumination_controller = IlluminationController(channel_configs)
+        
         squid = SquidAdapter(
             main_camera=Locked(main_camera),
             focus_camera=Locked(focus_camera),
             microcontroller=microcontroller,
+            illumination_controller=illumination_controller,
             channels=channel_configs,
             filters=filter_configs,
         )
@@ -1394,9 +1400,29 @@ class SquidAdapter(BaseModel):
                         logger.debug("channel snap - no filter specified for this channel")
 
                     logger.debug("channel snap - before illum on")
-                    await qmc.send_cmd(
-                        mc.Command.illumination_begin(illum_code, command.channel.illum_perc)
+                    # Get calibrated intensity for this channel
+                    calibrated_intensity = self.illumination_controller.get_calibrated_intensity(
+                        command.channel.handle, command.channel.illum_perc
                     )
+                    
+                    # For LED matrix sources (brightfield), intensity is controlled via RGB values
+                    if illum_code.is_led_matrix:
+                        # Convert calibrated intensity to RGB brightness (0-1 range)
+                        rgb_brightness = calibrated_intensity / 100.0
+                        await qmc.send_cmd(
+                            mc.Command.illumination_begin(
+                                illum_code, 
+                                100.0,  # intensity_percent is ignored for LED matrix
+                                rgb_brightness,  # R
+                                rgb_brightness,  # G  
+                                rgb_brightness   # B
+                            )
+                        )
+                    else:
+                        # For regular sources (lasers), use intensity directly
+                        await qmc.send_cmd(
+                            mc.Command.illumination_begin(illum_code, calibrated_intensity)
+                        )
 
                     with self.main_camera() as main_camera:
                         if main_camera is None:
@@ -1501,9 +1527,29 @@ class SquidAdapter(BaseModel):
                                 detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
                             )
 
-                    await qmc.send_cmd(
-                        mc.Command.illumination_begin(illum_code, command.channel.illum_perc)
+                    # Get calibrated intensity for this channel
+                    calibrated_intensity = self.illumination_controller.get_calibrated_intensity(
+                        command.channel.handle, command.channel.illum_perc
                     )
+                    
+                    # For LED matrix sources (brightfield), intensity is controlled via RGB values
+                    if illum_code.is_led_matrix:
+                        # Convert calibrated intensity to RGB brightness (0-1 range)
+                        rgb_brightness = calibrated_intensity / 100.0
+                        await qmc.send_cmd(
+                            mc.Command.illumination_begin(
+                                illum_code, 
+                                100.0,  # intensity_percent is ignored for LED matrix
+                                rgb_brightness,  # R
+                                rgb_brightness,  # G  
+                                rgb_brightness   # B
+                            )
+                        )
+                    else:
+                        # For regular sources (lasers), use intensity directly
+                        await qmc.send_cmd(
+                            mc.Command.illumination_begin(illum_code, calibrated_intensity)
+                        )
 
                     # returns true if should stop
                     class ForwardImageCallback(tp.TypedDict):
