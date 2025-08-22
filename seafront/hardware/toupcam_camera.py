@@ -405,113 +405,121 @@ class ToupCamCamera(Camera):
                 logger.debug("camera - supports bitdepth 12 (packed)")
 
         self.acquisition_ongoing = True
+        try:
+            # Get image buffer size based on pixel format
+            if toupcam_format == tc.TOUPCAM_PIXELFORMAT_RAW8:
+                bytes_per_pixel = 1
+                dtype=np.uint8
+                # separate format!
+                pullimage_pix_format=8
 
-        # Get image buffer size based on pixel format
-        if toupcam_format == tc.TOUPCAM_PIXELFORMAT_RAW8:
-            bytes_per_pixel = 1
-            dtype=np.uint8
-            # separate format!
-            pullimage_pix_format=8
+            elif toupcam_format == tc.TOUPCAM_PIXELFORMAT_RAW16:
+                bytes_per_pixel = 2
+                dtype=np.uint16
+                # separate format!
+                pullimage_pix_format=16
 
-        elif toupcam_format == tc.TOUPCAM_PIXELFORMAT_RAW16:
-            bytes_per_pixel = 2
-            dtype=np.uint16
-            # separate format!
-            pullimage_pix_format=16
+            else:
+                raise ValueError(f"camera does not support format {toupcam_format}")
+            
 
-        else:
-            raise ValueError(f"camera does not support format {toupcam_format}")
-        
+            with toupcam_ctx("put option TOUPCAM_OPTION_PIXEL_FORMAT"):
+                self._set_toupcam_option(tc.TOUPCAM_OPTION_PIXEL_FORMAT,toupcam_format)
 
-        with toupcam_ctx("put option TOUPCAM_OPTION_PIXEL_FORMAT"):
-            self._set_toupcam_option(tc.TOUPCAM_OPTION_PIXEL_FORMAT,toupcam_format)
+            logger.debug(f"camera - toupcam set pixel format to {toupcam_format} ({self.handle.get_Option(tc.TOUPCAM_OPTION_PIXEL_FORMAT)})")
 
-        logger.debug(f"camera - toupcam set pixel format to {toupcam_format} ({self.handle.get_Option(tc.TOUPCAM_OPTION_PIXEL_FORMAT)})")
+            logger.debug(f"using toupcam_format {pullimage_pix_format} ({toupcam_format})")
 
-        logger.debug(f"using toupcam_format {pullimage_pix_format} ({toupcam_format})")
+            # TOUPCAM_OPTION_RGB for value explanations
+            #with toupcam_ctx(f"set rgb to {bytes_per_pixel+1}"):
+            #    self._set_toupcam_option(tc.TOUPCAM_OPTION_RGB, bytes_per_pixel+1)
+            with toupcam_ctx(f"set bitdepth to {bytes_per_pixel-1}"):
+                self._set_toupcam_option(tc.TOUPCAM_OPTION_BITDEPTH,bytes_per_pixel-1)
 
-        # TOUPCAM_OPTION_RGB for value explanations
-        #with toupcam_ctx(f"set rgb to {bytes_per_pixel+1}"):
-        #    self._set_toupcam_option(tc.TOUPCAM_OPTION_RGB, bytes_per_pixel+1)
-        with toupcam_ctx(f"set bitdepth to {bytes_per_pixel-1}"):
-            self._set_toupcam_option(tc.TOUPCAM_OPTION_BITDEPTH,bytes_per_pixel-1)
+            # Set exposure time (ToupCam uses microseconds)
+            exposure_us = self._exposure_time_ms_to_us(config.exposure_time_ms)
+            context_msg=f"camera - toupcam exposure time set to {config.exposure_time_ms}ms (target: {exposure_us}us, real: {self.handle.get_RealExpoTime()}us)"
+            with toupcam_ctx(context_msg):
+                self.handle.put_ExpoTime(exposure_us)
+            logger.debug(context_msg)
 
-        # Set exposure time (ToupCam uses microseconds)
-        exposure_us = self._exposure_time_ms_to_us(config.exposure_time_ms)
-        self.handle.put_ExpoTime(exposure_us)
-        logger.debug(f"camera - toupcam exposure time set to {config.exposure_time_ms}ms (target: {exposure_us}us, real: {self.handle.get_RealExpoTime()}us)")
+            # Set analog gain (ToupCam uses percentage, 100-10000%)
+            # config.analog_gain is in dB, camera uses percentage
+            # e.g. 0db->100%, 10db->1000%
+            gain_factor=10**(config.analog_gain/10)
+            gain_percent = int(gain_factor * 100)
+            context_msg=f"camera - toupcam analog gain set to {config.analog_gain} ({gain_percent}%)"
+            with toupcam_ctx(context_msg):
+                self.handle.put_ExpoAGain(gain_percent)
+            logger.debug(context_msg)
 
-        # Set analog gain (ToupCam uses percentage, 100-10000%)
-        # config.analog_gain is in dB, camera uses percentage
-        # e.g. 0db->100%, 10db->1000%
-        gain_factor=10**(config.analog_gain/10)
-        gain_percent = int(gain_factor * 100)
-        self.handle.put_ExpoAGain(gain_percent)
-        logger.debug(f"camera - toupcam analog gain set to {config.analog_gain} ({gain_percent}%)")
+            self.ctx.bytes_per_pixel=bytes_per_pixel
+            self.ctx.pullimage_pix_format=pullimage_pix_format
+            self.ctx.dtype=dtype
 
-        self.ctx.bytes_per_pixel=bytes_per_pixel
-        self.ctx.pullimage_pix_format=pullimage_pix_format
-        self.ctx.dtype=dtype
+            self.ctx.captured_image=None
+            self.ctx.image_ready=False
 
-        self.ctx.captured_image=None
-        self.ctx.image_ready=False
+            match mode:
+                case "once":
 
-        match mode:
-            case "once":
+                    try:
 
-                try:
+                        self._set_acquisition_mode(
+                            acq_mode=AcquisitionMode.ON_TRIGGER
+                        )
 
-                    self._set_acquisition_mode(
-                        acq_mode=AcquisitionMode.ON_TRIGGER
-                    )
+                        img_bytes=bytes(self.height*self.width*bytes_per_pixel)
 
-                    img_bytes=bytes(self.height*self.width*bytes_per_pixel)
+                        # lower overhead than regular trigger for single acquisition
+                        self.handle.TriggerSyncV4(
+                            0,
+                            img_bytes,
+                            self.ctx.pullimage_pix_format,
+                            0,
+                            tc.ToupcamFrameInfoV4()
+                        )
 
-                    # lower overhead than regular trigger for single acquisition
-                    self.handle.TriggerSyncV4(
-                        0,
-                        img_bytes,
-                        self.ctx.pullimage_pix_format,
-                        0,
-                        tc.ToupcamFrameInfoV4()
-                    )
+                        img_np=np.frombuffer(img_bytes, dtype=self.ctx.dtype).reshape(
+                            (self.height, self.width)
+                        )
 
-                    img_np=np.frombuffer(img_bytes, dtype=self.ctx.dtype).reshape(
-                        (self.height, self.width)
-                    )
+                        return img_np
 
-                    return img_np
+                    except Exception as e:
+                        raise e
+                    
+                    finally:
+                        self.acquisition_ongoing = False
+                        self.handle.Trigger(0)
 
-                except Exception as e:
-                    raise e
-                
-                finally:
-                    self.acquisition_ongoing = False
-                    self.handle.Trigger(0)
+                case "until_stop":
+                    if callback is None:
+                        self.acquisition_ongoing = False
+                        raise ValueError("callback must be provided for until_stop mode")
 
-            case "until_stop":
-                if callback is None:
-                    self.acquisition_ongoing = False
-                    raise ValueError("callback must be provided for until_stop mode")
+                    try:
 
-                try:
+                        self._set_acquisition_mode(
+                            acq_mode=AcquisitionMode.CONTINUOUS,
+                            with_cb=callback
+                        )
 
-                    self._set_acquisition_mode(
-                        acq_mode=AcquisitionMode.CONTINUOUS,
-                        with_cb=callback
-                    )
+                        # trigger until stop
+                        self.handle.Trigger(0xffff)
 
-                    # trigger until stop
-                    self.handle.Trigger(0xffff)
+                        # someone else calls _acquistion_until_stop_cleanup() later
 
-                    # someone else calls _acquistion_until_stop_cleanup() later
+                        return None
 
-                    return None
+                    except Exception as e:
+                        self._acquisition_until_stop_cleanup()
+                        raise e
 
-                except Exception as e:
-                    self._acquisition_until_stop_cleanup()
-                    raise e
-                
+        except Exception as e:
+            self.acquisition_ongoing = False
+            raise e
+
     def _acquisition_until_stop_cleanup(self):
         assert self.handle is not None
 
