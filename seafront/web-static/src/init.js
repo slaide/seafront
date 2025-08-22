@@ -260,72 +260,21 @@ document.addEventListener("alpine:init", () => {
          * @return {Promise<AcquisitionConfig>}
          **/
         async defaultConfig() {
-            /** @ts-ignore @type {AcquisitionConfig} */
-            let microscope_config = {};
+            // Load default protocol from server using existing config_fetch endpoint
+            const response = await fetch(`${this.server_url}/api/acquisition/config_fetch`, {
+                method: "POST",
+                body: JSON.stringify({ config_file: "default.json" }),
+                headers: [["Content-Type", "application/json"]],
+            });
 
-            /** @type {AcquisitionConfig} */
-            let referenceConfig = {
-                project_name: "",
-                plate_name: "",
-                cell_line: "",
+            if (!response.ok) {
+                const errorMsg = `Failed to load default protocol: HTTP ${response.status}: ${response.statusText}`;
+                console.error(errorMsg);
+                throw new Error(errorMsg + ". Please ensure default.json exists and run: uv run python scripts/generate_default_protocol.py");
+            }
 
-                autofocus_enabled: false,
-
-                grid: {
-                    num_x: 1,
-                    delta_x_mm: 0.9,
-
-                    num_y: 1,
-                    delta_y_mm: 0.9,
-
-                    num_t: 1,
-                    delta_t: {
-                        h: 2,
-                        m: 1,
-                        s: 4,
-                    },
-
-                    mask: [{ row: 0, col: 0, selected: true }],
-                },
-
-                // some [arbitrary] default
-                wellplate_type: {
-                    Manufacturer: "Revvity",
-                    Model_name: "PhenoPlate 384-well",
-                    Model_id_manufacturer: "6057800",
-                    Model_id: "revvity-384-6057800",
-                    Offset_A1_x_mm: 10.5,
-                    Offset_A1_y_mm: 7.36,
-                    Offset_bottom_mm: 0.32799999999999996,
-                    Well_distance_x_mm: 4.5,
-                    Well_distance_y_mm: 4.5,
-                    Well_size_x_mm: 3.26,
-                    Well_size_y_mm: 3.26,
-                    Num_wells_x: 24,
-                    Num_wells_y: 16,
-                    Length_mm: 127.76,
-                    Width_mm: 85.48,
-                    Well_edge_radius_mm: 0.1,
-                },
-
-                plate_wells: [{ col: 0, row: 0, selected: true }],
-
-                channels: (await this.getHardwareCapabilities())
-                    .main_camera_imaging_channels,
-
-                machine_config: await this.getMachineDefaults(),
-                comment: "",
-                spec_version: {
-                    major: 0,
-                    minor: 0,
-                    patch: 0,
-                },
-                timestamp: null,
-            };
-
-            Object.assign(microscope_config, referenceConfig);
-
-            return microscope_config;
+            const protocolData = await response.json();
+            return protocolData.file;
         },
 
         /** protocols stored on server @type {ConfigListEntry[]} */
@@ -446,7 +395,36 @@ document.addEventListener("alpine:init", () => {
             const newconfig = await this.Actions.loadConfig({
                 config_file: protocol.filename,
             });
+            
+            // Save the current complete plate_wells grid before replacing
+            const currentPlateWells = this.microscope_config.plate_wells;
+            
+            // Load the new configuration
             Object.assign(this.microscope_config, newconfig.file);
+            
+            // Merge well selection state from loaded protocol into complete grid
+            if (newconfig.file.plate_wells && currentPlateWells) {
+                // Reset all wells to unselected first
+                currentPlateWells.forEach(well => well.selected = false);
+                
+                // Apply selection state from loaded protocol
+                const loadedWellsMap = new Map();
+                newconfig.file.plate_wells.forEach(well => {
+                    const key = `${well.col},${well.row}`;
+                    loadedWellsMap.set(key, well.selected);
+                });
+                
+                // Update selection state in complete grid
+                currentPlateWells.forEach(well => {
+                    const key = `${well.col},${well.row}`;
+                    if (loadedWellsMap.has(key)) {
+                        well.selected = loadedWellsMap.get(key);
+                    }
+                });
+                
+                // Restore the complete plate_wells grid with updated selections
+                this.microscope_config.plate_wells = currentPlateWells;
+            }
 
             this.configIsStored = true;
         },
@@ -458,6 +436,32 @@ document.addEventListener("alpine:init", () => {
         initDone: false,
         async manualInit() {
             await this.initSelf();
+            
+            // Ensure we have a complete well grid for the well selector
+            // The default config contains sparse well data, but the UI needs all wells
+            if (this._microscope_config && this._microscope_config.wellplate_type) {
+                const currentWells = this._microscope_config.plate_wells || [];
+                const completeWells = this.createPlateWells(this._microscope_config.wellplate_type);
+                
+                // Merge selection state from sparse data into complete grid
+                if (currentWells.length > 0) {
+                    const wellSelectionMap = new Map();
+                    currentWells.forEach(well => {
+                        const key = `${well.col},${well.row}`;
+                        wellSelectionMap.set(key, well.selected);
+                    });
+                    
+                    completeWells.forEach(well => {
+                        const key = `${well.col},${well.row}`;
+                        if (wellSelectionMap.has(key)) {
+                            well.selected = wellSelectionMap.get(key);
+                        }
+                    });
+                }
+                
+                this._microscope_config.plate_wells = completeWells;
+            }
+            
             this.initDone = true;
 
             await this.refreshConfigList();
@@ -881,7 +885,7 @@ document.addEventListener("alpine:init", () => {
                 } else {
                     // console.log(ws.ws.readyState, WebSocket.CLOSED, WebSocket.CONNECTING, WebSocket.OPEN)
                     // if websocket is not yet ready, try again later
-                    requestAnimationFrame(this.status_getstate_loop);
+                    requestAnimationFrame(() => this.status_getstate_loop());
                 }
             } catch (e) {
                 this.isConnectedToServer = false;

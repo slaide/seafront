@@ -1808,6 +1808,16 @@ def main():
     # Initialize global config with selected microscope
     GlobalConfigHandler.reset(selected_microscope.microscope_name)
 
+    # Check for default protocol file
+    default_protocol_file = GlobalConfigHandler.home_acquisition_config_dir() / "default.json"
+    
+    if not default_protocol_file.exists():
+        logger.critical(f"Default protocol file not found: {default_protocol_file}")
+        logger.critical("Please run: uv run python scripts/generate_default_protocol.py")
+        return
+
+    logger.info(f"✓ Default protocol found: {default_protocol_file}")
+
     core = Core(selected_microscope)
 
     # Schedule hardware connection establishment via HTTP request
