@@ -60,68 +60,79 @@ bash run.sh
 # note: config file is now in ~/seafront/config.json (change and reload software to apply)
 ```
 
-example config file (json5 supported):
-```
-$ cat ~/seafront/config.json
+## configuration
+
+See `examples/` directory for complete configuration examples:
+- **`examples/squid_config.json`**: Standard SQUID microscope with Galaxy cameras and power calibration
+- **`examples/squid+_config.json`**: SQUID+ microscope with ToupCam main camera and filter wheel
+
+Place your configuration file at `~/seafront/config.json` (JSON5 format supported).
+
+### basic configuration structure
+```json
 {
-    "port": 5000,
+    "port": 5002,
     "microscopes": [
         {
             "microscope_name": "unnamed HCS SQUID",
-            "main_camera_model": "MER2-1220-32U3M",
+            "main_camera_model": "MER2-1220-32U3M", 
             "main_camera_driver": "galaxy",
-            "base_image_output_dir": "/home/patrick/seafront/images",
-            "calibration_offset_x_mm": 2.44,
-            "calibration_offset_y_mm": 0.44,
-            "calibration_offset_z_mm": 0.0,
-            "forbidden_wells": "{                 '1': [],                 '4': [],                 '96': [],                 '384': ['A01', 'A24', 'P01', 'P24'],                 '1536': []             }",
-
+            "base_image_output_dir": "/home/scientist/seafront/images",
+            
             "laser_autofocus_available": "yes",
             "laser_autofocus_camera_model": "MER2-630-60U3M",
             "laser_autofocus_camera_driver": "galaxy",
-
-            "channels": "[
-                {
-                    'name': 'Fluo 405 nm Ex', 
-                    'handle': 'fluo405', 
-                    'source_slot': 11,
-                    'use_power_calibration': false,
-                    'power_calibration': null
-                },
-                {
-                    'name': 'BF LED Full', 
-                    'handle': 'bfledfull', 
-                    'source_slot': 0,
-                    'use_power_calibration': true,
-                    'power_calibration': {
-                        'dac_percent': [0, 25, 50, 75, 100],
-                        'optical_power_mw': [0.0, 5.0, 20.0, 45.0, 80.0]
-                    }
-                }
-            ]",
-
-            "filter_wheel_available": "yes",
-            "filters": "[                 {'name': 'Basic Filter', 'handle': 'slot1', 'slot': 1},                 {'name': '609nm Filter', 'handle': 'slot2', 'slot': 2},                 {'name': '540nm Filter', 'handle': 'slot3', 'slot': 3},                 {'name': '434nm Filter', 'handle': 'slot4', 'slot': 4},                 {'name': 'No Filter', 'handle': 'nofilter5', 'slot': 5}             ]"
+            
+            "filter_wheel_available": "no",
+            "calibration_offset_x_mm": 0.0,
+            "calibration_offset_y_mm": 0.0, 
+            "calibration_offset_z_mm": 0.0,
+            "forbidden_wells": "{\"384\":[\"A01\",\"A24\",\"P01\",\"P24\"]}",
+            
+            "channels": "[{\"name\": \"BF LED Full\", \"handle\": \"bfledfull\", \"source_slot\": 0}]",
+            "filters": "[]"
         }
     ]
 }
 ```
-- the `"<x>_camera_model"` name strings are passed to the camera api to connect to the camera, so they need to be specific!
-- the `"<x>_camera_driver"` specifies which camera api to use (`"galaxy"` for Daheng cameras, `"toupcam"` for ToupTek cameras).
-- the `"microscope_name"` can be any string, and will be passed as metadata.
-- the `"base_image_output_dir"` is the parent container of the directories where the images are actually stored.
-    the path of an image after acquisition is: 
-    `<base_image_output_dir>/<project name>/<plate name>/<unique acquisition id>_<acqusition start timestamp>`.
+### configuration parameters
 
-    note: the `<unique acquisition id>` is currently hard-coded because i have not had a good idea in how to generate a unique id.
-- the `"calibration_offset_<x|y|z>"` should be _mostly_ correct. there can be minor deviations between microscope restarts, so there is 
-a setting in the seafront web interface to fine-tune the values used during acquisition, so the value in this config file does not 
-need to be changed all the time.
-- the `"forbidden_wells"` because of hardware conflicts (the objective being able to crash into the XY-stage), there is a list of 
-wells that the microscope is not allowed to enter. this list will depend on the objective used (an objective with a larger 
-working distance from the bottom of the plate may not conflict with as many positions).
-the format of this value is a json string, and plate types not in the list will have no forbidden wells associated.
-format is : {"< num wells on plate >:["< forbidden well name 0 >",...]"}
+- **`"<x>_camera_model"`**: Camera model names passed to the camera API - must be specific! Use `scripts/list_squid_hardware.py` to find exact model names.
+- **`"<x>_camera_driver"`**: Camera API to use (`"galaxy"` for Daheng cameras, `"toupcam"` for ToupTek cameras).
+- **`"microscope_name"`**: Any string, used as metadata.
+- **`"base_image_output_dir"`**: Parent directory for image storage.
+- **`"channels"`**: JSON string defining available imaging channels (see [Channel Configuration](#channel-configuration)).
+- **`"filters"`**: JSON string defining filter wheel configuration (empty array `"[]"` if no filter wheel).
+
+Image storage path format: `<base_image_output_dir>/<project name>/<plate name>/<unique acquisition id>_<acquisition start timestamp>`
+
+### channel configuration
+
+Channels define the available imaging modalities and their illumination sources. Each channel in the `"channels"` JSON string has these properties:
+
+```json
+{
+    "name": "BF LED Full",              // Display name in interface
+    "handle": "bfledfull",              // Internal identifier (must be unique)
+    "source_slot": 0,                   // Illumination source slot (0-6: LED matrix, 11-15: lasers)
+    "use_power_calibration": true,      // Enable power calibration
+    "power_calibration": {              // Optional: calibration data
+        "dac_percent": [0, 25, 50, 75, 100],
+        "optical_power_mw": [0.0, 5.0, 20.0, 45.0, 80.0]
+    }
+}
+```
+
+**Hardware mapping**:
+- **Slots 0-6**: LED matrix sources (brightfield)
+- **Slots 11-15**: Laser sources (fluorescence)
+
+The software automatically detects LED matrix vs laser sources and applies appropriate control methods. See [Power Calibration](#power-calibration-for-illumination-sources) for details on calibrated illumination control.
+
+### additional parameters
+
+- **`"calibration_offset_<x|y|z>"`**: Should be _mostly_ correct. Minor deviations between microscope restarts can be fine-tuned in the web interface during acquisition.
+- **`"forbidden_wells"`**: Hardware conflict prevention. JSON string listing wells where the objective might crash into the XY-stage. Format: `{"<num_wells>": ["<well_name>", ...]}`. Wells not listed are allowed. This depends on the objective's working distance.
 
 ## power calibration for illumination sources
 
@@ -200,6 +211,7 @@ DAC 100% → measure power → 80.0 mW
 - **Predictable results**: Same intensity percentage produces same optical power across acquisitions
 - **User-friendly interface**: Still use familiar percentage interface, but with calibrated output
 - **Per-channel flexibility**: Enable calibration only for sources that need it
+- **Dynamic configuration**: Channels are loaded from microscope config, not hardcoded
 
 # calibration
 

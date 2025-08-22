@@ -42,7 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 from pydantic.fields import FieldInfo
 from seaconfig.acquisition import AcquisitionConfig
 
-from seafront.config.basics import ConfigItem, GlobalConfigHandler, ServerConfig
+from seafront.config.basics import ChannelConfig, ConfigItem, GlobalConfigHandler, ServerConfig
 from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.logger import logger
 from seafront.server.commands import (
@@ -157,93 +157,42 @@ def get_hardware_capabilities() -> HardwareCapabilitiesResponse:
 
     these are the high-level configuration options that the user can select from
     """
-
-    default_channel_config = [
-        sc.AcquisitionChannelConfig(
-            name="Fluo 405 nm Ex",
-            handle="fluo405",
-            illum_perc=100,
-            exposure_time_ms=5.0,
-            analog_gain=0,
-            z_offset_um=0,
-            num_z_planes=1,
-            delta_z_um=1,
-        ),
-        sc.AcquisitionChannelConfig(
-            name="Fluo 488 nm Ex",
-            handle="fluo488",
-            illum_perc=100,
-            exposure_time_ms=5.0,
-            analog_gain=0,
-            z_offset_um=0,
-            num_z_planes=1,
-            delta_z_um=1,
-        ),
-        sc.AcquisitionChannelConfig(
-            name="Fluo 561 nm Ex",
-            handle="fluo561",
-            illum_perc=100,
-            exposure_time_ms=5.0,
-            analog_gain=0,
-            z_offset_um=0,
-            num_z_planes=1,
-            delta_z_um=1,
-        ),
-        sc.AcquisitionChannelConfig(
-            name="Fluo 638 nm Ex",
-            handle="fluo638",
-            illum_perc=100,
-            exposure_time_ms=5.0,
-            analog_gain=0,
-            z_offset_um=0,
-            num_z_planes=1,
-            delta_z_um=1,
-        ),
-        sc.AcquisitionChannelConfig(
-            name="Fluo 730 nm Ex",
-            handle="fluo730",
-            illum_perc=100,
-            exposure_time_ms=5.0,
-            analog_gain=0,
-            z_offset_um=0,
-            num_z_planes=1,
-            delta_z_um=1,
-        ),
-        sc.AcquisitionChannelConfig(
-            name="BF LED Full",
-            handle="bfledfull",
-            illum_perc=20,
-            exposure_time_ms=5.0,
-            analog_gain=0,
-            z_offset_um=0,
-            num_z_planes=1,
-            delta_z_um=1,
-        ),
-        sc.AcquisitionChannelConfig(
-            name="BF LED Right Half",
-            handle="bfledright",
-            illum_perc=20,
-            exposure_time_ms=5.0,
-            analog_gain=0,
-            z_offset_um=0,
-            num_z_planes=1,
-            delta_z_um=1,
-        ),
-        sc.AcquisitionChannelConfig(
-            name="BF LED Left Half",
-            handle="bfledleft",
-            illum_perc=20,
-            exposure_time_ms=5.0,
-            analog_gain=0,
-            z_offset_um=0,
-            num_z_planes=1,
-            delta_z_um=1,
-        ),
-    ]
+    
+    # Access global configuration
+    g_dict = GlobalConfigHandler.get_dict()
+    
+    # Get channels JSON string and parse it
+    channels_json = g_dict["channels"].strvalue
+    channels_data = json5.loads(channels_json)
+    
+    if channels_data is None:
+        raise ValueError("Parsed channels configuration is None - invalid JSON structure")
+    
+    # Convert to ChannelConfig objects
+    channel_configs = [ChannelConfig(**ch) for ch in channels_data]
+    
+    # Convert ChannelConfig to AcquisitionChannelConfig with sensible defaults
+    acquisition_channels = []
+    for ch in channel_configs:
+        # Use different default illumination based on channel type
+        default_illum_perc = 20.0 if ch.handle.startswith('bfled') else 100.0
+        
+        acquisition_channels.append(sc.AcquisitionChannelConfig(
+            name=ch.name,
+            handle=ch.handle,
+            illum_perc=default_illum_perc,   # Lower default for brightfield LEDs
+            exposure_time_ms=5.0,           # Default exposure time
+            analog_gain=0.0,                # Default analog gain
+            z_offset_um=0.0,                # Default z offset
+            num_z_planes=1,                 # Default single z plane
+            delta_z_um=1.0,                 # Default z spacing
+            filter_handle=None,             # No filter by default
+            enabled=True                    # Enabled by default
+        ))
 
     return HardwareCapabilitiesResponse(
         wellplate_types=sc.Plates,
-        main_camera_imaging_channels=list(default_channel_config),
+        main_camera_imaging_channels=acquisition_channels,
     )
 
 
