@@ -15,6 +15,7 @@ import threading
 import time
 import traceback
 import typing as tp
+
 from concurrent.futures import Future as CCFuture
 from enum import Enum
 from functools import wraps
@@ -970,6 +971,13 @@ class Core:
             methods=["POST"],
         )
 
+        # Establish hardware connection
+        route_wrapper(
+            "/api/action/establish_hardware_connection",
+            CustomRoute(handler=EstablishHardwareConnection, tags=[RouteTag.ACTIONS.value]),
+            methods=["POST"],
+        )
+
         self.latest_images: dict[str, ImageStoreEntry] = {}
         "latest image acquired in each channel, key is channel handle"
 
@@ -1824,6 +1832,51 @@ def main():
     GlobalConfigHandler.reset(selected_microscope.microscope_name)
 
     core = Core()
+
+    # Schedule hardware connection establishment via HTTP request
+    def establish_hardware_connection():
+        try:
+            import urllib.request
+            import urllib.error
+            import socket
+
+            server_base_url=f"http://127.0.0.1:{server_config.port}"
+            
+            # Wait for server to be ready by polling a simple endpoint
+            server_ready = False
+            max_attempts = 30  # 30 seconds max wait
+            for attempt in range(max_attempts):
+                try:
+                    with urllib.request.urlopen(server_base_url+"/", timeout=0.5) as response:
+                        if response.status == 200:
+                            server_ready = True
+                            break
+                except (urllib.error.URLError, socket.timeout):
+                    pass
+                time.sleep(0.5)
+            
+            if not server_ready:
+                logger.warning("server did not become ready within 30 seconds, skipping hardware connection")
+                return
+            
+            logger.info("establishing hardware connection at startup")
+            req = urllib.request.Request(
+                server_base_url + "/api/action/establish_hardware_connection",
+                data=b'{}',
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=30) as response:
+                if response.status == 200:
+                    logger.info("hardware connection established")
+                else:
+                    logger.warning(f"hardware connection failed: {response.status}")
+        except Exception as e:
+            logger.warning(f"failed to establish hardware connection at startup: {e}")
+
+    import threading
+    connection_thread = threading.Thread(target=establish_hardware_connection, daemon=True)
+    connection_thread.start()
 
     try:
         logger.info("starting http server")
