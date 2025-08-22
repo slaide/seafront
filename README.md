@@ -265,6 +265,31 @@ DAC 100% → measure power → 80.0 mW
 - **Per-channel flexibility**: Enable calibration only for sources that need it
 - **Dynamic configuration**: Channels are loaded from microscope config, not hardcoded
 
+## default protocol configuration
+
+Seafront requires a default protocol configuration file at startup. This file provides default acquisition settings and wellplate configuration that the interface loads when first started.
+
+### generating default configuration
+
+A default protocol must be present at `~/seafront/acquisition_configs/default.json` before starting the software. Generate it using:
+
+```bash
+# Generate with default 384-well plate
+uv run python scripts/generate_default_protocol.py
+
+# List available wellplate types
+uv run python scripts/generate_default_protocol.py --list
+
+# Generate with specific wellplate
+uv run python scripts/generate_default_protocol.py --plate revvity-384-6057800
+```
+
+The script automatically uses wellplate specifications from the seaconfig library, ensuring accurate dimensions and well layouts for supported plate types.
+
+### what it contains
+
+The default protocol provides initial settings for channel configurations including default power levels, exposure times, and channel-filter mappings. This serves as the starting point that users customize through the web interface for their specific experiments.
+
 # calibration
 
 the one major calibration step required to run this software properly is to calibrate the XY stage position. it requires a 384 well 
