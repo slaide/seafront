@@ -850,7 +850,7 @@ document.addEventListener("alpine:init", () => {
                     this.isConnectedToServer = false;
 
                     // wait a short time before attempting to reconnect
-                    setTimeout(this.status_reconnect, 200);
+                    setTimeout(() => this.status_reconnect(url), 200);
                 };
                 this.status_ws.onopen = (ev) =>
                     requestAnimationFrame(() => this.status_getstate_loop());
@@ -858,7 +858,7 @@ document.addEventListener("alpine:init", () => {
                 this.isConnectedToServer = false;
 
                 console.warn(`websocket error: ${e}`);
-                setTimeout(this.status_reconnect, 200);
+                setTimeout(() => this.status_reconnect(url), 200);
             }
         },
 
@@ -882,7 +882,7 @@ document.addEventListener("alpine:init", () => {
                 this.isConnectedToServer = false;
 
                 // wait a short time before attempting to reconnect
-                setTimeout(this.status_reconnect, 200);
+                setTimeout(() => this.status_reconnect(), 200);
             }
         },
 
