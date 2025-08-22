@@ -65,6 +65,7 @@ bash run.sh
 See `examples/` directory for complete configuration examples:
 - **`examples/squid_config.json`**: Standard SQUID microscope with Galaxy cameras and power calibration
 - **`examples/squid+_config.json`**: SQUID+ microscope with ToupCam main camera and filter wheel
+- **`examples/mock_config.json`**: Mock microscope for development and testing
 
 Place your configuration file at `~/seafront/config.json` (JSON5 format supported).
 
@@ -100,6 +101,7 @@ Place your configuration file at `~/seafront/config.json` (JSON5 format supporte
 - **`"<x>_camera_model"`**: Camera model names passed to the camera API - must be specific! Use `scripts/list_squid_hardware.py` to find exact model names.
 - **`"<x>_camera_driver"`**: Camera API to use (`"galaxy"` for Daheng cameras, `"toupcam"` for ToupTek cameras).
 - **`"microscope_name"`**: Any string, used as metadata.
+- **`"microscope_type"`**: Hardware implementation (`"squid"` for real hardware, `"mock"` for simulation). Defaults to `"squid"`.
 - **`"base_image_output_dir"`**: Parent directory for image storage.
 - **`"channels"`**: JSON string defining available imaging channels (see [Channel Configuration](#channel-configuration)).
 - **`"filters"`**: JSON string defining filter wheel configuration (empty array `"[]"` if no filter wheel).
@@ -128,6 +130,51 @@ Channels define the available imaging modalities and their illumination sources.
 - **Slots 11-15**: Laser sources (fluorescence)
 
 The software automatically detects LED matrix vs laser sources and applies appropriate control methods. See [Power Calibration](#power-calibration-for-illumination-sources) for details on calibrated illumination control.
+
+### mock microscope for development and testing
+
+Seafront includes a mock microscope implementation for development, testing, and demonstration purposes. The mock microscope:
+
+- **Simulates all hardware operations** without requiring actual microscope hardware
+- **Returns instantly** from all operations (no waiting for motors, cameras, etc.)
+- **Generates synthetic images** with realistic cellular and fluorescent patterns
+- **Maintains realistic state** transitions and position tracking
+- **Supports all commands** that the real SQUID microscope supports
+- **Realistic camera behavior** with proper exposure time and analog gain (dB) scaling
+- **Dynamic streaming** with continuous frame generation at realistic framerates (6 FPS)
+- **Channel-specific image patterns** (brightfield cellular structures vs fluorescent spots)
+
+#### enabling mock mode
+
+Add `"microscope_type": "mock"` to your microscope configuration:
+
+```json
+{
+    "port": 5002,
+    "microscopes": [
+        {
+            "microscope_name": "Mock SQUID for Testing",
+            "microscope_type": "mock",
+            "base_image_output_dir": "/home/scientist/seafront/images",
+            "calibration_offset_x_mm": 0.0,
+            "calibration_offset_y_mm": 0.0,
+            "calibration_offset_z_mm": 0.0,
+            "channels": "[{\"name\": \"BF LED Full\", \"handle\": \"bfledfull\", \"source_slot\": 0}]",
+            "filters": "[]"
+        }
+    ]
+}
+```
+
+**Note**: When using mock mode, camera and microcontroller fields are ignored since no real hardware is used.
+
+#### use cases
+
+- **Development**: Test software changes without microscope hardware
+- **CI/CD**: Run automated tests in continuous integration environments  
+- **Demonstrations**: Show software functionality without hardware setup
+- **Training**: Allow users to learn the interface safely
+- **Debugging**: Isolate software issues from hardware problems
 
 ### additional parameters
 

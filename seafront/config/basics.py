@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
 CameraDriver = tp.Literal["galaxy", "toupcam"]
+MicroscopeType = tp.Literal["squid", "mock"]
 
 
 class PowerCalibration(BaseModel):
@@ -62,6 +63,7 @@ class FilterConfig(BaseModel):
 
 class CriticalMachineConfig(BaseModel):
     microscope_name: str
+    microscope_type: MicroscopeType
 
     main_camera_model: str
     main_camera_driver: CameraDriver = "galaxy"
@@ -174,9 +176,22 @@ class GlobalConfigHandler:
         # store critical config items from current config
         store_dict = {}
         current_config = GlobalConfigHandler.get_dict()
+        
+        # Find the existing microscope config to use as fallback
+        current_microscope_name = current_config.get("microscope_name")
+        existing_microscope_config = None
+        if current_microscope_name:
+            for microscope_config in server_config.microscopes:
+                if microscope_config.microscope_name == current_microscope_name.value:
+                    existing_microscope_config = microscope_config
+                    break
+        
         for key in critical_machine_config.keys():
             if key in current_config:
                 store_dict[key] = current_config[key].value
+            elif existing_microscope_config and hasattr(existing_microscope_config, key):
+                # Fallback to existing config value for missing keys
+                store_dict[key] = getattr(existing_microscope_config, key)
 
         store_config = CriticalMachineConfig(**store_dict)
 
@@ -262,6 +277,7 @@ class GlobalConfigHandler:
             main_camera_model="MER2-1220-32U3M",
             laser_autofocus_camera_model="MER2-630-60U3M",
             microscope_name="unnamed HCS SQUID",
+            microscope_type="squid",
             base_image_output_dir=str(GlobalConfigHandler.home() / "images"),
             laser_autofocus_available="yes",
             filter_wheel_available="no",

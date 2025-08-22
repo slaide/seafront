@@ -23,6 +23,7 @@ from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, CoreState
 from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier
 from seafront.hardware.illumination import IlluminationController
+from seafront.hardware.microscope import Microscope, microscope_exclusive
 from seafront.logger import logger
 from seafront.server import commands as cmd
 from seafront.server.commands import (
@@ -140,46 +141,14 @@ class Locked[T]:
             yield None
 
 
-def squid_exclusive(f):
-    "wrapper to ensure exclusive access to some code sections"
-
-    @wraps(f)
-    def wrapper(self, *args, **kwargs):
-        with self._lock:
-            return f(self, *args, **kwargs)
-
-    return wrapper
-
-
-class SquidAdapter(BaseModel):
+class SquidAdapter(Microscope):
     """interface to squid microscope"""
 
+    # SQUID-specific hardware components
     main_camera: Locked[Camera]
     focus_camera: Locked[Camera]
     microcontroller: mc.Microcontroller
     illumination_controller: IlluminationController
-    
-    channels: list[ChannelConfig]
-    filters: list[FilterConfig]
-
-    state: CoreState = CoreState.Idle
-    is_connected: bool = False
-    is_in_loading_position: bool = False
-
-    stream_callback: tp.Callable[[np.ndarray | bool], bool] | None = Field(default=None)
-    """
-    call with either:
-        image, then return if should stop or not
-        or call with bool, which indicates if should stop (return value then ignored)
-    """
-
-    last_state: AdapterState | None = None
-
-    _lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
-    _stop_streaming_flag: bool = PrivateAttr(default=False)
-    "indicate that streaming should stop, without locking hardware"
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @contextmanager
     def lock(self, blocking: bool = True) -> tp.Iterator[tp.Self | None]:
@@ -197,8 +166,8 @@ class SquidAdapter(BaseModel):
         else:
             yield None
 
-    @staticmethod
-    def make() -> "SquidAdapter":
+    @classmethod
+    def make(cls) -> "SquidAdapter":
         g_dict = GlobalConfigHandler.get_dict()
 
         microcontrollers = mc.Microcontroller.get_all()
@@ -298,7 +267,7 @@ class SquidAdapter(BaseModel):
         # Initialize illumination controller with channel configurations
         illumination_controller = IlluminationController(channel_configs)
         
-        squid = SquidAdapter(
+        squid = cls(
             main_camera=Locked(main_camera),
             focus_camera=Locked(focus_camera),
             microcontroller=microcontroller,
@@ -311,7 +280,7 @@ class SquidAdapter(BaseModel):
 
         return squid
 
-    @squid_exclusive
+    @microscope_exclusive
     def open_connections(self):
         """open connections to devices"""
         if self.is_connected:

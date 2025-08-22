@@ -42,8 +42,10 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 from pydantic.fields import FieldInfo
 from seaconfig.acquisition import AcquisitionConfig
 
-from seafront.config.basics import ChannelConfig, ConfigItem, GlobalConfigHandler, ServerConfig
+from seafront.config.basics import ChannelConfig, ConfigItem, CriticalMachineConfig, GlobalConfigHandler, ServerConfig
 from seafront.hardware.squid import DisconnectError, SquidAdapter
+from seafront.hardware.mock_microscope import MockMicroscope
+from seafront.hardware.microscope import Microscope
 from seafront.logger import logger
 from seafront.server.commands import (
     AcquisitionCommand,
@@ -168,8 +170,15 @@ def get_hardware_capabilities() -> HardwareCapabilitiesResponse:
     if channels_data is None:
         raise ValueError("Parsed channels configuration is None - invalid JSON structure")
     
+    if not isinstance(channels_data, list):
+        raise ValueError("Parsed channels configuration must be a list")
+    
     # Convert to ChannelConfig objects
-    channel_configs = [ChannelConfig(**ch) for ch in channels_data]
+    channel_configs = []
+    for ch in channels_data:
+        if not isinstance(ch, dict):
+            raise ValueError("Each channel configuration must be a dictionary")
+        channel_configs.append(ChannelConfig(**ch))
     
     # Convert ChannelConfig to AcquisitionChannelConfig with sensible defaults
     acquisition_channels = []
@@ -356,7 +365,7 @@ def filename_check(name: str) -> str | None:
 class Core:
     """application core, contains server capabilities and microcontroller interaction"""
 
-    def __init__(self):
+    def __init__(self, selected_microscope: CriticalMachineConfig | None = None):
         # self.lock=CoreLock()
 
         def make_acquisition_event_loop():
@@ -370,7 +379,22 @@ class Core:
 
         self.acqusition_eventloop = make_acquisition_event_loop()
 
-        self.squid = SquidAdapter.make()
+        # Create microscope based on configuration
+        if selected_microscope is not None:
+            # Use the passed microscope configuration
+            microscope_type = getattr(selected_microscope, 'microscope_type', 'squid')
+        else:
+            # Fallback to global config (for backward compatibility)
+            g_dict = GlobalConfigHandler.get_dict()
+            microscope_type_item = g_dict.get("microscope_type")
+            microscope_type = microscope_type_item.strvalue if microscope_type_item else "squid"
+        
+        if microscope_type == "mock":
+            logger.info("Creating mock microscope adapter") 
+            self.microscope: Microscope = MockMicroscope.make()
+        else:
+            logger.info("Creating SQUID microscope adapter")
+            self.microscope: Microscope = SquidAdapter.make()
 
         self.acquisition_map: dict[str, AcquisitionStatus] = {}
         """ map containing information on past and current acquisitions """
@@ -405,16 +429,16 @@ class Core:
                         if route.require_hardware_lock:
                             try:
                                 # ensure a connection is established, before running any other command
-                                with self.squid.lock(blocking=False) as squid:
-                                    if squid is None:
-                                        error_internal("squid is busy")
-                                    _ = await squid.execute(EstablishHardwareConnection())
-                                    result = await squid.execute(instance)
+                                with self.microscope.lock(blocking=False) as microscope:
+                                    if microscope is None:
+                                        error_internal("microscope is busy")
+                                    _ = await microscope.execute(EstablishHardwareConnection())
+                                    result = await microscope.execute(instance)
                             except DisconnectError:
                                 error_internal("hardware disconnected")
                         else:
-                            _ = await self.squid.execute(EstablishHardwareConnection())
-                            result = await self.squid.execute(instance)
+                            _ = await self.microscope.execute(EstablishHardwareConnection())
+                            result = await self.microscope.execute(instance)
                     else:
                         raise AttributeError(
                             f"Provided class {target_func} {type(target_func)=} is no BaseCommand"
@@ -482,7 +506,7 @@ class Core:
                 request_data = kwargs.copy()
                 request_data.update(kwargs_static)
 
-                # squid code expects rlock to function as expected, but fastapi serving two requests in parallel
+                # microscope code expects rlock to function as expected, but fastapi serving two requests in parallel
                 # through async will technically run in the same thread, so rlock will function improperly.
                 # we start a new thread just to run this async code in it, to work around this issue.
                 result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
@@ -528,7 +552,7 @@ class Core:
                             request_body_as_toplevel_dict[key] = getattr(request_body, key)
                         request_data.update(request_body_as_toplevel_dict)
 
-                    # squid code expects rlock to function as expected, but fastapi serving two requests in parallel
+                    # microscope code expects rlock to function as expected, but fastapi serving two requests in parallel
                     # through async will technically run in the same thread, so rlock will function improperly.
                     # we start a new thread just to run this async code in it, to work around this issue.
                     logger.debug(f"about to start thread to generate answer {callfunc}")
@@ -550,7 +574,7 @@ class Core:
 
                     request_data = kwargs_static.copy()
 
-                    # squid code expects rlock to function as expected, but fastapi serving two requests in parallel
+                    # microscope code expects rlock to function as expected, but fastapi serving two requests in parallel
                     # through async will technically run in the same thread, so rlock will function improperly.
                     # we start a new thread just to run this async code in it, to work around this issue.
                     result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
@@ -844,11 +868,11 @@ class Core:
 
         def register_stream_begin(begin: ChannelStreamBegin, res: StreamingStartedResponse):
             # register callback on microscope
-            with self.squid.lock() as squid:
-                if squid is None:
-                    error_internal(detail="squid is busy")
+            with self.microscope.lock() as microscope:
+                if microscope is None:
+                    error_internal(detail="microscope is busy")
 
-                squid.stream_callback = handle_image
+                microscope.stream_callback = handle_image
 
                 # store channel info, to be used inside the streaming callback to store the images in the server properly
                 stream_info["channel"] = begin.channel
@@ -1062,11 +1086,11 @@ class Core:
         due to the delay between improper calibration and actual cause of the damage, this function should be treat with appropriate care.
         """
 
-        with self.squid.lock() as squid:
-            if squid is None:
-                error_internal(detail="squid is busy")
+        with self.microscope.lock() as microscope:
+            if microscope is None:
+                error_internal(detail="microscope is busy")
 
-            if squid.is_in_loading_position:
+            if microscope.is_in_loading_position:
                 error_internal(detail="now allowed while in loading position")
 
             _plates = [p for p in sc.Plates if p.Model_id == plate_model_id]
@@ -1074,7 +1098,7 @@ class Core:
                 error_internal(f"{plate_model_id=} is not a known plate model")
             plate = _plates[0]
 
-            current_pos = (await squid.get_current_state()).stage_position
+            current_pos = (await microscope.get_current_state()).stage_position
 
         # real/should position = measured/is position + calibrated offset
         # i.e. calibrated offset = real/should position - measured/is position
@@ -1118,7 +1142,7 @@ class Core:
         """
 
         try:
-            adapter_state = await self.squid.get_current_state()
+            adapter_state = await self.microscope.get_current_state()
         except DisconnectError:
             error_internal("hardware disconnect")
 
@@ -1167,12 +1191,12 @@ class Core:
                     current_acquisition_id = acq_id
 
         try:
-            squid_adapter_state = await self.squid.get_current_state()
+            microscope_adapter_state = await self.microscope.get_current_state()
         except DisconnectError:
             error_internal("hardware disconnect")
 
         return CoreCurrentState(
-            adapter_state=squid_adapter_state,
+            adapter_state=microscope_adapter_state,
             latest_imgs={key: entry.info for key, entry in self.latest_images.items()},
             current_acquisition_id=current_acquisition_id,
         )
@@ -1226,16 +1250,16 @@ class Core:
         """
 
         # check if microscope is even is connected
-        with self.squid.lock() as squid:
-            if squid is None:
-                error_internal(detail="squid is busy")
+        with self.microscope.lock() as microscope:
+            if microscope is None:
+                error_internal(detail="microscope is busy")
 
             try:
-                _ = await squid.get_current_state()
+                _ = await microscope.get_current_state()
             except DisconnectError:
                 error_internal("device not connected")
 
-            if squid.is_in_loading_position:
+            if microscope.is_in_loading_position:
                 error_internal(detail="now allowed while in loading position")
 
         if self.acquisition_future is not None:
@@ -1316,7 +1340,7 @@ class Core:
 
             error_internal(detail=error_detail)
 
-        # this function internally locks the squid
+        # this function internally locks the microscope
         async def run_acquisition(
             q_in: asyncio.Queue[AcquisitionCommand],
             q_out: asyncio.Queue[
@@ -1342,13 +1366,13 @@ class Core:
                     tp.Literal["disconnected"] | InternalErrorModel | AcquisitionStatusOut
                 ],
             ):
-                logger.debug("protocol - started. awaiting squid lock.")
+                logger.debug("protocol - started. awaiting microscope lock.")
 
-                with self.squid.lock() as squid:
-                    if squid is None:
-                        error_internal(detail="squid is busy (this should not be possible)")
+                with self.microscope.lock() as microscope:
+                    if microscope is None:
+                        error_internal(detail="microscope is busy (this should not be possible)")
 
-                    logger.debug("protocol - acquired squid lock")
+                    logger.debug("protocol - acquired microscope lock")
 
                     try:
                         # initiate generation
@@ -1365,7 +1389,7 @@ class Core:
                                 result = None
                                 try:
                                     logger.debug("about to execute next protocol step")
-                                    result = await squid.execute(next_step)
+                                    result = await microscope.execute(next_step)
                                     logger.debug("just executed next protocol step")
                                 except DisconnectError as e:
                                     logger.debug(f"executing protocol step generated error {e}")
@@ -1397,7 +1421,7 @@ class Core:
 
                     except DisconnectError:
                         await q_out.put("disconnected")
-                        squid.close()
+                        microscope.close()
 
                         assert acquisition_status.last_status is not None
                         acquisition_status.last_status.acquisition_status = (
@@ -1464,12 +1488,12 @@ class Core:
             return acq_res.last_status
 
     def close(self):
-        logger.debug("shutdown - closing squid")
+        logger.debug("shutdown - closing microscope")
         try:
-            with self.squid.lock(blocking=True) as squid:
-                assert squid is not None
+            with self.microscope.lock(blocking=True) as microscope:
+                assert microscope is not None
 
-                squid.close()
+                microscope.close()
         except:
             pass
 
@@ -1780,7 +1804,7 @@ def main():
     # Initialize global config with selected microscope
     GlobalConfigHandler.reset(selected_microscope.microscope_name)
 
-    core = Core()
+    core = Core(selected_microscope)
 
     # Schedule hardware connection establishment via HTTP request
     def establish_hardware_connection():
