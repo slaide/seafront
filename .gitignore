@@ -141,3 +141,5 @@ cython_debug/
 
 *.code-workspace
 *.sublime-workspace
+
+.*
