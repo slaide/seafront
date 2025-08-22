@@ -94,6 +94,7 @@ declare module "three" {
 
     class Material {
         get color(): Color;
+        dispose(): void;
     }
     class MeshBasicMaterial extends Material {
         constructor(opts: {
@@ -119,6 +120,7 @@ declare module "three" {
 
         computeBoundingBox(): void;
         get boundingBox(): BoundingBox;
+        dispose(): void;
     }
 
     class Object3D {
@@ -194,8 +196,10 @@ declare module "three" {
     class Texture {
         minFilter: TextureFilter;
         magFilter: TextureFilter;
+        type: DataType;
 
         set needsUpdate(flag: boolean);
+        dispose(): void;
     }
 
     class ShaderMaterial extends Material {

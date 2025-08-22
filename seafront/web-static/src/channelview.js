@@ -333,25 +333,41 @@ export class ChannelImageView {
             sceneInfo.elem = new_element
         }
 
-        if (!sceneInfo.img) {
-            sceneInfo.img = this._makeImage(newimageinfo)
+        // Check if we need to recreate the image due to bit depth change
+        const needsRecreation = !sceneInfo.img || 
+            (sceneInfo.img.texture.type !== datatype) ||
+            (sceneInfo.img.texture.image.data.constructor !== imgdata.constructor);
 
-            if (sceneInfo.img) {
-                sceneInfo.scene.add(sceneInfo.img.mesh)
+        if (needsRecreation) {
+            // Remove old mesh from scene if it exists
+            if (sceneInfo.img && sceneInfo.mesh) {
+                sceneInfo.scene.remove(sceneInfo.mesh);
+                sceneInfo.img.texture.dispose();
+                sceneInfo.img.mesh.geometry.dispose();
+                sceneInfo.img.mesh.material.dispose();
             }
 
-            sceneInfo.mesh = sceneInfo.img?.mesh
-        }
-        if (!sceneInfo.img) { const error = `sceneInfo.img is null`; console.error(error); throw error }
+            // Create new image with correct format
+            sceneInfo.img = this._makeImage(newimageinfo);
 
-        const texture = sceneInfo.img.texture
-        if (!texture) { const error = ``; console.error(error); throw error }
-        if (texture.image.data.length != imgdata.length) {
-            console.error("length does not match", texture.image.data.length, imgdata.length)
-            return
+            if (sceneInfo.img) {
+                sceneInfo.scene.add(sceneInfo.img.mesh);
+            }
+
+            sceneInfo.mesh = sceneInfo.img?.mesh;
+        } else {
+            // Safe to update existing texture since formats match
+            if (!sceneInfo.img) { const error = `sceneInfo.img is null`; console.error(error); throw error }
+
+            const texture = sceneInfo.img.texture
+            if (!texture) { const error = `texture is null`; console.error(error); throw error }
+            if (texture.image.data.length != imgdata.length) {
+                console.error("length does not match", texture.image.data.length, imgdata.length)
+                return
+            }
+            texture.image.data = imgdata
+            texture.needsUpdate = true; // signal Three.js that the texture data has changed
         }
-        texture.image.data = imgdata
-        texture.needsUpdate = true; // signal Three.js that the texture data has changed
     }
 
     /**
