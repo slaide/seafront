@@ -22,7 +22,7 @@ class toupcam_ctx():
         if exc_type is not None:
             if isinstance(exc_value.args[0],int):
                 errval=exc_value.args[0]&0xffffffff
-                print(f"Toupcam Error Code: {errval:0x}",self.msg)
+                logger.debug(f"Toupcam Error Code: {errval:0x}",self.msg)
 
         # raise exception ?
         return self.ignore_error
@@ -37,7 +37,7 @@ class measuretime():
         return self
     
     def __exit__(self, exc_type, exc_value, traceback):
-        print(f"{self.msg} took {time.time()-self.time}ms")
+        logger.debug(f"{self.msg} took {time.time()-self.time}ms")
 
         # raise exception ?
         return self.ignore_error
@@ -61,19 +61,13 @@ class ImageContext(BaseModel):
 
 def pullmode_callback(event_type: int, ctx: ImageContext) -> None:
     if event_type != tc.TOUPCAM_EVENT_IMAGE:
-        print(f"toupcam got event {event_type}")
         return
-    
-    print(f"toupcam got an image event with mode {ctx.mode}")
 
     if not ctx.cam.handle:
-        print(f"toupcam callback got no handle")
         return
     
     if ctx.mode=="until_stop":
         if ctx.stop_acquisition:
-            print(f"toupcam asked to stop acquisition")
-
             ctx.cam._acquisition_until_stop_cleanup()
 
             return
@@ -91,8 +85,6 @@ def pullmode_callback(event_type: int, ctx: ImageContext) -> None:
         )
 
         ctx.captured_image = ctx.captured_image.copy()
-
-        print("toupcam got an image")
 
         match ctx.mode:
             case "once":
@@ -209,8 +201,6 @@ class ToupCamCamera(Camera):
 
         with toupcam_ctx():
             self._set_toupcam_option(tc.TOUPCAM_OPTION_RAW,1)
-
-        print(f"TOUPCAM_OPTION_BANDWIDTH: {self.handle.get_Option(tc.TOUPCAM_OPTION_BANDWIDTH)}")
 
         logger.debug(f"MaxBitDepth: {self.handle.MaxBitDepth()}")
 
