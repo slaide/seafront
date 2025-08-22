@@ -1,5 +1,5 @@
 import asyncio
-import json
+import json5
 import typing as tp
 from enum import Enum
 
@@ -72,7 +72,7 @@ def wellIsForbidden(well_name: str, plate_type: sc.Wellplate) -> bool:
     if not isinstance(forbidden_wells_str, str):
         error_internal(detail="forbidden_wells entry is not a string")
 
-    forbidden_wells_dict: dict[str, list[str]] = json.loads(forbidden_wells_str)
+    forbidden_wells_dict: dict[str, list[str]] = json5.loads(forbidden_wells_str) #type: ignore
     for num_wells_str, well_names in forbidden_wells_dict.items():
         num_wells = int(num_wells_str)
         if plate_type.Num_total_wells == num_wells:

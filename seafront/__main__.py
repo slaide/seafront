@@ -6,7 +6,7 @@ import asyncio
 import datetime as dt
 import faulthandler
 import inspect
-import json, json5
+import json5, json
 import os
 import pathlib as path
 import re
@@ -266,7 +266,7 @@ def get_machine_defaults() -> list[ConfigItem]:
         if item.handle in ['channels', 'filters'] and item.value_kind == 'text':
             try:
                 # Parse JSON5 and re-serialize as standard JSON
-                parsed_data = json5.loads(item.value)
+                parsed_data = json5.loads(item.strvalue)
                 item.value = json.dumps(parsed_data)
             except Exception as e:
                 # If parsing fails, leave the original value
@@ -989,7 +989,7 @@ class Core:
             comment = None
 
             with c.open("r") as f:
-                contents = json.load(f)
+                contents = json5.load(f)
                 config = AcquisitionConfig(**contents)
 
                 timestamp = config.timestamp
@@ -1049,7 +1049,7 @@ class Core:
             error_internal(detail=f"config file with name {filename} not found")
 
         with filepath.open("r") as f:
-            config_json = json.load(f)
+            config_json = json5.load(f)
 
         config = sc.AcquisitionConfig(**config_json)
 
@@ -1595,11 +1595,11 @@ def custom_openapi():
         # otherwise recursion
         schema_str = json.dumps(model_schema)
         schema_str = schema_str.replace("#/$defs/", "#/components/schemas/")
-        model_schema = json.loads(schema_str)
+        model_schema = json5.loads(schema_str)
 
         # the json schema has a top level field called defs, which contains internal fields, which we
         # embed into the openapi schema here (the path replacement is separate from this)
-        defs = model_schema.pop("$defs", {})
+        defs = model_schema.pop("$defs", {}) # type: ignore
         openapi_schema.setdefault("components", {}).setdefault("schemas", {}).update(defs)
 
         # unsure if this works with the new code (written for 0.1, untested in 0.2)

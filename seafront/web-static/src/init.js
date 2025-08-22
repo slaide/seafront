@@ -46,6 +46,8 @@ Object.assign(window, { disableElement });
 
 // import alpine, and start
 import { Alpine } from "alpine";
+import JSON5 from "json5";
+const json5=JSON5;
 window.addEventListener("load", () => {
     Alpine.start();
 });
@@ -62,7 +64,7 @@ function cloneObject(o) {
     try {
         return structuredClone(o);
     } catch (e) {
-        return JSON.parse(JSON.stringify(o));
+        return json5.parse(JSON.stringify(o));
     }
 }
 
@@ -529,7 +531,7 @@ document.addEventListener("alpine:init", () => {
                      * camera_bit_depth: number
                      * }}
                      */
-                    const metadata = JSON.parse(meta_ev.data);
+                    const metadata = json5.parse(meta_ev.data);
 
                     // fetch image data (into arraybuffer)
                     cws.binaryType = "arraybuffer";
@@ -694,7 +696,7 @@ document.addEventListener("alpine:init", () => {
                 if(!(typeof filtersConfigItem.value == "string")){
                     throw `invalid type of filter config`;
                 }
-                const filtersData = JSON.parse(filtersConfigItem.value);
+                const filtersData = json5.parse(filtersConfigItem.value);
 
                 const ret=Array.isArray(filtersData) ? filtersData : [];
                 return ret;
@@ -836,7 +838,7 @@ document.addEventListener("alpine:init", () => {
                     `${this.server_url}/ws/get_info/current_state`,
                 );
                 this.status_ws.onmessage = async (ev) => {
-                    const data = JSON.parse(JSON.parse(ev.data));
+                    const data = json5.parse(json5.parse(ev.data));
                     await this.updateMicroscopeStatus(data);
 
                     // if we got this far, the connection to the server is established
@@ -906,6 +908,10 @@ document.addEventListener("alpine:init", () => {
             await this.updateMicroscopeStatus(currentStateJson);
 
             this.status_getstate_loop();
+        },
+
+        mnicroscopeConfigAsString(){
+            return JSON.stringify(this.microscope_config);
         },
 
         /**
