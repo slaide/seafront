@@ -6,6 +6,7 @@ declare module "three" {
         constructor(hexCode:number);
         setRGB(r: number, g: number, b: number): Color;
         setHex(hex: number): Color;
+        set(value: number | string | Color): this;
     }
 
     class Renderer {
@@ -93,12 +94,12 @@ declare module "three" {
     type DataType = UnsignedByteType | UnsignedShortType;
 
     class Material {
-        get color(): Color;
+        color: Color | number;
         dispose(): void;
     }
     class MeshBasicMaterial extends Material {
         constructor(opts: {
-            color: Color,
+            color: Color | number,
             side: SidedNess,
             transparent?: boolean,
             wireframe?: boolean,
@@ -144,6 +145,9 @@ declare module "three" {
 
         /** indicates if object should be drawn */
         visible: boolean;
+        
+        /** dispose of this object and free memory */
+        dispose(): void;
     }
 
     class InstancedMesh extends Object3D {
@@ -261,6 +265,8 @@ declare module "three" {
         x: number;
         y: number;
         z: number;
+        
+        set(x: number, y: number, z: number): this;
     }
     class Matrix4 extends Matrix {
         constructor();

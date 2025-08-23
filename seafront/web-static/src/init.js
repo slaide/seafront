@@ -189,6 +189,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         // Debounced config saving to prevent excessive localStorage writes
+        /** @type {number|null} */
         _saveTimeout: null,
         
         saveCurrentConfig() {
@@ -228,7 +229,7 @@ document.addEventListener("alpine:init", () => {
                     const parsed = JSON.parse(saved);
                     console.log("📊 Saved config stats:", {
                         channels: parsed.microscope_config?.channels?.length || 0,
-                        selectedWells: parsed.microscope_config?.plate_wells?.filter(w => w.selected).length || 0,
+                        selectedWells: parsed.microscope_config?.plate_wells?.filter(/** @type {function(PlateWellConfig):boolean}*/(w) => w.selected).length || 0,
                         totalWells: parsed.microscope_config?.plate_wells?.length || 0,
                         projectName: parsed.microscope_config?.project_name || 'empty',
                         plateType: parsed.microscope_config?.wellplate_type?.Model_id || 'unknown',
@@ -606,6 +607,8 @@ document.addEventListener("alpine:init", () => {
                 this._savedConfigIsStored = undefined; // Clean up
             }
         },
+        /** @type {boolean|undefined} */
+        _savedConfigIsStored:undefined,
 
         /**
          *
@@ -785,6 +788,11 @@ document.addEventListener("alpine:init", () => {
             this.plateNavigator.setObjectiveMoveCallback((x_mm, y_mm) => {
                 this.moveObjectiveTo(x_mm, y_mm);
             });
+
+            // Set up shift+drag callback to select wells
+            this.plateNavigator.setWellSelectionCallback(async (wellNames, mode) => {
+                await this.selectWellsByNames(wellNames, mode);
+            });
         },
 
         /**
@@ -794,19 +802,54 @@ document.addEventListener("alpine:init", () => {
          */
         async moveObjectiveTo(x_mm, y_mm) {
             try {
-                console.log(`Moving objective to position: (${x_mm.toFixed(2)}, ${y_mm.toFixed(2)}) mm`);
-                
                 const moveRequest = {
                     x_mm: x_mm,
                     y_mm: y_mm
                 };
                 
                 await this.Actions.moveTo(moveRequest);
-                console.log("Objective movement completed successfully");
             } catch (error) {
                 console.error("Failed to move objective:", error);
-                // Could add user notification here if needed
             }
+        },
+
+        /**
+         * Select or deselect wells by their names (e.g., ["A01", "A02", "B01"])
+         * @param {string[]} wellNames - Array of well names to select/deselect
+         * @param {string} mode - 'select' to add wells to selection, 'deselect' to remove wells from selection
+         */
+        async selectWellsByNames(wellNames, mode = 'select') {
+            if (!this._microscope_config || !this._microscope_config.plate_wells) {
+                console.warn("Cannot select wells - no plate configuration loaded");
+                return;
+            }
+
+            // Create a Set for fast lookup
+            const wellNamesSet = new Set(wellNames);
+            
+            // Update selection state only for the specified wells
+            let changedCount = 0;
+            for (const well of this._microscope_config.plate_wells) {
+                // Skip header wells (col < 0 or row < 0)
+                if (well.col < 0 || well.row < 0) continue;
+                
+                const wellName = makeWellName(well.col, well.row);
+                if (wellNamesSet.has(wellName)) {
+                    const newState = mode === 'select' ? true : false;
+                    if (well.selected !== newState) {
+                        well.selected = newState;
+                        changedCount++;
+                    }
+                }
+            }
+            
+            // Update the plate view to show new well colors and sites
+            if (this.plateNavigator) {
+                this.plateNavigator.refreshWellColors(this._microscope_config);
+            }
+            
+            // Save the updated configuration
+            this.saveCurrentConfig();
         },
 
         /**
@@ -1393,7 +1436,11 @@ document.addEventListener("alpine:init", () => {
                     }
                 }
             });
-            await this.updatePlate(undefined, undefined);
+            
+            // Update the plate view to show new well colors  
+            if (this.plateNavigator) {
+                this.plateNavigator.refreshWellColors(this._microscope_config);
+            }
         },
 
         /**
@@ -1711,7 +1758,7 @@ document.addEventListener("alpine:init", () => {
 
                 /**
                  * Snap all selected channels with autofocus and z-offsets
-                 * @returns {Promise<ChannelSnapSelectionResult>}
+                 * @returns {Promise<ChannelSnapSelectionResponse>}
                  */
                 snapAllChannels: () => {
                     return this.machineConfigFlush().then(() => {
@@ -1725,7 +1772,7 @@ document.addEventListener("alpine:init", () => {
                             body: JSON.stringify(body),
                             headers: [["Content-Type", "application/json"]],
                         }).then((v) => {
-                            /** @ts-ignore @type {CheckMapSquidRequestFn<ChannelSnapSelectionResult,InternalErrorModel>} */
+                            /** @ts-ignore @type {CheckMapSquidRequestFn<ChannelSnapSelectionResponse,InternalErrorModel>} */
                             const check = checkMapSquidRequest;
                             return check(v);
                         });

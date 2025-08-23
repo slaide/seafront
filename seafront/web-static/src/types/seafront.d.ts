@@ -232,6 +232,10 @@ declare global {
     };
     type ChannelSnapshotResponse = ImageAcquiredResponse;
 
+    type ChannelSnapSelectionResponse={
+        channel_handles: string[],
+    };
+
     type MachineConfigFlushRequest = {
         machine_config: MachineConfigItem[];
     };

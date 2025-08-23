@@ -163,13 +163,30 @@ function makeRoundedQuad(aabb, mat, opts) {
 
 let objectNamePlate = "plate";
 let objectNameWells = "wells";
+let objectNameWellsSelected = "wellsSelected";
 let objectNameSites = "sites";
 let objectNameText = "wellLabels";
 export let matTextColor = 0xFFFFFF;
 export let matWellColor = 0x006699;
-export let matSiteColor = 0x119966;
+let matWellSelectedColor = 0x0099FF; // Brighter blue for selected wells
+export let matSiteColor = 0xFF8800;
 export let matPlateColor = 0x222222;
 export let matFovColor = 0xAA1111;
+
+/**
+ * @typedef {Object} SelectionState
+ * @property {boolean} active - Whether selection is currently active
+ * @property {'select'|'deselect'} mode - Selection mode (select or deselect wells)
+ * @property {{x: number, y: number}} start - Starting coordinates of selection
+ * @property {{x: number, y: number}} current - Current coordinates of selection
+ * @property {THREE.Mesh|null} box - THREE.Mesh for selection box visualization
+ */
+
+/**
+ * @typedef {Object} MouseCoordinates
+ * @property {number} offsetX - X coordinate relative to the element
+ * @property {number} offsetY - Y coordinate relative to the element
+ */
 
 export class PlateNavigator {
     /**
@@ -223,13 +240,56 @@ export class PlateNavigator {
             active: false,
             last: { x: 0, y: 0 },
         };
-        el.addEventListener("mousedown", event => {
-            drag.active = true;
+        
+        // Selection state for shift+drag well selection
+        /** @type {SelectionState} */
+        let selection = {
+            active: false,
+            mode: 'select', // 'select' for adding wells, 'deselect' for removing wells
+            start: { x: 0, y: 0 },
+            current: { x: 0, y: 0 },
+            box: null, // THREE.Mesh for selection box visualization
+        };
 
-            drag.last.x = event.offsetX;
-            drag.last.y = event.offsetY;
+        el.addEventListener("mousedown", event => {
+            if (event.shiftKey) {
+                // Prevent default behavior and context menu
+                event.preventDefault();
+                event.stopPropagation();
+                
+                // Make sure drag is not active when starting selection
+                drag.active = false;
+                
+                // Start selection mode
+                selection.active = true;
+                selection.mode = event.button === 2 ? 'deselect' : 'select';
+                selection.start.x = event.offsetX;
+                selection.start.y = event.offsetY;
+                selection.current.x = event.offsetX;
+                selection.current.y = event.offsetY;
+                
+                // Create selection box mesh
+                this.createSelectionBox(selection);
+                
+            } else {
+                // Start drag mode only if not in selection mode
+                drag.active = true;
+                drag.last.x = event.offsetX;
+                drag.last.y = event.offsetY;
+            }
         });
         el.addEventListener("mouseup", event => {
+            if (selection.active) {
+                // Prevent default behavior when ending selection
+                event.preventDefault();
+                event.stopPropagation();
+                
+                // End selection mode - perform well selection
+                selection.active = false;
+                this.performWellSelection(selection);
+                this.clearSelectionBox(selection);
+            }
+            // Always reset drag state on mouse up
             drag.active = false;
         });
         
@@ -238,17 +298,34 @@ export class PlateNavigator {
             this.handleDoubleClick(event);
         });
         el.addEventListener("mousemove", event => {
-            if (!drag.active) return;
+            if (selection.active) {
+                // Prevent default behavior when in selection mode
+                event.preventDefault();
+                event.stopPropagation();
+                
+                // Update selection box
+                selection.current.x = event.offsetX;
+                selection.current.y = event.offsetY;
+                this.updateSelectionBox(selection);
+            } else if (drag.active) {
+                // update camera view (based on current zoom factor)
+                this.cameraApplyDeltaPos({
+                    x: event.offsetX - drag.last.x,
+                    y: event.offsetY - drag.last.y,
+                });
 
-            // update camera view (based on current zoom factor)
-            this.cameraApplyDeltaPos({
-                x: event.offsetX - drag.last.x,
-                y: event.offsetY - drag.last.y,
-            });
-
-            drag.last.x = event.offsetX;
-            drag.last.y = event.offsetY;
+                drag.last.x = event.offsetX;
+                drag.last.y = event.offsetY;
+            }
         });
+        // Prevent context menu when shift+right-clicking
+        el.addEventListener("contextmenu", event => {
+            if (event.shiftKey) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        });
+
         containerel.addEventListener("wheel", event => {
             event.preventDefault();
 
@@ -296,6 +373,15 @@ export class PlateNavigator {
         this.matWell = new THREE.LineBasicMaterial({
             color: matWellColor,
             side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.8,
+        });
+        /** @type {THREE.LineBasicMaterial} */
+        this.matWellSelected = new THREE.LineBasicMaterial({
+            color: matWellSelectedColor,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.9,
         });
         /** @type {THREE.LineBasicMaterial} */
         this.matSite = new THREE.LineBasicMaterial({
@@ -457,21 +543,27 @@ export class PlateNavigator {
 
         //this.cameraFit(plate_aabb)
 
-        // display wells and sites as mesh instances
-        let well_quad = makeRoundedQuad({
+        // display wells with different colors for selected vs unselected
+        let well_geometry = makeRoundedQuad({
             ax: 0,
             ay: 0,
             bx: 0 + plate.Well_size_x_mm,
             by: 0 + plate.Well_size_y_mm,
-        }, this.matWell, { border_radius: plate.Well_edge_radius_mm, segments: 8 });
+        }, this.matWell, { border_radius: plate.Well_edge_radius_mm, segments: 8 }).geometry;
 
-        // instancedmesh see https://threejs.org/docs/#api/en/objects/InstancedMesh
+        let valid_wells = microscope_config.plate_wells.filter(w => w.selected && w.col >= 0 && w.row >= 0);
+        let unselected_wells = microscope_config.plate_wells.filter(w => !w.selected && w.col >= 0 && w.row >= 0);
+        
         /**@type {THREE.InstancedMesh?} */
         let well_quads = null;
-        let valid_wells = microscope_config.plate_wells.filter(w => w.selected);
-        let num_wells = plate.Num_wells_x * plate.Num_wells_y;
-        if (!this.scene.getObjectByName(objectNameWells)) {
-            well_quads = new THREE.InstancedMesh(well_quad.geometry, well_quad.material, num_wells);
+        /**@type {THREE.InstancedMesh?} */
+        let well_selected_quads = null;
+        
+        if (!this.scene.getObjectByName(objectNameWells) && unselected_wells.length > 0) {
+            well_quads = new THREE.InstancedMesh(well_geometry, this.matWell, unselected_wells.length);
+        }
+        if (!this.scene.getObjectByName(objectNameWellsSelected) && valid_wells.length > 0) {
+            well_selected_quads = new THREE.InstancedMesh(well_geometry, this.matWellSelected, valid_wells.length);
         }
 
         let site_quad = makeQuad({
@@ -503,7 +595,10 @@ export class PlateNavigator {
 
         // init index into site buffer (will be incremented before first use)
         let site_index = -1;
-        // display all wells, even those not selected
+        let selected_well_index = 0;
+        let unselected_well_index = 0;
+        
+        // display all wells, separating selected and unselected
         for (let well of microscope_config.plate_wells) {
             let x = well.col;
             let y = well.row;
@@ -526,9 +621,17 @@ export class PlateNavigator {
             well_matrix.identity();
             well_matrix.compose(translatematrix, quaternion, scalematrix);
 
-            let well_index = y * plate.Num_wells_x + x;
-            if (well_quads != null) {
-                well_quads.setMatrixAt(well_index, well_matrix);
+            // Use appropriate InstancedMesh based on selection state
+            if (well.selected) {
+                if (well_selected_quads != null) {
+                    well_selected_quads.setMatrixAt(selected_well_index, well_matrix);
+                    selected_well_index++;
+                }
+            } else {
+                if (well_quads != null) {
+                    well_quads.setMatrixAt(unselected_well_index, well_matrix);
+                    unselected_well_index++;
+                }
             }
 
             /** @type {AABB} */
@@ -616,6 +719,10 @@ export class PlateNavigator {
             well_quads.name = objectNameWells;
             this.scene.add(well_quads);
         }
+        if (well_selected_quads != null) {
+            well_selected_quads.name = objectNameWellsSelected;
+            this.scene.add(well_selected_quads);
+        }
         if (site_quads != null) {
             site_quads.name = objectNameSites;
             if (this.scene.getObjectByName(objectNameSites)) {
@@ -663,6 +770,7 @@ export class PlateNavigator {
             // may be different (same for the text positions), hence it needs to be regenerated
             objectNamesToRemove.push(...[
                 objectNameWells,
+                objectNameWellsSelected,
                 objectNameText,
             ]);
         }
@@ -695,8 +803,8 @@ export class PlateNavigator {
     }
 
     /**
-     * Convert mouse event coordinates to plate coordinates (in mm)
-     * @param {MouseEvent} event
+     * Convert mouse coordinates to plate coordinates (in mm)
+     * @param {MouseCoordinates} event - Object with offsetX and offsetY properties
      * @returns {{x: number, y: number} | null}
      */
     mouseToPlateCoordinates(event) {
@@ -729,5 +837,299 @@ export class PlateNavigator {
      */
     setObjectiveMoveCallback(callback) {
         this.onObjectiveMoveTo = callback;
+    }
+
+    /**
+     * Set callback function for well selection requests
+     * @param {function(string[], string): void} callback - Callback function that receives array of well names and mode ('select' or 'deselect')
+     */
+    setWellSelectionCallback(callback) {
+        this.onWellSelection = callback;
+    }
+
+    /**
+     * Create selection box visualization
+     * @param {SelectionState} selection - Selection state object
+     */
+    createSelectionBox(selection) {
+        const color = selection.mode === 'select' ? 0x0088ff : 0xff4444;
+        
+        const material = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.3,
+            side: THREE.DoubleSide
+        });
+
+        const geometry = new THREE.PlaneGeometry(1, 1);
+        selection.box = new THREE.Mesh(geometry, material);
+        selection.box.position.z = 0.8;
+        selection.box.scale.set(0.1, 0.1, 1);
+        this.scene.add(selection.box);
+        
+    }
+
+    /**
+     * Update selection box geometry and position
+     * @param {SelectionState} selection - Selection state object
+     */
+    updateSelectionBox(selection) {
+        if (!selection.box) return;
+
+        // Convert screen coordinates to plate coordinates
+        const start = this.mouseToPlateCoordinates({offsetX: selection.start.x, offsetY: selection.start.y});
+        const current = this.mouseToPlateCoordinates({offsetX: selection.current.x, offsetY: selection.current.y});
+        
+        if (!start || !current) return;
+
+        // Calculate box dimensions and position
+        const minX = Math.min(start.x, current.x);
+        const maxX = Math.max(start.x, current.x);
+        const minY = Math.min(start.y, current.y);
+        const maxY = Math.max(start.y, current.y);
+        
+        const width = Math.max(maxX - minX, 0.1);
+        const height = Math.max(maxY - minY, 0.1);
+        const centerX = minX + (maxX - minX) / 2;
+        const centerY = minY + (maxY - minY) / 2;
+
+        selection.box.scale.set(width, height, 1);
+        selection.box.position.set(centerX, centerY, 0.8);
+    }
+
+    /**
+     * Remove selection box from scene
+     * @param {SelectionState} selection - Selection state object
+     */
+    clearSelectionBox(selection) {
+        if (selection.box) {
+            this.scene.remove(selection.box);
+            selection.box.geometry.dispose();
+            selection.box.material.dispose();
+            selection.box = null;
+        }
+    }
+
+    /**
+     * Refresh well colors and sites after selection changes without full plate reload
+     * @param {AcquisitionConfig} microscope_config 
+     */
+    refreshWellColors(microscope_config) {
+        if (!this.plate) return;
+
+        // Remove existing well and site meshes
+        const existingWells = this.scene.getObjectByName(objectNameWells);
+        const existingSelectedWells = this.scene.getObjectByName(objectNameWellsSelected);
+        const existingSites = this.scene.getObjectByName(objectNameSites);
+        
+        if (existingWells) {
+            this.scene.remove(existingWells);
+            existingWells.dispose();
+        }
+        if (existingSelectedWells) {
+            this.scene.remove(existingSelectedWells);
+            existingSelectedWells.dispose();
+        }
+        if (existingSites) {
+            this.scene.remove(existingSites);
+            existingSites.dispose();
+        }
+
+        // Recreate well meshes with current selections
+        const plate = this.plate;
+        let well_z = 0;
+        
+        let well_geometry = makeRoundedQuad({
+            ax: 0,
+            ay: 0,
+            bx: 0 + plate.Well_size_x_mm,
+            by: 0 + plate.Well_size_y_mm,
+        }, this.matWell, { border_radius: plate.Well_edge_radius_mm, segments: 8 }).geometry;
+
+        let valid_wells = microscope_config.plate_wells.filter(w => w.selected && w.col >= 0 && w.row >= 0);
+        let unselected_wells = microscope_config.plate_wells.filter(w => !w.selected && w.col >= 0 && w.row >= 0);
+        
+        let well_quads = null;
+        let well_selected_quads = null;
+        
+        if (unselected_wells.length > 0) {
+            well_quads = new THREE.InstancedMesh(well_geometry, this.matWell, unselected_wells.length);
+        }
+        if (valid_wells.length > 0) {
+            well_selected_quads = new THREE.InstancedMesh(well_geometry, this.matWellSelected, valid_wells.length);
+        }
+
+        let selected_well_index = 0;
+        let unselected_well_index = 0;
+        
+        // Position wells
+        for (let well of microscope_config.plate_wells) {
+            let x = well.col;
+            let y = well.row;
+
+            if (x < 0 || y < 0) continue;
+
+            let well_x = plate.Offset_A1_x_mm + x * plate.Well_distance_x_mm;
+            let well_y = plate.Offset_A1_y_mm + y * plate.Well_distance_y_mm;
+
+            let translatematrix = new THREE.Vector3(well_x, well_y, well_z);
+            let quaternion = new THREE.Quaternion();
+            quaternion.identity();
+            let scalematrix = new THREE.Vector3(1, 1, 1);
+
+            let well_matrix = new THREE.Matrix4();
+            well_matrix.identity();
+            well_matrix.compose(translatematrix, quaternion, scalematrix);
+
+            if (well.selected) {
+                if (well_selected_quads != null) {
+                    well_selected_quads.setMatrixAt(selected_well_index, well_matrix);
+                    selected_well_index++;
+                }
+            } else {
+                if (well_quads != null) {
+                    well_quads.setMatrixAt(unselected_well_index, well_matrix);
+                    unselected_well_index++;
+                }
+            }
+        }
+
+        // Add wells to scene
+        if (well_quads != null) {
+            well_quads.name = objectNameWells;
+            this.scene.add(well_quads);
+        }
+        if (well_selected_quads != null) {
+            well_selected_quads.name = objectNameWellsSelected;
+            this.scene.add(well_selected_quads);
+        }
+
+        // Recreate sites for selected wells
+        let site_z = 0.1;
+        let site_quad = makeQuad({
+            ax: 0,
+            ay: 0,
+            bx: 0 + this.objective.fovx,
+            by: 0 + this.objective.fovy,
+        }, this.matSite);
+        
+        let num_sites = valid_wells.length * microscope_config.grid.mask.filter(s => s.selected).length;
+        let site_quads = null;
+        
+        if (num_sites > 0) {
+            site_quads = new THREE.InstancedMesh(
+                site_quad.geometry,
+                site_quad.material,
+                num_sites
+            );
+
+            let site_index = 0;
+            
+            // Add sites to selected wells
+            for (let well of microscope_config.plate_wells) {
+                let x = well.col;
+                let y = well.row;
+
+                if (x < 0 || y < 0 || !well.selected) continue;
+
+                let well_x = plate.Offset_A1_x_mm + x * plate.Well_distance_x_mm;
+                let well_y = plate.Offset_A1_y_mm + y * plate.Well_distance_y_mm;
+
+                let well_aabb = {
+                    ax: well_x,
+                    ay: well_y,
+                    bx: well_x + plate.Well_size_x_mm,
+                    by: well_y + plate.Well_size_y_mm,
+                };
+
+                for (let site of microscope_config.grid.mask) {
+                    if (!site.selected) continue;
+
+                    let sitex = site.col;
+                    let sitey = site.row;
+
+                    let site_plate_x_offset = well_x + plate.Well_size_x_mm / 2
+                        - (this.objective.fovx + (microscope_config.grid.num_x - 1) * microscope_config.grid.delta_x_mm) / 2
+                        + sitex * microscope_config.grid.delta_x_mm;
+                    let site_plate_y_offset = well_y + plate.Well_size_y_mm / 2
+                        - (this.objective.fovy + (microscope_config.grid.num_y - 1) * microscope_config.grid.delta_y_mm) / 2
+                        + sitey * microscope_config.grid.delta_y_mm;
+
+                    let translatematrix = new THREE.Vector3(
+                        site_plate_x_offset,
+                        site_plate_y_offset,
+                        site_z
+                    );
+
+                    let quaternion = new THREE.Quaternion();
+                    quaternion.identity();
+                    let scalematrix = new THREE.Vector3(1, 1, 1);
+
+                    let site_matrix = new THREE.Matrix4();
+                    site_matrix.identity();
+                    site_matrix.compose(translatematrix, quaternion, scalematrix);
+
+                    site_quads.setMatrixAt(site_index, site_matrix);
+                    site_index++;
+                }
+            }
+
+            site_quads.name = objectNameSites;
+            this.scene.add(site_quads);
+        }
+    }
+
+    /**
+     * Perform well selection based on selection box
+     * @param {SelectionState} selection - Selection state object
+     */
+    performWellSelection(selection) {
+        if (!this.plate || !this.onWellSelection) return;
+
+        // Convert screen coordinates to plate coordinates
+        const start = this.mouseToPlateCoordinates({offsetX: selection.start.x, offsetY: selection.start.y});
+        const current = this.mouseToPlateCoordinates({offsetX: selection.current.x, offsetY: selection.current.y});
+        
+        if (!start || !current) return;
+
+        // Calculate selection bounding box
+        const selectionBox = {
+            minX: Math.min(start.x, current.x),
+            maxX: Math.max(start.x, current.x),
+            minY: Math.min(start.y, current.y),
+            maxY: Math.max(start.y, current.y)
+        };
+
+        // Find wells that intersect with selection box
+        const selectedWells = [];
+        
+        for (let y = 0; y < this.plate.Num_wells_y; y++) {
+            for (let x = 0; x < this.plate.Num_wells_x; x++) {
+                // Calculate well position and bounds
+                const wellX = this.plate.Offset_A1_x_mm + x * this.plate.Well_distance_x_mm;
+                const wellY = this.plate.Offset_A1_y_mm + y * this.plate.Well_distance_y_mm;
+                
+                const wellBounds = {
+                    minX: wellX,
+                    maxX: wellX + this.plate.Well_size_x_mm,
+                    minY: wellY, 
+                    maxY: wellY + this.plate.Well_size_y_mm
+                };
+                
+                const intersects = !(
+                    wellBounds.maxX < selectionBox.minX ||
+                    wellBounds.minX > selectionBox.maxX ||
+                    wellBounds.maxY < selectionBox.minY ||
+                    wellBounds.minY > selectionBox.maxY
+                );
+                
+                if (intersects) {
+                    const wellName = makeWellName(x, y);
+                    selectedWells.push(wellName);
+                }
+            }
+        }
+
+        this.onWellSelection(selectedWells, selection.mode);
     }
 }
