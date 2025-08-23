@@ -78,13 +78,31 @@ export class ChannelImageView {
 
                             event.preventDefault();
 
-                            // calculate offset
+                            // calculate offset in screen pixels
                             const deltax = event.clientX - drag.x;
                             const deltay = event.clientY - drag.y;
 
-                            // adjust offset
-                            scene.range.offsetx -= deltax * scene.range.zoom;
-                            scene.range.offsety += deltay * scene.range.zoom;
+                            // Get element dimensions to calculate pixel-to-image coordinate conversion
+                            const elemRect = el.getBoundingClientRect();
+                            
+                            if (scene.img && elemRect.width > 0 && elemRect.height > 0) {
+                                // Calculate the actual displayed image size accounting for zoom and aspect ratio
+                                const displayedImageWidth = scene.img.width * scene.range.zoom;
+                                const displayedImageHeight = scene.img.height * scene.range.zoom;
+                                
+                                // Calculate the scale factor from screen pixels to image coordinates
+                                // This accounts for how much of the element is filled by the image
+                                const scaleX = displayedImageWidth / elemRect.width;
+                                const scaleY = displayedImageHeight / elemRect.height;
+                                
+                                // Apply the drag with proper scaling so mouse stays pinned to same image pixel
+                                scene.range.offsetx -= deltax * scaleX;
+                                scene.range.offsety += deltay * scaleY;
+                            } else {
+                                // Fallback to old behavior if image not loaded yet
+                                scene.range.offsetx -= deltax * scene.range.zoom;
+                                scene.range.offsety += deltay * scene.range.zoom;
+                            }
 
                             // update current cursor position for later updates
                             drag.x = event.clientX;
