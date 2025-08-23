@@ -1207,6 +1207,8 @@
                                                 <select
                                                     x-model="channel.filter_handle"
                                                     x-effect="disableElement($el,()=>!channel.enabled || !isFilterWheelAvailable)"
+                                                    x-init="enabletooltip($el)"
+                                                    x-bind:tooltip="!isFilterWheelAvailable ? 'This microscope does not support custom channel filters.' : ''"
                                                 >
                                                     <template
                                                         x-for="filterOption in filterOptions.filter(f => !f.isGroup)"
