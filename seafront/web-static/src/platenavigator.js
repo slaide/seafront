@@ -232,6 +232,11 @@ export class PlateNavigator {
         el.addEventListener("mouseup", event => {
             drag.active = false;
         });
+        
+        // Add double-click handler for objective movement
+        el.addEventListener("dblclick", event => {
+            this.handleDoubleClick(event);
+        });
         el.addEventListener("mousemove", event => {
             if (!drag.active) return;
 
@@ -669,5 +674,60 @@ export class PlateNavigator {
                 this.scene.remove(object_to_remove);
             }
         }
+    }
+
+    /**
+     * Handle double-click events to move objective to clicked position
+     * @param {MouseEvent} event
+     */
+    handleDoubleClick(event) {
+        if (!this.plate) {
+            console.warn("Cannot move objective - no plate loaded");
+            return;
+        }
+
+        // Convert mouse coordinates to plate coordinates
+        const plateCoords = this.mouseToPlateCoordinates(event);
+        
+        if (plateCoords && this.onObjectiveMoveTo) {
+            this.onObjectiveMoveTo(plateCoords.x, plateCoords.y);
+        }
+    }
+
+    /**
+     * Convert mouse event coordinates to plate coordinates (in mm)
+     * @param {MouseEvent} event
+     * @returns {{x: number, y: number} | null}
+     */
+    mouseToPlateCoordinates(event) {
+        if (!this.plate) return null;
+
+        // Get canvas dimensions
+        const canvasRect = this.renderer.domElement.getBoundingClientRect();
+        
+        // Convert mouse position to normalized coordinates (0 to 1)
+        const normalizedX = event.offsetX / canvasRect.width;
+        const normalizedY = event.offsetY / canvasRect.height;
+        
+        // Convert to camera space coordinates
+        const cameraWidth = this.camera.right - this.camera.left;
+        const cameraHeight = this.camera.top - this.camera.bottom;
+        
+        const cameraX = this.camera.left + normalizedX * cameraWidth;
+        const cameraY = this.camera.bottom + (1 - normalizedY) * cameraHeight; // Flip Y axis
+        
+        // Clamp coordinates to plate boundaries
+        const plateX = Math.max(0, Math.min(this.plate.Length_mm, cameraX));
+        const plateY = Math.max(0, Math.min(this.plate.Width_mm, cameraY));
+        
+        return { x: plateX, y: plateY };
+    }
+
+    /**
+     * Set callback function for objective movement requests
+     * @param {function(number, number): void} callback - Callback function that receives (x_mm, y_mm)
+     */
+    setObjectiveMoveCallback(callback) {
+        this.onObjectiveMoveTo = callback;
     }
 }

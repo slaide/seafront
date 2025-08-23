@@ -780,6 +780,33 @@ document.addEventListener("alpine:init", () => {
                 bx: this.microscope_config.wellplate_type.Length_mm,
                 by: this.microscope_config.wellplate_type.Width_mm,
             });
+
+            // Set up double-click callback to move objective
+            this.plateNavigator.setObjectiveMoveCallback((x_mm, y_mm) => {
+                this.moveObjectiveTo(x_mm, y_mm);
+            });
+        },
+
+        /**
+         * Move objective to specified plate coordinates
+         * @param {number} x_mm - X coordinate in mm
+         * @param {number} y_mm - Y coordinate in mm  
+         */
+        async moveObjectiveTo(x_mm, y_mm) {
+            try {
+                console.log(`Moving objective to position: (${x_mm.toFixed(2)}, ${y_mm.toFixed(2)}) mm`);
+                
+                const moveRequest = {
+                    x_mm: x_mm,
+                    y_mm: y_mm
+                };
+                
+                await this.Actions.moveTo(moveRequest);
+                console.log("Objective movement completed successfully");
+            } catch (error) {
+                console.error("Failed to move objective:", error);
+                // Could add user notification here if needed
+            }
         },
 
         /**
