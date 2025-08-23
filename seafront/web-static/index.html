@@ -151,16 +151,14 @@
                                     x-bind:style="`background:#${matFovColor.toString(16).padStart(6,'0')}D0;`"
                                     >Current FOV</span
                                 >
+                                <span 
+                                    style="display: inline-block; margin-left: 10px; padding: 2px 6px; border-radius: 3px; font-size: 0.85em; border: 1px solid var(--text-color); background: var(--weak-bg-color); color: var(--text-color); cursor: help;"
+                                    x-init="enabletooltip($el)"
+                                    tooltip="• Drag = pan view<br>• Double-click = move objective<br>• Shift+left-click = select single well<br>• Shift+left-drag = select wells in area<br>• Shift+right-click = deselect single well<br>• Shift+right-drag = deselect wells in area"
+                                >
+                                    Controls ?
+                                </span>
                             </p>
-                            <div style="font-size: 0.9em; color: #666; margin-top: 8px; line-height: 1.4;">
-                                <div><strong>Controls:</strong></div>
-                                <div>• Drag = pan view</div>
-                                <div>• Double-click = move objective</div>
-                                <div>• Shift+left-click = select single well</div>
-                                <div>• Shift+left-drag = select wells in area</div>
-                                <div>• Shift+right-click = deselect single well</div>
-                                <div>• Shift+right-drag = deselect wells in area</div>
-                            </div>
                         </div>
                         <div tabname="Channel View" style="position: relative">
                             <div>
@@ -365,7 +363,7 @@
 												Manufacturer: ${protocol.plate_type.Manufacturer}
 												Model Name: ${protocol.plate_type.Model_name}
 												Model ID: ${protocol.plate_type.Model_id}
-											`.trimLeft().replaceAll('\n','<br>')"
+											`"
                                                 x-text="protocol.plate_type.Model_id"
                                             ></div>
 
@@ -982,7 +980,7 @@
     										Indicates if the channel should be imaged during acqusition.
 
     										When checked, this channel will be imaged.
-    									`.trimLeft().replaceAll('\n','<br>')"
+    									`"
                                         >
                                             ?
                                         </p>
@@ -999,7 +997,7 @@
     										exposure time in milliseconds.
 
     										range: ${limits.imaging_exposure_time_ms.min} - ${limits.imaging_exposure_time_ms.max} ( in steps of ${limits.imaging_exposure_time_ms.step})
-    										`.trimLeft().replaceAll('\n','<br>')"
+    										`"
                                         >
                                             Exp. [ms]
                                         </p>
@@ -1010,7 +1008,7 @@
     										analog gain in decibels.
 
     										range: ${limits.imaging_analog_gain_db.min} - ${limits.imaging_analog_gain_db.max} ( in steps of ${limits.imaging_analog_gain_db.step})
-    										`.trimLeft().replaceAll('\n','<br>')"
+    										`"
                                         >
                                             Gain [dB]
                                         </p>
@@ -1021,7 +1019,7 @@
     										z offset (from focus reference) in micrometers.
 
     										range: ${limits.imaging_focus_offset_um.min} - ${limits.imaging_focus_offset_um.max} ( in steps of ${limits.imaging_focus_offset_um.step})
-    										`.trimLeft().replaceAll('\n','<br>')"
+    										`"
                                         >
                                             Off. [um]
                                         </p>
@@ -1032,7 +1030,7 @@
     										illumination strength as percent of maximum.
 
     										range: ${limits.imaging_illum_perc.min} - ${limits.imaging_illum_perc.max} ( in steps of ${limits.imaging_illum_perc.step})
-    										`.trimLeft().replaceAll('\n','<br>')"
+    										`"
                                         >
                                             Pow. [%]
                                         </p>
@@ -1043,7 +1041,7 @@
     										number of z planes.
 
     										range: ${limits.imaging_number_z_planes.min} - ${limits.imaging_number_z_planes.max} ( in steps of ${limits.imaging_number_z_planes.step})
-    										`.trimLeft().replaceAll('\n','<br>')"
+    										`"
                                         >
                                             num z
                                         </p>
@@ -1054,7 +1052,7 @@
     										distance between z planes in um.
 
     										range: ${limits.imaging_delta_z_um.min} - ${limits.imaging_delta_z_um.max} ( in steps of ${limits.imaging_delta_z_um.step})
-    										`.trimLeft().replaceAll('\n','<br>')"
+    										`"
                                         >
                                             delta z [um]
                                         </p>
@@ -1065,7 +1063,7 @@
     										Filter wheel selection for this channel.
 
     										Select 'None' for no filter movement, or choose a specific filter to position the filter wheel before imaging.
-    										`.trimLeft().replaceAll('\n','<br>')"
+    										`"
                                         >
                                             Filter
                                         </p>
@@ -1251,7 +1249,7 @@
                                             • Move to each channel's Z-offset
                                             • Capture images with the configured exposure and gain
                                             • Display captured images
-                                        `.trimLeft().replaceAll('\n','<br>')"
+                                        `"
                                     >
                                         Snap All Channels
                                     </button>
@@ -1307,7 +1305,7 @@
 										Live Acquisition is the process where a number of acquisition are performed each second until stopped.
 
 										Note that this may quickly bleach your sample!
-									`.trimLeft().replaceAll('\n','<br>')"
+									`"
                                             >Live Acq.</label
                                         >
                                         <button 

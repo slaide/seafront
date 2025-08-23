@@ -149,7 +149,10 @@ export function enabletooltip(el) {
          */
         function setTooltip(){
             if(tooltip.currentTooltipElement){
-                tooltip.currentTooltipElement.innerHTML = targetel.getAttribute("tooltip")??"";
+                const tooltipText = targetel.getAttribute("tooltip") ?? "";
+                // Process tooltip text: trim leading whitespace and convert newlines to <br> tags
+                const tooltipHtml = tooltipText.trimStart().replace(/\n/g, "<br>");
+                tooltip.currentTooltipElement.innerHTML = tooltipHtml;
             }
         }
     }

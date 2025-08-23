@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "seafront"
-version = "2.5.3"
+version = "2.5.4"
 source = { editable = "." }
 dependencies = [
     { name = "crc" },
