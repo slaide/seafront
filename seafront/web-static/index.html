@@ -61,7 +61,17 @@
         <link href="/css/tabs.css" rel="stylesheet" />
     </head>
 
-    <body x-data="microscope_state" x-init="await manualInit()">
+    <body 
+        x-data="microscope_state" 
+        x-init="await manualInit(); 
+                // Set up watcher after init is complete
+                if(_microscope_config) {
+                    $watch('_microscope_config', () => { 
+                        saveCurrentConfig(); 
+                    }, { deep: true });
+                    console.log('Config localStorage watcher initialized - watching _microscope_config with deep:true');
+                }"
+    >
         <link rel="stylesheet" href="/css/theme.css" />
 
         <style>
@@ -761,7 +771,7 @@
                                             <select
                                                 id="platetype"
                                                 @change="await updatePlate($el.value)"
-                                                x-init="await updatePlate(microscope_config.wellplate_type.Model_id,true)"
+                                                x-init="await updatePlate(microscope_config.wellplate_type.Model_id,false)"
                                             >
                                                 <template
                                                     x-for="plategroup in plateinfo.plategroups"
@@ -870,23 +880,49 @@
                                                     background: red;
                                                 }
                                             </style>
+                                            <!-- Column headers (row = -1) -->
                                             <template
-                                                x-for="well in microscope_config.plate_wells"
-                                                :key="`c${well.col}r${well.row}`"
+                                                x-for="well in createHeaderWells(microscope_config.wellplate_type).filter(w => w.row === -1)"
+                                                :key="`header-c${well.col}r${well.row}`"
                                             >
                                                 <div
-                                                    x-init="if((well.col>=0) && (well.row>=0)){enabletooltip($el)}"
+                                                    class="well noselect wellheader"
+                                                    x-bind:style="`grid-column: ${well.col + 2}; grid-row: 1;`"
+                                                >
+                                                    <span x-text="wellText(well)"></span>
+                                                </div>
+                                            </template>
+                                            
+                                            <!-- Row headers (col = -1) -->
+                                            <template
+                                                x-for="well in createHeaderWells(microscope_config.wellplate_type).filter(w => w.col === -1)"
+                                                :key="`header-c${well.col}r${well.row}`"
+                                            >
+                                                <div
+                                                    class="well noselect wellheader"
+                                                    x-bind:style="`grid-column: 1; grid-row: ${well.row + 2};`"
+                                                >
+                                                    <span x-text="wellText(well)"></span>
+                                                </div>
+                                            </template>
+                                            
+                                            <!-- Real wells (col >= 0 and row >= 0) -->
+                                            <template
+                                                x-for="well in microscope_config.plate_wells.filter(w => w.col >= 0 && w.row >= 0)"
+                                                :key="`well-c${well.col}r${well.row}`"
+                                            >
+                                                <div
+                                                    x-init="enabletooltip($el)"
                                                     x-bind:tooltip="`Well ${wellName(well)}`"
-                                                    class="well noselect"
-                                                    x-bind:class="`${well.selected?'selected':''} ${(well.col>=0 && well.row>=0)?'clickable':'wellheader'}`"
+                                                    class="well noselect clickable"
+                                                    x-bind:class="well.selected ? 'selected' : ''"
+                                                    x-bind:style="`grid-column: ${well.col + 2}; grid-row: ${well.row + 2};`"
                                                     @mousedown="setStartSelectedWell(event,well)"
                                                     @mouseenter="selectionContinue(event,well)"
                                                     @mouseup="endSelectionRange(well)"
                                                     @dblclick="await buttons_wellcontainer_dblclick(well)"
                                                 >
-                                                    <span
-                                                        x-text="(!((well.col>=0) && (well.row>=0)))?wellText(well):''"
-                                                    ></span>
+                                                    <span></span>
                                                 </div>
                                             </template>
                                         </div>
@@ -1205,7 +1241,7 @@
                                             • Run laser autofocus if enabled and calibrated
                                             • Move to each channel's Z-offset
                                             • Capture images with the configured exposure and gain
-                                            • Display results in the interface
+                                            • Display captured images
                                         `.trimLeft().replaceAll('\n','<br>')"
                                     >
                                         Snap All Channels
@@ -1484,7 +1520,7 @@
                             type="checkbox"
                             x-model.boolean="configIsStored"
                             disabled
-                            x-effect="const c=mnicroscopeConfigAsString(); configIsStored=false;"
+                            x-effect="const c=microscopeConfigAsString(); if(initDone) configIsStored=false;"
                         />
                     </div>
 

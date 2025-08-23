@@ -290,6 +290,20 @@ The script automatically uses wellplate specifications from the seaconfig librar
 
 The default protocol provides initial settings for channel configurations including default power levels, exposure times, and channel-filter mappings. This serves as the starting point that users customize through the web interface for their specific experiments.
 
+## browser configuration persistence
+
+The web interface automatically saves your current configuration to browser localStorage for persistence across page reloads. This includes:
+
+- Project information (name, plate name, cell line, comments)
+- Well selections and grid settings  
+- Channel configurations (exposure times, power levels, etc.)
+- Theme preferences
+
+**Important notes:**
+- Browser storage is temporary and may be cleared by browser updates or cache clearing
+- For permanent storage, save your configuration as a named protocol using the "Store Config" button
+- When closing/refreshing the page, the browser will warn you if your current protocol has not been saved to the server (indicated by the unchecked "protocol saved?" status)
+
 # calibration
 
 the one major calibration step required to run this software properly is to calibrate the XY stage position. it requires a 384 well 

@@ -155,6 +155,121 @@ document.addEventListener("alpine:init", () => {
             localStorage.setItem("seafront-theme", this.theme);
         },
 
+        saveMicroscopeConfigToStorage() {
+            if (this._microscope_config) {
+                try {
+                    const configToSave = {
+                        microscope_config: this._microscope_config,
+                        configIsStored: this.configIsStored,
+                        savedAt: new Date().toISOString()
+                    };
+                    localStorage.setItem("seafront-microscope-config", JSON.stringify(configToSave));
+                } catch (error) {
+                    console.error("Failed to save microscope config to localStorage:", error);
+                }
+            }
+        },
+
+        loadMicroscopeConfigFromStorage() {
+            try {
+                const saved = localStorage.getItem("seafront-microscope-config");
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (parsed.microscope_config) {
+                        return { 
+                            config: parsed.microscope_config, 
+                            configIsStored: parsed.configIsStored !== undefined ? parsed.configIsStored : false 
+                        };
+                    }
+                }
+            } catch (error) {
+                console.error("Failed to load microscope config from localStorage:", error);
+            }
+            return null;
+        },
+
+        // Debounced config saving to prevent excessive localStorage writes
+        _saveTimeout: null,
+        
+        saveCurrentConfig() {
+            // Clear any pending save
+            if (this._saveTimeout) {
+                clearTimeout(this._saveTimeout);
+            }
+            
+            // Debounce saves by 50ms to batch rapid changes
+            this._saveTimeout = setTimeout(() => {
+                this.saveMicroscopeConfigToStorage();
+                this._saveTimeout = null;
+            }, 50);
+        },
+
+        // Debug method to clear localStorage
+        clearSavedConfig() {
+            localStorage.removeItem("seafront-microscope-config");
+            console.log("🧹 Cleared saved microscope config from localStorage");
+        },
+
+        // Debug method to inspect current state
+        debugConfig() {
+            console.log("🔍 DEBUG: Current microscope config state:");
+            console.log("📊 Current config stats:", {
+                channels: this._microscope_config?.channels?.length || 0,
+                selectedWells: this._microscope_config?.plate_wells?.filter(w => w.selected).length || 0,
+                totalWells: this._microscope_config?.plate_wells?.length || 0,
+                projectName: this._microscope_config?.project_name || 'empty',
+                plateType: this._microscope_config?.wellplate_type?.Model_id || 'unknown'
+            });
+            
+            const saved = localStorage.getItem("seafront-microscope-config");
+            if (saved) {
+                console.log("💾 LocalStorage content preview:");
+                try {
+                    const parsed = JSON.parse(saved);
+                    console.log("📊 Saved config stats:", {
+                        channels: parsed.microscope_config?.channels?.length || 0,
+                        selectedWells: parsed.microscope_config?.plate_wells?.filter(w => w.selected).length || 0,
+                        totalWells: parsed.microscope_config?.plate_wells?.length || 0,
+                        projectName: parsed.microscope_config?.project_name || 'empty',
+                        plateType: parsed.microscope_config?.wellplate_type?.Model_id || 'unknown',
+                        savedAt: parsed.savedAt
+                    });
+                } catch (e) {
+                    console.error("❌ Failed to parse saved config:", e);
+                }
+            } else {
+                console.log("📭 No saved config in localStorage");
+            }
+            
+            return { current: this._microscope_config, localStorage: saved };
+        },
+
+        // Debug method to force an immediate save
+        forceSave() {
+            console.log("🚀 Force saving current config...");
+            if (this._saveTimeout) {
+                clearTimeout(this._saveTimeout);
+                this._saveTimeout = null;
+            }
+            this.saveMicroscopeConfigToStorage();
+        },
+
+        // Set up warning when user tries to leave page with unsaved protocol
+        setupUnsavedChangesWarning() {
+            window.addEventListener('beforeunload', (event) => {
+                // Check if the current protocol is not saved to server
+                // configIsStored tracks whether current config matches a saved server protocol
+                if (!this.configIsStored) {
+                    // Modern browsers ignore the custom message and show their own
+                    const message = 'Your current protocol has not been saved. Are you sure you want to leave?';
+                    event.returnValue = message; // For older browsers
+                    return message; // For modern browsers
+                }
+            });
+            
+            console.log("🛡️ Unsaved protocol warning set up");
+        },
+
         /**
          * @returns {Promise<HardwareCapabilities>}
          */
@@ -427,6 +542,9 @@ document.addEventListener("alpine:init", () => {
                 
                 // Restore the complete plate_wells grid with updated selections
                 this.microscope_config.plate_wells = currentPlateWells;
+                
+                // Save config after well selections are loaded
+                this.saveCurrentConfig();
             }
 
             this.configIsStored = true;
@@ -440,34 +558,53 @@ document.addEventListener("alpine:init", () => {
         async manualInit() {
             await this.initSelf();
             
-            // Ensure we have a complete well grid for the well selector
-            // The default config contains sparse well data, but the UI needs all wells
+            // Only recreate well grid if we don't have a complete one (i.e., from server default)
+            // If we loaded from localStorage, we should already have a complete grid with selections
             if (this._microscope_config && this._microscope_config.wellplate_type) {
                 const currentWells = this._microscope_config.plate_wells || [];
-                const completeWells = this.createPlateWells(this._microscope_config.wellplate_type);
+                const expectedWellCount = this._microscope_config.wellplate_type.Num_wells_x * this._microscope_config.wellplate_type.Num_wells_y;
                 
-                // Merge selection state from sparse data into complete grid
-                if (currentWells.length > 0) {
-                    const wellSelectionMap = new Map();
-                    currentWells.forEach(well => {
-                        const key = `${well.col},${well.row}`;
-                        wellSelectionMap.set(key, well.selected);
-                    });
+                
+                // Only recreate wells if we have fewer wells than expected (sparse data from server)
+                if (currentWells.length < expectedWellCount) {
+                    const completeWells = this.createPlateWells(this._microscope_config.wellplate_type);
                     
-                    completeWells.forEach(well => {
-                        const key = `${well.col},${well.row}`;
-                        if (wellSelectionMap.has(key)) {
-                            well.selected = wellSelectionMap.get(key);
-                        }
-                    });
+                    // Merge selection state from sparse data into complete grid
+                    if (currentWells.length > 0) {
+                        const wellSelectionMap = new Map();
+                        currentWells.forEach(well => {
+                            const key = `${well.col},${well.row}`;
+                            wellSelectionMap.set(key, well.selected);
+                        });
+                        
+                        completeWells.forEach(well => {
+                            const key = `${well.col},${well.row}`;
+                            if (wellSelectionMap.has(key)) {
+                                well.selected = wellSelectionMap.get(key);
+                            }
+                        });
+                    }
+                    
+                    this._microscope_config.plate_wells = completeWells;
+                    
+                    // Save config after well selections are merged during initialization
+                    this.saveCurrentConfig();
                 }
-                
-                this._microscope_config.plate_wells = completeWells;
             }
             
             this.initDone = true;
 
+            // Set up beforeunload warning for unsaved changes
+            this.setupUnsavedChangesWarning();
+
+
             await this.refreshConfigList();
+
+            // Restore the configIsStored status AFTER all initialization is complete
+            if (this._savedConfigIsStored !== undefined) {
+                this.configIsStored = this._savedConfigIsStored;
+                this._savedConfigIsStored = undefined; // Clean up
+            }
         },
 
         /**
@@ -688,6 +825,12 @@ document.addEventListener("alpine:init", () => {
             }
             return this._microscope_config;
         },
+        set microscope_config(newConfig) {
+            this._microscope_config = newConfig;
+            if (newConfig) {
+                this.saveMicroscopeConfigToStorage();
+            }
+        },
 
         /** a copy of this is required often, but non-trivial to construct, so the utility is provided here. */
         get microscope_config_copy() {
@@ -906,6 +1049,37 @@ document.addEventListener("alpine:init", () => {
             this._plateinfo = await this.getPlateTypes();
             this._microscope_config = await this.defaultConfig();
 
+            // Load channels from hardware capabilities
+            const hardwareCapabilities = await this.getHardwareCapabilities();
+            if (hardwareCapabilities.main_camera_imaging_channels) {
+                this._microscope_config.channels = hardwareCapabilities.main_camera_imaging_channels;
+            } else {
+                console.warn("No channels found in hardware capabilities");
+            }
+
+            // Try to load saved config from localStorage, falling back to server default
+            const savedData = this.loadMicroscopeConfigFromStorage();
+            if (savedData) {
+                const savedConfig = savedData.config;
+                // Smart merge: preserve essential arrays from server if they're empty in savedConfig
+                const mergedConfig = { ...this._microscope_config, ...savedConfig };
+                
+                // Preserve channels from server if savedConfig has empty or missing channels
+                if (!savedConfig.channels || savedConfig.channels.length === 0) {
+                    mergedConfig.channels = this._microscope_config.channels;
+                }
+                
+                // Preserve plate_wells structure if savedConfig has issues
+                if (!savedConfig.plate_wells || savedConfig.plate_wells.length === 0) {
+                    mergedConfig.plate_wells = this._microscope_config.plate_wells;
+                }
+                
+                this._microscope_config = mergedConfig;
+                
+                // Store the configIsStored status to restore later (after all initialization)
+                this._savedConfigIsStored = savedData.configIsStored;
+            }
+
             // init data
             const currentStateData = await fetch(
                 `${this.server_url}/api/get_info/current_state`,
@@ -922,7 +1096,7 @@ document.addEventListener("alpine:init", () => {
             this.status_getstate_loop();
         },
 
-        mnicroscopeConfigAsString(){
+        microscopeConfigAsString(){
             return JSON.stringify(this.microscope_config);
         },
 
@@ -1033,6 +1207,9 @@ document.addEventListener("alpine:init", () => {
 
             // flush selection
             await this.toggleWellSelectionRange(this.start_selected_well, well);
+            
+            // save config after well selection changes
+            this.saveCurrentConfig();
 
             // remove selection overlay
             if (this.overlayelement) {
@@ -2204,14 +2381,41 @@ document.addEventListener("alpine:init", () => {
         createPlateWells(wellplate) {
             /** @type {PlateWellConfig[]} */
             let new_wells = [];
-            for (let y = -1; y < wellplate.Num_wells_y; y++) {
-                for (let x = -1; x < wellplate.Num_wells_x; x++) {
+            // Only create real wells (col >= 0 and row >= 0)
+            // Headers are now created dynamically in the HTML templates
+            for (let y = 0; y < wellplate.Num_wells_y; y++) {
+                for (let x = 0; x < wellplate.Num_wells_x; x++) {
                     /** @type {PlateWellConfig} */
                     let newwell = { col: x, row: y, selected: false };
                     new_wells.push(newwell);
                 }
             }
             return new_wells;
+        },
+
+        /**
+         * Create header wells for display purposes only (not stored in config)
+         * @param {Wellplate} wellplate
+         * @returns {PlateWellConfig[]}
+         */
+        createHeaderWells(wellplate) {
+            /** @type {PlateWellConfig[]} */
+            let header_wells = [];
+            
+            // Column headers (row = -1)
+            for (let x = 0; x < wellplate.Num_wells_x; x++) {
+                header_wells.push({ col: x, row: -1, selected: false });
+            }
+            
+            // Row headers (col = -1) 
+            for (let y = 0; y < wellplate.Num_wells_y; y++) {
+                header_wells.push({ col: -1, row: y, selected: false });
+            }
+            
+            // Corner header (col = -1, row = -1)
+            header_wells.push({ col: -1, row: -1, selected: false });
+            
+            return header_wells;
         },
 
         /**
@@ -2288,14 +2492,29 @@ document.addEventListener("alpine:init", () => {
                 selectedplate = newplate;
                 this.microscope_config.wellplate_type = newplate;
 
+                // Check if we have well selections that we should preserve
+                const currentWells = this.microscope_config.plate_wells || [];
+                const hasSelectedWells = currentWells.some(w => w.selected && w.row >= 0 && w.col >= 0);
+                
+                console.log(`🔍 updatePlate: force_override=${force_override}, hasSelectedWells=${hasSelectedWells}, currentWells=${currentWells.length}`);
+
                 // generate new wells in the dom
                 if (
                     this.plateNumWells(newplate) !=
                     this.plateNumWells(oldplate) ||
                     force_override
                 ) {
-                    const new_wells = this.createPlateWells(newplate);
-                    this.microscope_config.plate_wells = new_wells;
+                    // Don't force override if we have selected wells from localStorage
+                    if (force_override && hasSelectedWells) {
+                        console.log("🛡️ Skipping well recreation to preserve localStorage selections");
+                    } else {
+                        console.log("🔧 Creating new well grid");
+                        const new_wells = this.createPlateWells(newplate);
+                        this.microscope_config.plate_wells = new_wells;
+                        
+                        // Save config after plate wells are updated
+                        this.saveCurrentConfig();
+                    }
                 }
             }
 
