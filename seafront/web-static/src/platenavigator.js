@@ -610,7 +610,7 @@ export class PlateNavigator {
 
             // add well
             let well_x = plate.Offset_A1_x_mm + x * plate.Well_distance_x_mm;
-            let well_y = plate.Offset_A1_y_mm + y * plate.Well_distance_y_mm;
+            let well_y = plate.Offset_A1_y_mm + (plate.Num_wells_y - 1 - y) * plate.Well_distance_y_mm;
 
             let translatematrix = new THREE.Vector3(well_x, well_y, well_z);
             let quaternion = new THREE.Quaternion();
@@ -970,7 +970,7 @@ export class PlateNavigator {
             if (x < 0 || y < 0) continue;
 
             let well_x = plate.Offset_A1_x_mm + x * plate.Well_distance_x_mm;
-            let well_y = plate.Offset_A1_y_mm + y * plate.Well_distance_y_mm;
+            let well_y = plate.Offset_A1_y_mm + (plate.Num_wells_y - 1 - y) * plate.Well_distance_y_mm;
 
             let translatematrix = new THREE.Vector3(well_x, well_y, well_z);
             let quaternion = new THREE.Quaternion();
@@ -1033,7 +1033,7 @@ export class PlateNavigator {
                 if (x < 0 || y < 0 || !well.selected) continue;
 
                 let well_x = plate.Offset_A1_x_mm + x * plate.Well_distance_x_mm;
-                let well_y = plate.Offset_A1_y_mm + y * plate.Well_distance_y_mm;
+                let well_y = plate.Offset_A1_y_mm + (plate.Num_wells_y - 1 - y) * plate.Well_distance_y_mm;
 
                 let well_aabb = {
                     ax: well_x,
@@ -1107,7 +1107,7 @@ export class PlateNavigator {
             for (let x = 0; x < this.plate.Num_wells_x; x++) {
                 // Calculate well position and bounds
                 const wellX = this.plate.Offset_A1_x_mm + x * this.plate.Well_distance_x_mm;
-                const wellY = this.plate.Offset_A1_y_mm + y * this.plate.Well_distance_y_mm;
+                const wellY = this.plate.Offset_A1_y_mm + (this.plate.Num_wells_y - 1 - y) * this.plate.Well_distance_y_mm;
                 
                 const wellBounds = {
                     minX: wellX,

@@ -2570,8 +2570,6 @@ document.addEventListener("alpine:init", () => {
                 const currentWells = this.microscope_config.plate_wells || [];
                 const hasSelectedWells = currentWells.some(w => w.selected && w.row >= 0 && w.col >= 0);
                 
-                console.log(`🔍 updatePlate: force_override=${force_override}, hasSelectedWells=${hasSelectedWells}, currentWells=${currentWells.length}`);
-
                 // generate new wells in the dom
                 if (
                     this.plateNumWells(newplate) !=
