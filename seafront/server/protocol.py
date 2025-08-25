@@ -543,7 +543,23 @@ class ProtocolGenerator(BaseModel):
                             # Use channel handle when explicitly set to "no"
                             channel_identifier = channel.handle
                         
-                        image_storage_path = f"{self.project_output_path!s}/{well.well_name}_s{site_index}_x{site.col + 1}_y{site.row + 1}_z{plane_index + 1}_{channel_identifier}.tiff"
+                        # Get index starting values from configuration (with defaults if not present)
+                        xy_start = g_config.get("image_filename_xy_index_start")
+                        xy_start_value = xy_start.intvalue if xy_start else 0
+                        
+                        z_start = g_config.get("image_filename_z_index_start") 
+                        z_start_value = z_start.intvalue if z_start else 0
+                        
+                        site_start = g_config.get("image_filename_site_index_start")
+                        site_start_value = site_start.intvalue if site_start else 1
+                        
+                        # Generate filename with configurable index starting values
+                        site_num = site_index + site_start_value
+                        x_num = site.col + xy_start_value
+                        y_num = site.row + xy_start_value  
+                        z_num = plane_index + z_start_value
+                        
+                        image_storage_path = f"{self.project_output_path!s}/{well.well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.tiff"
 
                         image_store_entry = cmds.ImageStoreEntry(
                             pixel_format=g_config["main_camera_pixel_format"].strvalue,

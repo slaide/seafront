@@ -636,6 +636,24 @@ class GlobalConfigHandler:
                 options=ConfigItemOption.get_bool_options(),
             ),
             ConfigItem(
+                name="image filename xy index start",
+                handle="image_filename_xy_index_start",
+                value_kind="int",
+                value=0,
+            ),
+            ConfigItem(
+                name="image filename z index start", 
+                handle="image_filename_z_index_start",
+                value_kind="int",
+                value=0,
+            ),
+            ConfigItem(
+                name="image filename site index start",
+                handle="image_filename_site_index_start", 
+                value_kind="int",
+                value=1,
+            ),
+            ConfigItem(
                 name="forbidden wells",
                 handle="forbidden_wells",
                 value_kind="text",
