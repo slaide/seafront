@@ -269,9 +269,27 @@ declare global {
     type EnterLoadingPositionResponse = {};
     type LeaveLoadingPositionResponse = {};
 
+    type HardwareLimitValue = {
+        min: number;
+        max: number;  
+        step: number;
+    };
+
+    type HardwareLimits = {
+        imaging_exposure_time_ms: HardwareLimitValue;
+        imaging_analog_gain_db: HardwareLimitValue;
+        imaging_focus_offset_um: HardwareLimitValue;
+        imaging_illum_perc: HardwareLimitValue;
+        imaging_illum_perc_fluorescence: HardwareLimitValue;
+        imaging_illum_perc_brightfield: HardwareLimitValue;
+        imaging_number_z_planes: HardwareLimitValue;
+        imaging_delta_z_um: HardwareLimitValue;
+    };
+
     type HardwareCapabilities = {
         main_camera_imaging_channels: AcquisitionChannelConfig[];
         wellplate_types: Wellplate[];
+        hardware_limits: HardwareLimits;
     };
 
     type ConfigItemOption = {

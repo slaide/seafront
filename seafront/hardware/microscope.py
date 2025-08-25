@@ -9,6 +9,7 @@ import abc
 import threading
 import typing as tp
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 import numpy as np
 import seaconfig as sc
@@ -16,7 +17,36 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from seafront.config.basics import ChannelConfig, FilterConfig
 from seafront.hardware.adapter import AdapterState, CoreState
+from seafront.hardware.camera import HardwareLimitValue
 from seafront.server import commands as cmd
+
+
+@dataclass(frozen=True)
+class HardwareLimits:
+    """
+    Complete hardware limits structure that mirrors the TypeScript HardwareLimits type.
+    """
+    imaging_exposure_time_ms: dict[str, tp.Union[float, int]]
+    imaging_analog_gain_db: dict[str, tp.Union[float, int]]
+    imaging_focus_offset_um: dict[str, tp.Union[float, int]]
+    imaging_illum_perc: dict[str, tp.Union[float, int]]
+    imaging_illum_perc_fluorescence: dict[str, tp.Union[float, int]]
+    imaging_illum_perc_brightfield: dict[str, tp.Union[float, int]]
+    imaging_number_z_planes: dict[str, tp.Union[float, int]]
+    imaging_delta_z_um: dict[str, tp.Union[float, int]]
+    
+    def to_dict(self) -> dict[str, dict[str, tp.Union[float, int]]]:
+        """Convert to dictionary format for API responses."""
+        return {
+            "imaging_exposure_time_ms": self.imaging_exposure_time_ms,
+            "imaging_analog_gain_db": self.imaging_analog_gain_db,
+            "imaging_focus_offset_um": self.imaging_focus_offset_um,
+            "imaging_illum_perc": self.imaging_illum_perc,
+            "imaging_illum_perc_fluorescence": self.imaging_illum_perc_fluorescence,
+            "imaging_illum_perc_brightfield": self.imaging_illum_perc_brightfield,
+            "imaging_number_z_planes": self.imaging_number_z_planes,
+            "imaging_delta_z_um": self.imaging_delta_z_um,
+        }
 
 
 class Microscope(BaseModel, abc.ABC):
@@ -150,6 +180,23 @@ class Microscope(BaseModel, abc.ABC):
             
         Returns:
             Command execution result
+        """
+        pass
+    
+    @abc.abstractmethod
+    def get_hardware_limits(self) -> HardwareLimits:
+        """
+        Get hardware-specific limits for all configurable parameters.
+        
+        This method should query the actual hardware components to determine
+        their capabilities and combine them into a complete limits structure.
+        
+        Camera limits (exposure time, gain) should be obtained from the main camera.
+        Mechanical limits (focus offset, z-planes) should be defined by the microscope.
+        Power limits should be specific to the illumination system.
+        
+        Returns:
+            HardwareLimits object with strongly-typed limit values
         """
         pass
 

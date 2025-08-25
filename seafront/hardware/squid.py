@@ -21,9 +21,9 @@ from scipy import stats  # for linear regression
 from seafront.config.basics import GlobalConfigHandler, CameraDriver, ChannelConfig, FilterConfig
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, CoreState
-from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier
+from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier, HardwareLimitValue
 from seafront.hardware.illumination import IlluminationController
-from seafront.hardware.microscope import Microscope, microscope_exclusive
+from seafront.hardware.microscope import Microscope, microscope_exclusive, HardwareLimits
 from seafront.logger import logger
 from seafront.server import commands as cmd
 from seafront.server.commands import (
@@ -977,6 +977,41 @@ class SquidAdapter(Microscope):
         )
 
         return self.last_state
+
+    def get_hardware_limits(self) -> HardwareLimits:
+        """
+        Get hardware-specific limits by querying camera and combining with SQUID mechanical limits.
+        """
+        # Get camera-specific limits (exposure time and analog gain)
+        with self.main_camera() as main_camera:
+            if main_camera is None:
+                raise RuntimeError("Main camera not available for hardware limits query")
+                
+            # Get exposure time limits from camera hardware
+            exposure_limits = main_camera.get_exposure_time_limits()
+            
+            # Get analog gain limits from camera hardware  
+            gain_limits = main_camera.get_analog_gain_limits()
+        
+        # Create SQUID-specific mechanical and power limits as HardwareLimitValue objects
+        focus_offset_limits = HardwareLimitValue(min=-200, max=200, step=0.1)
+        fluorescence_power_limits = HardwareLimitValue(min=5, max=100, step=0.1)
+        brightfield_power_limits = HardwareLimitValue(min=3, max=100, step=0.1)
+        generic_power_limits = HardwareLimitValue(min=5, max=100, step=0.1)  # Use fluorescence as default
+        z_planes_limits = HardwareLimitValue(min=1, max=999, step=1)
+        z_spacing_limits = HardwareLimitValue(min=0.1, max=1000, step=0.1)
+        
+        # Return properly typed HardwareLimits object
+        return HardwareLimits(
+            imaging_exposure_time_ms=exposure_limits.to_dict(),
+            imaging_analog_gain_db=gain_limits.to_dict(),
+            imaging_focus_offset_um=focus_offset_limits.to_dict(),
+            imaging_illum_perc=generic_power_limits.to_dict(),
+            imaging_illum_perc_fluorescence=fluorescence_power_limits.to_dict(),
+            imaging_illum_perc_brightfield=brightfield_power_limits.to_dict(),
+            imaging_number_z_planes=z_planes_limits.to_dict(),
+            imaging_delta_z_um=z_spacing_limits.to_dict(),
+        )
 
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         # Handle ChannelStreamEnd without locking to avoid deadlock

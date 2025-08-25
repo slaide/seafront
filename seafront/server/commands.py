@@ -332,9 +332,15 @@ class HardwareCapabilitiesResponse(BaseModel):
     main_camera_imaging_channels: list[sc.AcquisitionChannelConfig] = Field(
         ...,
         title="Main Camera Imaging Channels",
-        description="list of imaging channels that the microscope is capable of. numerical limits of configurable parameters are NOT contained.",
+        description="list of imaging channels that the microscope is capable of",
     )
-    "list of imaging channels that the microscope is capable of. numerical limits of configurable parameters are NOT contained."
+    "list of imaging channels that the microscope is capable of"
+    hardware_limits: dict[str, dict[str, tp.Union[float, int]]] = Field(
+        ...,
+        title="Hardware Limits",
+        description="numerical limits of configurable parameters based on actual hardware capabilities",
+    )
+    "numerical limits of configurable parameters based on actual hardware capabilities"
 
 
 class LoadingPositionEnter(BaseModel, BaseCommand[BasicSuccessResponse]):

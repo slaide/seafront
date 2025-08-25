@@ -6,7 +6,7 @@ import toupcam.toupcam as tc
 from seaconfig import AcquisitionChannelConfig
 
 from seafront.config.basics import GlobalConfigHandler
-from seafront.hardware.camera import AcquisitionMode, Camera
+from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
 from pydantic import BaseModel, ConfigDict 
 
@@ -305,6 +305,57 @@ class ToupCamCamera(Camera):
 
         self.handle = None
         logger.debug("closed toupcam camera")
+
+    def get_exposure_time_limits(self) -> HardwareLimitValue:
+        """Get camera's exposure time limits in milliseconds."""
+        if not self.handle:
+            raise RuntimeError("Camera not opened")
+        
+        valmin, valmax, valdef = self.handle.get_ExpTimeRange()
+        # ToupCam returns exposure time in microseconds, convert to milliseconds
+        return HardwareLimitValue(
+            min=valmin * 1e-3,  # Convert µs to ms
+            max=valmax * 1e-3,  # Convert µs to ms 
+            step=0.1  # Step size in ms - reasonable default for ToupCam
+        )
+
+    def get_analog_gain_limits(self) -> HardwareLimitValue:
+        """Get camera's analog gain limits in decibels.""" 
+        if not self.handle:
+            raise RuntimeError("Camera not opened")
+            
+        valmin, valmax, valdef = self.handle.get_ExpoAGainRange()
+        logger.debug(f"ToupCam analog gain range: min={valmin}%, max={valmax}%, default={valdef}%")
+        # ToupCam returns gain as percentage (100-10000%)
+        # Convert to decibels: dB = 10 * log10(percentage / 100)
+        
+        # Handle edge cases that could cause NaN or invalid values
+        # ToupCam typically returns 100-10000% range (0dB to 20dB)
+        if valmin > 0:
+            min_db = 10 * np.log10(valmin / 100)
+        else:
+            min_db = 0.0  # Default to 0dB if invalid min percentage
+            
+        if valmax > 0:
+            max_db = 10 * np.log10(valmax / 100)
+        else:
+            # If max is invalid, we don't know the safe range - default both to 0
+            min_db = 0.0
+            max_db = 0.0
+        
+        # If calculated values are NaN (shouldn't happen with above logic, but safety check)
+        if np.isnan(min_db):
+            min_db = 0.0
+        if np.isnan(max_db):
+            # If max is NaN, we don't know the safe range - set both to 0  
+            min_db = 0.0
+            max_db = 0.0
+        
+        return HardwareLimitValue(
+            min=min_db,
+            max=max_db,
+            step=0.1  # Step size in dB - reasonable default
+        )
 
     def _exposure_time_ms_to_us(self, exposure_time_ms: float) -> int:
         """Convert exposure time from ms to microseconds (ToupCam native unit)."""

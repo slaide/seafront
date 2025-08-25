@@ -9,6 +9,21 @@ from seaconfig import AcquisitionChannelConfig
 from seafront.logger import logger
 
 
+@dataclass(frozen=True)
+class HardwareLimitValue:
+    """
+    Represents a hardware limit with min/max/step values.
+    Mirrors the TypeScript HardwareLimitValue type.
+    """
+    min: tp.Union[float, int]
+    max: tp.Union[float, int]
+    step: tp.Union[float, int]
+    
+    def to_dict(self) -> dict[str, tp.Union[float, int]]:
+        """Convert to dictionary format for API responses."""
+        return {"min": self.min, "max": self.max, "step": self.step}
+
+
 class AcquisitionMode(str, Enum):
     """
     set acquisition mode of microscope
@@ -94,6 +109,26 @@ class Camera(ABC):
 
         Returns:
             np.ndarray of image data if mode is "once", None if mode is "until_stop"
+        """
+        pass
+
+    @abstractmethod
+    def get_exposure_time_limits(self) -> HardwareLimitValue:
+        """
+        Get camera's exposure time limits.
+        
+        Returns:
+            HardwareLimitValue with min/max/step values (all in milliseconds)
+        """
+        pass
+
+    @abstractmethod  
+    def get_analog_gain_limits(self) -> HardwareLimitValue:
+        """
+        Get camera's analog gain limits.
+        
+        Returns:
+            HardwareLimitValue with min/max/step values (all in decibels)
         """
         pass
 

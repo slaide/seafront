@@ -101,38 +101,8 @@ document.addEventListener("alpine:init", () => {
 
         tooltipConfig,
 
-        limits: {
-            imaging_exposure_time_ms: {
-                min: 0.1,
-                step: 0.1,
-                max: 936,
-            },
-            imaging_analog_gain_db: {
-                min: 0,
-                step: 0.1,
-                max: 24,
-            },
-            imaging_focus_offset_um: {
-                min: -200,
-                step: 0.1,
-                max: 200,
-            },
-            imaging_illum_perc: {
-                min: 0,
-                step: 0.1,
-                max: 100,
-            },
-            imaging_number_z_planes: {
-                min: 1,
-                step: 2,
-                max: 999,
-            },
-            imaging_delta_z_um: {
-                min: 0.1,
-                step: 0.1,
-                max: 1000,
-            },
-        },
+        /** @type {HardwareLimits|null} */
+        limits: null,
 
         themes: ["light", "dark"],
         theme: localStorage.getItem("seafront-theme") || "light",
@@ -1119,12 +1089,21 @@ document.addEventListener("alpine:init", () => {
             this._plateinfo = await this.getPlateTypes();
             this._microscope_config = await this.defaultConfig();
 
-            // Load channels from hardware capabilities
+            // Load channels and hardware limits from hardware capabilities
             const hardwareCapabilities = await this.getHardwareCapabilities();
             if (hardwareCapabilities.main_camera_imaging_channels) {
                 this._microscope_config.channels = hardwareCapabilities.main_camera_imaging_channels;
             } else {
                 console.warn("No channels found in hardware capabilities");
+            }
+            
+            // Update limits with hardware capabilities if available
+            if (hardwareCapabilities.hardware_limits) {
+                // Replace hardcoded limits with server-provided hardware limits
+                this.limits = hardwareCapabilities.hardware_limits;
+                console.log("🔧 Updated hardware limits from server:", this.limits);
+            } else {
+                console.warn("No hardware limits found in capabilities, using defaults");
             }
 
             // Try to load saved config from localStorage, falling back to server default

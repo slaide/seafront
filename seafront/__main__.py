@@ -148,62 +148,6 @@ name_validity_regex = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
 """ name_validity_regex only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot """
 
 
-@app.api_route(
-    "/api/get_features/hardware_capabilities",
-    methods=["POST"],
-    summary="Get available imaging channels and plate types.",
-)
-def get_hardware_capabilities() -> HardwareCapabilitiesResponse:
-    """
-    get a list of all the hardware capabilities of the system
-
-    these are the high-level configuration options that the user can select from
-    """
-    
-    # Access global configuration
-    g_dict = GlobalConfigHandler.get_dict()
-    
-    # Get channels JSON string and parse it
-    channels_json = g_dict["channels"].strvalue
-    channels_data = json5.loads(channels_json)
-    
-    if channels_data is None:
-        raise ValueError("Parsed channels configuration is None - invalid JSON structure")
-    
-    if not isinstance(channels_data, list):
-        raise ValueError("Parsed channels configuration must be a list")
-    
-    # Convert to ChannelConfig objects
-    channel_configs = []
-    for ch in channels_data:
-        if not isinstance(ch, dict):
-            raise ValueError("Each channel configuration must be a dictionary")
-        channel_configs.append(ChannelConfig(**ch))
-    
-    # Convert ChannelConfig to AcquisitionChannelConfig with sensible defaults
-    acquisition_channels = []
-    for ch in channel_configs:
-        # Use different default illumination based on channel type
-        default_illum_perc = 20.0 if ch.handle.startswith('bfled') else 100.0
-        
-        acquisition_channels.append(sc.AcquisitionChannelConfig(
-            name=ch.name,
-            handle=ch.handle,
-            illum_perc=default_illum_perc,   # Lower default for brightfield LEDs
-            exposure_time_ms=5.0,           # Default exposure time
-            analog_gain=0.0,                # Default analog gain
-            z_offset_um=0.0,                # Default z offset
-            num_z_planes=1,                 # Default single z plane
-            delta_z_um=1.0,                 # Default z spacing
-            filter_handle=None,             # No filter by default
-            enabled=True                    # Enabled by default
-        ))
-
-    return HardwareCapabilitiesResponse(
-        wellplate_types=sc.Plates,
-        main_camera_imaging_channels=acquisition_channels,
-    )
-
 
 @app.api_route(
     "/api/get_features/machine_defaults",
@@ -622,6 +566,13 @@ class Core:
         route_wrapper(
             "/api/get_info/current_state",
             CustomRoute(handler=self.get_current_state),
+            methods=["POST"],
+        )
+        
+        # Register hardware capabilities route
+        route_wrapper(
+            "/api/get_features/hardware_capabilities",
+            CustomRoute(handler=self.get_hardware_capabilities),
             methods=["POST"],
         )
 
@@ -1243,6 +1194,63 @@ class Core:
         GlobalConfigHandler.override(machine_config)
 
         return BasicSuccessResponse()
+
+    def get_hardware_capabilities(self) -> HardwareCapabilitiesResponse:
+        """
+        Get hardware capabilities including real hardware limits from the microscope.
+        """
+        # Access global configuration
+        g_dict = GlobalConfigHandler.get_dict()
+        
+        # Get channels JSON string and parse it
+        channels_json = g_dict["channels"].strvalue
+        channels_data = json5.loads(channels_json)
+        
+        if channels_data is None:
+            raise ValueError("Parsed channels configuration is None - invalid JSON structure")
+        
+        if not isinstance(channels_data, list):
+            raise ValueError("Parsed channels configuration must be a list")
+        
+        # Convert to ChannelConfig objects
+        channel_configs = []
+        for ch in channels_data:
+            if not isinstance(ch, dict):
+                raise ValueError("Each channel configuration must be a dictionary")
+            channel_configs.append(ChannelConfig(**ch))
+        
+        # Convert ChannelConfig to AcquisitionChannelConfig with sensible defaults
+        acquisition_channels = []
+        for ch in channel_configs:
+            # Use different default illumination based on channel type
+            default_illum_perc = 20.0 if ch.handle.startswith('bfled') else 100.0
+            
+            acquisition_channels.append(sc.AcquisitionChannelConfig(
+                name=ch.name,
+                handle=ch.handle,
+                illum_perc=default_illum_perc,   # Lower default for brightfield LEDs
+                exposure_time_ms=5.0,           # Default exposure time
+                analog_gain=0.0,                # Default analog gain
+                z_offset_um=0.0,                # Default z offset
+                num_z_planes=1,                 # Default single z plane
+                delta_z_um=1.0,                 # Default z spacing
+                filter_handle=None,             # No filter by default
+                enabled=True                    # Enabled by default
+            ))
+
+        # Get real hardware limits from the microscope
+        with self.microscope.lock() as microscope:
+            if microscope is None:
+                raise RuntimeError("Microscope not available for hardware limits query")
+                
+            # Get actual hardware limits from microscope - let any failures crash
+            hardware_limits_obj = microscope.get_hardware_limits()
+
+        return HardwareCapabilitiesResponse(
+            wellplate_types=sc.Plates,
+            main_camera_imaging_channels=acquisition_channels,
+            hardware_limits=hardware_limits_obj.to_dict(),
+        )
 
     async def start_acquisition(
         self, config_file: sc.AcquisitionConfig

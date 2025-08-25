@@ -31,7 +31,8 @@ from pydantic import Field, PrivateAttr
 from seafront.config.basics import ChannelConfig, FilterConfig, GlobalConfigHandler
 from seafront.hardware.adapter import AdapterState, CoreState, Position
 from seafront.hardware.illumination import IlluminationController
-from seafront.hardware.microscope import Microscope, microscope_exclusive
+from seafront.hardware.microscope import Microscope, HardwareLimits, microscope_exclusive
+from seafront.hardware.camera import HardwareLimitValue
 from seafront.logger import logger
 from seafront.server import commands as cmd
 
@@ -449,6 +450,34 @@ class MockMicroscope(Microscope):
             
         logger.info(f"Mock microscope: snapped {len(enabled_channels)} channels")
         return cmd.BasicSuccessResponse()
+    
+    def get_hardware_limits(self) -> HardwareLimits:
+        """
+        Get mock hardware limits for testing.
+        
+        Returns realistic limits that simulate various hardware capabilities.
+        """
+        # Create mock limits as HardwareLimitValue objects for type safety
+        exposure_limits = HardwareLimitValue(min=0.05, max=10000, step=0.01)  # 50 microseconds to 10 seconds
+        gain_limits = HardwareLimitValue(min=-5, max=30, step=0.1)  # Typical scientific camera range
+        focus_offset_limits = HardwareLimitValue(min=-500, max=500, step=0.05)  # Larger range for testing
+        fluorescence_power_limits = HardwareLimitValue(min=5, max=100, step=0.1)  # Same as SQUID
+        brightfield_power_limits = HardwareLimitValue(min=3, max=100, step=0.1)  # Same as SQUID
+        generic_power_limits = HardwareLimitValue(min=5, max=100, step=0.1)  # Use fluorescence as default
+        z_planes_limits = HardwareLimitValue(min=1, max=200, step=1)  # Smaller max for testing
+        z_spacing_limits = HardwareLimitValue(min=0.01, max=2000, step=0.01)  # Higher precision for testing
+        
+        # Return properly typed HardwareLimits object
+        return HardwareLimits(
+            imaging_exposure_time_ms=exposure_limits.to_dict(),
+            imaging_analog_gain_db=gain_limits.to_dict(),
+            imaging_focus_offset_um=focus_offset_limits.to_dict(),
+            imaging_illum_perc=generic_power_limits.to_dict(),
+            imaging_illum_perc_fluorescence=fluorescence_power_limits.to_dict(),
+            imaging_illum_perc_brightfield=brightfield_power_limits.to_dict(),
+            imaging_number_z_planes=z_planes_limits.to_dict(),
+            imaging_delta_z_um=z_spacing_limits.to_dict(),
+        )
     
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         """Execute mock commands."""

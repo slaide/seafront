@@ -6,7 +6,7 @@ from gxipy import gxiapi
 from seaconfig import AcquisitionChannelConfig
 
 from seafront.config.basics import GlobalConfigHandler
-from seafront.hardware.camera import Camera, AcquisitionMode
+from seafront.hardware.camera import Camera, AcquisitionMode, HardwareLimitValue
 from seafront.logger import logger
 
 gxiapi.gx_init_lib()
@@ -409,3 +409,45 @@ class GalaxyCamera(Camera):
                     AcquisitionMode.CONTINUOUS,
                     with_cb=run_callback,
                 )
+
+    def get_exposure_time_limits(self) -> HardwareLimitValue:
+        """
+        Get camera's exposure time limits from Galaxy camera hardware.
+        
+        Returns:
+            HardwareLimitValue with min/max/step values (all in milliseconds)
+        """
+        if not self.handle:
+            raise RuntimeError("Camera not opened")
+            
+        # Get exposure time range from camera hardware
+        exposure_range = self.handle.ExposureTime.get_range()
+        
+        # Convert from microseconds to milliseconds and return
+        # Type: ignore needed because gxiapi TypedDict doesn't expose these keys to type checker
+        return HardwareLimitValue(
+            min=exposure_range['min'] / 1000.0,  # type: ignore[typeddict-item]
+            max=exposure_range['max'] / 1000.0,  # type: ignore[typeddict-item]
+            step=exposure_range['inc'] / 1000.0  # type: ignore[typeddict-item]
+        )
+
+    def get_analog_gain_limits(self) -> HardwareLimitValue:
+        """
+        Get camera's analog gain limits from Galaxy camera hardware.
+        
+        Returns:
+            HardwareLimitValue with min/max/step values (all in decibels)
+        """
+        if not self.handle:
+            raise RuntimeError("Camera not opened")
+            
+        # Get analog gain range from camera hardware  
+        gain_range = self.handle.Gain.get_range()
+        
+        # Galaxy cameras typically report gain in dB already
+        # Type: ignore needed because gxiapi TypedDict doesn't expose these keys to type checker
+        return HardwareLimitValue(
+            min=gain_range['min'],  # type: ignore[typeddict-item]
+            max=gain_range['max'],  # type: ignore[typeddict-item]
+            step=gain_range['inc']  # type: ignore[typeddict-item]
+        )

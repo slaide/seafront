@@ -993,66 +993,42 @@
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`
-    										exposure time in milliseconds.
-
-    										range: ${limits.imaging_exposure_time_ms.min} - ${limits.imaging_exposure_time_ms.max} ( in steps of ${limits.imaging_exposure_time_ms.step})
-    										`"
+                                            tooltip="Exposure time in milliseconds. Hover over individual inputs for specific ranges."
                                         >
                                             Exp. [ms]
                                         </p>
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`
-    										analog gain in decibels.
-
-    										range: ${limits.imaging_analog_gain_db.min} - ${limits.imaging_analog_gain_db.max} ( in steps of ${limits.imaging_analog_gain_db.step})
-    										`"
+                                            tooltip="Analog gain in decibels. Hover over individual inputs for specific ranges."
                                         >
                                             Gain [dB]
                                         </p>
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`
-    										z offset (from focus reference) in micrometers.
-
-    										range: ${limits.imaging_focus_offset_um.min} - ${limits.imaging_focus_offset_um.max} ( in steps of ${limits.imaging_focus_offset_um.step})
-    										`"
+                                            tooltip="Z offset from focus reference in micrometers. Hover over individual inputs for specific ranges."
                                         >
                                             Off. [um]
                                         </p>
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`
-    										illumination strength as percent of maximum.
-
-    										range: ${limits.imaging_illum_perc.min} - ${limits.imaging_illum_perc.max} ( in steps of ${limits.imaging_illum_perc.step})
-    										`"
+                                            tooltip="Illumination strength as percent of maximum. Limits vary by channel type - hover over individual inputs for specific ranges."
                                         >
                                             Pow. [%]
                                         </p>
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`
-    										number of z planes.
-
-    										range: ${limits.imaging_number_z_planes.min} - ${limits.imaging_number_z_planes.max} ( in steps of ${limits.imaging_number_z_planes.step})
-    										`"
+                                            tooltip="Number of Z planes. Hover over individual inputs for specific ranges."
                                         >
                                             num z
                                         </p>
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`
-    										distance between z planes in um.
-
-    										range: ${limits.imaging_delta_z_um.min} - ${limits.imaging_delta_z_um.max} ( in steps of ${limits.imaging_delta_z_um.step})
-    										`"
+                                            tooltip="Distance between Z planes in micrometers. Hover over individual inputs for specific ranges."
                                         >
                                             delta z [um]
                                         </p>
@@ -1139,7 +1115,8 @@
                                                     max="limits.imaging_exposure_time_ms.max"
                                                     placeholder="5"
                                                     x-model.number="channel.exposure_time_ms"
-                                                    x-init="registerNumberInput($el)"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Exposure time: ${limits.imaging_exposure_time_ms?.min ?? 'N/A'}ms - ${limits.imaging_exposure_time_ms?.max ?? 'N/A'}ms (step: ${limits.imaging_exposure_time_ms?.step ?? 'N/A'}ms)`"
                                                     is="number-input"
                                                     x-effect="disableElement($el,()=>!channel.enabled)"
                                                 />
@@ -1151,7 +1128,8 @@
                                                     max="limits.imaging_analog_gain_db.max"
                                                     placeholder="0"
                                                     x-model.number="channel.analog_gain"
-                                                    x-init="registerNumberInput($el)"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Analog gain: ${limits.imaging_analog_gain_db?.min ?? 'N/A'}dB - ${limits.imaging_analog_gain_db?.max ?? 'N/A'}dB (step: ${limits.imaging_analog_gain_db?.step ?? 'N/A'}dB)`"
                                                     is="number-input"
                                                     x-effect="disableElement($el,()=>!channel.enabled)"
                                                 />
@@ -1163,20 +1141,22 @@
                                                     max="limits.imaging_focus_offset_um.max"
                                                     placeholder="0"
                                                     x-model.number="channel.z_offset_um"
-                                                    x-init="registerNumberInput($el)"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Z offset: ${limits.imaging_focus_offset_um?.min ?? 'N/A'}μm - ${limits.imaging_focus_offset_um?.max ?? 'N/A'}μm (step: ${limits.imaging_focus_offset_um?.step ?? 'N/A'}μm)`"
                                                     is="number-input"
                                                     x-effect="disableElement($el,()=>!channel.enabled)"
                                                 />
 
                                                 <input
                                                     type="number"
-                                                    min="limits.imaging_illum_perc.min"
-                                                    step="limits.imaging_illum_perc.step"
-                                                    max="limits.imaging_illum_perc.max"
+                                                    x-bind:min="channel.handle.startsWith('bfled') ? (limits.imaging_illum_perc_brightfield?.min || limits.imaging_illum_perc?.min) : (limits.imaging_illum_perc_fluorescence?.min || limits.imaging_illum_perc?.min)"
+                                                    x-bind:step="channel.handle.startsWith('bfled') ? (limits.imaging_illum_perc_brightfield?.step || limits.imaging_illum_perc?.step) : (limits.imaging_illum_perc_fluorescence?.step || limits.imaging_illum_perc?.step)"
+                                                    x-bind:max="channel.handle.startsWith('bfled') ? (limits.imaging_illum_perc_brightfield?.max || limits.imaging_illum_perc?.max) : (limits.imaging_illum_perc_fluorescence?.max || limits.imaging_illum_perc?.max)"
                                                     placeholder="100"
                                                     x-model.number="channel.illum_perc"
                                                     is="number-input"
-                                                    x-init="registerNumberInput($el),$nextTick(()=>$dispatch('blur'))"
+                                                    x-init="registerNumberInput($el),$nextTick(()=>$dispatch('blur')),enabletooltip($el)"
+                                                    x-bind:tooltip="channel.handle.startsWith('bfled') ? `Brightfield LED power: ${limits.imaging_illum_perc_brightfield?.min ?? limits.imaging_illum_perc?.min ?? 'N/A'}% - ${limits.imaging_illum_perc_brightfield?.max ?? limits.imaging_illum_perc?.max ?? 'N/A'}% (step: ${limits.imaging_illum_perc_brightfield?.step ?? limits.imaging_illum_perc?.step ?? 'N/A'}%)` : `Fluorescence LED power: ${limits.imaging_illum_perc_fluorescence?.min ?? limits.imaging_illum_perc?.min ?? 'N/A'}% - ${limits.imaging_illum_perc_fluorescence?.max ?? limits.imaging_illum_perc?.max ?? 'N/A'}% (step: ${limits.imaging_illum_perc_fluorescence?.step ?? limits.imaging_illum_perc?.step ?? 'N/A'}%)`"
                                                     x-effect="disableElement($el,()=>!channel.enabled)"
                                                 />
 
@@ -1188,7 +1168,8 @@
                                                     placeholder="1"
                                                     x-model.number="channel.num_z_planes"
                                                     is="number-input"
-                                                    x-init="registerNumberInput($el)"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Number of Z planes: ${limits.imaging_number_z_planes?.min ?? 'N/A'} - ${limits.imaging_number_z_planes?.max ?? 'N/A'} (step: ${limits.imaging_number_z_planes?.step ?? 'N/A'})`"
                                                     x-effect="disableElement($el,()=>!channel.enabled)"
                                                 />
 
@@ -1200,7 +1181,8 @@
                                                     placeholder="3"
                                                     x-model.number="channel.delta_z_um"
                                                     is="number-input"
-                                                    x-init="registerNumberInput($el)"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Delta Z spacing: ${limits.imaging_delta_z_um?.min ?? 'N/A'}μm - ${limits.imaging_delta_z_um?.max ?? 'N/A'}μm (step: ${limits.imaging_delta_z_um?.step ?? 'N/A'}μm)`"
                                                     x-effect="disableElement($el,()=>!channel.enabled)"
                                                 />
 
