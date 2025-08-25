@@ -1971,6 +1971,10 @@ document.addEventListener("alpine:init", () => {
                 config_file: this.microscope_config_copy,
                 target_offset_um: this.laserAutofocusTargetOffsetUM,
             });
+            
+            // Automatically measure the current offset after moving to target
+            await this.button_laserAutofocusMeasureOffset();
+            
             return res;
         },
         /**
