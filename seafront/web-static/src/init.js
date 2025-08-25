@@ -2173,6 +2173,20 @@ document.addEventListener("alpine:init", () => {
             const reference_z_mm = laser_autofocus_calibration_refzmm.value;
             return `set at z = ${reference_z_mm.toFixed(3)}`;
         },
+        get laserAutofocusReferenceValue() {
+            const is_calibrated = this.laserAutofocusIsCalibrated;
+            const laser_autofocus_calibration_refzmm =
+                this.getMachineConfigItem("laser_autofocus_calibration_refzmm");
+            if (!is_calibrated || !laser_autofocus_calibration_refzmm) {
+                return 0;
+            }
+
+            if (laser_autofocus_calibration_refzmm.value_kind != "float") {
+                return 0;
+            }
+
+            return laser_autofocus_calibration_refzmm.value;
+        },
         /**
          * this calibrates the system and sets the current z as reference
          * -> store for later retrieval

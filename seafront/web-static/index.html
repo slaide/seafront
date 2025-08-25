@@ -1417,6 +1417,27 @@
                                         >
                                             Move
                                         </button>
+
+                                        <label
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Enable autofocus during acquisition. Only available when reference is calibrated (non-zero).`"
+                                            >Use during acquisition</label
+                                        >
+                                        <input
+                                            type="checkbox"
+                                            x-model="microscope_config.autofocus_enabled"
+                                            x-bind:disabled="laserAutofocusReferenceValue == 0"
+                                        />
+                                        <span
+                                            x-show="laserAutofocusReferenceValue == 0"
+                                            style="color: #888; font-size: 0.9em;"
+                                        >
+                                            Set reference first
+                                        </span>
+                                        <span
+                                            x-show="laserAutofocusReferenceValue != 0"
+                                            x-text="microscope_config.autofocus_enabled ? 'Enabled' : 'Disabled'"
+                                        ></span>
                                     </div>
                                 </div>
                             </div>
