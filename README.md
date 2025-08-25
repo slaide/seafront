@@ -90,7 +90,7 @@ Place your configuration file at `~/seafront/config.json` (JSON5 format supporte
             "calibration_offset_z_mm": 0.0,
             "forbidden_wells": "{\"384\":[\"A01\",\"A24\",\"P01\",\"P24\"]}",
             
-            "channels": "[{\"name\": \"BF LED Full\", \"handle\": \"bfledfull\", \"source_slot\": 0}]",
+            "channels": "[{\"name\": \"BF LED matrix full\", \"handle\": \"bfledfull\", \"source_slot\": 0}]",
             "filters": "[]"
         }
     ]
@@ -114,7 +114,7 @@ Channels define the available imaging modalities and their illumination sources.
 
 ```json
 {
-    "name": "BF LED Full",              // Display name in interface
+    "name": "BF LED matrix full",              // Display name in interface
     "handle": "bfledfull",              // Internal identifier (must be unique)
     "source_slot": 0,                   // Illumination source slot (0-6: LED matrix, 11-15: lasers)
     "use_power_calibration": true,      // Enable power calibration
@@ -158,7 +158,7 @@ Add `"microscope_type": "mock"` to your microscope configuration:
             "calibration_offset_x_mm": 0.0,
             "calibration_offset_y_mm": 0.0,
             "calibration_offset_z_mm": 0.0,
-            "channels": "[{\"name\": \"BF LED Full\", \"handle\": \"bfledfull\", \"source_slot\": 0}]",
+            "channels": "[{\"name\": \"BF LED matrix full\", \"handle\": \"bfledfull\", \"source_slot\": 0}]",
             "filters": "[]"
         }
     ]
@@ -196,7 +196,7 @@ Power calibration is configured per-channel in the `channels` configuration. Eac
 
 ```json
 {
-  "name": "BF LED Full",
+  "name": "BF LED matrix full",
   "handle": "bfledfull", 
   "source_slot": 0,
   "use_power_calibration": true,

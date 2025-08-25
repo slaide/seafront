@@ -260,10 +260,10 @@ class GlobalConfigHandler:
             ChannelConfig(name="Fluo 561 nm Ex", handle="fluo561", source_slot=14),
             ChannelConfig(name="Fluo 638 nm Ex", handle="fluo638", source_slot=13),
             ChannelConfig(name="Fluo 730 nm Ex", handle="fluo730", source_slot=15),
-            ChannelConfig(name="BF LED Full", handle="bfledfull", source_slot=0, 
+            ChannelConfig(name="BF LED matrix full", handle="bfledfull", source_slot=0, 
                          use_power_calibration=True, power_calibration=bfled_calibration),
-            ChannelConfig(name="BF LED Left Half", handle="bfledleft", source_slot=1),
-            ChannelConfig(name="BF LED Right Half", handle="bfledright", source_slot=2)
+            ChannelConfig(name="BF LED matrix left half", handle="bfledleft", source_slot=1),
+            ChannelConfig(name="BF LED matrix right half", handle="bfledright", source_slot=2)
         ]
         
         # Default filter configuration - empty by default since filter wheel is optional
