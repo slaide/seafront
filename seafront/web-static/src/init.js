@@ -732,9 +732,12 @@ document.addEventListener("alpine:init", () => {
                 this.plateNavigator.objectiveFov.position.x =
                     this.state.adapter_state.stage_position.x_pos_mm -
                     this.plateNavigator.objective.fovx / 2;
-                this.plateNavigator.objectiveFov.position.y =
-                    this.state.adapter_state.stage_position.y_pos_mm -
-                    this.plateNavigator.objective.fovy / 2;
+                    
+                // Flip Y coordinate to match the plate view coordinate system
+                // where A1 is at the top-left corner instead of bottom-left
+                const plateHeight = this.microscope_config.wellplate_type.Width_mm;
+                const flippedY = plateHeight - this.state.adapter_state.stage_position.y_pos_mm;
+                this.plateNavigator.objectiveFov.position.y = flippedY - this.plateNavigator.objective.fovy / 2;
             }
         },
 
@@ -772,9 +775,14 @@ document.addEventListener("alpine:init", () => {
          */
         async moveObjectiveTo(x_mm, y_mm) {
             try {
+                // PlateNavigator returns display coordinates (A1 at top-left)
+                // Convert back to physical coordinates (A1 at bottom-left)  
+                const plateHeight = this.microscope_config.wellplate_type.Width_mm;
+                const physicalY = plateHeight - y_mm;
+                
                 const moveRequest = {
                     x_mm: x_mm,
-                    y_mm: y_mm
+                    y_mm: physicalY
                 };
                 
                 await this.Actions.moveTo(moveRequest);
