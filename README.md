@@ -290,6 +290,33 @@ The script automatically uses wellplate specifications from the seaconfig librar
 
 The default protocol provides initial settings for channel configurations including default power levels, exposure times, and channel-filter mappings. This serves as the starting point that users customize through the web interface for their specific experiments.
 
+### propagating new default settings
+
+When you update the microscope configuration with new channel names or other defaults (like the recent change from "BF LED Full" to "BF LED matrix full"), follow these steps to propagate the changes to existing installations:
+
+1. **Update machine config**: Modify the default channel configurations in `seafront/config/basics.py` or update your local `~/seafront/config.json`
+
+2. **Delete existing default protocol**: Remove the old protocol file to force regeneration with new settings
+   ```bash
+   rm ~/seafront/acquisition_configs/default.json
+   ```
+
+3. **Generate new default protocol**: Use the script to create a fresh protocol with updated channel names
+   ```bash
+   uv run python scripts/generate_default_protocol.py
+   ```
+
+4. **Load protocol in GUI**: Start seafront and verify the new channel names appear correctly in the interface
+   ```bash
+   bash run.sh
+   ```
+
+5. **Reset machine config values**: In the web interface, go to "Machine Config" → "reset all values" to ensure all configuration values match the updated defaults
+
+6. **Reload interface**: Refresh (not hard reload) the browser page to apply all changes
+
+7. **Done**: The interface now uses the updated channel names (e.g., "BF LED matrix full" instead of "BF LED Full") and any other configuration changes
+
 ## browser configuration persistence
 
 The web interface automatically saves your current configuration to browser localStorage for persistence across page reloads. This includes:

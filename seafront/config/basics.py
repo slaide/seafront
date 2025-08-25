@@ -33,7 +33,7 @@ class PowerCalibration(BaseModel):
 class ChannelConfig(BaseModel):
     """Configuration for a single imaging channel"""
     name: str
-    "Display name for the channel (e.g. 'Fluo 405 nm Ex')"
+    "Display name for the channel (e.g. 'Fluorescence 405 nm Ex')"
     handle: str
     "Internal handle for the channel (e.g. 'fluo405')"
     source_slot: int
@@ -255,11 +255,11 @@ class GlobalConfigHandler:
         
         # Default channel configuration with traditional illumination sources using proper constructors
         default_channels = [
-            ChannelConfig(name="Fluo 405 nm Ex", handle="fluo405", source_slot=11),
-            ChannelConfig(name="Fluo 488 nm Ex", handle="fluo488", source_slot=12), 
-            ChannelConfig(name="Fluo 561 nm Ex", handle="fluo561", source_slot=14),
-            ChannelConfig(name="Fluo 638 nm Ex", handle="fluo638", source_slot=13),
-            ChannelConfig(name="Fluo 730 nm Ex", handle="fluo730", source_slot=15),
+            ChannelConfig(name="Fluorescence 405 nm Ex", handle="fluo405", source_slot=11),
+            ChannelConfig(name="Fluorescence 488 nm Ex", handle="fluo488", source_slot=12), 
+            ChannelConfig(name="Fluorescence 561 nm Ex", handle="fluo561", source_slot=14),
+            ChannelConfig(name="Fluorescence 638 nm Ex", handle="fluo638", source_slot=13),
+            ChannelConfig(name="Fluorescence 730 nm Ex", handle="fluo730", source_slot=15),
             ChannelConfig(name="BF LED matrix full", handle="bfledfull", source_slot=0, 
                          use_power_calibration=True, power_calibration=bfled_calibration),
             ChannelConfig(name="BF LED matrix left half", handle="bfledleft", source_slot=1),
