@@ -534,7 +534,16 @@ class ProtocolGenerator(BaseModel):
                         logger.debug("protocol - took image snapshot")
 
                         # store image
-                        image_storage_path = f"{self.project_output_path!s}/{well.well_name}_s{site_index}_x{site.col + 1}_y{site.row + 1}_z{plane_index + 1}_{channel.handle}.tiff"
+                        # Choose channel identifier for filename based on configuration
+                        use_channel_name = g_config.get("image_filename_use_channel_name")
+                        if use_channel_name is None or use_channel_name.boolvalue:
+                            # Use channel name with spaces replaced by underscores (default behavior)
+                            channel_identifier = channel.name.replace(" ", "_")
+                        else:
+                            # Use channel handle when explicitly set to "no"
+                            channel_identifier = channel.handle
+                        
+                        image_storage_path = f"{self.project_output_path!s}/{well.well_name}_s{site_index}_x{site.col + 1}_y{site.row + 1}_z{plane_index + 1}_{channel_identifier}.tiff"
 
                         image_store_entry = cmds.ImageStoreEntry(
                             pixel_format=g_config["main_camera_pixel_format"].strvalue,

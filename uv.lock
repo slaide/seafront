@@ -516,15 +516,15 @@ wheels = [
 
 [[package]]
 name = "seaconfig"
-version = "6.1.0"
-source = { git = "https://github.com/slaide/seafront-config?rev=v6.1.0#8a0c96a637afa181b6825d810ef26d2008006e0f" }
+version = "6.2.0"
+source = { git = "https://github.com/slaide/seafront-config?rev=v6.2.0#6a3716f022403fab6b9822f5f4df0ce3bd41856e" }
 dependencies = [
     { name = "pydantic" },
 ]
 
 [[package]]
 name = "seafront"
-version = "2.5.5"
+version = "2.5.6"
 source = { editable = "." }
 dependencies = [
     { name = "crc" },
@@ -579,7 +579,7 @@ requires-dist = [
     { name = "pyserial", specifier = "==3.5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
     { name = "scipy", specifier = ">=1.15,<1.16" },
-    { name = "seaconfig", git = "https://github.com/slaide/seafront-config?rev=v6.1.0" },
+    { name = "seaconfig", git = "https://github.com/slaide/seafront-config?rev=v6.2.0" },
     { name = "tifffile", specifier = "==2025.1.10" },
     { name = "toupcam", git = "https://github.com/slaide/toupcam-sdk?rev=v1.0.3" },
     { name = "types-pillow", marker = "extra == 'dev'" },

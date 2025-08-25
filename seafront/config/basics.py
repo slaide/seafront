@@ -629,6 +629,13 @@ class GlobalConfigHandler:
                 options=ConfigItemOption.get_bool_options(),
             ),
             ConfigItem(
+                name="image filename use channel name",
+                handle="image_filename_use_channel_name",
+                value_kind="option", 
+                value="yes",
+                options=ConfigItemOption.get_bool_options(),
+            ),
+            ConfigItem(
                 name="forbidden wells",
                 handle="forbidden_wells",
                 value_kind="text",
