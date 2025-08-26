@@ -140,6 +140,7 @@ document.addEventListener("alpine:init", () => {
                         configIsStored: this.configIsStored,
                         savedAt: new Date().toISOString()
                     };
+                    
                     localStorage.setItem("seafront-microscope-config", JSON.stringify(configToSave));
                 } catch (error) {
                     console.error("Failed to save microscope config to localStorage:", error);
@@ -583,9 +584,32 @@ document.addEventListener("alpine:init", () => {
                 this.configIsStored = this._savedConfigIsStored;
                 this._savedConfigIsStored = undefined; // Clean up
             }
+            
+            // Restore site selections AFTER all grid initialization is complete
+            if (this._savedSiteSelections !== undefined) {
+                // Restore saved site selections by updating existing mask entries
+                for (const savedSite of this._savedSiteSelections) {
+                    const existingSite = this.microscope_config.grid.mask.find(
+                        s => s.col === savedSite.col && s.row === savedSite.row
+                    );
+                    if (existingSite) {
+                        existingSite.selected = savedSite.selected;
+                    }
+                }
+                
+                this._savedSiteSelections = undefined; // Clean up
+                
+                // Update the visual display to show restored selections
+                if (this.plateNavigator) {
+                    this.plateNavigator.refreshWellColors(this.microscope_config);
+                }
+            }
         },
         /** @type {boolean|undefined} */
         _savedConfigIsStored:undefined,
+        
+        /** @type {AcquisitionWellSiteConfigurationSiteSelectionItem[]|undefined} */
+        _savedSiteSelections: undefined,
 
         /**
          *
@@ -1141,6 +1165,11 @@ document.addEventListener("alpine:init", () => {
                 // Preserve plate_wells structure if savedConfig has issues
                 if (!savedConfig.plate_wells || savedConfig.plate_wells.length === 0) {
                     mergedConfig.plate_wells = this._microscope_config.plate_wells;
+                }
+                
+                // Store grid.mask (site selections) from savedConfig to restore later (after grid initialization)
+                if (savedConfig.grid && savedConfig.grid.mask && savedConfig.grid.mask.length > 0) {
+                    this._savedSiteSelections = savedConfig.grid.mask;
                 }
                 
                 this._microscope_config = mergedConfig;
