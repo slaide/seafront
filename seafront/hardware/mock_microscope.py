@@ -728,11 +728,12 @@ class MockMicroscope(Microscope):
         elif isinstance(command, cmd.LaserAutofocusCalibrate):
             logger.info("Mock microscope: calibrating laser autofocus")
             await asyncio.sleep(0.2)  # Simulate calibration time
-            # Mock calibration result
+            # Mock calibration result using current position
+            current_state = await self.get_current_state()
             calibration_data = cmd.LaserAutofocusCalibrationData(
                 um_per_px=1.0,
                 x_reference=0.0,
-                calibration_position=Position(x_pos_mm=0.0, y_pos_mm=0.0, z_pos_mm=0.0)
+                calibration_position=current_state.stage_position
             )
             return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)  # type: ignore
             

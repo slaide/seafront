@@ -9,6 +9,76 @@ import { FontLoader } from 'three/addons/loaders/FontLoader';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils';
 
 /**
+ * Calculate the physical position of a site within a well
+ * @param {number} wellX_mm - Well X position in mm
+ * @param {number} wellY_mm - Well Y position in mm  
+ * @param {number} wellSizeX_mm - Well width in mm
+ * @param {number} wellSizeY_mm - Well height in mm
+ * @param {number} siteX - Site column index
+ * @param {number} siteY - Site row index
+ * @param {number} gridNumX - Total grid columns
+ * @param {number} gridNumY - Total grid rows
+ * @param {number} deltaX_mm - Site spacing X in mm
+ * @param {number} deltaY_mm - Site spacing Y in mm
+ * @param {number} fovX - Objective FOV width in mm
+ * @param {number} fovY - Objective FOV height in mm
+ * @returns {{x: number, y: number}} Site position in mm
+ */
+export function calculateSitePosition(wellX_mm, wellY_mm, wellSizeX_mm, wellSizeY_mm, 
+                                     siteX, siteY, gridNumX, gridNumY, 
+                                     deltaX_mm, deltaY_mm, fovX, fovY) {
+    const site_plate_x_offset = wellX_mm + wellSizeX_mm / 2
+        - (fovX + (gridNumX - 1) * deltaX_mm) / 2
+        + siteX * deltaX_mm;
+    const site_plate_y_offset = wellY_mm + wellSizeY_mm / 2
+        - (fovY + (gridNumY - 1) * deltaY_mm) / 2
+        + (gridNumY - 1 - siteY) * deltaY_mm;
+    
+    return { x: site_plate_x_offset, y: site_plate_y_offset };
+}
+
+/**
+ * Calculate well position on the plate
+ * @param {Wellplate} plate - Wellplate configuration
+ * @param {number} x - Well column index
+ * @param {number} y - Well row index
+ * @returns {{x: number, y: number}} Well position in mm
+ */
+export function calculateWellPosition(plate, x, y) {
+    const well_x = plate.Offset_A1_x_mm + x * plate.Well_distance_x_mm;
+    const well_y = plate.Offset_A1_y_mm + (plate.Num_wells_y - 1 - y) * plate.Well_distance_y_mm;
+    return { x: well_x, y: well_y };
+}
+
+/**
+ * Calculate site position using Python protocol runner logic (for hit detection)
+ * @param {number} wellX_mm - Well X position in mm
+ * @param {number} wellY_mm - Well Y position in mm  
+ * @param {number} wellSizeX_mm - Well width in mm
+ * @param {number} wellSizeY_mm - Well height in mm
+ * @param {number} siteX - Site column index
+ * @param {number} siteY - Site row index
+ * @param {number} gridNumX - Total grid columns
+ * @param {number} gridNumY - Total grid rows
+ * @param {number} deltaX_mm - Site spacing X in mm
+ * @param {number} deltaY_mm - Site spacing Y in mm
+ * @returns {{x: number, y: number}} Site position in mm
+ */
+export function calculateSitePositionPython(wellX_mm, wellY_mm, wellSizeX_mm, wellSizeY_mm, 
+                                           siteX, siteY, gridNumX, gridNumY, 
+                                           deltaX_mm, deltaY_mm) {
+    // Python protocol runner logic: center grid within well
+    const site_plate_x_offset = wellX_mm + wellSizeX_mm / 2
+        - (gridNumX - 1) / 2 * deltaX_mm
+        + siteX * deltaX_mm;
+    const site_plate_y_offset = wellY_mm + wellSizeY_mm / 2
+        - (gridNumY - 1) / 2 * deltaY_mm
+        + siteY * deltaY_mm;
+    
+    return { x: site_plate_x_offset, y: site_plate_y_offset };
+}
+
+/**
  * make well name
  * 
  * Example:
@@ -317,6 +387,7 @@ export class PlateNavigator {
                 drag.last.x = event.offsetX;
                 drag.last.y = event.offsetY;
             }
+            
         });
         // Prevent context menu when shift+right-clicking
         el.addEventListener("contextmenu", event => {
@@ -389,6 +460,13 @@ export class PlateNavigator {
             side: THREE.DoubleSide,
             transparent: true,
             opacity: 0.5,
+        });
+        /** @type {THREE.LineBasicMaterial} */
+        this.matSiteUnselected = new THREE.LineBasicMaterial({
+            color: 0x666666,  // Gray color for unselected sites instead of opacity
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.5,  // Same opacity as selected but different color
         });
         /** @type {THREE.LineBasicMaterial} */
         this.matPlate = new THREE.LineBasicMaterial({
@@ -573,14 +651,29 @@ export class PlateNavigator {
             by: 0 + this.objective.fovy,
         }, this.matSite);
         /**@type {THREE.InstancedMesh|null} */
-        let site_quads = null;
-        let num_sites = valid_wells.length * microscope_config.grid.mask.map(s => 1).reduce((v, o) => v + o, 0);
-        if (!this.scene.getObjectByName(objectNameSites)) {
-            site_quads = new THREE.InstancedMesh(
-                site_quad.geometry,
-                site_quad.material,
-                num_sites
-            );
+        let site_quads_selected = null;
+        let site_quads_unselected = null;
+        let num_sites_selected = valid_wells.length * microscope_config.grid.mask.filter(s => s.selected).length;
+        let num_sites_unselected = valid_wells.length * microscope_config.grid.mask.filter(s => !s.selected).length;
+        
+        if (!this.scene.getObjectByName(objectNameSites + "_selected")) {
+            if (num_sites_selected > 0) {
+                site_quads_selected = new THREE.InstancedMesh(
+                    site_quad.geometry,
+                    this.matSite,
+                    num_sites_selected
+                );
+            }
+        }
+        
+        if (!this.scene.getObjectByName(objectNameSites + "_unselected")) {
+            if (num_sites_unselected > 0) {
+                site_quads_unselected = new THREE.InstancedMesh(
+                    site_quad.geometry,
+                    this.matSiteUnselected,
+                    num_sites_unselected
+                );
+            }
         }
 
         // combine all text into one mesh to simplify into a single draw call
@@ -594,7 +687,8 @@ export class PlateNavigator {
         let text_font = await this.font;
 
         // init index into site buffer (will be incremented before first use)
-        let site_index = -1;
+        let site_index_selected = -1;
+        let site_index_unselected = -1;
         let selected_well_index = 0;
         let unselected_well_index = 0;
         
@@ -609,8 +703,9 @@ export class PlateNavigator {
             }
 
             // add well
-            let well_x = plate.Offset_A1_x_mm + x * plate.Well_distance_x_mm;
-            let well_y = plate.Offset_A1_y_mm + (plate.Num_wells_y - 1 - y) * plate.Well_distance_y_mm;
+            const wellPos = calculateWellPosition(plate, x, y);
+            let well_x = wellPos.x;
+            let well_y = wellPos.y;
 
             let translatematrix = new THREE.Vector3(well_x, well_y, well_z);
             let quaternion = new THREE.Quaternion();
@@ -643,23 +738,21 @@ export class PlateNavigator {
             };
 
             // add sites to well
-            if (site_quads != null) {
+            if (site_quads_selected != null || site_quads_unselected != null) {
                 // add well to display, but skip sites, if well is not selected
                 if (well.selected) {
                     for (let site of microscope_config.grid.mask) {
-                        if (!site.selected) {
-                            continue;
-                        }
-
                         let sitex = site.col;
                         let sitey = site.row;
 
-                        let site_plate_x_offset = well_x + plate.Well_size_x_mm / 2
-                            - (this.objective.fovx + (microscope_config.grid.num_x - 1) * microscope_config.grid.delta_x_mm) / 2
-                            + sitex * microscope_config.grid.delta_x_mm;
-                        let site_plate_y_offset = well_y + plate.Well_size_y_mm / 2
-                            - (this.objective.fovy + (microscope_config.grid.num_y - 1) * microscope_config.grid.delta_y_mm) / 2
-                            + sitey * microscope_config.grid.delta_y_mm;
+                        const sitePos = calculateSitePosition(
+                            well_x, well_y, plate.Well_size_x_mm, plate.Well_size_y_mm,
+                            sitex, sitey, microscope_config.grid.num_x, microscope_config.grid.num_y,
+                            microscope_config.grid.delta_x_mm, microscope_config.grid.delta_y_mm,
+                            this.objective.fovx, this.objective.fovy
+                        );
+                        let site_plate_x_offset = sitePos.x;
+                        let site_plate_y_offset = sitePos.y;
 
                         let translatematrix = new THREE.Vector3(
                             site_plate_x_offset,
@@ -675,11 +768,14 @@ export class PlateNavigator {
                         site_matrix.identity();
                         site_matrix.compose(translatematrix, quaternion, scalematrix);
 
-                        site_index++;
-                        site_quads.setMatrixAt(
-                            site_index,
-                            site_matrix
-                        );
+                        // Use appropriate mesh based on site selection state
+                        if (site.selected && site_quads_selected != null) {
+                            site_index_selected++;
+                            site_quads_selected.setMatrixAt(site_index_selected, site_matrix);
+                        } else if (!site.selected && site_quads_unselected != null) {
+                            site_index_unselected++;
+                            site_quads_unselected.setMatrixAt(site_index_unselected, site_matrix);
+                        }
                     }
                 }
             }
@@ -723,12 +819,21 @@ export class PlateNavigator {
             well_selected_quads.name = objectNameWellsSelected;
             this.scene.add(well_selected_quads);
         }
-        if (site_quads != null) {
-            site_quads.name = objectNameSites;
-            if (this.scene.getObjectByName(objectNameSites)) {
-                console.error("duplicate found for", objectNameSites);
+        if (site_quads_selected != null) {
+            site_quads_selected.name = objectNameSites + "_selected";
+            if (this.scene.getObjectByName(objectNameSites + "_selected")) {
+                console.error("duplicate found for", objectNameSites + "_selected");
             } else {
-                this.scene.add(site_quads);
+                this.scene.add(site_quads_selected);
+            }
+        }
+        
+        if (site_quads_unselected != null) {
+            site_quads_unselected.name = objectNameSites + "_unselected";
+            if (this.scene.getObjectByName(objectNameSites + "_unselected")) {
+                console.error("duplicate found for", objectNameSites + "_unselected");
+            } else {
+                this.scene.add(site_quads_unselected);
             }
         }
     }
@@ -917,10 +1022,16 @@ export class PlateNavigator {
     refreshWellColors(microscope_config) {
         if (!this.plate) return;
 
+        // Store the microscope config for cursor debugging
+        this.microscopeConfig = microscope_config;
+
         // Remove existing well and site meshes
         const existingWells = this.scene.getObjectByName(objectNameWells);
         const existingSelectedWells = this.scene.getObjectByName(objectNameWellsSelected);
-        const existingSites = this.scene.getObjectByName(objectNameSites);
+        const existingSitesSelected = this.scene.getObjectByName(objectNameSites + "_selected");
+        const existingSitesUnselected = this.scene.getObjectByName(objectNameSites + "_unselected");
+        // Also remove old single site mesh for backwards compatibility
+        const existingSitesOld = this.scene.getObjectByName(objectNameSites);
         
         if (existingWells) {
             this.scene.remove(existingWells);
@@ -930,9 +1041,17 @@ export class PlateNavigator {
             this.scene.remove(existingSelectedWells);
             existingSelectedWells.dispose();
         }
-        if (existingSites) {
-            this.scene.remove(existingSites);
-            existingSites.dispose();
+        if (existingSitesSelected) {
+            this.scene.remove(existingSitesSelected);
+            existingSitesSelected.dispose();
+        }
+        if (existingSitesUnselected) {
+            this.scene.remove(existingSitesUnselected);
+            existingSitesUnselected.dispose();
+        }
+        if (existingSitesOld) {
+            this.scene.remove(existingSitesOld);
+            existingSitesOld.dispose();
         }
 
         // Recreate well meshes with current selections
@@ -969,8 +1088,9 @@ export class PlateNavigator {
 
             if (x < 0 || y < 0) continue;
 
-            let well_x = plate.Offset_A1_x_mm + x * plate.Well_distance_x_mm;
-            let well_y = plate.Offset_A1_y_mm + (plate.Num_wells_y - 1 - y) * plate.Well_distance_y_mm;
+            const wellPos = calculateWellPosition(plate, x, y);
+            let well_x = wellPos.x;
+            let well_y = wellPos.y;
 
             let translatematrix = new THREE.Vector3(well_x, well_y, well_z);
             let quaternion = new THREE.Quaternion();
@@ -1013,69 +1133,89 @@ export class PlateNavigator {
             by: 0 + this.objective.fovy,
         }, this.matSite);
         
-        let num_sites = valid_wells.length * microscope_config.grid.mask.filter(s => s.selected).length;
-        let site_quads = null;
+        // Only count sites in selected wells
+        let selected_wells = microscope_config.plate_wells.filter(w => w.selected && w.row >= 0 && w.col >= 0);
+        let num_sites_selected = selected_wells.length * microscope_config.grid.mask.filter(s => s.selected).length;
+        let num_sites_unselected = selected_wells.length * microscope_config.grid.mask.filter(s => !s.selected).length;
+        let site_quads_selected = null;
+        let site_quads_unselected = null;
         
-        if (num_sites > 0) {
-            site_quads = new THREE.InstancedMesh(
+        if (num_sites_selected > 0) {
+            site_quads_selected = new THREE.InstancedMesh(
                 site_quad.geometry,
-                site_quad.material,
-                num_sites
+                this.matSite,
+                num_sites_selected
             );
+        }
+        
+        if (num_sites_unselected > 0) {
+            site_quads_unselected = new THREE.InstancedMesh(
+                site_quad.geometry,
+                this.matSiteUnselected,
+                num_sites_unselected
+            );
+        }
 
-            let site_index = 0;
+        let site_index_selected = -1;
+        let site_index_unselected = -1;
             
-            // Add sites to selected wells
-            for (let well of microscope_config.plate_wells) {
-                let x = well.col;
-                let y = well.row;
+        // Add sites to selected wells
+        for (let well of microscope_config.plate_wells) {
+            let x = well.col;
+            let y = well.row;
 
-                if (x < 0 || y < 0 || !well.selected) continue;
+            if (x < 0 || y < 0 || !well.selected) continue;
 
-                let well_x = plate.Offset_A1_x_mm + x * plate.Well_distance_x_mm;
-                let well_y = plate.Offset_A1_y_mm + (plate.Num_wells_y - 1 - y) * plate.Well_distance_y_mm;
+            const wellPos = calculateWellPosition(plate, x, y);
+            let well_x = wellPos.x;
+            let well_y = wellPos.y;
 
-                let well_aabb = {
-                    ax: well_x,
-                    ay: well_y,
-                    bx: well_x + plate.Well_size_x_mm,
-                    by: well_y + plate.Well_size_y_mm,
-                };
+            for (let site of microscope_config.grid.mask) {
+                let sitex = site.col;
+                let sitey = site.row;
 
-                for (let site of microscope_config.grid.mask) {
-                    if (!site.selected) continue;
+                const sitePos = calculateSitePosition(
+                    well_x, well_y, plate.Well_size_x_mm, plate.Well_size_y_mm,
+                    sitex, sitey, microscope_config.grid.num_x, microscope_config.grid.num_y,
+                    microscope_config.grid.delta_x_mm, microscope_config.grid.delta_y_mm,
+                    this.objective.fovx, this.objective.fovy
+                );
+                let site_plate_x_offset = sitePos.x;
+                let site_plate_y_offset = sitePos.y;
 
-                    let sitex = site.col;
-                    let sitey = site.row;
+                let translatematrix = new THREE.Vector3(
+                    site_plate_x_offset,
+                    site_plate_y_offset,
+                    site_z
+                );
 
-                    let site_plate_x_offset = well_x + plate.Well_size_x_mm / 2
-                        - (this.objective.fovx + (microscope_config.grid.num_x - 1) * microscope_config.grid.delta_x_mm) / 2
-                        + sitex * microscope_config.grid.delta_x_mm;
-                    let site_plate_y_offset = well_y + plate.Well_size_y_mm / 2
-                        - (this.objective.fovy + (microscope_config.grid.num_y - 1) * microscope_config.grid.delta_y_mm) / 2
-                        + sitey * microscope_config.grid.delta_y_mm;
+                let quaternion = new THREE.Quaternion();
+                quaternion.identity();
+                let scalematrix = new THREE.Vector3(1, 1, 1);
 
-                    let translatematrix = new THREE.Vector3(
-                        site_plate_x_offset,
-                        site_plate_y_offset,
-                        site_z
-                    );
+                let site_matrix = new THREE.Matrix4();
+                site_matrix.identity();
+                site_matrix.compose(translatematrix, quaternion, scalematrix);
 
-                    let quaternion = new THREE.Quaternion();
-                    quaternion.identity();
-                    let scalematrix = new THREE.Vector3(1, 1, 1);
-
-                    let site_matrix = new THREE.Matrix4();
-                    site_matrix.identity();
-                    site_matrix.compose(translatematrix, quaternion, scalematrix);
-
-                    site_quads.setMatrixAt(site_index, site_matrix);
-                    site_index++;
+                // Use appropriate mesh based on site selection state
+                if (site.selected && site_quads_selected != null) {
+                    site_index_selected++;
+                    site_quads_selected.setMatrixAt(site_index_selected, site_matrix);
+                } else if (!site.selected && site_quads_unselected != null) {
+                    site_index_unselected++;
+                    site_quads_unselected.setMatrixAt(site_index_unselected, site_matrix);
                 }
             }
+        }
 
-            site_quads.name = objectNameSites;
-            this.scene.add(site_quads);
+        if (site_quads_selected != null) {
+            site_quads_selected.name = objectNameSites + "_selected";
+            this.scene.add(site_quads_selected);
+        }
+        
+        if (site_quads_unselected != null) {
+            site_quads_unselected.name = objectNameSites + "_unselected";
+            this.scene.add(site_quads_unselected);
         }
     }
 
@@ -1106,8 +1246,9 @@ export class PlateNavigator {
         for (let y = 0; y < this.plate.Num_wells_y; y++) {
             for (let x = 0; x < this.plate.Num_wells_x; x++) {
                 // Calculate well position and bounds
-                const wellX = this.plate.Offset_A1_x_mm + x * this.plate.Well_distance_x_mm;
-                const wellY = this.plate.Offset_A1_y_mm + (this.plate.Num_wells_y - 1 - y) * this.plate.Well_distance_y_mm;
+                const wellPos = calculateWellPosition(this.plate, x, y);
+                const wellX = wellPos.x;
+                const wellY = wellPos.y;
                 
                 const wellBounds = {
                     minX: wellX,
@@ -1130,6 +1271,15 @@ export class PlateNavigator {
             }
         }
 
-        this.onWellSelection(selectedWells, selection.mode);
+        // Pass selection bounds along with well names for site selection mode
+        const selectionBounds = {
+            minX: selectionBox.minX,
+            maxX: selectionBox.maxX,
+            minY: selectionBox.minY,
+            maxY: selectionBox.maxY
+        };
+        
+        this.onWellSelection(selectedWells, selection.mode, selectionBounds);
     }
+
 }

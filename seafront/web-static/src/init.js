@@ -7,12 +7,16 @@
 
 // import some stuff, then make it available in the html code
 
+import * as THREE from 'three';
+
 import {
     PlateNavigator,
     makeWellName,
     matWellColor,
     matSiteColor,
     matFovColor,
+    calculateSitePosition,
+    calculateSitePositionPython,
 } from "platenavigator";
 // these colors are used to create a legend in html
 Object.assign(window, { matWellColor, matSiteColor, matFovColor });
@@ -106,6 +110,9 @@ document.addEventListener("alpine:init", () => {
 
         themes: ["light", "dark"],
         theme: localStorage.getItem("seafront-theme") || "light",
+        
+        /** Selection mode for plate navigator: 'wells' or 'sites' */
+        plateSelectionMode: "wells",
         changeTheme() {
             // apply theme to document body
             const el = document.body;
@@ -762,9 +769,13 @@ document.addEventListener("alpine:init", () => {
                 this.moveObjectiveTo(x_mm, y_mm);
             });
 
-            // Set up shift+drag callback to select wells
-            this.plateNavigator.setWellSelectionCallback(async (wellNames, mode) => {
-                await this.selectWellsByNames(wellNames, mode);
+            // Set up shift+drag callback to select wells or sites
+            this.plateNavigator.setWellSelectionCallback(async (wellNames, mode, selectionBounds) => {
+                if (this.plateSelectionMode === "wells") {
+                    await this.selectWellsByNames(wellNames, mode);
+                } else if (this.plateSelectionMode === "sites") {
+                    await this.selectSitesByWellArea(wellNames, mode, selectionBounds);
+                }
             });
         },
 
@@ -829,6 +840,7 @@ document.addEventListener("alpine:init", () => {
             // Save the updated configuration
             this.saveCurrentConfig();
         },
+
 
         /**
          *
@@ -2553,7 +2565,7 @@ document.addEventListener("alpine:init", () => {
         /**
          * if newplate_Model_id is a string: update plate navigator and selector to newly selected plate type
          * if newplate_Model_id is not a string: update plate navigator and selector with changed site or well selections
-         * @param {string|any} newplate_Model_id
+         * @param {string|null|undefined} newplate_Model_id
          * @param {boolean|undefined} force_override
          */
         async updatePlate(newplate_Model_id, force_override) {
@@ -2609,6 +2621,100 @@ document.addEventListener("alpine:init", () => {
 
             // await plate navigator update
             await this.setPlate(this.microscope_config, selectedplate);
+            
+            // Also explicitly refresh sites to ensure they update with new grid settings
+            if (this.plateNavigator) {
+                this.plateNavigator.refreshWellColors(this.microscope_config);
+            }
+        },
+
+
+        /**
+         * Handle site selection based on area selection on the plate
+         * Uses AABB intersection testing for precise site selection
+         * @param {string[]} wellNames - Array of well names in the selection
+         * @param {string} mode - 'select' or 'deselect'
+         * @param {{minX: number, maxX: number, minY: number, maxY: number}} selectionBounds - Selection area bounds in mm
+         */
+        selectSitesByWellArea(wellNames, mode, selectionBounds) {
+            if (!this.microscope_config || !this.plateNavigator) {
+                console.warn("No plate configuration or navigator available for site selection");
+                return;
+            }
+
+            // Get grid configuration
+            const gridConfig = this.microscope_config.grid;
+            const plateConfig = this.microscope_config.wellplate_type;
+            
+            let modifiedSites = 0;
+            
+            // Test each selected well
+            for (let wellRow = 0; wellRow < plateConfig.Num_wells_y; wellRow++) {
+                for (let wellCol = 0; wellCol < plateConfig.Num_wells_x; wellCol++) {
+                    // Check if this well is selected
+                    const wellSelected = this.microscope_config.plate_wells?.some(w => 
+                        w.row === wellRow && w.col === wellCol && w.selected) || false;
+                    
+                    if (!wellSelected) continue;
+                    
+                    // Calculate well physical position and dimensions
+                    const wellX_mm = plateConfig.Offset_A1_x_mm + wellCol * plateConfig.Well_distance_x_mm;
+                    const wellY_mm = plateConfig.Offset_A1_y_mm + wellRow * plateConfig.Well_distance_y_mm;
+                    const wellSizeX_mm = plateConfig.Well_size_x_mm;
+                    const wellSizeY_mm = plateConfig.Well_size_y_mm;
+                    
+                    // Test sites in this well using AABB intersection
+                    for (let site of gridConfig.mask) {
+                        // Calculate site position for intersection testing
+                        const fovX = this.plateNavigator.objective.fovx;
+                        const fovY = this.plateNavigator.objective.fovy;
+                        
+                        const sitePosRaw = calculateSitePositionPython(
+                            wellX_mm, wellY_mm, wellSizeX_mm, wellSizeY_mm,
+                            site.col, site.row,
+                            gridConfig.num_x, gridConfig.num_y,
+                            gridConfig.delta_x_mm, gridConfig.delta_y_mm
+                        );
+                        
+                        // Transform Y coordinate to match selection coordinate system
+                        const plateWidth = plateConfig.Width_mm;
+                        const sitePos = {
+                            x: sitePosRaw.x,
+                            y: plateWidth - sitePosRaw.y
+                        };
+                        
+                        // Calculate site AABB using FOV size
+                        const siteMinX = sitePos.x - fovX / 2;
+                        const siteMaxX = sitePos.x + fovX / 2;
+                        const siteMinY = sitePos.y - fovY / 2;
+                        const siteMaxY = sitePos.y + fovY / 2;
+                        
+                        // AABB intersection test: rectangles intersect if they are NOT separated in any direction
+                        const intersects = !(
+                            siteMaxX < selectionBounds.minX ||  // site is to the left of selection
+                            siteMinX > selectionBounds.maxX ||  // site is to the right of selection
+                            siteMaxY < selectionBounds.minY ||  // site is below selection
+                            siteMinY > selectionBounds.maxY     // site is above selection
+                        );
+                        
+                        if (intersects) {
+                            const newSelected = (mode === 'select');
+                            if (site.selected !== newSelected) {
+                                site.selected = newSelected;
+                                modifiedSites++;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (modifiedSites > 0) {
+                // Refresh the visual display
+                this.plateNavigator.refreshWellColors(this.microscope_config);
+                
+                // Save the updated configuration
+                this.saveCurrentConfig();
+            }
         },
     }));
 });
