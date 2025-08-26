@@ -236,6 +236,88 @@ class ProtocolGenerator(BaseModel):
         "selected channels"
         return [c for c in self.config_file.channels if c.enabled]
 
+    def get_greedy_well_order(self) -> list[sc.PlateWellConfig]:
+        """
+        Get wells in greedy nearest-neighbor traversal order for maximum efficiency.
+        Always moves to the nearest unvisited well.
+        """
+        wells = self.plate_wells.copy()
+        if len(wells) <= 1:
+            return wells
+        
+        def distance(w1: sc.PlateWellConfig, w2: sc.PlateWellConfig) -> float:
+            return math.sqrt((w1.col - w2.col)**2 + (w1.row - w2.row)**2)
+        
+        # Start with the first well (top-left-most)
+        wells.sort(key=lambda w: (w.row, w.col))
+        current_well = wells.pop(0)
+        optimized_wells = [current_well]
+        
+        # Greedily pick the nearest remaining well
+        while wells:
+            nearest_well = min(wells, key=lambda w: distance(current_well, w))
+            wells.remove(nearest_well)
+            optimized_wells.append(nearest_well)
+            current_well = nearest_well
+        
+        logger.info(f"protocol - greedy well traversal: {len(optimized_wells)} wells")
+        return optimized_wells
+
+    def get_optimized_site_order_for_well(self, 
+                                          current_well: sc.PlateWellConfig,
+                                          last_position: tuple[float, float]) -> list[sc.AcquisitionWellSiteConfigurationSiteSelectionItem]:
+        """
+        Get sites in optimal traversal order for maximum efficiency within a single well.
+        Starts with the site closest to the current physical position and uses greedy traversal.
+        
+        Args:
+            current_well: The well we're about to enter
+            last_position: Current physical position (x_mm, y_mm)
+        """
+        sites = self.well_sites.copy()
+        if len(sites) <= 1:
+            return sites
+        
+        def site_distance(s1: sc.AcquisitionWellSiteConfigurationSiteSelectionItem, 
+                         s2: sc.AcquisitionWellSiteConfigurationSiteSelectionItem) -> float:
+            return math.sqrt((s1.col - s2.col)**2 + (s1.row - s2.row)**2)
+        
+        def physical_distance_to_site(site: sc.AcquisitionWellSiteConfigurationSiteSelectionItem, 
+                                     position: tuple[float, float]) -> float:
+            """Calculate physical distance from current position to a site in the target well"""
+            # Calculate the physical position of this site
+            site_x_mm = (
+                self.plate.get_well_offset_x(current_well.well_name)
+                + self.site_topleft_x_mm
+                + site.col * self.config_file.grid.delta_x_mm
+            )
+            site_y_mm = (
+                self.plate.get_well_offset_y(current_well.well_name)
+                + self.site_topleft_y_mm
+                + site.row * self.config_file.grid.delta_y_mm
+            )
+            
+            # Calculate distance from current position to this site
+            return math.sqrt((site_x_mm - position[0])**2 + (site_y_mm - position[1])**2)
+        
+        # Find the site closest to our current physical position
+        start_site = min(sites, key=lambda s: physical_distance_to_site(s, last_position))
+        start_distance = physical_distance_to_site(start_site, last_position)
+        
+        sites.remove(start_site)
+        optimized_sites = [start_site]
+        current_site = start_site
+        
+        # Greedily pick the nearest remaining site within this well
+        while sites:
+            nearest_site = min(sites, key=lambda s: site_distance(current_site, s))
+            sites.remove(nearest_site)
+            optimized_sites.append(nearest_site)
+            current_site = nearest_site
+        
+        logger.debug(f"protocol - optimized site order for well {current_well.well_name}: {len(optimized_sites)} sites, starting with site ({start_site.col},{start_site.row}) at distance {start_distance:.2f}mm")
+        return optimized_sites
+
     # pydantics version of dataclass.__post_init__
     def model_post_init(self, __context):
         self.num_wells = len(self.plate_wells)
@@ -381,18 +463,31 @@ class ProtocolGenerator(BaseModel):
 
         # run acquisition:
 
+        # Get optimized well traversal order once (doesn't change between timepoints)
+        # Site order will be calculated per-well for maximum efficiency
+        optimized_wells = self.get_greedy_well_order()
+
+        # Initialize position tracking (start from reference position if autofocus enabled)
+        if self.config_file.autofocus_enabled and reference_z_mm is not None:
+            current_position = (0.0, 0.0)  # Start from reference position
+        else:
+            current_position = (0.0, 0.0)  # Start from origin
+
         # for each timepoint, starting at 1
         for timepoint in range(1, self.config_file.grid.num_t + 1):
             logger.info(f"protocol - started timepoint {timepoint}/{self.config_file.grid.num_t}")
 
-            for well_index, well in enumerate(self.plate_wells):
+            for well_index, well in enumerate(optimized_wells):
                 # these are xy sites
                 logger.info(
-                    f"protocol - handling next well: {well.well_name} {well_index + 1}/{len(self.plate_wells)}"
+                    f"protocol - handling next well: {well.well_name} {well_index + 1}/{len(optimized_wells)} (row {well.row}, col {well.col})"
                 )
 
-                for site_index, site in enumerate(self.well_sites):
-                    logger.info(f"protocol - handling site {site_index + 1}/{len(self.well_sites)}")
+                # Calculate optimal site order for this well based on current physical position
+                optimized_sites = self.get_optimized_site_order_for_well(well, current_position)
+
+                for site_index, site in enumerate(optimized_sites):
+                    logger.info(f"protocol - handling site {site_index + 1}/{len(optimized_sites)} (row {site.row}, col {site.col})")
 
                     self.handle_q_in()
 
@@ -410,6 +505,9 @@ class ProtocolGenerator(BaseModel):
 
                     res = yield cmds.MoveTo(x_mm=site_x_mm, y_mm=site_y_mm)
                     assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
+                    
+                    # Update current position for distance calculations
+                    current_position = (site_x_mm, site_y_mm)
 
                     logger.debug("protocol - moved to site")
 
