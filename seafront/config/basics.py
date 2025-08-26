@@ -654,6 +654,13 @@ class GlobalConfigHandler:
                 value=1,
             ),
             ConfigItem(
+                name="image filename zero pad column index",
+                handle="image_filename_zero_pad_column",
+                value_kind="option",
+                value="yes",
+                options=ConfigItemOption.get_bool_options(),
+            ),
+            ConfigItem(
                 name="forbidden wells",
                 handle="forbidden_wells",
                 value_kind="text",

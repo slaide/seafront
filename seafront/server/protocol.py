@@ -94,6 +94,29 @@ class AsyncThreadPool(BaseModel):
             self.threads[i].join(timeout=timeout)
 
 
+def _format_well_name_with_padding(well_name: str) -> str:
+    """
+    Format well name to ensure column index is zero-padded to 2 digits.
+    
+    Examples:
+        F8 -> F08
+        A10 -> A10 (already padded)
+        H1 -> H01
+    
+    Args:
+        well_name: Original well name (e.g., "F8", "A10")
+        
+    Returns:
+        Formatted well name with zero-padded column index
+    """
+    # Well name format: single letter + number (e.g., F8, A10)
+    row_letter = well_name[0]
+    col_number = well_name[1:]
+    
+    # Zero-pad column to 2 digits
+    return f"{row_letter}{col_number.zfill(2)}"
+
+
 def make_unique_acquisition_id(length: tp.Literal[16, 32] = 16) -> str:
     """
     Generates a random microscope image acquisition protocol name.
@@ -559,7 +582,16 @@ class ProtocolGenerator(BaseModel):
                         y_num = site.row + xy_start_value  
                         z_num = plane_index + z_start_value
                         
-                        image_storage_path = f"{self.project_output_path!s}/{well.well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.tiff"
+                        # Apply zero-padding to well name if configured
+                        zero_pad_column = g_config.get("image_filename_zero_pad_column")
+                        if zero_pad_column is None or zero_pad_column.boolvalue:
+                            # Default behavior: apply zero-padding (e.g., F8 -> F08)
+                            formatted_well_name = _format_well_name_with_padding(well.well_name)
+                        else:
+                            # Use well name as-is without zero-padding
+                            formatted_well_name = well.well_name
+                        
+                        image_storage_path = f"{self.project_output_path!s}/{formatted_well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.tiff"
 
                         image_store_entry = cmds.ImageStoreEntry(
                             pixel_format=g_config["main_camera_pixel_format"].strvalue,
