@@ -1145,7 +1145,6 @@ document.addEventListener("alpine:init", () => {
             if (hardwareCapabilities.hardware_limits) {
                 // Replace hardcoded limits with server-provided hardware limits
                 this.limits = hardwareCapabilities.hardware_limits;
-                console.log("🔧 Updated hardware limits from server:", this.limits);
             } else {
                 console.warn("No hardware limits found in capabilities, using defaults");
             }
