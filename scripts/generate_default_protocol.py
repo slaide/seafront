@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 import seaconfig as sc
+from seafront.config.basics import GlobalConfigHandler
 
 def generate_plate_wells() -> list[sc.PlateWellConfig]:
     """
@@ -116,6 +117,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate default acquisition protocol")
     parser.add_argument("--plate", "-p", type=str, help="Wellplate Model_id to use (default: revvity-384-6057800)")
     parser.add_argument("--list", "-l", action="store_true", help="List available wellplates and exit")
+    parser.add_argument("--microscope", "-m", type=str, help="Microscope name for protocol directory (required for protocol generation)")
     
     args = parser.parse_args()
     
@@ -124,12 +126,26 @@ def main():
         list_available_wellplates()
         return
     
-    # Use existing acquisition_configs directory
-    seafront_home = Path.home() / "seafront" 
-    config_dir = seafront_home / "acquisition_configs"
+    # Microscope name is now required
+    if not args.microscope:
+        print("Error: --microscope argument is required")
+        print("Protocol generation now requires a microscope name to create microscope-specific directories")
+        print("Usage: python scripts/generate_default_protocol.py --microscope 'Your Microscope Name'")
+        return
+    
+    # Use microscope-specific directory
+    seafront_home = Path.home() / "seafront"
+    try:
+        safe_dir_name = GlobalConfigHandler._sanitize_microscope_name_for_directory(args.microscope)
+        config_dir = seafront_home / "acquisition_configs" / safe_dir_name
+        print(f"Using microscope-specific directory: {args.microscope} -> {safe_dir_name}")
+    except ValueError as e:
+        print(f"Error: {e}")
+        print("Please provide a valid microscope name (not empty or whitespace-only)")
+        return
     
     # Ensure config directory exists
-    config_dir.mkdir(exist_ok=True)
+    config_dir.mkdir(parents=True, exist_ok=True)
     
     # Generate default protocol
     default_protocol = generate_default_protocol(args.plate)

@@ -1,6 +1,8 @@
+import hashlib
 import json
 import json5
 import os
+import re
 import typing as tp
 from pathlib import Path
 
@@ -102,6 +104,7 @@ class GlobalConfigHandler:
     _seafront_home: Path | None = None
 
     _config_list: list[ConfigItem] | None = None
+    _current_microscope_name: str | None = None
 
     @staticmethod
     def home() -> Path:
@@ -137,8 +140,7 @@ class GlobalConfigHandler:
 
             # ensure config file is present in home
             _ = GlobalConfigHandler.home_config()
-            # ensure default acquisition dir is present
-            _ = GlobalConfigHandler.home_acquisition_config_dir()
+            # Note: acquisition config dir is created per-microscope, not during home() init
 
         return SEAFRONT_HOME
 
@@ -232,18 +234,66 @@ class GlobalConfigHandler:
             json.dump(config.dict(), f, indent=4)
 
     @staticmethod
-    def home_acquisition_config_dir() -> Path:
+    def _sanitize_microscope_name_for_directory(microscope_name: str) -> str:
+        """
+        Convert microscope name to safe directory name format.
+        Process: lowercase, replace spaces with dashes, remove non-alphanumeric chars,
+        append 6-digit hash of original name.
+        
+        Raises ValueError for empty or whitespace-only names.
+        """
+        # Validate input - reject empty or whitespace-only names
+        if not microscope_name or not microscope_name.strip():
+            raise ValueError("Microscope name cannot be empty or contain only whitespace")
+        
+        # Generate 6-digit hash of original name
+        name_hash = hashlib.sha256(microscope_name.encode()).hexdigest()[:6]
+        
+        # Convert to lowercase and replace spaces with dashes
+        sanitized = microscope_name.lower().replace(' ', '-')
+        
+        # Remove non-alphanumeric characters (keep dashes)
+        sanitized = re.sub(r'[^a-z0-9\-]', '', sanitized)
+        
+        # Remove consecutive dashes and trim dashes from ends
+        sanitized = re.sub(r'-+', '-', sanitized).strip('-')
+        
+        # If sanitization resulted in empty string (e.g., name was only special chars),
+        # use 'microscope' as base name
+        if not sanitized:
+            sanitized = 'microscope'
+            
+        return f"{sanitized}-{name_hash}"
+
+    @staticmethod
+    def home_acquisition_config_dir(microscope_name: str | None = None) -> Path:
         """
         get path to directory containing [user-defined] acquisition configurations
 
         will create the directory it not already present.
+        if microscope_name is provided, returns microscope-specific subdirectory.
+        if no microscope_name provided, uses current microscope from GlobalConfigHandler.
+        
+        Raises ValueError if no microscope name is available (shared directory fallback removed).
         """
+        base_dir = GlobalConfigHandler.home() / "acquisition_configs"  # type: ignore
+        
+        # Use provided microscope name or fall back to current microscope
+        # Empty strings are treated as None (falsy)
+        target_microscope = (microscope_name if microscope_name and microscope_name.strip() 
+                           else GlobalConfigHandler._current_microscope_name)
+        
+        if target_microscope is None:
+            raise ValueError("Microscope name is required - shared directory fallback has been removed")
+            
+        # Use microscope-specific subdirectory with safe directory name
+        safe_dir_name = GlobalConfigHandler._sanitize_microscope_name_for_directory(target_microscope)
+        config_dir = base_dir / safe_dir_name
+            
+        if not config_dir.exists():
+            config_dir.mkdir(parents=True)
 
-        DEFAULT_CONFIG_STORAGE_DIR = GlobalConfigHandler.home() / "acquisition_configs"  # type: ignore
-        if not DEFAULT_CONFIG_STORAGE_DIR.exists():
-            DEFAULT_CONFIG_STORAGE_DIR.mkdir(parents=True)
-
-        return DEFAULT_CONFIG_STORAGE_DIR
+        return config_dir
 
     @staticmethod
     def CRITICAL_MACHINE_DEFAULTS() -> CriticalMachineConfig:
@@ -752,4 +802,5 @@ class GlobalConfigHandler:
 
     @staticmethod
     def reset(microscope_name: str | None = None):
+        GlobalConfigHandler._current_microscope_name = microscope_name
         GlobalConfigHandler._config_list = GlobalConfigHandler._defaults(microscope_name)

@@ -1260,6 +1260,9 @@ class Core:
 
         the acquisition is run in the background, i.e. this command returns after acquisition bas begun. see /api/acquisition/status for ongoing status of the acquisition.
         """
+        
+        # Note: Protocol compatibility is validated in config_fetch, but we could add additional
+        # validation here if protocols are submitted directly via API without going through config_fetch
 
         # check if microscope is even is connected
         with self.microscope.lock() as microscope:
@@ -1821,7 +1824,7 @@ def main():
     
     if not default_protocol_file.exists():
         logger.critical(f"Default protocol file not found: {default_protocol_file}")
-        logger.critical("Please run: uv run python scripts/generate_default_protocol.py")
+        logger.critical(f"Please run: uv run python scripts/generate_default_protocol.py --microscope \"{selected_microscope.microscope_name}\"")
         return
 
     logger.info(f"✓ Default protocol found: {default_protocol_file}")

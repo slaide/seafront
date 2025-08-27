@@ -271,18 +271,21 @@ Seafront requires a default protocol configuration file at startup. This file pr
 
 ### generating default configuration
 
-A default protocol must be present at `~/seafront/acquisition_configs/default.json` before starting the software. Generate it using:
+A default protocol must be present before starting the software. Protocols are stored in microscope-specific directories to prevent compatibility issues when multiple microscopes share the same server.
 
+**Protocol Generation:**
 ```bash
-# Generate with default 384-well plate
-uv run python scripts/generate_default_protocol.py
+# Generate with default 384-well plate for specific microscope
+uv run python scripts/generate_default_protocol.py --microscope "your-microscope-name"
 
 # List available wellplate types
 uv run python scripts/generate_default_protocol.py --list
 
-# Generate with specific wellplate
-uv run python scripts/generate_default_protocol.py --plate revvity-384-6057800
+# Generate with specific wellplate and microscope
+uv run python scripts/generate_default_protocol.py --plate revvity-384-6057800 --microscope "your-microscope-name"
 ```
+
+**Note:** The `--microscope` argument is now required for protocol generation to ensure proper isolation between different microscope configurations.
 
 The script automatically uses wellplate specifications from the seaconfig library, ensuring accurate dimensions and well layouts for supported plate types.
 
@@ -299,11 +302,13 @@ When you update the microscope configuration with new channel names or other def
 2. **Delete existing default protocol**: Remove the old protocol file to force regeneration with new settings
    ```bash
    rm ~/seafront/acquisition_configs/default.json
+   # OR remove microscope-specific protocol
+   rm ~/seafront/acquisition_configs/your-microscope-name/default.json
    ```
 
 3. **Generate new default protocol**: Use the script to create a fresh protocol with updated channel names
    ```bash
-   uv run python scripts/generate_default_protocol.py
+   uv run python scripts/generate_default_protocol.py --microscope "your-microscope-name"
    ```
 
 4. **Load protocol in GUI**: Start seafront and verify the new channel names appear correctly in the interface
