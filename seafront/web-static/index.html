@@ -560,6 +560,42 @@
                                 </div>
                             </div>
                         </div>
+                        <div tabname="Settings">
+                            <div class="section">
+                                <div>Interface Settings</div>
+                                <div style="display: grid; grid-template-columns: auto 1fr; gap: 1em; align-items: center;">
+                                    <label for="tooltips-enabled-checkbox">Tooltips enabled:</label>
+                                    <input
+                                        id="tooltips-enabled-checkbox"
+                                        type="checkbox"
+                                        x-model.boolean="tooltipConfig.enabled"
+                                    />
+                                    
+                                    <label>Theme:</label>
+                                    <select
+                                        x-model="theme"
+                                        x-init="$nextTick(()=>{
+                                            $nextTick(()=>{
+                                                console.log(`current theme is ${theme}`)
+                                                changeTheme()
+                                            })
+                                        })"
+                                        @change="changeTheme($el,$event)"
+                                    >
+                                        <template
+                                            x-for="themeoption in themes"
+                                            :key="themeoption"
+                                        >
+                                            <option
+                                                x-bind:value="themeoption"
+                                                x-text="themeoption"
+                                                x-bind:selected="themeoption === theme"
+                                            ></option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1459,19 +1495,25 @@
                             gap: 0 1em;
                             display: grid;
                             grid-template:
-                                "server-label     server-text     other-1 other-3 acquisition" 1fr
-                                "microscope-label microscope-text other-2 other-4 acquisition" 1fr
-                                / min-content 20em auto auto 1fr;
+                                "server stage acquisition" 1fr
+                                / min-content min-content 1fr;
+                        }
+                        .stage-coords {
+                            font-family: monospace;
+                            font-size: 0.9em;
+                            white-space: nowrap;
                         }
                     </style>
-                    <label style="grid-area: server-label">
-                        <span>Server:</span>
+                    
+                    <!-- Server Connection Status -->
+                    <div style="grid-area: server; display: flex; align-items: center;" x-init="registerContainedPopup($el)">
                         <style>
                             .connection-indicator {
                                 display: inline-block;
                                 aspect-ratio: 1/1;
                                 height: 1.2em;
                                 border-radius: 50%;
+                                margin-left: 0.5em;
                             }
                             .connection-indicator.connected {
                                 background-color: #2ace1b;
@@ -1480,246 +1522,92 @@
                                 background-color: #e74c3c;
                             }
                         </style>
+                        <span x-text="isConnectedToServer ? 'Connected' : 'Disconnected'"></span>
                         <span
                             x-bind:class="`connection-indicator ${isConnectedToServer?'connected':''}`"
-                            x-bind:tooltip="`this web interface ${isConnectedToServer?'is':'is NOT'} currently connected to the server at ${server_url} `"
-                            x-init="enabletooltip($el)"
                             >&nbsp;</span
                         >
-                    </label>
-                    <input
-                        style="grid-area: server-text"
-                        type="text"
-                        x-model="server_url_input"
-                        @keydown="(ev)=>{if(ev.key=='Enter'){$dispatch('blur')}}"
-                        x-init="$nextTick(()=>{server_url_input=server_url;$dispatch('blur')})"
-                        @blur="status_reconnect(server_url_input)"
-                    />
-
-                    <label style="grid-area: microscope-label"
-                        >Microscope:</label
-                    >
-                    <span
-                        style="grid-area: microscope-text"
-                        x-text="getMachineConfigItem('microscope_name')?.value??'(none)'"
-                    ></span>
-
-                    <div style="grid-area: other-1">
-                        <label for="tooltips-enabled-checkbox"
-                            >tooltips enabled?</label
-                        >
-                        <input
-                            id="tooltips-enabled-checkbox"
-                            type="checkbox"
-                            x-model.boolean="tooltipConfig.enabled"
-                        />
-                    </div>
-
-                    <div style="grid-area: other-2">
-                        <label>theme</label>
-                        <select
-                            x-model="theme"
-                            x-init="$nextTick(()=>{
-							$nextTick(()=>{
-								console.log(`current theme is ${theme}`)
-								changeTheme()
-							})
-						})"
-                            @change="changeTheme($el,$event)"
-                        >
-                            <template
-                                x-for="themeoption in themes"
-                                :key="themeoption"
-                            >
-                                <option
-                                    x-bind:value="themeoption"
-                                    x-text="themeoption"
-                                    x-bind:selected="themeoption === theme"
-                                ></option>
-                            </template>
-                        </select>
-                    </div>
-
-                    <div style="grid-area: other-3">
-                        <label>protocol saved?</label>
-                        <input
-                            type="checkbox"
-                            x-model.boolean="configIsStored"
-                            disabled
-                            x-effect="const c=microscopeConfigAsString(); if(initDone) configIsStored=false;"
-                        />
-                    </div>
-
-                    <div style="grid-area: other-4">
-                        <style>
-                            .popup {
-                                position: absolute;
-                                top: 0;
-                                left: 0;
-                                background: var(--strong-bg-color);
-                                z-index: 1;
-                                transform: translateY(-100%) translateX(-50%);
-                                width: 35em;
-                                padding: 0.5em;
-                                border: 1px solid var(--text-color);
-                                border-radius: 1em;
-                            }
-                        </style>
-                        <script>
-                            /**
-                             * @param {HTMLElement} el
-                             */
-                            function registerContainedPopup(el) {
-                                const target_popups =
-                                    el.getElementsByClassName("popup");
-                                if (target_popups.length != 1) throw ``;
-                                const target_popup = target_popups[0];
-
-                                makeInvisible(target_popup);
-                                el.addEventListener("mouseenter", () => {
-                                    makeVisible(target_popup);
-                                });
-                                el.addEventListener("mouseleave", () => {
-                                    makeInvisible(target_popup);
-                                });
-                            }
-                            function makeVisible(el) {
-                                const parentRect =
-                                    el.parentElement.getBoundingClientRect();
-
-                                el.style.setProperty(
-                                    "top",
-                                    `${parentRect.top}px`,
-                                );
-                                el.style.setProperty(
-                                    "left",
-                                    `${parentRect.left + parentRect.width / 2}px`,
-                                );
-                                el.style.setProperty("display", "block");
-                            }
-                            function makeInvisible(el) {
-                                el.style.setProperty("display", "none");
-                            }
-                        </script>
-
-                        <div x-init="registerContainedPopup($el)">
-                            <span>
-                                <!-- from https://stackoverflow.com/a/18367765 -->
-                                <span
-                                    style="
-                                        display: inline-block;
-                                        transform: rotate(45deg);
-                                    "
-                                    >&#9906;</span
-                                >
-                                objective position
-                            </span>
-                            <div id="objective-position-popup" class="popup">
-                                <div id="objective-position" class="scrolly">
-                                    <style>
-                                        #objective-position {
-                                            width: 100%;
-
-                                            display: grid;
-                                            grid-template:
-                                                " t   t   m   m   llp " auto
-                                                " lx  vx  mv  ms  lpe " auto
-                                                " ly  vy  mp  mp  lpl " auto
-                                                " lz  vz  mm  mm  lpi " auto
-                                                / 1fr 1fr 1fr 1fr auto;
-                                            gap: 0 1em;
-
-                                            span {
-                                                height: min-content;
-                                                width: max-content;
-                                            }
-                                        }
-                                    </style>
-
-                                    <span style="grid-area: lx">x [mm]</span>
-                                    <span
-                                        style="grid-area: vx"
-                                        x-text="state.adapter_state?.stage_position.x_pos_mm.toFixed(3)"
-                                    ></span>
-                                    <span style="grid-area: ly">y [mm]</span>
-                                    <span
-                                        style="grid-area: vy"
-                                        x-text="state.adapter_state?.stage_position.y_pos_mm.toFixed(3)"
-                                    ></span>
-                                    <span style="grid-area: lz">z [um]</span>
-                                    <span
-                                        style="grid-area: vz"
-                                        x-text="(state.adapter_state?.stage_position.z_pos_mm*1e3).toFixed(1)"
-                                    ></span>
-
-                                    <label style="grid-area: m">Move By:</label>
-                                    <select
-                                        x-model="moveByAxis"
-                                        style="grid-area: ms"
-                                    >
-                                        <option value="x">x [mm]</option>
-                                        <option value="y">y [mm]</option>
-                                        <option value="z" selected>
-                                            z [um]
-                                        </option>
-                                    </select>
-                                    <input
-                                        style="grid-area: mv"
-                                        type="number"
-                                        is="number-input"
-                                        step="0.1"
-                                        min="0.1"
-                                        x-bind:max="1000"
-                                        x-init="registerNumberInput($el)"
-                                        x-model.number="moveByDistance"
-                                    />
-                                    <button
-                                        style="grid-area: mp"
-                                        @click="stageMoveBy('+')"
-                                    >
-                                        +
-                                    </button>
-                                    <button
-                                        style="grid-area: mm"
-                                        @click="stageMoveBy('-')"
-                                    >
-                                        -
-                                    </button>
-
-                                    <label style="grid-area: llp"
-                                        >Loading Position</label
-                                    >
-                                    <button
-                                        style="grid-area: lpe"
-                                        x-effect="disableElement($el,()=>state?.adapter_state.is_in_loading_position??true)"
-                                        @click="await Actions.enterLoadingPosition()"
-                                    >
-                                        Enter
-                                    </button>
-                                    <button
-                                        style="grid-area: lpl"
-                                        x-effect="disableElement($el,()=>!(state?.adapter_state.is_in_loading_position??false))"
-                                        @click="await Actions.leaveLoadingPosition()"
-                                    >
-                                        Leave
-                                    </button>
-                                    <input
-                                        style="grid-area: lpi"
-                                        type="checkbox"
-                                        x-init="enabletooltip($el)"
-                                        x-bind:tooltip="`stage is in loading position? ${state?.adapter_state.is_in_loading_position}`"
-                                        disabled
-                                        x-effect="$el.checked=state?.adapter_state.is_in_loading_position??false"
-                                    />
-                                </div>
+                        
+                        <!-- Server Details Popup -->
+                        <div class="popup">
+                            <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5em; align-items: center;">
+                                <label>Server URL:</label>
+                                <input
+                                    type="text"
+                                    x-model="server_url_input"
+                                    @keydown="(ev)=>{if(ev.key=='Enter'){$dispatch('blur')}}"
+                                    x-init="$nextTick(()=>{server_url_input=server_url;$dispatch('blur')})"
+                                    @blur="status_reconnect(server_url_input)"
+                                    style="width: 100%;"
+                                />
+                                <label>Microscope:</label>
+                                <span x-text="getMachineConfigItem('microscope_name')?.value??'(none)'"></span>
+                                <label>Status:</label>
+                                <span x-text="isConnectedToServer ? 'Connected' : 'Disconnected'"></span>
                             </div>
                         </div>
                     </div>
 
-                    <div
-                        style="grid-area: acquisition"
-                        id="acquisition-progress-container"
-                    >
+                    <!-- Stage Position -->
+                    <div style="grid-area: stage; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 1em;" x-init="registerContainedPopup($el)">
+                        <span>Stage</span>
+                        <div style="display: grid; grid-template-rows: repeat(3, 1fr); gap: 2px;">
+                            <div class="stage-coords">X: <span x-text="state.adapter_state?.stage_position.x_pos_mm?.toFixed(2).padStart(6, ' ') ?? '   ---'"></span>mm</div>
+                            <div class="stage-coords">Y: <span x-text="state.adapter_state?.stage_position.y_pos_mm?.toFixed(2).padStart(6, ' ') ?? '   ---'"></span>mm</div>
+                            <div class="stage-coords">Z: <span x-text="(state.adapter_state?.stage_position.z_pos_mm * 1000)?.toFixed(1).padStart(6, ' ') ?? '   ---'"></span>μm</div>
+                        </div>
+                        
+                        <!-- Stage Control Popup -->
+                        <div class="popup">
+                            <div style="display: grid; grid-template:
+                                'lx vx mv ms llp' auto
+                                'ly vy mp mp lpe' auto
+                                'lz vz mm mm lpl' auto
+                                / 1fr 1fr 1fr 1fr auto;
+                                gap: 0 1em;">
+                                
+                                <span style="grid-area: lx">X [mm]</span>
+                                <span style="grid-area: vx" x-text="state.adapter_state?.stage_position.x_pos_mm?.toFixed(2).padStart(6, ' ') ?? '   ---'"></span>
+                                <span style="grid-area: ly">Y [mm]</span>
+                                <span style="grid-area: vy" x-text="state.adapter_state?.stage_position.y_pos_mm?.toFixed(2).padStart(6, ' ') ?? '   ---'"></span>
+                                <span style="grid-area: lz">Z [μm]</span>
+                                <span style="grid-area: vz" x-text="(state.adapter_state?.stage_position.z_pos_mm * 1000)?.toFixed(1).padStart(6, ' ') ?? '   ---'"></span>
+                                
+                                <input
+                                    style="grid-area: mv"
+                                    type="number"
+                                    step="0.001"
+                                    x-model.number="moveByDistance"
+                                />
+                                <select style="grid-area: ms" x-model="moveByAxis">
+                                    <option value="x">X [mm]</option>
+                                    <option value="y">Y [mm]</option>
+                                    <option value="z" selected>Z [μm]</option>
+                                </select>
+                                <button style="grid-area: mp" @click="stageMoveBy('+')">+</button>
+                                <button style="grid-area: mm" @click="stageMoveBy('-')">-</button>
+
+                                <label style="grid-area: llp">Loading Position</label>
+                                <button
+                                    style="grid-area: lpe"
+                                    x-effect="disableElement($el,()=>state?.adapter_state.is_in_loading_position??true)"
+                                    @click="await Actions.enterLoadingPosition()"
+                                >
+                                    Enter
+                                </button>
+                                <button
+                                    style="grid-area: lpl"
+                                    x-effect="disableElement($el,()=>!(state?.adapter_state.is_in_loading_position??false))"
+                                    @click="await Actions.leaveLoadingPosition()"
+                                >
+                                    Leave
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Acquisition Progress -->
+                    <div style="grid-area: acquisition" id="acquisition-progress-container">
                         <style>
                             #acquisition-progress-container {
                                 display: grid;
@@ -1728,7 +1616,6 @@
                             #acquisition-progress-bar {
                                 margin: 0.4em;
                                 padding: 0.4em;
-
                                 border: 1px solid var(--text-color);
                                 --progress-color: var(--highlight-color);
                                 --bg-color: var(--strong-bg-color);
@@ -1745,15 +1632,71 @@
                             .center-content {
                                 display: grid;
                                 position: relative;
-                                * {
-                                    display: block;
-                                    height: min-content;
-                                    position: relative;
-                                    top: 50%;
-                                    transform: translateY(-50%);
-                                }
+                            }
+                            .center-content * {
+                                display: block;
+                                height: min-content;
+                                position: relative;
+                                top: 50%;
+                                transform: translateY(-50%);
+                            }
+                            .popup {
+                                position: absolute;
+                                top: 0;
+                                left: 0;
+                                background: var(--strong-bg-color);
+                                z-index: 1;
+                                transform: translateY(-100%);
+                                width: 35em;
+                                padding: 0.5em;
+                                border: 1px solid var(--text-color);
+                                border-radius: 1em;
                             }
                         </style>
+                        <script>
+                            function registerContainedPopup(el) {
+                                const target_popups = el.getElementsByClassName("popup");
+                                if (target_popups.length != 1) throw ``;
+                                const target_popup = target_popups[0];
+
+                                makeInvisible(target_popup);
+                                el.addEventListener("mouseenter", () => {
+                                    makeVisible(target_popup);
+                                });
+                                el.addEventListener("mouseleave", () => {
+                                    makeInvisible(target_popup);
+                                });
+                            }
+                            function makeVisible(el) {
+                                const parentRect = el.parentElement.getBoundingClientRect();
+                                
+                                // Show popup temporarily to measure it
+                                el.style.setProperty("display", "block");
+                                el.style.setProperty("left", "0px");
+                                const popupWidth = el.offsetWidth;
+                                
+                                // Calculate centered position on parent
+                                let leftPos = parentRect.left + parentRect.width / 2 - popupWidth / 2;
+                                
+                                // Check right boundary
+                                if (leftPos + popupWidth > window.innerWidth - 10) {
+                                    leftPos = window.innerWidth - popupWidth - 10;
+                                }
+                                
+                                // Check left boundary  
+                                if (leftPos < 10) {
+                                    leftPos = 10;
+                                }
+                                
+                                // Set final position
+                                el.style.setProperty("top", `${parentRect.top}px`);
+                                el.style.setProperty("left", `${leftPos}px`);
+                            }
+                            function makeInvisible(el) {
+                                el.style.setProperty("display", "none");
+                            }
+                        </script>
+                        
                         <div style="font-size: 1.6em" class="center-content">
                             <span>Acquisition</span>
                         </div>
@@ -1763,124 +1706,19 @@
                             x-bind:style="`--progress:${current_acquisition_progress_percent}%;`"
                         >
                             <span>
-                                <span
-                                    x-text="`${latest_acquisition_status?.acquisition_status??'not running'}`"
-                                ></span>
+                                <span x-text="`${latest_acquisition_status?.acquisition_status??'not running'}`"></span>
                                 <span>|</span>
                                 <span>Progress</span>
-                                <span
-                                    x-text="`${current_acquisition_progress_percent.toFixed(2)}%`"
-                                ></span>
+                                <span x-text="`${current_acquisition_progress_percent.toFixed(2)}%`"></span>
                                 <span>|</span>
-                                <span>Done in</span>
-                                <span
-                                    x-text="`${(()=>{
-								let remaining_s=latest_acquisition_status?.acquisition_progress.estimated_remaining_time_s ?? 0.0;
-								const remaining_h=Math.floor(remaining_s/3600);
-								const remaining_m=Math.floor((remaining_s-remaining_h*3600)/60);
-								remaining_s=remaining_s-remaining_h*3600-remaining_m*60;
-
-								const ret=`${remaining_h.toFixed(0)}h ${remaining_m.toFixed(0)}m ${remaining_s.toFixed(0)}s`;
-								return ret;
-							})()}`"
-                                ></span>
+                                <span x-text="`Done in ${latest_acquisition_status?.acquisition_meta_information.acquisition_time_left_string??'0h 0m 0s'}`"></span>
                             </span>
-
                             <div class="popup">
-                                <div
-                                    style="
-                                        display: grid;
-                                        grid-template-columns: auto auto;
-                                    "
-                                >
-                                    <label>current acquisition:</label
-                                    ><span
-                                        x-text="state.current_acquisition_id??'none'"
-                                    ></span>
-
-                                    <label>Total number of images:</label
-                                    ><span x-text="num_images"></span>
-                                    <label>last acquisition id</label
-                                    ><span
-                                        x-text="latest_acquisition_status?.acquisition_id??''"
-                                    ></span>
-                                    <label>progress status</label
-                                    ><span
-                                        x-text="latest_acquisition_status?.acquisition_status??''"
-                                    ></span>
-                                    <label>progress message</label
-                                    ><span
-                                        x-text="latest_acquisition_status?.message??''"
-                                    ></span>
-                                    <label>comment</label
-                                    ><span
-                                        x-text="latest_acquisition_status?.acquisition_config.comment??''"
-                                    ></span>
-                                    <label>num images (acquired / total)</label
-                                    ><span
-                                        x-text="`${latest_acquisition_status?.acquisition_progress.current_num_images??''} / ${latest_acquisition_status?.acquisition_meta_information.total_num_images??''}`"
-                                    ></span>
-                                    <label>time [s] (elapsed / remaining)</label
-                                    ><span
-                                        x-text="`${latest_acquisition_status?.acquisition_progress.time_since_start_s.toFixed(1)??''} / ${latest_acquisition_status?.acquisition_progress.estimated_remaining_time_s.toFixed(1)??''}`"
-                                    ></span>
-                                    <label
-                                        >storage [GB] (occupied / max
-                                        total)</label
-                                    ><span
-                                        x-text="`${latest_acquisition_status?.acquisition_progress.current_storage_usage_GB.toFixed(2)??''} / ${latest_acquisition_status?.acquisition_meta_information.max_storage_size_images_GB.toFixed(2)??''}`"
-                                    ></span>
-                                </div>
+                                <span x-text="`Acquisition Status: ${latest_acquisition_status?.acquisition_status??'not running'}`"></span>
                             </div>
                         </div>
-                        <button
-                            style="font-size: 1.7em"
-                            x-init="
-							const getLatestStatus=async ()=>{
-								const current_acquisition_id=state.current_acquisition_id;
-
-								// stop fetching updates if no acquisition is currently running
-								if(current_acquisition_id==null){
-									return;
-								}
-
-								const status=await acquisition_status({acquisition_id:current_acquisition_id});
-								latest_acquisition_status=status;
-
-								// if acquisition is completed, do not schedule new update
-								// (wait for value to change to trigger a new update)
-								if(status.acquisition_status=='completed'){
-									return;
-								}
-
-								const status_element=document.getElementById('acquisition-status');
-								if(status_element){
-									status_element.innerHTML=JSON.stringify(status,null,2).replace('\n ','<br>&nbsp;');
-								}
-
-								$nextTick(getLatestStatus);
-							};
-							if(state.current_acquisition_id!=null)getLatestStatus();
-							$watch('state.current_acquisition_id',async ()=>{
-								await getLatestStatus();
-							});
-						"
-                            x-effect="disableElement($el,()=>{
-							return state.current_acquisition_id!=null;
-						})"
-                            @click="await acquisition_start({ config_file: microscope_config })"
-                        >
-                            Start
-                        </button>
-                        <button
-                            style="font-size: 1.7em"
-                            x-effect="disableElement($el,()=>{
-							return state.current_acquisition_id==null;
-						})"
-                            @click="await acquisition_stop({ acquisition_id: state.current_acquisition_id })"
-                        >
-                            Cancel
-                        </button>
+                        <button @click="await acquisition_start()">Start</button>
+                        <button @click="await acquisition_stop()">Cancel</button>
                     </div>
                 </div>
             </div>
