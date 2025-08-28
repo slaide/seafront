@@ -1403,9 +1403,7 @@ class Core:
                             else:
                                 result = None
                                 try:
-                                    logger.debug("about to execute next protocol step")
                                     result = await microscope.execute(next_step)
-                                    logger.debug("just executed next protocol step")
                                 except DisconnectError as e:
                                     logger.debug(f"executing protocol step generated error {e}")
                                     protocol_generator.throw(e)

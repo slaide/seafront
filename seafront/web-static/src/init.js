@@ -650,6 +650,86 @@ document.addEventListener("alpine:init", () => {
 
         // keep track of number of open websockets (to limit frontend load)
         _numOpenWebsockets: 0,
+        
+        // Persistent image WebSocket
+        /** @type {WebSocket|null} */
+        image_ws: null,
+        /** @type {Map<string, {resolve: Function, reject: Function}>} */
+        pending_image_requests: new Map(),
+        
+        initImageWebSocket() {
+            if (this.image_ws && this.image_ws.readyState === WebSocket.OPEN) {
+                return; // Already connected
+            }
+            
+            try {
+                this.image_ws = new WebSocket(`${this.server_url}/ws/get_info/acquired_image`);
+                this.image_ws.binaryType = "blob";
+                
+                this.image_ws.onopen = () => {
+                    console.log('Image WebSocket connected');
+                };
+                
+                let currentRequest = null;
+                
+                this.image_ws.onmessage = (ev) => {
+                    // The protocol sends metadata first (string), then image data (ArrayBuffer)
+                    if (typeof ev.data === 'string') {
+                        // Metadata message
+                        const metadata = json5.parse(ev.data);
+                        // Find the matching request (we need to track which channel this is for)
+                        // Since we can't reliably get channel_handle from metadata, use FIFO
+                        const [channel_handle, request] = this.pending_image_requests.entries().next().value;
+                        if (request) {
+                            currentRequest = { channel_handle, request, metadata };
+                            // Switch to receive ArrayBuffer for image data
+                            this.image_ws.binaryType = "arraybuffer";
+                        }
+                    } else {
+                        // Image data (ArrayBuffer)
+                        if (currentRequest) {
+                            const img_data = ev.data;
+                            
+                            /** @type {CachedChannelImage} */
+                            const img = Object.assign(currentRequest.metadata, {
+                                data: img_data,
+                                info: currentRequest.request.channel_info,
+                            });
+                            
+                            currentRequest.request.resolve(img);
+                            this.pending_image_requests.delete(currentRequest.channel_handle);
+                            currentRequest = null;
+                            
+                            // Switch back to blob for next metadata
+                            this.image_ws.binaryType = "blob";
+                        }
+                    }
+                };
+                
+                this.image_ws.onerror = (ev) => {
+                    console.warn('Image WebSocket error:', ev);
+                    // Reject all pending requests
+                    this.pending_image_requests.forEach(request => {
+                        request.reject(new Error('WebSocket error'));
+                    });
+                    this.pending_image_requests.clear();
+                };
+                
+                this.image_ws.onclose = () => {
+                    console.log('Image WebSocket closed');
+                    this.image_ws = null;
+                    // Reject all pending requests
+                    this.pending_image_requests.forEach(request => {
+                        request.reject(new Error('WebSocket closed'));
+                    });
+                    this.pending_image_requests.clear();
+                };
+                
+            } catch (error) {
+                console.warn('Failed to create image WebSocket:', error);
+            }
+        },
+        
         /**
          *
          * @param {ChannelInfo} channel_info
@@ -657,55 +737,43 @@ document.addEventListener("alpine:init", () => {
          * @returns
          */
         async fetch_image(channel_info, downsample_factor = 1) {
-            const cws = new WebSocket(
-                `${this.server_url}/ws/get_info/acquired_image`,
-            );
-
-            this._numOpenWebsockets++;
+            // Initialize persistent WebSocket if needed
+            this.initImageWebSocket();
+            
+            // Wait for WebSocket to be ready
+            if (this.image_ws.readyState === WebSocket.CONNECTING) {
+                await new Promise((resolve) => {
+                    const checkReady = () => {
+                        if (this.image_ws.readyState === WebSocket.OPEN) {
+                            resolve();
+                        } else {
+                            setTimeout(checkReady, 10);
+                        }
+                    };
+                    checkReady();
+                });
+            }
+            
+            if (this.image_ws.readyState !== WebSocket.OPEN) {
+                throw new Error('Image WebSocket not available');
+            }
 
             const channel_handle = channel_info.channel.handle;
 
             /**@type {Promise<CachedChannelImage>}*/
             const finished = new Promise((resolve, reject) => {
-                // fetch image metadata
-                cws.binaryType = "blob";
-                cws.onopen = (ev) => cws.send(channel_handle);
-                cws.onmessage = (meta_ev) => {
-                    /**
-                     * @type {{
-                     * height: number,
-                     * width: number,
-                     * bit_depth: number,
-                     * camera_bit_depth: number
-                     * }}
-                     */
-                    const metadata = json5.parse(meta_ev.data);
-
-                    // fetch image data (into arraybuffer)
-                    cws.binaryType = "arraybuffer";
-                    cws.onmessage = (img_ev) => {
-                        /** @type {ArrayBuffer} */
-                        const img_data = img_ev.data;
-
-                        /** @type {CachedChannelImage} */
-                        const img = Object.assign(metadata, {
-                            // store image data
-                            data: img_data,
-                            // update current channel info (latest image, incl. metadata)
-                            info: channel_info,
-                        });
-
-                        // close websocket once data is received
-                        cws.close();
-                        this._numOpenWebsockets--;
-
-                        resolve(img);
-                    };
-                    // send downsample factor
-                    cws.send(`${downsample_factor}`);
-                };
-                cws.onerror = (ev) => reject(ev);
+                // Store the request
+                this.pending_image_requests.set(channel_handle, {
+                    resolve,
+                    reject,
+                    channel_info
+                });
+                
+                // Send the request through persistent WebSocket
+                this.image_ws.send(channel_handle);
+                this.image_ws.send(`${downsample_factor}`);
             });
+            
             const data = await finished;
             // console.log("fetched image",data.info.channel.name, data);
             return data;
@@ -728,6 +796,21 @@ document.addEventListener("alpine:init", () => {
             // Sync streaming state from server
             if (data.is_streaming !== undefined) {
                 this.isStreaming = data.is_streaming;
+            }
+            
+            // Update acquisition status WebSocket based on acquisition state
+            if (data.current_acquisition_id) {
+                // Start acquisition status WebSocket if not already running
+                if (!this.acquisition_status_ws || this.acquisition_status_ws.readyState === WebSocket.CLOSED) {
+                    this.startAcquisitionStatusWebSocket(data.current_acquisition_id);
+                }
+            } else {
+                // No active acquisition, close WebSocket and clear status
+                if (this.acquisition_status_ws && this.acquisition_status_ws.readyState !== WebSocket.CLOSED) {
+                    this.acquisition_status_ws.close();
+                    this.acquisition_status_ws = null;
+                }
+                this.latest_acquisition_status = null;
             }
 
             if (this._numOpenWebsockets < 1 && this.state.latest_imgs != null) {
@@ -1032,6 +1115,8 @@ document.addEventListener("alpine:init", () => {
         // initiate async websocket event loop to update
         /** @type {WebSocket|null} */
         status_ws: null,
+        /** @type {WebSocket|null} */
+        acquisition_status_ws: null,
         server_url_input: "",
         /**
          *
@@ -1125,6 +1210,62 @@ document.addEventListener("alpine:init", () => {
             }
         },
 
+        /**
+         * 
+         * @param {string} acquisitionId 
+         */
+        startAcquisitionStatusWebSocket(acquisitionId) {
+            try {
+                // Close existing WebSocket if any
+                if (this.acquisition_status_ws && this.acquisition_status_ws.readyState !== WebSocket.CLOSED) {
+                    this.acquisition_status_ws.close();
+                }
+
+                this.acquisition_status_ws = new WebSocket(
+                    `${this.server_url}/ws/acquisition/status`
+                );
+
+                this.acquisition_status_ws.onmessage = (ev) => {
+                    const data = JSON.parse(JSON.parse(ev.data));
+                    if(typeof data != "object")throw new Error(`event data has wrong type ${typeof data}`);
+                    this.latest_acquisition_status=data;
+                };
+
+                this.acquisition_status_ws.onerror = (ev) => {
+                    console.warn('Acquisition status WebSocket error:', ev);
+                    // Don't auto-reconnect for acquisition status - let the main status WebSocket handle lifecycle
+                };
+
+                this.acquisition_status_ws.onopen = () => {
+                    // Start the polling loop for this acquisition
+                    this.acquisitionStatusLoop(acquisitionId);
+                };
+
+                this.acquisition_status_ws.onclose = () => {
+                    // WebSocket closed, stop polling
+                };
+
+            } catch (error) {
+                console.warn('Failed to create acquisition status WebSocket:', error);
+            }
+        },
+
+        acquisitionStatusLoop(acquisitionId) {
+            try {
+                if (!this.acquisition_status_ws || this.acquisition_status_ws.readyState !== WebSocket.OPEN) {
+                    return; // WebSocket closed, stop polling
+                }
+
+                // Send acquisition_id to get status update
+                this.acquisition_status_ws.send(JSON.stringify({ acquisition_id: acquisitionId }));
+
+                // Schedule next update
+                setTimeout(() => this.acquisitionStatusLoop(acquisitionId), 500); // Poll every 500ms
+            } catch (error) {
+                console.warn('Acquisition status loop error:', error);
+            }
+        },
+
         // this is an annoying workaround (in combination with initManual) because
         // alpine does not actually await an async init before mounting the element.
         // which leads to a whole bunch of errors in the console and breaks
@@ -1191,6 +1332,9 @@ document.addEventListener("alpine:init", () => {
             await this.updateMicroscopeStatus(currentStateJson);
 
             this.status_getstate_loop();
+            
+            // Initialize persistent image WebSocket
+            this.initImageWebSocket();
         },
 
         microscopeConfigAsString(){
@@ -1583,11 +1727,11 @@ document.addEventListener("alpine:init", () => {
          * @param {AcquisitionStartRequestFrontend} body
          * @returns  {Promise<AcquisitionStartResponse>}
          */
-        async acquisition_start(body) {
+        async acquisition_start() {
             await this.machineConfigFlush();
 
             // Convert frontend format to backend format
-            const backend_config = this.convertAcquisitionConfigToBackend(body.config_file);
+            const backend_config = this.convertAcquisitionConfigToBackend(this.microscope_config);
             
             // mutate copy (to fix some errors we introduce in the interface)
             // 1) remove wells that are unselected or invalid
@@ -1618,11 +1762,16 @@ document.addEventListener("alpine:init", () => {
          * @param {AcquisitionStopRequest} body
          * @returns {Promise<AcquisitionStopResponse>}
          */
-        async acquisition_stop(body) {
+        async acquisition_stop() {
             try {
+                const acquisitionId = this.state.current_acquisition_id;
+                if (!acquisitionId) {
+                    throw new Error('No active acquisition to cancel');
+                }
+                
                 return fetch(`${this.server_url}/api/acquisition/cancel`, {
                     method: "POST",
-                    body: JSON.stringify(body),
+                    body: JSON.stringify({ acquisition_id: acquisitionId }),
                     headers: [["Content-Type", "application/json"]],
                 }).then((v) => {
                     /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStopResponse,AcquisitionStopError>} */
@@ -1640,15 +1789,39 @@ document.addEventListener("alpine:init", () => {
         get current_acquisition_progress_percent() {
             const images_done =
                 this.latest_acquisition_status?.acquisition_progress
-                    .current_num_images;
+                    ?.current_num_images;
             if (images_done == null) return 0;
 
             const total_images =
                 this.latest_acquisition_status?.acquisition_meta_information
-                    .total_num_images;
+                    ?.total_num_images;
             if (total_images == null) return 0;
 
             return (images_done / total_images) * 100;
+        },
+        get isAcquisitionRunning() {
+            return !!this.state.current_acquisition_id;
+        },
+        get acquisitionTimeLeftString() {
+            const timeLeftSeconds = this.latest_acquisition_status?.acquisition_progress?.estimated_remaining_time_s;
+            if (timeLeftSeconds == null || timeLeftSeconds <= 0) {
+                return '0h 0m 0s';
+            }
+            
+            const hours = Math.floor(timeLeftSeconds / 3600);
+            const minutes = Math.floor((timeLeftSeconds % 3600) / 60);
+            const seconds = Math.floor(timeLeftSeconds % 60);
+            
+            return `${hours}h ${minutes}m ${seconds}s`;
+        },
+        formatStageCoordXY(value) {
+            if (value == null) return '&nbsp;&nbsp;&nbsp;---';
+            return value.toFixed(2).padStart(6, '\u00A0'); // Use non-breaking space
+        },
+        formatStageCoordZ(value) {
+            if (value == null) return '&nbsp;&nbsp;&nbsp;---';
+            const zInUm = value * 1000;
+            return zInUm.toFixed(1).padStart(6, '\u00A0'); // Use non-breaking space
         },
         /**
          * rpc to /api/acquisition/status
