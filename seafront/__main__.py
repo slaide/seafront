@@ -45,7 +45,7 @@ from seaconfig.acquisition import AcquisitionConfig
 from seafront.config.basics import ChannelConfig, ConfigItem, CriticalMachineConfig, GlobalConfigHandler, ServerConfig
 from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.hardware.mock_microscope import MockMicroscope
-from seafront.hardware.microscope import Microscope
+from seafront.hardware.microscope import Microscope, HardwareLimits
 from seafront.logger import logger
 from seafront.server.commands import (
     AcquisitionCommand,
@@ -342,6 +342,9 @@ class Core:
 
         self.acquisition_map: dict[str, AcquisitionStatus] = {}
         """ map containing information on past and current acquisitions """
+        
+        self._hardware_limits_cache: HardwareLimits | None = None
+        """ cached hardware limits to serve when microscope is busy """
 
         # set up routes to member functions
 
@@ -1239,12 +1242,16 @@ class Core:
             ))
 
         # Get real hardware limits from the microscope
-        with self.microscope.lock() as microscope:
+        with self.microscope.lock(blocking=False) as microscope:
             if microscope is None:
-                raise RuntimeError("Microscope not available for hardware limits query")
-                
-            # Get actual hardware limits from microscope - let any failures crash
-            hardware_limits_obj = microscope.get_hardware_limits()
+                # Microscope is busy - use cached limits if available
+                if self._hardware_limits_cache is None:
+                    error_internal(detail="microscope is busy and hardware limits not cached yet")
+                hardware_limits_obj = self._hardware_limits_cache
+            else:
+                # Get actual hardware limits from microscope and cache them
+                hardware_limits_obj = microscope.get_hardware_limits()
+                self._hardware_limits_cache = hardware_limits_obj
 
         return HardwareCapabilitiesResponse(
             wellplate_types=sc.Plates,
@@ -1866,6 +1873,24 @@ def main():
             with urllib.request.urlopen(req, timeout=30) as response:
                 if response.status == 200:
                     logger.info("hardware connection established")
+                    
+                    # Initialize hardware limits cache
+                    try:
+                        logger.info("initializing hardware limits cache")
+                        req_limits = urllib.request.Request(
+                            server_base_url + "/api/get_features/hardware_capabilities",
+                            data=b'{}',
+                            headers={'Content-Type': 'application/json'},
+                            method='POST'
+                        )
+                        
+                        with urllib.request.urlopen(req_limits, timeout=30) as limits_response:
+                            if limits_response.status == 200:
+                                logger.info("hardware limits cache initialized")
+                            else:
+                                logger.warning(f"hardware limits cache initialization failed: {limits_response.status}")
+                    except Exception as e_limits:
+                        logger.warning(f"failed to initialize hardware limits cache: {e_limits}")
                 else:
                     logger.warning(f"hardware connection failed: {response.status}")
         except Exception as e:
