@@ -250,19 +250,25 @@ class SquidAdapter(Microscope):
 
         # Extract and parse channel and filter configurations (JSON-encoded strings)
         channels_json = g_dict["channels"].strvalue
-        filters_json = g_dict["filters"].strvalue
-        
-        # Parse JSON strings and convert to config objects
         channels_data = json5.loads(channels_json)
-        filters_data = json5.loads(filters_json)
         
         if channels_data is None:
             raise ValueError("Parsed channels configuration is None - invalid JSON structure")
-        if filters_data is None:
-            raise ValueError("Parsed filters configuration is None - invalid JSON structure")
         
         channel_configs = [ChannelConfig(**ch) for ch in channels_data] #type: ignore
-        filter_configs = [FilterConfig(**f) for f in filters_data] #type: ignore
+        
+        # Only process filters if filter wheel is available
+        filter_wheel_available = g_dict.get("filter_wheel_available")
+        if filter_wheel_available and filter_wheel_available.boolvalue:
+            filters_json = g_dict["filters"].strvalue
+            filters_data = json5.loads(filters_json)
+            
+            if filters_data is None:
+                raise ValueError("Parsed filters configuration is None - invalid JSON structure")
+            
+            filter_configs = [FilterConfig(**f) for f in filters_data] #type: ignore
+        else:
+            filter_configs = []
 
         # Initialize illumination controller with channel configurations
         illumination_controller = IlluminationController(channel_configs)

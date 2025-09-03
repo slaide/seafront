@@ -17,7 +17,11 @@ import serial.tools.list_ports
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from seafront.hardware.adapter import Position as AdapterPosition
+from seafront.hardware.firmware_config import get_firmware_config, FirmwareConfig
 from seafront.logger import logger
+
+# Global firmware configuration instance
+firmware_config = get_firmware_config()
 
 
 @dataclass
@@ -90,181 +94,8 @@ class LIMIT_SWITCH_POLARITY:
     DISABLED: int = 2
 
 
-class FirmwareDefinitions:
-    READ_PACKET_LENGTH = 24
-    # 1 byte cmd id, 1 byte cmd name, 6 bytes for command arguments
-    COMMAND_PACKET_LENGTH = 8
-
-    AXIS_X: int = 0
-    AXIS_Y: int = 1
-    AXIS_Z: int = 2
-    AXIS_THETA: int = 3
-    AXIS_XY: int = 4  # Note: firmware uses AXES_XY = 4
-    AXIS_W: int = 5   # Filter wheel axis
-    
-    # Filter wheel configuration (W axis)
-    SCREW_PITCH_W_MM: float = 1.0
-    MICROSTEPPING_DEFAULT_W: int = 64
-    FULLSTEPS_PER_REV_W: int = 200
-    STAGE_MOVEMENT_SIGN_W: int = 1
-    FILTERWHEEL_MAX_INDEX: int = 8
-    FILTERWHEEL_MIN_INDEX: int = 1
-    FILTERWHEEL_OFFSET_MM: float = 0.008  # Offset applied after homing
-    
-    # Filter wheel motor parameters (from Squid _def.py)
-    W_MOTOR_I_HOLD: float = 0.5
-    MAX_ACCELERATION_W_mm: float = 300.0
-
-    # TODO
-    SCREW_PITCH_X_MM: float = 2.54
-    SCREW_PITCH_Y_MM: float = 2.54
-    # SCREW_PITCH_Z_MM=0.012*25.4 was written here at some point, not sure why.
-    # the motor makes _the_ weird noise during homing when set to the latter term (=0.3048), instead of 0.3
-    SCREW_PITCH_Z_MM: float = 0.3
-
-    MICROSTEPPING_DEFAULT_X: int = 256
-    MICROSTEPPING_DEFAULT_Y: int = 256
-    MICROSTEPPING_DEFAULT_Z: int = 256
-    MICROSTEPPING_DEFAULT_THETA: int = 256
-
-    USE_ENCODER_X: bool = False
-    USE_ENCODER_Y: bool = False
-    USE_ENCODER_Z: bool = False
-    USE_ENCODER_THETA: bool = False
-
-    ENCODER_POS_SIGN_X: int = 1
-    ENCODER_POS_SIGN_Y: int = 1
-    ENCODER_POS_SIGN_Z: int = 1
-    ENCODER_POS_SIGN_THETA: int = 1
-
-    ENCODER_STEP_SIZE_X_MM: float = 100e-6
-    ENCODER_STEP_SIZE_Y_MM: float = 100e-6
-    ENCODER_STEP_SIZE_Z_MM: float = 100e-6
-    ENCODER_STEP_SIZE_THETA: float = 1.0
-
-    FULLSTEPS_PER_REV_X: int = 200
-    FULLSTEPS_PER_REV_Y: int = 200
-    FULLSTEPS_PER_REV_Z: int = 200
-    FULLSTEPS_PER_REV_THETA: int = 200
-
-    STAGE_MOVEMENT_SIGN_X: int = 1
-    STAGE_MOVEMENT_SIGN_Y: int = 1
-    STAGE_MOVEMENT_SIGN_Z: int = -1
-    STAGE_MOVEMENT_SIGN_THETA: int = 1
-
-    STAGE_POS_SIGN_X: int = STAGE_MOVEMENT_SIGN_X
-    STAGE_POS_SIGN_Y: int = STAGE_MOVEMENT_SIGN_Y
-    STAGE_POS_SIGN_Z: int = STAGE_MOVEMENT_SIGN_Z
-    STAGE_POS_SIGN_THETA: int = STAGE_MOVEMENT_SIGN_THETA
-
-    X_MOTOR_RMS_CURRENT_mA: int = 1000
-    Y_MOTOR_RMS_CURRENT_mA: int = 1000
-    Z_MOTOR_RMS_CURRENT_mA: int = 500
-    W_MOTOR_RMS_CURRENT_mA: int = 1900
-
-    # these 3 values must be in range [0.0;1.0]
-    X_MOTOR_I_HOLD: float = 0.25
-    Y_MOTOR_I_HOLD: float = 0.25
-    Z_MOTOR_I_HOLD: float = 0.5
-
-    MAX_VELOCITY_X_mm: float = 40.0
-    MAX_VELOCITY_Y_mm: float = 40.0
-    MAX_VELOCITY_Z_mm: float = 2.0
-    MAX_VELOCITY_W_mm: float = 3.19
-
-    MAX_ACCELERATION_X_mm: float = 500.0
-    MAX_ACCELERATION_Y_mm: float = 500.0
-    MAX_ACCELERATION_Z_mm: float = 100.0
-
-    # end of actuator specific configurations
-
-    SCAN_STABILIZATION_TIME_MS_X: float = 160.0
-    SCAN_STABILIZATION_TIME_MS_Y: float = 160.0
-    SCAN_STABILIZATION_TIME_MS_Z: float = 20.0
-
-    # limit switch
-    X_HOME_SWITCH_POLARITY: int = LIMIT_SWITCH_POLARITY.ACTIVE_HIGH
-    Y_HOME_SWITCH_POLARITY: int = LIMIT_SWITCH_POLARITY.ACTIVE_HIGH
-    Z_HOME_SWITCH_POLARITY: int = LIMIT_SWITCH_POLARITY.ACTIVE_LOW
-
-    @staticmethod
-    def mm_per_ustep_x() -> float:
-        return FirmwareDefinitions.SCREW_PITCH_X_MM / (
-            FirmwareDefinitions.MICROSTEPPING_DEFAULT_X * FirmwareDefinitions.FULLSTEPS_PER_REV_X
-        )
-
-    @staticmethod
-    def mm_per_ustep_y() -> float:
-        return FirmwareDefinitions.SCREW_PITCH_Y_MM / (
-            FirmwareDefinitions.MICROSTEPPING_DEFAULT_Y * FirmwareDefinitions.FULLSTEPS_PER_REV_Y
-        )
-
-    @staticmethod
-    def mm_per_ustep_z() -> float:
-        return FirmwareDefinitions.SCREW_PITCH_Z_MM / (
-            FirmwareDefinitions.MICROSTEPPING_DEFAULT_Z * FirmwareDefinitions.FULLSTEPS_PER_REV_Z
-        )
-
-    @staticmethod
-    def mm_per_ustep_w() -> float:
-        return FirmwareDefinitions.SCREW_PITCH_W_MM / (
-            FirmwareDefinitions.MICROSTEPPING_DEFAULT_W * FirmwareDefinitions.FULLSTEPS_PER_REV_W
-        )
-
-    @staticmethod
-    def mm_to_ustep_x(value_mm: float) -> int:
-        if FirmwareDefinitions.USE_ENCODER_X:
-            return int(
-                value_mm
-                / (
-                    FirmwareDefinitions.ENCODER_POS_SIGN_X
-                    * FirmwareDefinitions.ENCODER_STEP_SIZE_X_MM
-                )
-            )
-        else:
-            return int(
-                value_mm
-                / (FirmwareDefinitions.STAGE_POS_SIGN_X * FirmwareDefinitions.mm_per_ustep_x())
-            )
-
-    @staticmethod
-    def mm_to_ustep_y(value_mm: float) -> int:
-        if FirmwareDefinitions.USE_ENCODER_Y:
-            return int(
-                value_mm
-                / (
-                    FirmwareDefinitions.ENCODER_POS_SIGN_Y
-                    * FirmwareDefinitions.ENCODER_STEP_SIZE_Y_MM
-                )
-            )
-        else:
-            return int(
-                value_mm
-                / (FirmwareDefinitions.STAGE_POS_SIGN_Y * FirmwareDefinitions.mm_per_ustep_y())
-            )
-
-    @staticmethod
-    def mm_to_ustep_z(value_mm: float) -> int:
-        if FirmwareDefinitions.USE_ENCODER_Z:
-            return int(
-                value_mm
-                / (
-                    FirmwareDefinitions.ENCODER_POS_SIGN_Z
-                    * FirmwareDefinitions.ENCODER_STEP_SIZE_Z_MM
-                )
-            )
-        else:
-            return int(
-                value_mm
-                / (FirmwareDefinitions.STAGE_POS_SIGN_Z * FirmwareDefinitions.mm_per_ustep_z())
-            )
-
-    @staticmethod
-    def mm_to_ustep_w(value_mm: float) -> int:
-        return int(
-            value_mm
-            / (FirmwareDefinitions.STAGE_MOVEMENT_SIGN_W * FirmwareDefinitions.mm_per_ustep_w())
-        )
+# Global firmware configuration instance - this replaces the old static FirmwareDefinitions class
+firmware_config = get_firmware_config()
 
 
 @dataclass(init=False)
@@ -302,15 +133,15 @@ class MicrocontrollerStatusPackage:
         self.exec_status: int = packet[1]
         self.x_pos_usteps: int = (
             twos_complement_rev(intFromPayload(packet, 2, 4), 4)
-            * FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X
+            * firmware_config.STAGE_MOVEMENT_SIGN_X
         )
         self.y_pos_usteps: int = (
             twos_complement_rev(intFromPayload(packet, 6, 4), 4)
-            * FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y
+            * firmware_config.STAGE_MOVEMENT_SIGN_Y
         )
         self.z_pos_usteps: int = (
             twos_complement_rev(intFromPayload(packet, 10, 4), 4)
-            * FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z
+            * firmware_config.STAGE_MOVEMENT_SIGN_Z
         )
         # 4 bytes from theta ignored (index 14-17)
         self.buttons_and_switches: int = packet[18]
@@ -440,15 +271,15 @@ class Position:
 
     @property
     def x_pos_mm(self):
-        return FirmwareDefinitions.mm_per_ustep_x() * self.x_usteps
+        return firmware_config.mm_per_ustep_x * self.x_usteps
 
     @property
     def y_pos_mm(self):
-        return FirmwareDefinitions.mm_per_ustep_y() * self.y_usteps
+        return firmware_config.mm_per_ustep_y * self.y_usteps
 
     @property
     def z_pos_mm(self):
-        return FirmwareDefinitions.mm_per_ustep_z() * self.z_usteps
+        return firmware_config.mm_per_ustep_z * self.z_usteps
 
     @property
     def pos(self) -> AdapterPosition:
@@ -461,7 +292,7 @@ class Position:
 
 class Command:
     def __init__(self):
-        self.bytes = bytearray(FirmwareDefinitions.COMMAND_PACKET_LENGTH)
+        self.bytes = bytearray(firmware_config.COMMAND_PACKET_LENGTH)
         self.wait_for_completion = True
 
         self.is_move_cmd = False
@@ -501,14 +332,14 @@ class Command:
         screw_pitch_mm = None
         match axis:
             case "x":
-                axis_int = FirmwareDefinitions.AXIS_X
-                screw_pitch_mm = FirmwareDefinitions.SCREW_PITCH_X_MM
+                axis_int = firmware_config.AXIS_X
+                screw_pitch_mm = firmware_config.SCREW_PITCH_X_MM
             case "y":
-                axis_int = FirmwareDefinitions.AXIS_Y
-                screw_pitch_mm = FirmwareDefinitions.SCREW_PITCH_Y_MM
+                axis_int = firmware_config.AXIS_Y
+                screw_pitch_mm = firmware_config.SCREW_PITCH_Y_MM
             case "z":
-                axis_int = FirmwareDefinitions.AXIS_Z
-                screw_pitch_mm = FirmwareDefinitions.SCREW_PITCH_Z_MM
+                axis_int = firmware_config.AXIS_Z
+                screw_pitch_mm = firmware_config.SCREW_PITCH_Z_MM
             case _:
                 raise RuntimeError("invalid axis " + axis)
 
@@ -529,20 +360,20 @@ class Command:
         motor_i_hold = None
         match axis:
             case "x":
-                axis_int = FirmwareDefinitions.AXIS_X
-                microstepping_default = FirmwareDefinitions.MICROSTEPPING_DEFAULT_X
-                motor_rms_current = FirmwareDefinitions.X_MOTOR_RMS_CURRENT_mA
-                motor_i_hold = FirmwareDefinitions.X_MOTOR_I_HOLD
+                axis_int = firmware_config.AXIS_X
+                microstepping_default = firmware_config.MICROSTEPPING_DEFAULT_X
+                motor_rms_current = firmware_config.X_MOTOR_RMS_CURRENT_mA
+                motor_i_hold = firmware_config.X_MOTOR_I_HOLD
             case "y":
-                axis_int = FirmwareDefinitions.AXIS_Y
-                microstepping_default = FirmwareDefinitions.MICROSTEPPING_DEFAULT_Y
-                motor_rms_current = FirmwareDefinitions.Y_MOTOR_RMS_CURRENT_mA
-                motor_i_hold = FirmwareDefinitions.Y_MOTOR_I_HOLD
+                axis_int = firmware_config.AXIS_Y
+                microstepping_default = firmware_config.MICROSTEPPING_DEFAULT_Y
+                motor_rms_current = firmware_config.Y_MOTOR_RMS_CURRENT_mA
+                motor_i_hold = firmware_config.Y_MOTOR_I_HOLD
             case "z":
-                axis_int = FirmwareDefinitions.AXIS_Z
-                microstepping_default = FirmwareDefinitions.MICROSTEPPING_DEFAULT_Z
-                motor_rms_current = FirmwareDefinitions.Z_MOTOR_RMS_CURRENT_mA
-                motor_i_hold = FirmwareDefinitions.Z_MOTOR_I_HOLD
+                axis_int = firmware_config.AXIS_Z
+                microstepping_default = firmware_config.MICROSTEPPING_DEFAULT_Z
+                motor_rms_current = firmware_config.Z_MOTOR_RMS_CURRENT_mA
+                motor_i_hold = firmware_config.Z_MOTOR_I_HOLD
             case _:
                 raise RuntimeError("invalid axis " + axis)
 
@@ -564,17 +395,17 @@ class Command:
         max_acc_mm = None
         match axis:
             case "x":
-                axis_int = FirmwareDefinitions.AXIS_X
-                max_vel_mm = FirmwareDefinitions.MAX_VELOCITY_X_mm
-                max_acc_mm = FirmwareDefinitions.MAX_ACCELERATION_X_mm
+                axis_int = firmware_config.AXIS_X
+                max_vel_mm = firmware_config.MAX_VELOCITY_X_mm
+                max_acc_mm = firmware_config.MAX_ACCELERATION_X_mm
             case "y":
-                axis_int = FirmwareDefinitions.AXIS_Y
-                max_vel_mm = FirmwareDefinitions.MAX_VELOCITY_Y_mm
-                max_acc_mm = FirmwareDefinitions.MAX_ACCELERATION_Y_mm
+                axis_int = firmware_config.AXIS_Y
+                max_vel_mm = firmware_config.MAX_VELOCITY_Y_mm
+                max_acc_mm = firmware_config.MAX_ACCELERATION_Y_mm
             case "z":
-                axis_int = FirmwareDefinitions.AXIS_Z
-                max_vel_mm = FirmwareDefinitions.MAX_VELOCITY_Z_mm
-                max_acc_mm = FirmwareDefinitions.MAX_ACCELERATION_Z_mm
+                axis_int = firmware_config.AXIS_Z
+                max_vel_mm = firmware_config.MAX_VELOCITY_Z_mm
+                max_acc_mm = firmware_config.MAX_ACCELERATION_Z_mm
             case _:
                 raise RuntimeError("invalid axis " + axis)
 
@@ -593,14 +424,14 @@ class Command:
         ret[1] = CommandName.SET_LIM_SWITCH_POLARITY.value
         match axis:
             case "x":
-                ret[2] = FirmwareDefinitions.AXIS_X
-                ret[3] = FirmwareDefinitions.X_HOME_SWITCH_POLARITY
+                ret[2] = firmware_config.AXIS_X
+                ret[3] = firmware_config.X_HOME_SWITCH_POLARITY
             case "y":
-                ret[2] = FirmwareDefinitions.AXIS_Y
-                ret[3] = FirmwareDefinitions.Y_HOME_SWITCH_POLARITY
+                ret[2] = firmware_config.AXIS_Y
+                ret[3] = firmware_config.Y_HOME_SWITCH_POLARITY
             case "z":
-                ret[2] = FirmwareDefinitions.AXIS_Z
-                ret[3] = FirmwareDefinitions.Z_HOME_SWITCH_POLARITY
+                ret[2] = firmware_config.AXIS_Z
+                ret[3] = firmware_config.Z_HOME_SWITCH_POLARITY
 
         return ret
 
@@ -636,21 +467,21 @@ class Command:
         ret[1] = CommandName.HOME_OR_ZERO.value
         match direction:
             case "x":
-                ret[2] = FirmwareDefinitions.AXIS_X
+                ret[2] = firmware_config.AXIS_X
                 # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
-                ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X + 1) / 2)
+                ret[3] = int((firmware_config.STAGE_MOVEMENT_SIGN_X + 1) / 2)
             case "y":
-                ret[2] = FirmwareDefinitions.AXIS_Y
+                ret[2] = firmware_config.AXIS_Y
                 # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
-                ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y + 1) / 2)
+                ret[3] = int((firmware_config.STAGE_MOVEMENT_SIGN_Y + 1) / 2)
             case "z":
-                ret[2] = FirmwareDefinitions.AXIS_Z
+                ret[2] = firmware_config.AXIS_Z
                 # "move backward" (1?) if SIGN is 1, "move forward" (0?) if SIGN is -1
-                ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z + 1) / 2)
+                ret[3] = int((firmware_config.STAGE_MOVEMENT_SIGN_Z + 1) / 2)
             case "w":
-                ret[2] = FirmwareDefinitions.AXIS_W
+                ret[2] = firmware_config.AXIS_W
                 # Use default W homing direction based on STAGE_MOVEMENT_SIGN_W
-                ret[3] = int((FirmwareDefinitions.STAGE_MOVEMENT_SIGN_W + 1) / 2)
+                ret[3] = int((firmware_config.STAGE_MOVEMENT_SIGN_W + 1) / 2)
             case _:
                 raise RuntimeError("invalid direction " + direction)
 
@@ -664,13 +495,13 @@ class Command:
         command_name = None
         match direction:
             case "x":
-                num_usteps = FirmwareDefinitions.mm_to_ustep_x(distance_mm)
+                num_usteps = firmware_config.mm_to_ustep_x(distance_mm)
                 command_name = CommandName.MOVE_X.value
             case "y":
-                num_usteps = FirmwareDefinitions.mm_to_ustep_y(distance_mm)
+                num_usteps = firmware_config.mm_to_ustep_y(distance_mm)
                 command_name = CommandName.MOVE_Y.value
             case "z":
-                num_usteps = FirmwareDefinitions.mm_to_ustep_z(distance_mm)
+                num_usteps = firmware_config.mm_to_ustep_z(distance_mm)
                 command_name = CommandName.MOVE_Z.value
             case _:
                 raise RuntimeError("invalid direction " + direction)
@@ -709,45 +540,45 @@ class Command:
 
         match (axis, direction):
             case ("x", "upper"):
-                usteps = FirmwareDefinitions.mm_to_ustep_x(coord)
+                usteps = firmware_config.mm_to_ustep_x(coord)
                 limit_code = (
                     LIMIT_CODE.X_POSITIVE
-                    if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X > 0
+                    if firmware_config.STAGE_MOVEMENT_SIGN_X > 0
                     else LIMIT_CODE.X_NEGATIVE
                 )
             case ("x", "lower"):
-                usteps = FirmwareDefinitions.mm_to_ustep_x(coord)
+                usteps = firmware_config.mm_to_ustep_x(coord)
                 limit_code = (
                     LIMIT_CODE.X_POSITIVE
-                    if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_X < 0
+                    if firmware_config.STAGE_MOVEMENT_SIGN_X < 0
                     else LIMIT_CODE.X_NEGATIVE
                 )
             case ("y", "upper"):
-                usteps = FirmwareDefinitions.mm_to_ustep_y(coord)
+                usteps = firmware_config.mm_to_ustep_y(coord)
                 limit_code = (
                     LIMIT_CODE.Y_POSITIVE
-                    if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y > 0
+                    if firmware_config.STAGE_MOVEMENT_SIGN_Y > 0
                     else LIMIT_CODE.Y_NEGATIVE
                 )
             case ("y", "lower"):
-                usteps = FirmwareDefinitions.mm_to_ustep_y(coord)
+                usteps = firmware_config.mm_to_ustep_y(coord)
                 limit_code = (
                     LIMIT_CODE.Y_POSITIVE
-                    if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Y < 0
+                    if firmware_config.STAGE_MOVEMENT_SIGN_Y < 0
                     else LIMIT_CODE.Y_NEGATIVE
                 )
             case ("z", "upper"):
-                usteps = FirmwareDefinitions.mm_to_ustep_z(coord)
+                usteps = firmware_config.mm_to_ustep_z(coord)
                 limit_code = (
                     LIMIT_CODE.Z_POSITIVE
-                    if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z > 0
+                    if firmware_config.STAGE_MOVEMENT_SIGN_Z > 0
                     else LIMIT_CODE.Z_NEGATIVE
                 )
             case ("z", "lower"):
-                usteps = FirmwareDefinitions.mm_to_ustep_z(coord)
+                usteps = firmware_config.mm_to_ustep_z(coord)
                 limit_code = (
                     LIMIT_CODE.Z_POSITIVE
-                    if FirmwareDefinitions.STAGE_MOVEMENT_SIGN_Z < 0
+                    if firmware_config.STAGE_MOVEMENT_SIGN_Z < 0
                     else LIMIT_CODE.Z_NEGATIVE
                 )
             case _:
@@ -772,11 +603,11 @@ class Command:
 
         match axis:
             case "x":
-                ret[2] = FirmwareDefinitions.AXIS_X
+                ret[2] = firmware_config.AXIS_X
             case "y":
-                ret[2] = FirmwareDefinitions.AXIS_Y
+                ret[2] = firmware_config.AXIS_Y
             case "z":
-                ret[2] = FirmwareDefinitions.AXIS_Z
+                ret[2] = firmware_config.AXIS_Z
             case _:
                 raise RuntimeError("invalid axis " + axis)
 
@@ -798,13 +629,13 @@ class Command:
         match axis:
             case "x":
                 axis_cmd = CommandName.MOVETO_X.value
-                move_usteps = FirmwareDefinitions.mm_to_ustep_x(coord_mm)
+                move_usteps = firmware_config.mm_to_ustep_x(coord_mm)
             case "y":
                 axis_cmd = CommandName.MOVETO_Y.value
-                move_usteps = FirmwareDefinitions.mm_to_ustep_y(coord_mm)
+                move_usteps = firmware_config.mm_to_ustep_y(coord_mm)
             case "z":
                 axis_cmd = CommandName.MOVETO_Z.value
-                move_usteps = FirmwareDefinitions.mm_to_ustep_z(coord_mm)
+                move_usteps = firmware_config.mm_to_ustep_z(coord_mm)
             case _:
                 raise RuntimeError("invalid axis " + axis)
 
@@ -974,7 +805,7 @@ class Microcontroller(BaseModel):
     last_position: Position = Field(default_factory=lambda: Position(0, 0, 0))
     
     # Filter wheel state
-    filter_wheel_position: int = Field(default=FirmwareDefinitions.FILTERWHEEL_MIN_INDEX)
+    filter_wheel_position: int = Field(default=firmware_config.FILTERWHEEL_MIN_INDEX)
 
     baudrate: int = 2_000_000
 
@@ -1113,7 +944,7 @@ class Microcontroller(BaseModel):
                 await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
 
-            if self.handle.in_waiting < FirmwareDefinitions.READ_PACKET_LENGTH:
+            if self.handle.in_waiting < firmware_config.READ_PACKET_LENGTH:
                 await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
 
@@ -1121,13 +952,13 @@ class Microcontroller(BaseModel):
             # TODO make this fast enough to check all packet command ids, to not skip over the
             # result of a command that finishes quickly
             num_bytes_to_skip = (
-                self.handle.in_waiting // FirmwareDefinitions.READ_PACKET_LENGTH
+                self.handle.in_waiting // firmware_config.READ_PACKET_LENGTH
             ) - 1
             if num_bytes_to_skip > 0:
-                self.handle.read(num_bytes_to_skip * FirmwareDefinitions.READ_PACKET_LENGTH)
+                self.handle.read(num_bytes_to_skip * firmware_config.READ_PACKET_LENGTH)
 
             packet = MicrocontrollerStatusPackage(
-                self.handle.read(FirmwareDefinitions.READ_PACKET_LENGTH)
+                self.handle.read(firmware_config.READ_PACKET_LENGTH)
             )
 
             # save current position as last known position
@@ -1262,19 +1093,19 @@ class Microcontroller(BaseModel):
         Position should be between FILTERWHEEL_MIN_INDEX and FILTERWHEEL_MAX_INDEX.
         This is the main public interface for filter wheel control.
         """
-        if not (FirmwareDefinitions.FILTERWHEEL_MIN_INDEX <= position <= FirmwareDefinitions.FILTERWHEEL_MAX_INDEX):
-            raise ValueError(f"Position {position} out of range [{FirmwareDefinitions.FILTERWHEEL_MIN_INDEX}, {FirmwareDefinitions.FILTERWHEEL_MAX_INDEX}]")
+        if not (firmware_config.FILTERWHEEL_MIN_INDEX <= position <= firmware_config.FILTERWHEEL_MAX_INDEX):
+            raise ValueError(f"Position {position} out of range [{firmware_config.FILTERWHEEL_MIN_INDEX}, {firmware_config.FILTERWHEEL_MAX_INDEX}]")
             
         if position != self.filter_wheel_position:
             # Calculate movement needed
             delta_positions = position - self.filter_wheel_position
-            distance_per_position = FirmwareDefinitions.SCREW_PITCH_W_MM / (
-                FirmwareDefinitions.FILTERWHEEL_MAX_INDEX - FirmwareDefinitions.FILTERWHEEL_MIN_INDEX + 1
+            distance_per_position = firmware_config.SCREW_PITCH_W_MM / (
+                firmware_config.FILTERWHEEL_MAX_INDEX - firmware_config.FILTERWHEEL_MIN_INDEX + 1
             )
             distance_mm = delta_positions * distance_per_position
             
             # Convert to microsteps and move
-            usteps = FirmwareDefinitions.mm_to_ustep_w(distance_mm)
+            usteps = firmware_config.mm_to_ustep_w(distance_mm)
             move_commands = Command.move_w_usteps(usteps)
             
             await self.send_cmd(move_commands)
@@ -1293,29 +1124,29 @@ class Microcontroller(BaseModel):
         # Configure W axis leadscrew pitch
         cmd = Command()
         cmd[1] = CommandName.SET_LEAD_SCREW_PITCH.value
-        cmd[2] = FirmwareDefinitions.AXIS_W
-        cmd[3] = (int(FirmwareDefinitions.SCREW_PITCH_W_MM * 1e3) >> 8 * 1) & 0xFF
-        cmd[4] = (int(FirmwareDefinitions.SCREW_PITCH_W_MM * 1e3) >> 8 * 0) & 0xFF
+        cmd[2] = firmware_config.AXIS_W
+        cmd[3] = (int(firmware_config.SCREW_PITCH_W_MM * 1e3) >> 8 * 1) & 0xFF
+        cmd[4] = (int(firmware_config.SCREW_PITCH_W_MM * 1e3) >> 8 * 0) & 0xFF
         await self.send_cmd(cmd)
 
         # Configure W axis motor driver (microstepping and current)
         cmd = Command()
         cmd[1] = CommandName.CONFIGURE_STEPPER_DRIVER.value
-        cmd[2] = FirmwareDefinitions.AXIS_W
-        cmd[3] = FirmwareDefinitions.MICROSTEPPING_DEFAULT_W
-        cmd[4] = (FirmwareDefinitions.W_MOTOR_RMS_CURRENT_mA >> 8 * 1) & 0xFF
-        cmd[5] = (FirmwareDefinitions.W_MOTOR_RMS_CURRENT_mA >> 8 * 0) & 0xFF
-        cmd[6] = int(FirmwareDefinitions.W_MOTOR_I_HOLD * 255)
+        cmd[2] = firmware_config.AXIS_W
+        cmd[3] = firmware_config.MICROSTEPPING_DEFAULT_W
+        cmd[4] = (firmware_config.W_MOTOR_RMS_CURRENT_mA >> 8 * 1) & 0xFF
+        cmd[5] = (firmware_config.W_MOTOR_RMS_CURRENT_mA >> 8 * 0) & 0xFF
+        cmd[6] = int(firmware_config.W_MOTOR_I_HOLD * 255)
         await self.send_cmd(cmd)
 
         # Configure W axis max velocity and acceleration
         cmd = Command()
         cmd[1] = CommandName.SET_MAX_VELOCITY_ACCELERATION.value
-        cmd[2] = FirmwareDefinitions.AXIS_W
-        cmd[3] = (int(FirmwareDefinitions.MAX_VELOCITY_W_mm * 100) >> 8 * 1) & 0xFF
-        cmd[4] = (int(FirmwareDefinitions.MAX_VELOCITY_W_mm * 100) >> 8 * 0) & 0xFF
-        cmd[5] = (int(FirmwareDefinitions.MAX_ACCELERATION_W_mm * 10) >> 8 * 1) & 0xFF
-        cmd[6] = (int(FirmwareDefinitions.MAX_ACCELERATION_W_mm * 10) >> 8 * 0) & 0xFF
+        cmd[2] = firmware_config.AXIS_W
+        cmd[3] = (int(firmware_config.MAX_VELOCITY_W_mm * 100) >> 8 * 1) & 0xFF
+        cmd[4] = (int(firmware_config.MAX_VELOCITY_W_mm * 100) >> 8 * 0) & 0xFF
+        cmd[5] = (int(firmware_config.MAX_ACCELERATION_W_mm * 10) >> 8 * 1) & 0xFF
+        cmd[6] = (int(firmware_config.MAX_ACCELERATION_W_mm * 10) >> 8 * 0) & 0xFF
         await self.send_cmd(cmd)
 
     @microcontroller_exclusive
@@ -1336,12 +1167,12 @@ class Microcontroller(BaseModel):
         
         # Apply small offset to move away from the limit switch 
         # This matches SQUID_FILTERWHEEL_OFFSET from the original Squid code
-        offset_usteps = FirmwareDefinitions.mm_to_ustep_w(FirmwareDefinitions.FILTERWHEEL_OFFSET_MM)
+        offset_usteps = firmware_config.mm_to_ustep_w(firmware_config.FILTERWHEEL_OFFSET_MM)
         move_commands = Command.move_w_usteps(offset_usteps)
         await self.send_cmd(move_commands)
         
         # Reset position tracking to minimum index (position 1)
-        self.filter_wheel_position = FirmwareDefinitions.FILTERWHEEL_MIN_INDEX
+        self.filter_wheel_position = firmware_config.FILTERWHEEL_MIN_INDEX
         
     def filter_wheel_get_position(self) -> int:
         """Get the current filter wheel position (non-blocking)"""
