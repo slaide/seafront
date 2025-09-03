@@ -202,6 +202,11 @@ class ToupCamCamera(Camera):
         with toupcam_ctx():
             self._set_toupcam_option(tc.TOUPCAM_OPTION_RAW,1)
 
+        with toupcam_ctx("set single trigger mode"):
+            supports_trigger_single=(self._original_device.model.flag&tc.TOUPCAM_FLAG_TRIGGER_SINGLE)!=0
+            print(f"supports trigger single {supports_trigger_single}")
+            # this is just a capability, not something you can enable..
+
         logger.debug(f"MaxBitDepth: {self.handle.MaxBitDepth()}")
 
         if False:

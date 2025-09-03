@@ -130,6 +130,9 @@ TOUPCAM_FLAG_RAW10PACK:int
 TOUPCAM_FLAG_RAW12PACK:int
 "#define TOUPCAM_FLAG_RAW12PACK            0x0020000000000000  /* pixel format, RAW 12bits packed */"
 
+TOUPCAM_FLAG_TRIGGER_SINGLE:int
+" 0x00200000          # only support trigger single: one trigger, one image"
+
 # /* pixel format */
 TOUPCAM_PIXELFORMAT_RAW8:int
 " #define TOUPCAM_PIXELFORMAT_RAW8              0x00"
