@@ -16,7 +16,7 @@ dependencies = [
     "imagecodecs==2024.12.30",                                          # for image compression
     "matplotlib>=3,<4",                                                 # for debug functionality
     "fastapi==0.115.8",                                                 # http server
-    "uvicorn>=0.34,<0.35",                                              # to run the fastapi http server
+    "uvicorn[standard]>=0.34,<0.35",                                    # http server with threading support
     "websockets>=14.2,<14.3",                                           # to enable uvicorn websocket capabilities
     "pydantic>=2.9,<2.10",                                              # python type model verification
     "ome-types",                                                        # for ome info in image files

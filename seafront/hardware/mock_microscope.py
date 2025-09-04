@@ -30,6 +30,7 @@ from pydantic import Field, PrivateAttr
 
 from seafront.config.basics import ChannelConfig, FilterConfig, GlobalConfigHandler
 from seafront.hardware.adapter import AdapterState, CoreState, Position
+from seafront.hardware.firmware_config import get_firmware_config, get_available_profiles, AVAILABLE_PROFILES
 from seafront.hardware.illumination import IlluminationController
 from seafront.hardware.microscope import Microscope, HardwareLimits, microscope_exclusive
 from seafront.hardware.camera import HardwareLimitValue
@@ -60,13 +61,87 @@ class MockMicroscope(Microscope):
     _streaming_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _latest_images: dict[str, cmd.ImageStoreEntry] = PrivateAttr(default_factory=dict)
     
+    # Per-axis movement parameters - loaded from firmware profile
+    _max_velocity_x_mm_s: float = PrivateAttr()
+    _max_velocity_y_mm_s: float = PrivateAttr()
+    _max_velocity_z_mm_s: float = PrivateAttr()
+    _max_velocity_w_mm_s: float = PrivateAttr()
+    
+    _acceleration_x_mm_s2: float = PrivateAttr()
+    _acceleration_y_mm_s2: float = PrivateAttr()
+    _acceleration_z_mm_s2: float = PrivateAttr()
+    _acceleration_w_mm_s2: float = PrivateAttr()
+    
+    _stabilization_time_x_s: float = PrivateAttr()
+    _stabilization_time_y_s: float = PrivateAttr()
+    _stabilization_time_z_s: float = PrivateAttr()
+    _stabilization_time_w_s: float = PrivateAttr()
+    
+    def model_post_init(self, __context: tp.Any) -> None:
+        """Initialize movement parameters from firmware profile"""
+        # Load firmware configuration based on SEAFRONT_FIRMWARE_PROFILE environment variable
+        firmware_config = get_firmware_config()
+        
+        # Set movement parameters from firmware profile
+        self._max_velocity_x_mm_s = firmware_config.MAX_VELOCITY_X_mm
+        self._max_velocity_y_mm_s = firmware_config.MAX_VELOCITY_Y_mm
+        self._max_velocity_z_mm_s = firmware_config.MAX_VELOCITY_Z_mm
+        self._max_velocity_w_mm_s = firmware_config.MAX_VELOCITY_W_mm
+        
+        self._acceleration_x_mm_s2 = firmware_config.MAX_ACCELERATION_X_mm
+        self._acceleration_y_mm_s2 = firmware_config.MAX_ACCELERATION_Y_mm
+        self._acceleration_z_mm_s2 = firmware_config.MAX_ACCELERATION_Z_mm
+        self._acceleration_w_mm_s2 = firmware_config.MAX_ACCELERATION_W_mm
+        
+        self._stabilization_time_x_s = firmware_config.SCAN_STABILIZATION_TIME_MS_X / 1000.0
+        self._stabilization_time_y_s = firmware_config.SCAN_STABILIZATION_TIME_MS_Y / 1000.0
+        self._stabilization_time_z_s = firmware_config.SCAN_STABILIZATION_TIME_MS_Z / 1000.0
+        # W axis doesn't have stabilization time in firmware config - use default 50ms
+        self._stabilization_time_w_s = 0.05
+        
+        logger.info(f"Mock microscope initialized with firmware profile parameters - "
+                   f"max velocities: X={self._max_velocity_x_mm_s}mm/s, Y={self._max_velocity_y_mm_s}mm/s, Z={self._max_velocity_z_mm_s}mm/s, W={self._max_velocity_w_mm_s}mm/s")
+    
     @property
     def _realistic_delays_enabled(self) -> bool:
         """Check if realistic delays should be simulated (default: True, disable with MOCK_NO_DELAYS=1)"""
         return os.environ.get("MOCK_NO_DELAYS", "0").lower() not in ("1", "true", "yes")
     
+    def _calculate_axis_movement_time(self, distance_mm: float, max_vel_mm_s: float, accel_mm_s2: float) -> tuple[float, float]:
+        """
+        Calculate movement time and max velocity reached for a single axis.
+        
+        Returns:
+            (total_time_s, actual_max_vel_mm_s)
+        """
+        if abs(distance_mm) < 0.001:  # No movement
+            return 0.0, 0.0
+            
+        distance = abs(distance_mm)
+        
+        # Time to reach max velocity
+        accel_time = max_vel_mm_s / accel_mm_s2
+        
+        # Distance covered during acceleration
+        accel_distance = 0.5 * accel_mm_s2 * accel_time**2
+        
+        # If movement is short, we never reach max velocity
+        if distance <= 2 * accel_distance:
+            # Triangle profile - accelerate then decelerate
+            accel_time_actual = (distance / accel_mm_s2) ** 0.5
+            total_time = 2 * accel_time_actual
+            actual_max_vel = accel_mm_s2 * accel_time_actual
+        else:
+            # Trapezoid profile - accelerate, constant velocity, decelerate
+            const_vel_distance = distance - 2 * accel_distance
+            const_vel_time = const_vel_distance / max_vel_mm_s
+            total_time = 2 * accel_time + const_vel_time
+            actual_max_vel = max_vel_mm_s
+            
+        return total_time, actual_max_vel
+    
     async def _simulate_gradual_movement(self, target_x_mm: float | None = None, target_y_mm: float | None = None, target_z_mm: float | None = None) -> None:
-        """Simulate realistic movement with gradual position updates (4cm/s)"""
+        """Simulate realistic movement with per-axis acceleration, max speed, and stabilization time"""
         # Get current real positions
         start_x = self._pos_x_measured_to_real(self._current_position.x_pos_mm)
         start_y = self._pos_y_measured_to_real(self._current_position.y_pos_mm)  
@@ -84,47 +159,66 @@ class MockMicroscope(Microscope):
             self._current_position.z_pos_mm = self._pos_z_real_to_measured(final_z)
             return
         
-        # Calculate 3D distance
+        # Calculate per-axis distances
         dx = final_x - start_x
         dy = final_y - start_y
         dz = final_z - start_z
-        distance_mm = (dx**2 + dy**2 + dz**2)**0.5
         
-        # Convert to cm and calculate time at 4cm/s
-        distance_cm = distance_mm / 10.0
-        movement_time_s = distance_cm / 4.0  # 4 cm/s
+        # Calculate movement time for each axis
+        time_x, max_vel_x = self._calculate_axis_movement_time(dx, self._max_velocity_x_mm_s, self._acceleration_x_mm_s2)
+        time_y, max_vel_y = self._calculate_axis_movement_time(dy, self._max_velocity_y_mm_s, self._acceleration_y_mm_s2)
+        time_z, max_vel_z = self._calculate_axis_movement_time(dz, self._max_velocity_z_mm_s, self._acceleration_z_mm_s2)
         
-        # Add minimum time for acceleration/deceleration (50ms)
-        total_time_s = max(0.05, movement_time_s)
+        # Total movement time is the longest axis
+        movement_time_s = max(time_x, time_y, time_z)
         
-        logger.debug(f"Mock movement: {distance_mm:.1f}mm distance, {total_time_s:.3f}s duration")
+        # Determine stabilization time (max of moved axes)
+        stabilization_time_s = 0.0
+        if abs(dx) > 0.001:
+            stabilization_time_s = max(stabilization_time_s, self._stabilization_time_x_s)
+        if abs(dy) > 0.001:
+            stabilization_time_s = max(stabilization_time_s, self._stabilization_time_y_s)
+        if abs(dz) > 0.001:
+            stabilization_time_s = max(stabilization_time_s, self._stabilization_time_z_s)
         
-        # Update position gradually during movement
-        update_interval_s = 0.02  # Update every 20ms for smooth movement
-        num_steps = max(1, int(total_time_s / update_interval_s))
+        total_distance_mm = (dx**2 + dy**2 + dz**2)**0.5
+        logger.debug(f"Mock movement: {total_distance_mm:.1f}mm distance, {movement_time_s:.3f}s movement + {stabilization_time_s:.3f}s settling")
+        logger.debug(f"  X: {dx:.1f}mm @ {max_vel_x:.1f}mm/s, Y: {dy:.1f}mm @ {max_vel_y:.1f}mm/s, Z: {dz:.1f}mm @ {max_vel_z:.1f}mm/s")
         
-        for step in range(num_steps):
-            # Calculate interpolation factor (0.0 to 1.0)
-            progress = (step + 1) / num_steps
+        if movement_time_s < 0.001:  # No significant movement
+            return
             
-            # Interpolate position
+        # Update position gradually during movement using simple linear interpolation
+        # (Full trapezoidal profile would be complex - this gives realistic timing)
+        update_interval_s = 0.01  # Update every 10ms for smooth movement
+        num_steps = max(1, int(movement_time_s / update_interval_s))
+        
+        for step in range(num_steps + 1):
+            # Calculate progress (0.0 to 1.0)
+            progress = min((step + 1) / num_steps, 1.0) if num_steps > 0 else 1.0
+            
+            # Interpolate position for each axis
             current_x = start_x + dx * progress
-            current_y = start_y + dy * progress  
+            current_y = start_y + dy * progress
             current_z = start_z + dz * progress
             
-            # Update measured position (this is what get_current_state() sees)
+            # Update measured position
             self._current_position.x_pos_mm = self._pos_x_real_to_measured(current_x)
             self._current_position.y_pos_mm = self._pos_y_real_to_measured(current_y)
             self._current_position.z_pos_mm = self._pos_z_real_to_measured(current_z)
             
-            # Wait for next update (or finish if last step)
-            if step < num_steps - 1:
+            # Wait for next update (except last step)
+            if step < num_steps:
                 await asyncio.sleep(update_interval_s)
-            else:
-                # Final step - sleep remaining time
-                remaining_time = total_time_s - (step * update_interval_s)
-                if remaining_time > 0:
-                    await asyncio.sleep(remaining_time)
+        
+        # Ensure final position is exact
+        self._current_position.x_pos_mm = self._pos_x_real_to_measured(final_x)
+        self._current_position.y_pos_mm = self._pos_y_real_to_measured(final_y)
+        self._current_position.z_pos_mm = self._pos_z_real_to_measured(final_z)
+        
+        # Wait for stabilization time
+        if stabilization_time_s > 0:
+            await asyncio.sleep(stabilization_time_s)
     
     async def _delay_for_imaging(self, exposure_time_ms: float) -> None:
         """Simulate realistic imaging delay (exposure time + overhead)"""
@@ -614,12 +708,15 @@ class MockMicroscope(Microscope):
             
         elif isinstance(command, cmd.MC_getLastPosition):
             # Convert adapter.Position to microcontroller.Position
-            from seafront.hardware.microcontroller import Position as McPosition, FirmwareDefinitions
+            from seafront.hardware.microcontroller import Position as McPosition
+            from seafront.hardware.firmware_config import get_firmware_config
+            
+            firmware_config = get_firmware_config()
             
             # Convert mm to micro-steps
-            x_usteps = int(self._current_position.x_pos_mm / FirmwareDefinitions.mm_per_ustep_x())
-            y_usteps = int(self._current_position.y_pos_mm / FirmwareDefinitions.mm_per_ustep_y())  
-            z_usteps = int(self._current_position.z_pos_mm / FirmwareDefinitions.mm_per_ustep_z())
+            x_usteps = int(self._current_position.x_pos_mm / firmware_config.mm_per_ustep_x)
+            y_usteps = int(self._current_position.y_pos_mm / firmware_config.mm_per_ustep_y)  
+            z_usteps = int(self._current_position.z_pos_mm / firmware_config.mm_per_ustep_z)
             
             return McPosition(x_usteps=x_usteps, y_usteps=y_usteps, z_usteps=z_usteps)  # type: ignore
             

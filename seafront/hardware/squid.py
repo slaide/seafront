@@ -1027,6 +1027,46 @@ class SquidAdapter(Microscope):
 
             self._stop_streaming_flag = True
             logger.debug("squid - requested stream stop")
+            
+            # Wait up to 1 second for the camera streaming thread to naturally clean up
+            # This gives the forward_image callback a chance to run and do proper cleanup
+            cleanup_timeout_s = 1.0
+            poll_interval_s = 0.1
+            max_polls = int(cleanup_timeout_s / poll_interval_s)
+            
+            for _ in range(max_polls):
+                if self.stream_callback is None:
+                    # Natural cleanup completed
+                    logger.debug("squid - streaming cleaned up naturally")
+                    break
+                await asyncio.sleep(poll_interval_s)
+            
+            # If natural cleanup didn't happen, force cleanup to prevent desync
+            if self.stream_callback is not None:
+                logger.warning("squid - streaming thread didn't clean up naturally, forcing cleanup")
+                
+                # Find channel config to clean up illumination
+                channel_config = None
+                for ch in self.channels:
+                    if ch.handle == command.channel.handle:
+                        channel_config = ch
+                        break
+                
+                if channel_config is not None:
+                    try:
+                        illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+                        with self.microcontroller.locked() as qmc:
+                            if qmc is not None:
+                                await qmc.send_cmd(mc.Command.illumination_end(illum_code))
+                                logger.debug(f"squid - forced illumination cleanup for channel {command.channel.handle}")
+                    except Exception as e:
+                        logger.warning(f"squid - failed to force illumination cleanup: {e}")
+                
+                # Force state cleanup
+                self.stream_callback = None
+                self.state = CoreState.Idle
+                logger.debug("squid - forced stream state cleanup")
+            
             result = cmd.BasicSuccessResponse()
             return result  # type: ignore[no-any-return]
 
