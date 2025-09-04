@@ -62,6 +62,8 @@ from seafront.server.commands import (
     BasicSuccessResponse,
     ChannelSnapSelection,
     ChannelSnapSelectionResult,
+    ChannelSnapProgressiveStart,
+    ChannelSnapProgressiveStatus,
     ChannelSnapshot,
     ChannelStreamBegin,
     ChannelStreamEnd,
@@ -345,6 +347,10 @@ class Core:
         
         self._hardware_limits_cache: HardwareLimits | None = None
         """ cached hardware limits to serve when microscope is busy """
+        
+        # Progressive channel snap state
+        self._progressive_snap_callbacks: dict[str, tp.Callable[[ChannelSnapProgressiveStatus], None]] = {}
+        """ callback functions for progressive channel snap status updates """
 
         # set up routes to member functions
 
@@ -453,9 +459,8 @@ class Core:
                 request_data = kwargs.copy()
                 request_data.update(kwargs_static)
 
-                # microscope code expects rlock to function as expected, but fastapi serving two requests in parallel
-                # through async will technically run in the same thread, so rlock will function improperly.
-                # we start a new thread just to run this async code in it, to work around this issue.
+                # Use asyncio.to_thread to run each request in its own system thread
+                # This ensures RLock works properly with different thread IDs
                 result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
                 return result
 
@@ -701,6 +706,57 @@ class Core:
                     await ws.send_json((await self.get_acquisition_status(**args)).json())
             except WebSocketDisconnect:
                 pass
+
+        @app.websocket("/ws/action/snap_selected_channels_progressive")
+        async def ws_snap_selected_channels_progressive(ws: WebSocket):
+            """
+            Progressive channel snapping with real-time updates.
+            
+            Client sends AcquisitionConfig, server responds with status updates
+            as each channel completes. Each completed channel image is immediately
+            available via the normal image retrieval endpoints.
+            """
+            await ws.accept()
+            callback_id = make_unique_acquisition_id()  # Define outside try block
+            
+            try:
+                # Receive the configuration
+                config_data = await ws.receive_json()
+                config_file = sc.AcquisitionConfig(**config_data)
+                
+                # Register callback to send updates via WebSocket
+                def send_status_update(status: ChannelSnapProgressiveStatus):
+                    try:
+                        # Create a task to send the WebSocket message
+                        asyncio.create_task(ws.send_json(status.model_dump()))
+                    except Exception as e:
+                        logger.warning(f"Failed to send progressive snap status: {e}")
+                
+                self._progressive_snap_callbacks[callback_id] = send_status_update
+                
+                # Start progressive snapping
+                try:
+                    await self.start_progressive_channel_snap(config_file, callback_id)
+                except Exception as e:
+                    # Send error status if startup fails
+                    send_status_update(ChannelSnapProgressiveStatus(
+                        channel_handle="",
+                        channel_name="",
+                        status="error",
+                        total_channels=0,
+                        completed_channels=0,
+                        message="Failed to start progressive snap",
+                        error_detail=str(e)
+                    ))
+                    
+            except WebSocketDisconnect:
+                pass  # Client disconnected
+            except Exception as e:
+                logger.error(f"Progressive snap WebSocket error: {e}")
+            finally:
+                # Always clean up callback
+                if callback_id in self._progressive_snap_callbacks:
+                    del self._progressive_snap_callbacks[callback_id]
 
         # Retrieve config list
         route_wrapper(
@@ -1507,6 +1563,121 @@ class Core:
         else:
             return acq_res.last_status
 
+    async def start_progressive_channel_snap(
+        self, config_file: sc.AcquisitionConfig, callback_id: str
+    ) -> BasicSuccessResponse:
+        """
+        Start progressive channel snapping with real-time status updates.
+        
+        Each channel is acquired sequentially, with status updates sent via callback
+        as soon as each channel completes. This allows the UI to show results immediately
+        instead of waiting for all channels to complete.
+        """
+        
+        if callback_id not in self._progressive_snap_callbacks:
+            error_internal(detail="no callback registered for progressive snap")
+        
+        callback = self._progressive_snap_callbacks[callback_id]
+        
+        # Get enabled channels
+        enabled_channels = [c for c in config_file.channels if c.enabled]
+        total_channels = len(enabled_channels)
+        
+        if total_channels == 0:
+            error_internal(detail="no channels selected")
+        
+        # Start background task for progressive snapping
+        async def progressive_snap_task():
+            completed_channels = 0
+            
+            try:
+                for channel in enabled_channels:
+                    # Send starting status
+                    callback(ChannelSnapProgressiveStatus(
+                        channel_handle=channel.handle,
+                        channel_name=channel.name,
+                        status="starting",
+                        total_channels=total_channels,
+                        completed_channels=completed_channels,
+                        message=f"Starting acquisition for {channel.name}"
+                    ))
+                    
+                    try:
+                        # Execute channel snapshot
+                        with self.microscope.lock() as microscope:
+                            if microscope is None:
+                                error_internal(detail="microscope is busy")
+                            
+                            result = await microscope.execute(ChannelSnapshot(
+                                channel=channel,
+                                machine_config=config_file.machine_config or []
+                            ))
+                        
+                        # Store the image
+                        g_dict = GlobalConfigHandler.get_dict()
+                        pixel_format = g_dict["main_camera_pixel_format"].strvalue
+                        await self._store_new_image(
+                            img=result._img, 
+                            pixel_format=pixel_format, 
+                            channel_config=channel
+                        )
+                        
+                        completed_channels += 1
+                        
+                        # Send completed status
+                        callback(ChannelSnapProgressiveStatus(
+                            channel_handle=channel.handle,
+                            channel_name=channel.name,
+                            status="completed",
+                            total_channels=total_channels,
+                            completed_channels=completed_channels,
+                            message=f"Completed {channel.name} ({completed_channels}/{total_channels})"
+                        ))
+                        
+                    except Exception as e:
+                        # Send error status
+                        callback(ChannelSnapProgressiveStatus(
+                            channel_handle=channel.handle,
+                            channel_name=channel.name,
+                            status="error",
+                            total_channels=total_channels,
+                            completed_channels=completed_channels,
+                            message=f"Error acquiring {channel.name}",
+                            error_detail=str(e)
+                        ))
+                        break
+                
+                # Send finished status
+                callback(ChannelSnapProgressiveStatus(
+                    channel_handle="",
+                    channel_name="",
+                    status="finished",
+                    total_channels=total_channels,
+                    completed_channels=completed_channels,
+                    message=f"All channels complete ({completed_channels}/{total_channels})"
+                ))
+                
+            except Exception as e:
+                # Send error status for unexpected errors
+                callback(ChannelSnapProgressiveStatus(
+                    channel_handle="",
+                    channel_name="",
+                    status="error", 
+                    total_channels=total_channels,
+                    completed_channels=completed_channels,
+                    message="Unexpected error during progressive snap",
+                    error_detail=str(e)
+                ))
+            finally:
+                # Clean up callback
+                if callback_id in self._progressive_snap_callbacks:
+                    del self._progressive_snap_callbacks[callback_id]
+        
+        # Start the task in background
+        asyncio.create_task(progressive_snap_task())
+        
+        return BasicSuccessResponse()
+
     def close(self):
         logger.debug("shutdown - closing microscope")
         try:
@@ -1901,8 +2072,17 @@ def main():
 
     try:
         logger.info("starting http server")
-        # Start FastAPI using uvicorn with websocket compression disabled
-        uvicorn.run(app, host="127.0.0.1", port=server_config.port, ws_per_message_deflate=False)  # , log_level="debug")
+        # Use standard Uvicorn but keep the asyncio.to_thread approach
+        # This ensures each request handler runs in its own system thread
+        logger.info("Starting Uvicorn server")
+        logger.info("🧵 Request handlers run via asyncio.to_thread for real threading!")
+        
+        uvicorn.run(
+            app, 
+            host="127.0.0.1", 
+            port=server_config.port, 
+            ws_per_message_deflate=False
+        )
         logger.info("http server initialised")
 
     except Exception as e:

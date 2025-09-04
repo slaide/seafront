@@ -436,6 +436,31 @@ class ChannelSnapSelection(BaseModel, BaseCommand[ChannelSnapSelectionResult]):
     _ReturnValue: type = PrivateAttr(default=ChannelSnapSelectionResult)
 
 
+class ChannelSnapProgressiveStatus(BaseModel):
+    """Progressive channel snap status update"""
+    
+    channel_handle: str
+    channel_name: str
+    status: tp.Literal["starting", "completed", "error", "finished"]
+    total_channels: int
+    completed_channels: int
+    message: str = ""
+    error_detail: str | None = None
+
+
+class ChannelSnapProgressiveStart(BaseModel, BaseCommand[BasicSuccessResponse]):
+    """
+    Start progressive channel snapping with real-time status updates
+    
+    Unlike ChannelSnapSelection, this returns immediately and sends status updates
+    via callback mechanism. Each channel result is available as soon as acquired.
+    """
+    
+    config_file: sc.AcquisitionConfig
+    
+    _ReturnValue: type = PrivateAttr(default=BasicSuccessResponse)
+
+
 class MoveByResult(BaseModel):
     axis: str
     moved_by_mm: float
