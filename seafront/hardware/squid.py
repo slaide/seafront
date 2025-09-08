@@ -446,18 +446,24 @@ class SquidAdapter(Microscope):
                 # and move objective up, slightly
                 await qmc.send_cmd(mc.Command.move_by_mm("z", 1))
 
-                # Initialize filter wheel with homing sequence (matching Squid behavior)
-                logger.info("initializing filter wheel...")
-                try:
-                    await qmc.filter_wheel_init()
-                    logger.info("configuring filter wheel actuator...")
-                    await qmc.filter_wheel_configure_actuator()
-                    logger.info("performing filter wheel homing...")
-                    await qmc.filter_wheel_home()
-                    logger.info("✓ Filter wheel initialized, configured, and homed")
-                except Exception as e:
-                    logger.warning(f"Filter wheel initialization/configuration/homing failed: {e}")
-                    logger.info("Continuing with microscope initialization...")
+                # Only initialize filter wheel if it's available
+                g_dict = GlobalConfigHandler.get_dict()
+                filter_wheel_available = g_dict.get("filter_wheel_available")
+                if filter_wheel_available and filter_wheel_available.boolvalue:
+                    # Initialize filter wheel with homing sequence (matching Squid behavior)
+                    logger.info("initializing filter wheel...")
+                    try:
+                        await qmc.filter_wheel_init()
+                        logger.info("configuring filter wheel actuator...")
+                        await qmc.filter_wheel_configure_actuator()
+                        logger.info("performing filter wheel homing...")
+                        await qmc.filter_wheel_home()
+                        logger.info("✓ Filter wheel initialized, configured, and homed")
+                    except Exception as e:
+                        logger.warning(f"Filter wheel initialization/configuration/homing failed: {e}")
+                        logger.info("Continuing with microscope initialization...")
+                else:
+                    logger.info("Filter wheel not available - skipping initialization")
 
                 logger.info("done initializing microscope")
 
@@ -1044,6 +1050,15 @@ class SquidAdapter(Microscope):
             # If natural cleanup didn't happen, force cleanup to prevent desync
             if self.stream_callback is not None:
                 logger.warning("squid - streaming thread didn't clean up naturally, forcing cleanup")
+                
+                # Stop camera streaming first
+                try:
+                    with self.main_camera.locked() as cam:
+                        if cam is not None:
+                            cam.stop_acquisition()
+                            logger.debug("squid - forced camera streaming stop")
+                except Exception as e:
+                    logger.warning(f"squid - failed to force camera streaming stop: {e}")
                 
                 # Find channel config to clean up illumination
                 channel_config = None

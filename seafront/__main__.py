@@ -598,9 +598,19 @@ class Core:
                     # await message, but ignore its contents
                     _ = await ws.receive()
 
-                    current_state = await self.get_current_state()
-
-                    await ws.send_json(current_state.json())
+                    try:
+                        current_state = await self.get_current_state()
+                        await ws.send_json(current_state.json())
+                    except Exception as e:
+                        # Handle hardware disconnects and other errors gracefully
+                        error_msg = {
+                            "error": "hardware_disconnect" if "disconnect" in str(e).lower() else "internal_error",
+                            "message": str(e),
+                            "timestamp": time.time()
+                        }
+                        await ws.send_json(error_msg)
+                        # Don't close the connection - let client decide
+                        
             except WebSocketDisconnect:
                 pass
 
