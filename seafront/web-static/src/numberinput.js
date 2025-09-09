@@ -53,31 +53,104 @@ export function registerNumberInput(el) {
     // allow certain operations on the element input.
     el.setAttribute("type", "text");
 
-    /** @type {number|null} */
-    let minvalue = parseFloat(el.min);
-    if (isNaN(minvalue)) minvalue = null;
-    /** @type {number|null} */
-    let maxvalue = parseFloat(el.max);
-    if (isNaN(maxvalue)) maxvalue = null;
-    /** @type {number|null} */
-    let stepvalue = parseFloat(el.step);
-    if (isNaN(stepvalue)) stepvalue = null;
+    /**
+     * Get current resolved values from attributes
+     * This evaluates attribute expressions against the global Alpine data
+     */
+    function getCurrentLimits() {
+        const currentMin = el.getAttribute('min');
+        const currentMax = el.getAttribute('max'); 
+        const currentStep = el.getAttribute('step');
+        
+        // Try to evaluate expressions like "limits.imaging_exposure_time_ms.min"
+        let minvalue = null;
+        let maxvalue = null;
+        let stepvalue = null;
+        
+        try {
+            // Access the global Alpine data through the nearest Alpine component
+            const alpineEl = el.closest('[x-data]');
+            if (alpineEl && alpineEl._x_dataStack && alpineEl._x_dataStack.length > 0) {
+                const data = alpineEl._x_dataStack[0];
+                
+                if (currentMin && currentMin.startsWith('limits.')) {
+                    minvalue = getNestedValue(data, currentMin);
+                } else {
+                    minvalue = parseFloat(currentMin);
+                    if (isNaN(minvalue)) minvalue = null;
+                }
+                
+                if (currentMax && currentMax.startsWith('limits.')) {
+                    maxvalue = getNestedValue(data, currentMax);
+                } else {
+                    maxvalue = parseFloat(currentMax);
+                    if (isNaN(maxvalue)) maxvalue = null;
+                }
+                
+                if (currentStep && currentStep.startsWith('limits.')) {
+                    stepvalue = getNestedValue(data, currentStep);
+                } else {
+                    stepvalue = parseFloat(currentStep);
+                    if (isNaN(stepvalue)) stepvalue = null;
+                }
+            } else {
+                // Fallback to simple parsing
+                minvalue = parseFloat(currentMin);
+                if (isNaN(minvalue)) minvalue = null;
+                
+                maxvalue = parseFloat(currentMax);
+                if (isNaN(maxvalue)) maxvalue = null;
+                
+                stepvalue = parseFloat(currentStep);
+                if (isNaN(stepvalue)) stepvalue = null;
+            }
+        } catch (e) {
+            console.warn('Error resolving limits:', e);
+            // Fallback to simple parsing
+            minvalue = parseFloat(currentMin);
+            if (isNaN(minvalue)) minvalue = null;
+            
+            maxvalue = parseFloat(currentMax);
+            if (isNaN(maxvalue)) maxvalue = null;
+            
+            stepvalue = parseFloat(currentStep);
+            if (isNaN(stepvalue)) stepvalue = null;
+        }
+        
+        return { minvalue, maxvalue, stepvalue };
+    }
+    
+    /**
+     * Get nested value from object using dot notation
+     * @param {object} obj - Object to search in
+     * @param {string} path - Dot-separated path like "limits.imaging_exposure_time_ms.min"
+     * @returns {any} - The nested value or null if not found
+     */
+    function getNestedValue(obj, path) {
+        return path.split('.').reduce((current, key) => {
+            return current && current[key] !== undefined ? current[key] : null;
+        }, obj);
+    }
 
-    const numdigits = getnumberofdecimaldigits(stepvalue);
+    // Note: numdigits will be calculated dynamically in validation
     /**
      *
      * @param {number} newval
+     * @param {object} limits - optional limits object with minvalue, maxvalue, stepvalue
      * @returns {string}
      */
-    function formatNumberInput(newval) {
+    function formatNumberInput(newval, limits = null) {
+        const { minvalue: minVal, maxvalue: maxVal, stepvalue: stepVal } = limits || getCurrentLimits();
+        const numdigits = getnumberofdecimaldigits(stepVal);
+        
         if (!isFinite(newval)) {
-            return (el.value || minvalue || maxvalue || 0) + "";
+            return (el.value || minVal || maxVal || 0) + "";
         }
-        if (maxvalue != null && newval > maxvalue) {
-            return maxvalue.toFixed(numdigits);
+        if (maxVal != null && newval > maxVal) {
+            return maxVal.toFixed(numdigits);
         }
-        if (minvalue != null && newval < minvalue) {
-            return minvalue.toFixed(numdigits);
+        if (minVal != null && newval < minVal) {
+            return minVal.toFixed(numdigits);
         }
         if (getnumberofdecimaldigits(newval) > numdigits) {
             return newval.toFixed(numdigits);
@@ -86,113 +159,235 @@ export function registerNumberInput(el) {
         return parseFloat(newval + "").toFixed(numdigits);
     }
 
-    const maxnumchars = Math.max(
-        formatNumberInput(minvalue ?? 0).length,
-        formatNumberInput(maxvalue ?? 0).length,
-        formatNumberInput(el.numvalue).length,
-    );
-    if (maxnumchars != null && !isNaN(maxnumchars)) {
-        el.setAttribute("size", `${maxnumchars}`);
+    // Set up initial sizing and placeholder
+    const initialLimits = getCurrentLimits();
+    try {
+        const maxnumchars = Math.max(
+            formatNumberInput(initialLimits.minvalue ?? 0).length,
+            formatNumberInput(initialLimits.maxvalue ?? 0).length,
+            formatNumberInput(el.numvalue).length,
+        );
+        if (maxnumchars != null && !isNaN(maxnumchars)) {
+            el.setAttribute("size", `${maxnumchars}`);
+        }
+    } catch (e) {
+        // Fallback sizing
+        el.setAttribute("size", "10");
     }
 
     let placeholdervalue = parseFloat(el.getAttribute("placeholder") ?? "");
     if (!isNaN(placeholdervalue)) {
-        el.setAttribute("placeholder", formatNumberInput(placeholdervalue));
+        try {
+            el.setAttribute("placeholder", formatNumberInput(placeholdervalue));
+        } catch (e) {
+            // Keep original placeholder
+        }
+    }
+
+    /**
+     * Validate the input and show/hide error feedback
+     * @param {boolean} forceValid - if true, correct invalid values instead of just showing error
+     */
+    function validateInput(forceValid = false) {
+        /** @type {number} */
+        const currentValue = el.numvalue;
+        let isValid = true;
+        let errorMessage = "";
+
+        // Get current limits (try to resolve dynamic values)
+        const limits = getCurrentLimits();
+        
+        const minValue = limits.minvalue;
+        const maxValue = limits.maxvalue;
+        const stepValue = limits.stepvalue;
+
+        // Debug logging
+        console.log('Validating input:', {
+            value: el.value,
+            currentValue,
+            resolvedLimits: limits,
+            forceValid
+        });
+
+        // Remove previous error styling
+        el.classList.remove("number-input-error");
+        // Remove any existing tooltips for this element
+        const existingTooltips = document.querySelectorAll('.number-input-tooltip');
+        existingTooltips.forEach(tooltip => tooltip.remove());
+
+        if (el.value.trim() === "") {
+            // Empty input validation - always invalid, never auto-fill
+            isValid = false;
+            errorMessage = "Cannot be empty";
+            console.log('Invalid: empty input');
+            // Note: We no longer auto-fill with placeholder on blur - force user to enter a value
+        } else if (isNaN(currentValue)) {
+            // Check if this is a valid intermediate state during typing
+            const isIntermediateState = !forceValid && (
+                el.value === '-' ||           // Just a minus sign
+                el.value === '+' ||           // Just a plus sign  
+                el.value === '.' ||           // Just a decimal point
+                el.value === '-.' ||          // Minus and decimal
+                el.value === '+.' ||          // Plus and decimal
+                el.value.match(/^-?0+$/)      // "-0", "00", "-00", etc.
+            );
+            
+            if (isIntermediateState) {
+                // Allow intermediate states during typing, but not on blur
+                isValid = true;
+                console.log('Allowing intermediate state during typing:', el.value);
+            } else {
+                // Invalid number format (contains letters, multiple dots, etc.)
+                isValid = false;
+                if (el.value.match(/[a-zA-Z]/)) {
+                    errorMessage = "Contains letters - only numbers allowed";
+                } else if (el.value.match(/\.\./)) {
+                    errorMessage = "Invalid number format - multiple decimal points";
+                } else if (el.value.match(/[^0-9.\-\+e]/)) {
+                    errorMessage = "Invalid characters - only numbers, dots, and minus allowed";
+                } else {
+                    errorMessage = "Invalid number format";
+                }
+                console.log('Invalid: not a number', el.value);
+            }
+        } else {
+            // For valid numbers, check additional constraints
+            
+            // Special case: preserve "-0" during typing (user might be typing "-0.5")
+            if (!forceValid && el.value === '-0') {
+                isValid = true;
+                console.log('Preserving "-0" during typing');
+            } else {
+                // Check range constraints
+                if (minValue != null && currentValue < minValue) {
+                    isValid = false;
+                    errorMessage = `Value too small - minimum is ${minValue}`;
+                    console.log('Invalid: below min', currentValue, '<', minValue);
+                } else if (maxValue != null && currentValue > maxValue) {
+                    isValid = false;
+                    errorMessage = `Value too big - maximum is ${maxValue}`;
+                    console.log('Invalid: above max', currentValue, '>', maxValue);
+                } else if (stepValue != null && getnumberofdecimaldigits(currentValue) > getnumberofdecimaldigits(stepValue)) {
+                    const maxDecimals = getnumberofdecimaldigits(stepValue);
+                    isValid = false;
+                    errorMessage = `Too many decimal places - maximum ${maxDecimals} allowed`;
+                    console.log('Invalid: too many decimals');
+                }
+            }
+        }
+
+        console.log('Validation result:', { isValid, errorMessage });
+
+        if (!isValid) {
+            // Add error styling regardless of forceValid
+            el.classList.add("number-input-error");
+            console.log('Adding error styling, classes now:', el.className);
+            console.log('Element type:', el.type, 'Element tagName:', el.tagName);
+            
+            // Create tooltip
+            const tooltip = document.createElement('div');
+            tooltip.className = 'number-input-tooltip';
+            tooltip.textContent = errorMessage;
+            
+            // Add range info if available
+            let rangeInfo = [];
+            if (minValue != null) rangeInfo.push(`Min: ${minValue}`);
+            if (maxValue != null) rangeInfo.push(`Max: ${maxValue}`);
+            if (stepValue != null) rangeInfo.push(`Step: ${stepValue}`);
+            
+            if (rangeInfo.length > 0) {
+                tooltip.textContent += ` (${rangeInfo.join(', ')})`;
+            }
+            
+            // Position tooltip within viewport
+            const rect = el.getBoundingClientRect();
+            document.body.appendChild(tooltip);
+            
+            // Get tooltip dimensions after adding to DOM
+            const tooltipRect = tooltip.getBoundingClientRect();
+            
+            // Calculate optimal position
+            let left = rect.left;
+            let top = rect.top - tooltipRect.height - 8; // 8px gap above input
+            let isAbove = true;
+            
+            // If tooltip would go above viewport, show below input instead
+            if (top < 10) { // 10px margin from top
+                top = rect.bottom + 8; // 8px gap below input
+                isAbove = false;
+            }
+            
+            // If still below viewport, constrain to bottom and keep above
+            const maxTop = window.innerHeight - tooltipRect.height - 10; // 10px margin
+            if (top > maxTop && !isAbove) {
+                top = maxTop;
+            }
+            
+            // Constrain horizontally to viewport
+            const maxLeft = window.innerWidth - tooltipRect.width - 10; // 10px margin
+            if (left > maxLeft) {
+                left = maxLeft;
+            }
+            if (left < 10) { // 10px margin from left edge
+                left = 10;
+            }
+            
+            // Calculate arrow position relative to input center
+            const inputCenter = rect.left + rect.width / 2;
+            let arrowLeft = inputCenter - left;
+            
+            // Constrain arrow position within tooltip bounds
+            const minArrowLeft = 10;
+            const maxArrowLeft = tooltipRect.width - 20;
+            if (arrowLeft < minArrowLeft) arrowLeft = minArrowLeft;
+            if (arrowLeft > maxArrowLeft) arrowLeft = maxArrowLeft;
+            
+            // Apply position and styling
+            tooltip.style.left = left + 'px';
+            tooltip.style.top = top + 'px';
+            tooltip.classList.add(isAbove ? 'tooltip-above' : 'tooltip-below');
+            tooltip.style.setProperty('--arrow-left', arrowLeft + 'px');
+            
+            console.log('Positioned tooltip at', { left, top, isAbove, arrowLeft, inputRect: rect, tooltipRect });
+        } else if (isValid && forceValid) {
+            // Only format if the value is valid
+            console.log('Formatting valid number');
+            el.value = formatNumberInput(currentValue, { minvalue: minValue, maxvalue: maxValue, stepvalue: stepValue });
+        }
+        // Note: If value is invalid, we preserve the invalid value and keep the error styling visible
     }
 
     el.addEventListener("blur", () => {
-        /** @type {number} */
-        const currentValue = el.numvalue;
+        validateInput(true); // Format valid values on blur, preserve invalid ones with error styling
+    });
 
-        // if input is valid, write it back.
-        // otherwise, (if value is nan, e.g. when the user empties the input)
-        // set the value to the placeholder (default) value.
-        if (!isNaN(currentValue)) {
-            el.value = formatNumberInput(currentValue);
-        } else {
-            if (isNaN(placeholdervalue))
-                console.warn("empty input without placeholder");
-            el.value = formatNumberInput(placeholdervalue);
-        }
+    el.addEventListener("input", () => {
+        validateInput(false); // Just validate, don't correct
     });
 
     el.addEventListener("keydown", (event) => {
-        // check for valid number of digits
-        let keyisnumericinput = "0123456789e+-.".indexOf(event.key) != -1;
-        let keyismetainput =
-            event.ctrlKey ||
-            event.metaKey ||
-            [
-                "ArrowLeft",
-                "ArrowRight",
-                "ArrowUp",
-                "ArrowDown",
-                "Tab",
-                "Backspace",
-                "Delete",
-                "Enter",
-                "End",
-                "Home",
-            ].indexOf(event.key) != -1;
-
-        if (!(keyisnumericinput || keyismetainput)) {
-            // ignore whatever would happen here
-            event.preventDefault();
-            return;
-        }
-
-        if (keyismetainput) {
-            // do not prevent input here (just ignore and propagate)
-
-            if (stepvalue != null) {
-                let currentvalue = el.numvalue;
-                if (event.key == "ArrowUp") {
-                    // prevent cursor from moving to start of input
-                    event.preventDefault();
-                    el.value = formatNumberInput(currentvalue + stepvalue);
-
-                    // flush change
-                    el.dispatchEvent(new Event("input"));
-                    return;
-                } else if (event.key == "ArrowDown") {
-                    // prevent cursor from moving to end of input
-                    event.preventDefault();
-                    el.value = formatNumberInput(currentvalue - stepvalue);
-
-                    // flush change
-                    el.dispatchEvent(new Event("input"));
-                    return;
-                }
+        // Handle arrow keys for step increments if step is defined
+        const currentLimits = getCurrentLimits();
+        let actualStepValue = currentLimits.stepvalue;
+        
+        
+        if (actualStepValue != null) {
+            let currentvalue = el.numvalue;
+            if (event.key == "ArrowUp") {
+                // prevent cursor from moving to start of input
+                event.preventDefault();
+                el.value = formatNumberInput(currentvalue + actualStepValue);
+                el.dispatchEvent(new Event("input"));
+                return;
+            } else if (event.key == "ArrowDown") {
+                // prevent cursor from moving to end of input
+                event.preventDefault();
+                el.value = formatNumberInput(currentvalue - actualStepValue);
+                el.dispatchEvent(new Event("input"));
+                return;
             }
-            return;
         }
-
-        // we handle input ourselves, no need for default
-        event.preventDefault();
-
-        let eventTarget = event.currentTarget;
-        if (!(eventTarget instanceof HTMLInputElement)) throw new Error("");
-        let selectionstart = eventTarget.selectionStart ?? 0;
-        let selectionend = eventTarget.selectionEnd ?? eventTarget.value.length;
-
-        let modifiedinput =
-            el.value.toString().substring(0, selectionstart) +
-            event.key +
-            el.value.toString().substring(selectionend);
-
-        // ignore input if change makes number invalid
-        if (
-            parseFloat(modifiedinput) !=
-            parseFloat(formatNumberInput(parseFloat(modifiedinput)))
-        ) {
-            return;
-        }
-
-        el.value = modifiedinput; //formatNumberInput(parseFloat(modifiedinput));
-        eventTarget.setSelectionRange(selectionstart + 1, selectionstart + 1);
-
-        // trigger input event to e.g. flush x-model on same element
-        el.dispatchEvent(new Event("input"));
+        // All other keys are allowed through naturally
     });
 
     // trigger blur event to trigger initial formatting

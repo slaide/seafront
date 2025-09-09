@@ -95,6 +95,13 @@ from seafront.server.protocol import (
     make_unique_acquisition_id,
 )
 
+# Custom exception for acquisition cancellation
+class AcquisitionCancelledError(Exception):
+    """Custom exception raised when an acquisition is cancelled by user request"""
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.detail = detail
+
 # Set the working directory to the script's directory as reference for static file paths
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -351,6 +358,12 @@ class Core:
         # Progressive channel snap state
         self._progressive_snap_callbacks: dict[str, tp.Callable[[ChannelSnapProgressiveStatus], None]] = {}
         """ callback functions for progressive channel snap status updates """
+        
+        # Acquisition error buffer
+        self._last_acquisition_error: str | None = None
+        """ stores the last acquisition error message for display in GUI """
+        self._last_acquisition_error_timestamp: str | None = None
+        """ stores the ISO timestamp of the last acquisition error """
 
         # set up routes to member functions
 
@@ -600,7 +613,7 @@ class Core:
 
                     try:
                         current_state = await self.get_current_state()
-                        await ws.send_json(current_state.json())
+                        await ws.send_json(current_state.model_dump())
                     except Exception as e:
                         # Handle hardware disconnects and other errors gracefully
                         error_msg = {
@@ -713,7 +726,7 @@ class Core:
                 while True:
                     # await message, but ignore its contents
                     args = await ws.receive_json()
-                    await ws.send_json((await self.get_acquisition_status(**args)).json())
+                    await ws.send_json((await self.get_acquisition_status(**args)).model_dump())
             except WebSocketDisconnect:
                 pass
 
@@ -1223,6 +1236,8 @@ class Core:
             latest_imgs={key: entry.info for key, entry in self.latest_images.items()},
             current_acquisition_id=current_acquisition_id,
             is_streaming=is_streaming,
+            last_acquisition_error=self._last_acquisition_error,
+            last_acquisition_error_timestamp=self._last_acquisition_error_timestamp,
         )
 
     async def cancel_acquisition(self, acquisition_id: str) -> BasicSuccessResponse:
@@ -1334,6 +1349,10 @@ class Core:
         the acquisition is run in the background, i.e. this command returns after acquisition bas begun. see /api/acquisition/status for ongoing status of the acquisition.
         """
         
+        # Clear any previous acquisition error
+        self._last_acquisition_error = None
+        self._last_acquisition_error_timestamp = None
+        
         # Note: Protocol compatibility is validated in config_fetch, but we could add additional
         # validation here if protocols are submitted directly via API without going through config_fetch
 
@@ -1397,7 +1416,7 @@ class Core:
             if not q_in.empty():
                 q_in_item = q_in.get_nowait()
                 if q_in_item == AcquisitionCommand.CANCEL:
-                    error_internal(detail="acquisition cancelled")
+                    raise AcquisitionCancelledError("acquisition cancelled")
 
                 logger.warning(f"command unhandled: {q_in_item}")
 
@@ -1499,11 +1518,23 @@ class Core:
                             AcquisitionStatusStage.COMPLETED
                         )
 
-                    except HTTPException:
+                    except AcquisitionCancelledError:
+                        # User requested cancellation
                         assert acquisition_status.last_status is not None
                         acquisition_status.last_status.acquisition_status = (
                             AcquisitionStatusStage.CANCELLED
                         )
+                    except HTTPException as e:
+                        # Validation errors or other internal errors should crash the acquisition
+                        assert acquisition_status.last_status is not None
+                        acquisition_status.last_status.acquisition_status = (
+                            AcquisitionStatusStage.CRASHED
+                        )
+                        acquisition_status.last_status.message = str(e.detail)
+                        
+                        # Store error in buffer for GUI to display
+                        self._last_acquisition_error = str(e.detail)
+                        self._last_acquisition_error_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
                     except DisconnectError:
                         await q_out.put("disconnected")

@@ -77,18 +77,39 @@ function cloneObject(o) {
  * @template {object} E
  * @type {CheckMapSquidRequestFn<T,E>}
  */
-async function checkMapSquidRequest(v) {
+async function checkMapSquidRequest(v, context = 'API request', showError = true, microscope_state = null) {
     if (!v.ok) {
         if (v.status == 500) {
             /** @type {E} */
             const error_body = await v.json();
 
-            const error = `api/acquisition/start failed with ${v.statusText} ${v.status} because: ${JSON.stringify(error_body)}`;
+            const error = `${context} failed with ${v.statusText} ${v.status} because: ${JSON.stringify(error_body)}`;
             console.error(error);
-            alert(error);
-            throw error;
+            
+            // Show error in central modal by default, but allow disabling for specific cases
+            if (showError && microscope_state) {
+                // Try to extract user-friendly message from error_body
+                let userMessage = error_body.detail || error_body.message || error;
+                microscope_state.showError(context + ' Error', userMessage);
+            } else if (showError) {
+                // Fallback to alert if microscope_state not available
+                alert(error);
+            }
+            throw new Error(error);
         } else {
-            throw `unknown error: ${v.status} ${await v.blob()}`;
+            const responseblob=await v.blob();
+            const responsetext=await responseblob.text();
+            try{
+                const repsonsejson=JSON.parse(responsetext);
+                console.warn(repsonsejson);
+            }catch(e){}
+            const error = `${context} failed: ${v.status} ${responsetext}`;
+            if (showError && microscope_state) {
+                microscope_state.showError(context + ' Error', `HTTP ${v.status}: ${responsetext}`);
+            } else if (showError) {
+                alert(error);
+            }
+            throw new Error(error);
         }
     }
     /** @type {Promise<T>} */
@@ -105,6 +126,14 @@ document.addEventListener("alpine:init", () => {
 
         tooltipConfig,
 
+        // Central error modal state
+        centralError: {
+            show: false,
+            title: '',
+            message: '',
+            timestamp: null
+        },
+
         /** @type {HardwareLimits|null} */
         limits: null,
 
@@ -113,6 +142,27 @@ document.addEventListener("alpine:init", () => {
         
         /** Selection mode for plate navigator: 'wells' or 'sites' */
         plateSelectionMode: "wells",
+        // Central error display method
+        showError(title, message) {
+            console.log(`showError called: ${title} - ${message}`);
+            this.centralError.title = title;
+            this.centralError.message = message;
+            this.centralError.timestamp = new Date();
+            this.centralError.show = true;
+        },
+
+        // Computed property for formatted timestamp in 24-hour format
+        get formattedErrorTimestamp() {
+            if (!this.centralError.timestamp) return '';
+            return this.centralError.timestamp.toLocaleString('en-US', { hour12: false });
+        },
+
+        // Helper to call checkMapSquidRequest with this context
+        checkRequest(response, context) {
+            console.log(`checkRequest called: ${context}`);
+            return checkMapSquidRequest(response, context, true, this);
+        },
+
         changeTheme() {
             // apply theme to document body
             const el = document.body;
@@ -632,7 +682,7 @@ document.addEventListener("alpine:init", () => {
          */
         async runMachineConfigAction(config) {
             if (config.value_kind != "action") {
-                throw `cannot runMachineConfigAction on non-action config ${config.handle} (kind=${config.value_kind})`;
+                throw new Error(`cannot runMachineConfigAction on non-action config ${config.handle} (kind=${config.value_kind})`);
             }
 
             const action_url = `${this.server_url}${config.value}`;
@@ -812,6 +862,18 @@ document.addEventListener("alpine:init", () => {
                 }
                 this.latest_acquisition_status = null;
             }
+            
+            // Check for acquisition errors and display them
+            if (data.last_acquisition_error && data.last_acquisition_error_timestamp !== this._last_displayed_acquisition_error_timestamp) {
+                // Format timestamp for user-friendly display in local time
+                let displayMessage = data.last_acquisition_error;
+                if (data.last_acquisition_error_timestamp) {
+                    const localTime = new Date(data.last_acquisition_error_timestamp).toLocaleTimeString('en-US', { hour12: false });
+                    displayMessage = `[${localTime}] ${data.last_acquisition_error}`;
+                }
+                this.showError('Acquisition Failed', displayMessage);
+                this._last_displayed_acquisition_error_timestamp = data.last_acquisition_error_timestamp;
+            }
 
             if (this._numOpenWebsockets < 1 && this.state.latest_imgs != null) {
                 for (const [channel_handle, channel_info] of Object.entries(
@@ -964,7 +1026,7 @@ document.addEventListener("alpine:init", () => {
         /** @returns {CoreCurrentState} */
         get state() {
             if (Object.keys(this._state).length == 0) {
-                throw `bug in state`;
+                throw new Error(`bug in state`);
             }
             //@ts-ignore
             return this._state;
@@ -980,7 +1042,7 @@ document.addEventListener("alpine:init", () => {
         _plateinfo: null,
         get plateinfo() {
             if (!this._plateinfo) {
-                throw `bug in plateinfo`;
+                throw new Error(`bug in plateinfo`);
             }
             return this._plateinfo;
         },
@@ -988,7 +1050,7 @@ document.addEventListener("alpine:init", () => {
         _microscope_config: null,
         get microscope_config() {
             if (!this._microscope_config) {
-                throw `bug in microscope_config`;
+                throw new Error(`bug in microscope_config`);
             }
             return this._microscope_config;
         },
@@ -1016,7 +1078,7 @@ document.addEventListener("alpine:init", () => {
             
             try {
                 if(!(typeof filtersConfigItem.value == "string")){
-                    throw `invalid type of filter config`;
+                    throw new Error(`invalid type of filter config`);
                 }
                 const filtersData = json5.parse(filtersConfigItem.value);
 
@@ -1154,7 +1216,7 @@ document.addEventListener("alpine:init", () => {
                 // the underlying bug is probably a state synchronization issue,
                 // but we can work around this by just trying again later.
                 if (this.server_url == null) {
-                    throw `server_url is invalid. retrying..`;
+                    throw new Error(`server_url is invalid. retrying..`);
                 }
 
                 // try reconnecting (may fail if server is closed, in which case just try reconnecting later)
@@ -1162,7 +1224,7 @@ document.addEventListener("alpine:init", () => {
                     `${this.server_url}/ws/get_info/current_state`,
                 );
                 this.status_ws.onmessage = async (ev) => {
-                    const data = json5.parse(json5.parse(ev.data));
+                    const data = json5.parse(ev.data);
                     await this.updateMicroscopeStatus(data);
 
                     // if we got this far, the connection to the server is established
@@ -1193,7 +1255,7 @@ document.addEventListener("alpine:init", () => {
                     this.status_ws.readyState == WebSocket.CLOSED
                 ) {
                     // trigger catch clause which will reconnect
-                    throw "websocket is closed!";
+                    throw new Error(`websocket is closed!`);
                 } else if (this.status_ws.readyState == WebSocket.OPEN) {
                     // send arbitrary message to receive status update
                     this.status_ws.send("info");
@@ -1226,9 +1288,27 @@ document.addEventListener("alpine:init", () => {
                 );
 
                 this.acquisition_status_ws.onmessage = (ev) => {
-                    const data = JSON.parse(JSON.parse(ev.data));
+                    const data = JSON.parse(ev.data);
                     if(typeof data != "object")throw new Error(`event data has wrong type ${typeof data}`);
-                    this.latest_acquisition_status=data;
+                    
+                    console.log('Acquisition WebSocket message:', data);
+                    
+                    // Store previous status to detect state changes
+                    const previousStatus = this.latest_acquisition_status;
+                    this.latest_acquisition_status = data;
+                    
+                    // Handle acquisition status changes
+                    if (data && data.acquisition_status) {
+                        console.log(`Acquisition status change: ${data.acquisition_status}`, data);
+                        
+                        // Show acquisition errors when status is CRASHED and there's a message
+                        if (data.acquisition_status === 'crashed' && data.message) {
+                            console.log(`Detected crashed acquisition with message: ${data.message}`);
+                            if (!previousStatus || previousStatus.acquisition_status !== 'crashed' || previousStatus.message !== data.message) {
+                                this.showError('Acquisition Failed', data.message);
+                            }
+                        }
+                    }
                 };
 
                 this.acquisition_status_ws.onerror = (ev) => {
@@ -1327,7 +1407,7 @@ document.addEventListener("alpine:init", () => {
                 },
             );
             if (!currentStateData.ok)
-                throw `error in fetch. http status: ${currentStateData.status}`;
+                throw new Error(`error in fetch. http status: ${currentStateData.status}`);
             const currentStateJson = await currentStateData.json();
             await this.updateMicroscopeStatus(currentStateJson);
 
@@ -1545,7 +1625,7 @@ document.addEventListener("alpine:init", () => {
                 const start_well_name = this.wellName(this.start_selected_well);
                 const end_well_name = this.wellName(this.current_hovered_well);
                 if (start_well_name == null || end_well_name == null)
-                    throw `wellname is null in overlay text generation`;
+                    throw new Error(`wellname is null in overlay text generation`);
 
                 // in the text, the well that is more to the top left should be first,
                 // regardless of manual selection order (hence synthesize corners for
@@ -1647,6 +1727,9 @@ document.addEventListener("alpine:init", () => {
 
         /** @type {Map<string,CachedChannelImage>} */
         cached_channel_image: new Map(),
+        
+        // Track last displayed acquisition error timestamp to avoid showing duplicates
+        _last_displayed_acquisition_error_timestamp: null,
 
         makeHistogram,
         /**
@@ -1688,7 +1771,7 @@ document.addEventListener("alpine:init", () => {
                                 (v) => v >> 8,
                             );
                         default:
-                            throw ``;
+                            throw new Error(``);
                     }
                 })();
                 for (const val of rawdata) {
@@ -1728,34 +1811,45 @@ document.addEventListener("alpine:init", () => {
          * @returns  {Promise<AcquisitionStartResponse>}
          */
         async acquisition_start() {
-            await this.machineConfigFlush();
+            try {
+                
+                await this.machineConfigFlush();
 
-            // Convert frontend format to backend format
-            const backend_config = this.convertAcquisitionConfigToBackend(this.microscope_config);
-            
-            // mutate copy (to fix some errors we introduce in the interface)
-            // 1) remove wells that are unselected or invalid
-            backend_config.plate_wells = backend_config.plate_wells.filter(
-                (w) => w.selected && w.col >= 0 && w.row >= 0,
-            );
+                // Convert frontend format to backend format
+                const backend_config = this.convertAcquisitionConfigToBackend(this.microscope_config);
+                
+                // mutate copy (to fix some errors we introduce in the interface)
+                // 1) remove wells that are unselected or invalid
+                backend_config.plate_wells = backend_config.plate_wells.filter(
+                    (w) => w.selected && w.col >= 0 && w.row >= 0,
+                );
 
-            /** @type {AcquisitionStartRequest} */
-            const backend_body = {
-                config_file: backend_config
-            };
+                /** @type {AcquisitionStartRequest} */
+                const backend_body = {
+                    config_file: backend_config
+                };
 
-            const body_str = JSON.stringify(backend_body, null, 2);
+                const body_str = JSON.stringify(backend_body, null, 2);
 
-            // console.log("acquisition start body:",body_str);
-            return fetch(`${this.server_url}/api/acquisition/start`, {
-                method: "POST",
-                body: body_str,
-                headers: [["Content-Type", "application/json"]],
-            }).then((v) => {
-                /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStartResponse,AcquisitionStartError>} */
-                const check = checkMapSquidRequest;
-                return check(v);
-            });
+                // console.log("acquisition start body:",body_str);
+                return fetch(`${this.server_url}/api/acquisition/start`, {
+                    method: "POST",
+                    body: body_str,
+                    headers: [["Content-Type", "application/json"]],
+                }).then((v) => {
+                    /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStartResponse,AcquisitionStartError>} */
+                    const check = checkMapSquidRequest;
+                    return check(v, 'Acquisition start', false); // Don't show alert - we handle it in UI
+                }).catch((error) => {
+                    // Show error in central modal
+                    this.showError('Acquisition Start Failed', error.message || error.toString());
+                    throw error; // Re-throw so calling code still sees the error
+                });
+            } catch (error) {
+                // Handle any errors from machineConfigFlush or config conversion
+                this.showError('Acquisition Start Failed', error.message || error.toString());
+                throw error;
+            }
         },
         /**
          * rpc to api/acquisition/cancel
@@ -1776,16 +1870,22 @@ document.addEventListener("alpine:init", () => {
                 }).then((v) => {
                     /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStopResponse,AcquisitionStopError>} */
                     const check = checkMapSquidRequest;
-                    return check(v);
+                    return check(v, 'Acquisition cancel', false); // Don't show alert for acquisition requests
+                }).catch((error) => {
+                    // Show error in central modal
+                    this.showError('Acquisition Cancel Failed', error.message || error.toString());
+                    throw error; // Re-throw so calling code still sees the error
                 });
             } catch (e) {
                 const error = `api/acquisition/cancel failed because ${e}`;
                 console.error(error);
+                this.showError('Acquisition Cancel Failed', error);
                 throw error;
             }
         },
         /** @type {AcquisitionStatusOut?} */
         latest_acquisition_status: null,
+        
         get current_acquisition_progress_percent() {
             const images_done =
                 this.latest_acquisition_status?.acquisition_progress
@@ -1855,9 +1955,7 @@ document.addEventListener("alpine:init", () => {
                             headers: [["Content-Type", "application/json"]],
                         },
                     ).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<StoreConfigResponse,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
-                        return check(v);
+                        return this.checkRequest(v, 'Save Configuration');
                     });
 
                     return response;
@@ -1876,9 +1974,7 @@ document.addEventListener("alpine:init", () => {
                             headers: [["Content-Type", "application/json"]],
                         },
                     ).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<LoadConfigResponse,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
-                        return check(v);
+                        return this.checkRequest(v, 'Load Configuration');
                     });
 
                     return response;
@@ -1894,9 +1990,7 @@ document.addEventListener("alpine:init", () => {
                         body: JSON.stringify(body),
                         headers: [["Content-Type", "application/json"]],
                     }).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<MoveByResult,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
-                        return check(v);
+                        return this.checkRequest(v, 'Move Stage');
                     });
                 },
 
@@ -1949,9 +2043,7 @@ document.addEventListener("alpine:init", () => {
                             body: JSON.stringify(backend_body),
                             headers: [["Content-Type", "application/json"]],
                         }).then((v) => {
-                            /** @ts-ignore @type {CheckMapSquidRequestFn<ChannelSnapshotResponse,InternalErrorModel>} */
-                            const check = checkMapSquidRequest;
-                            return check(v);
+                            return this.checkRequest(v, 'Channel Snapshot');
                         })
                     });
                 },
@@ -2371,7 +2463,7 @@ document.addEventListener("alpine:init", () => {
             }
 
             if (laser_autofocus_calibration_refzmm.value_kind != "float") {
-                throw `machine config laser_autofocus_calibration_refzmm has unexpected value kind ${laser_autofocus_calibration_refzmm.value_kind}`;
+                throw new Error(`machine config laser_autofocus_calibration_refzmm has unexpected value kind ${laser_autofocus_calibration_refzmm.value_kind}`);
             }
 
             const reference_z_mm = laser_autofocus_calibration_refzmm.value;
@@ -2405,9 +2497,9 @@ document.addEventListener("alpine:init", () => {
                 "laser_autofocus_calibration_refzmm",
             );
             if (!calibration_refzmm)
-                throw `machine config item calibration_refzmm not found during laser autofocus calibration`;
+                throw new Error(`machine config item calibration_refzmm not found during laser autofocus calibration`);
             if (calibration_refzmm.value_kind != "float")
-                throw `machine config item calibration_refzmm has unexpected type ${calibration_refzmm.value_kind}`;
+                throw new Error(`machine config item calibration_refzmm has unexpected type ${calibration_refzmm.value_kind}`);
             calibration_refzmm.value =
                 calibration_data.calibration_data.calibration_position.z_pos_mm;
 
@@ -2415,9 +2507,9 @@ document.addEventListener("alpine:init", () => {
                 "laser_autofocus_calibration_umpx",
             );
             if (!calibration_umpx)
-                throw `machine config item calibration_umpx not found during laser autofocus calibration`;
+                throw new Error(`machine config item calibration_umpx not found during laser autofocus calibration`);
             if (calibration_umpx.value_kind != "float")
-                throw `machine config item calibration_umpx has unexpected type ${calibration_umpx.value_kind}`;
+                throw new Error(`machine config item calibration_umpx has unexpected type ${calibration_umpx.value_kind}`);
             calibration_umpx.value =
                 calibration_data.calibration_data.um_per_px;
 
@@ -2425,18 +2517,18 @@ document.addEventListener("alpine:init", () => {
                 "laser_autofocus_calibration_x",
             );
             if (!calibration_x)
-                throw `machine config item calibration_x not found during laser autofocus calibration`;
+                throw new Error(`machine config item calibration_x not found during laser autofocus calibration`);
             if (calibration_x.value_kind != "float")
-                throw `machine config item calibration_x has unexpected type ${calibration_x.value_kind}`;
+                throw new Error(`machine config item calibration_x has unexpected type ${calibration_x.value_kind}`);
             calibration_x.value = calibration_data.calibration_data.x_reference;
 
             const is_calibrated = this.getMachineConfigItem(
                 "laser_autofocus_is_calibrated",
             );
             if (!is_calibrated)
-                throw `machine config item is_calibrated not found during laser autofocus calibration`;
+                throw new Error(`machine config item is_calibrated not found during laser autofocus calibration`);
             if (is_calibrated.value_kind != "option")
-                throw `machine config item is_calibrated has unexpected type ${is_calibrated.value_kind}`;
+                throw new Error(`machine config item is_calibrated has unexpected type ${is_calibrated.value_kind}`);
             is_calibrated.value = "yes";
         },
 
@@ -2460,10 +2552,10 @@ document.addEventListener("alpine:init", () => {
         async buttons_laserAutofocusDebugMeasurement() {
             this.laserAutofocusDebug_measurements.length = 0;
             if (!this.laserAutofocusIsCalibrated)
-                throw `in buttons_laserAutofocusDebugMeasurement: laser autofocus is not calibrated`;
+                throw new Error(`in buttons_laserAutofocusDebugMeasurement: laser autofocus is not calibrated`);
 
             if (this.laserAutofocusDebug_numz < 3)
-                throw `in buttons_laserAutofocusDebugMeasurement: numz (=${this.laserAutofocusDebug_numz}) < 3`;
+                throw new Error(`in buttons_laserAutofocusDebugMeasurement: numz (=${this.laserAutofocusDebug_numz}) < 3`);
             const stepDelta_mm =
                 (this.laserAutofocusDebug_totalz_um * 1e-3) /
                 (this.laserAutofocusDebug_numz - 1);

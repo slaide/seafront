@@ -45,6 +45,50 @@ body{
         font-style: italic;
     }
 
+    /* Number input error styling - high specificity */
+    input[type="text"].number-input-error,
+    input[is="number-input"].number-input-error {
+        border-color: #ff4444 !important;
+        border-width: 2px !important;
+        border-style: solid !important;
+        box-shadow: 0 0 6px rgba(255, 68, 68, 0.6) !important;
+        background-color: rgba(255, 68, 68, 0.1) !important;
+    }
+    
+    .number-input-tooltip {
+        position: fixed !important;
+        background: #ff4444 !important;
+        color: white !important;
+        padding: 6px 10px !important;
+        border-radius: 4px !important;
+        font-size: 0.85em !important;
+        white-space: nowrap !important;
+        z-index: 9999 !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+        border: 1px solid #cc0000 !important;
+        pointer-events: none !important;
+    }
+    
+    .number-input-tooltip::after {
+        content: '' !important;
+        position: absolute !important;
+        border: 5px solid transparent !important;
+    }
+    
+    .number-input-tooltip.tooltip-above::after {
+        top: 100% !important;
+        left: var(--arrow-left, 12px) !important;
+        border-top-color: #ff4444 !important;
+        border-bottom-color: transparent !important;
+    }
+    
+    .number-input-tooltip.tooltip-below::after {
+        bottom: 100% !important;
+        left: var(--arrow-left, 12px) !important;
+        border-bottom-color: #ff4444 !important;
+        border-top-color: transparent !important;
+    }
+
     .tabs{
         --tabs-header-border-color:var(--text-color);
         /*--tabs-header-bg-color:lightgrey;*/

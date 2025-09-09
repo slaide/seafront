@@ -573,8 +573,191 @@ class MockMicroscope(Microscope):
             imaging_delta_z_um=z_spacing_limits.to_dict(),
         )
     
+    def _validate_imaging_parameters(self, **params) -> None:
+        """
+        Validate imaging parameters against hardware limits.
+        
+        Args:
+            **params: Imaging parameters to validate. Supported keys:
+                - exposure_time_ms: float
+                - analog_gain: float  
+                - z_offset_um: float
+                - illum_perc: float
+                - num_z_planes: int
+                - delta_z_um: float
+                - channel_handle: str (used to determine fluorescence vs brightfield limits)
+        
+        Raises:
+            HTTPException: If any parameter is outside valid range
+        """
+        if not params:
+            return
+            
+        # Get current hardware limits
+        limits = self.get_hardware_limits()
+        
+        # Validate exposure time
+        if 'exposure_time_ms' in params:
+            self._validate_parameter_range(
+                params['exposure_time_ms'],
+                limits.imaging_exposure_time_ms,
+                'exposure_time_ms'
+            )
+        
+        # Validate analog gain
+        if 'analog_gain' in params:
+            self._validate_parameter_range(
+                params['analog_gain'],
+                limits.imaging_analog_gain_db,
+                'analog_gain'
+            )
+        
+        # Validate focus offset
+        if 'z_offset_um' in params:
+            self._validate_parameter_range(
+                params['z_offset_um'],
+                limits.imaging_focus_offset_um,
+                'z_offset_um'
+            )
+        
+        # Validate illumination power (check channel type for appropriate limits)
+        if 'illum_perc' in params:
+            channel_handle = params.get('channel_handle', '')
+            if channel_handle.startswith('bfled'):
+                limit_dict = limits.imaging_illum_perc_brightfield
+                param_name = 'illum_perc (brightfield)'
+            elif channel_handle.startswith('f'):
+                limit_dict = limits.imaging_illum_perc_fluorescence  
+                param_name = 'illum_perc (fluorescence)'
+            else:
+                limit_dict = limits.imaging_illum_perc
+                param_name = 'illum_perc'
+                
+            self._validate_parameter_range(
+                params['illum_perc'],
+                limit_dict,
+                param_name
+            )
+        
+        # Validate number of Z planes
+        if 'num_z_planes' in params:
+            self._validate_parameter_range(
+                params['num_z_planes'],
+                limits.imaging_number_z_planes,
+                'num_z_planes'
+            )
+        
+        # Validate Z spacing
+        if 'delta_z_um' in params:
+            self._validate_parameter_range(
+                params['delta_z_um'],
+                limits.imaging_delta_z_um,
+                'delta_z_um'
+            )
+
+    def _validate_parameter_range(self, value: float, limit_dict: dict[str, tp.Union[float, int]], param_name: str) -> None:
+        """
+        Validate a single parameter against its limits.
+        
+        Args:
+            value: Value to validate
+            limit_dict: Dictionary with 'min', 'max', 'step' keys
+            param_name: Parameter name for error messages
+        
+        Raises:
+            HTTPException: If value is outside valid range or doesn't match step
+        """
+        min_val = limit_dict.get('min')
+        max_val = limit_dict.get('max') 
+        step_val = limit_dict.get('step')
+        
+        if min_val is not None and value < min_val:
+            cmd.error_internal(
+                detail=f"{param_name} value {value} is below minimum {min_val}"
+            )
+        
+        if max_val is not None and value > max_val:
+            cmd.error_internal(
+                detail=f"{param_name} value {value} is above maximum {max_val}"
+            )
+        
+        # Validate step increment (optional - some parameters may not have step validation)
+        if step_val is not None and step_val > 0:
+            # Check if value is approximately a multiple of step from min
+            min_reference = min_val if min_val is not None else 0
+            remainder = (value - min_reference) % step_val
+            # Allow small floating point errors
+            tolerance = step_val * 1e-10
+            if remainder > tolerance and (step_val - remainder) > tolerance:
+                cmd.error_internal(
+                    detail=f"{param_name} value {value} does not match step increment of {step_val} (minimum: {min_val})"
+                )
+
+    def _validate_acquisition_config(self, config: sc.AcquisitionConfig) -> None:
+        """
+        Validate all channels in an acquisition configuration.
+        
+        Args:
+            config: Acquisition configuration to validate
+            
+        Raises:
+            HTTPException: If any channel has invalid parameters
+        """
+        for channel in config.channels:
+            if channel.enabled:
+                try:
+                    self._validate_imaging_parameters(
+                        exposure_time_ms=channel.exposure_time_ms,
+                        analog_gain=channel.analog_gain,
+                        z_offset_um=channel.z_offset_um,
+                        illum_perc=channel.illum_perc,
+                        num_z_planes=channel.num_z_planes,
+                        delta_z_um=channel.delta_z_um,
+                        channel_handle=channel.handle
+                    )
+                except Exception as e:
+                    # Re-raise with channel context
+                    cmd.error_internal(
+                        detail=f"Channel '{channel.handle}' validation failed: {str(e).split('detail=')[-1].strip('\"')}"
+                    )
+
+    def validate_command(self, command: cmd.BaseCommand[tp.Any]) -> None:
+        """
+        Validate a command against hardware limits before execution.
+        
+        Args:
+            command: Command object to validate
+            
+        Raises:
+            HTTPException: If any parameter is outside valid range
+        """
+        if isinstance(command, cmd.AutofocusSnap):
+            self._validate_imaging_parameters(
+                exposure_time_ms=command.exposure_time_ms,
+                analog_gain=command.analog_gain
+            )
+        
+        elif isinstance(command, (cmd.ChannelSnapshot, cmd.ChannelStreamBegin)):
+            self._validate_imaging_parameters(
+                exposure_time_ms=command.channel.exposure_time_ms,
+                analog_gain=command.channel.analog_gain,
+                z_offset_um=command.channel.z_offset_um,
+                illum_perc=command.channel.illum_perc,
+                num_z_planes=command.channel.num_z_planes,
+                delta_z_um=command.channel.delta_z_um,
+                channel_handle=command.channel.handle
+            )
+        
+        elif isinstance(command, cmd.ChannelSnapSelection):
+            self._validate_acquisition_config(command.config_file)
+        
+        # Other commands don't require validation (movement, connection, etc.)
+    
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         """Execute mock commands."""
+        
+        # Validate command against hardware limits first
+        self.validate_command(command)
         
         if isinstance(command, cmd.EstablishHardwareConnection):
             self.open_connections()

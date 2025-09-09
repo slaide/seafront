@@ -175,6 +175,9 @@ class Microscope(BaseModel, abc.ABC):
         """
         Main command dispatcher for all microscope operations.
         
+        Implementations should call self.validate_command(command) at the start
+        of their execute method to ensure commands are validated before execution.
+        
         Args:
             command: Command object to execute
             
@@ -197,6 +200,26 @@ class Microscope(BaseModel, abc.ABC):
         
         Returns:
             HardwareLimits object with strongly-typed limit values
+        """
+        pass
+    
+    @abc.abstractmethod
+    def validate_command(self, command: cmd.BaseCommand[tp.Any]) -> None:
+        """
+        Validate a command against hardware limits before execution.
+        
+        This method should validate all imaging parameters in the command against
+        the current hardware limits. It should raise an HTTPException if any
+        parameter is outside the valid range.
+        
+        Args:
+            command: Command object to validate
+            
+        Raises:
+            HTTPException: If any parameter is outside valid range
+            
+        Returns:
+            None on success (raises exception on failure)
         """
         pass
 

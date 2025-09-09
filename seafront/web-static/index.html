@@ -92,6 +92,29 @@
             <div id="loadingscreentext">Loading Seafront ...</div>
         </div>
 
+        <!-- Central Error Modal -->
+        <div 
+            x-show="centralError.show" 
+            x-transition.opacity.duration.300ms
+            id="error-modal-overlay"
+            @click="if($event.target === $el) centralError.show = false"
+        >
+            <div id="error-modal" @click.stop>
+                <div id="error-modal-header">
+                    <span>⚠ Error</span>
+                    <button @click="centralError.show = false" id="error-modal-close">&times;</button>
+                </div>
+                <div id="error-modal-body">
+                    <div id="error-modal-title" x-text="centralError.title"></div>
+                    <div id="error-modal-message" x-text="centralError.message"></div>
+                    <div id="error-modal-timestamp" x-text="formattedErrorTimestamp"></div>
+                </div>
+                <div id="error-modal-footer">
+                    <button @click="centralError.show = false" id="error-modal-ok">OK</button>
+                </div>
+            </div>
+        </div>
+
         <template x-if="initDone">
             <div id="content">
                 <style>
@@ -1640,6 +1663,110 @@
                                 align-items: center !important;
                                 justify-content: center !important;
                             }
+                            
+                            /* Central Error Modal Styles */
+                            #error-modal-overlay {
+                                position: fixed;
+                                top: 0;
+                                left: 0;
+                                width: 100vw;
+                                height: 100vh;
+                                background: rgba(0, 0, 0, 0.5);
+                                display: flex;
+                                justify-content: center;
+                                align-items: center;
+                                z-index: 10000;
+                            }
+                            
+                            #error-modal {
+                                background: var(--strong-bg-color);
+                                border: 2px solid #ff4444;
+                                border-radius: 8px;
+                                min-width: 400px;
+                                max-width: 600px;
+                                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+                            }
+                            
+                            #error-modal-header {
+                                background: #ff4444;
+                                color: white;
+                                padding: 12px 16px;
+                                display: flex;
+                                justify-content: space-between;
+                                align-items: center;
+                                font-weight: bold;
+                                font-size: 1.1em;
+                            }
+                            
+                            #error-modal-close {
+                                background: none;
+                                border: none;
+                                color: white;
+                                font-size: 24px;
+                                cursor: pointer;
+                                padding: 0;
+                                width: 30px;
+                                height: 30px;
+                                display: flex;
+                                justify-content: center;
+                                align-items: center;
+                            }
+                            
+                            #error-modal-close:hover {
+                                background: rgba(255, 255, 255, 0.2);
+                                border-radius: 4px;
+                            }
+                            
+                            #error-modal-body {
+                                padding: 20px;
+                                display: grid;
+                                gap: 12px;
+                            }
+                            
+                            #error-modal-title {
+                                font-weight: bold;
+                                font-size: 1.1em;
+                                color: var(--text-color);
+                            }
+                            
+                            #error-modal-message {
+                                background: var(--weak-bg-color);
+                                padding: 12px;
+                                border-radius: 4px;
+                                font-family: monospace;
+                                font-size: 0.9em;
+                                word-wrap: break-word;
+                                white-space: pre-wrap;
+                                color: var(--text-color);
+                                border-left: 4px solid #ff4444;
+                            }
+                            
+                            #error-modal-timestamp {
+                                font-size: 0.8em;
+                                color: var(--text-color);
+                                opacity: 0.7;
+                            }
+                            
+                            #error-modal-footer {
+                                padding: 12px 20px;
+                                display: flex;
+                                justify-content: flex-end;
+                                border-top: 1px solid var(--highlight-color);
+                            }
+                            
+                            #error-modal-ok {
+                                background: var(--highlight-color);
+                                color: white;
+                                border: none;
+                                padding: 8px 20px;
+                                border-radius: 4px;
+                                cursor: pointer;
+                                font-weight: bold;
+                            }
+                            
+                            #error-modal-ok:hover {
+                                opacity: 0.8;
+                            }
                             .center-content {
                                 display: grid;
                                 position: relative;
@@ -1667,7 +1794,7 @@
                         <script>
                             function registerContainedPopup(el) {
                                 const target_popups = el.getElementsByClassName("popup");
-                                if (target_popups.length != 1) throw ``;
+                                if (target_popups.length != 1) throw new Error(``);
                                 const target_popup = target_popups[0];
 
                                 makeInvisible(target_popup);
@@ -1724,6 +1851,7 @@
                                 <span>|</span>
                                 <span x-text="`Done in ${acquisitionTimeLeftString}`"></span>
                             </span>
+                            
                             <div class="popup">
                                 <span x-text="`Acquisition Status: ${latest_acquisition_status?.acquisition_status??'not running'}`"></span>
                             </div>

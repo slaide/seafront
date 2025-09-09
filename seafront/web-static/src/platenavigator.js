@@ -145,9 +145,9 @@ function makeRoundedQuad(aabb, mat, opts) {
     const border_radius = opts?.border_radius ?? Math.min(width, height) / 4;
     const segments = opts?.segments ?? 4;
 
-    if (segments < 1) throw `segments ${segments} is invalid (must be >=1)`;
+    if (segments < 1) throw new Error(`segments ${segments} is invalid (must be >=1)`);
     // ensure border radius makes sense
-    if (border_radius < 0 || border_radius > width / 2 || border_radius > height / 2) throw `border radius ${border_radius} is out of bounds [0;min(${width / 2},${height / 2})]`;
+    if (border_radius < 0 || border_radius > width / 2 || border_radius > height / 2) throw new Error(`border radius ${border_radius} is out of bounds [0;min(${width / 2},${height / 2})]`);
 
     const geo = RoundedRectangleIndexed(width, height, border_radius, segments);
 
@@ -297,7 +297,7 @@ export class PlateNavigator {
         this.renderer;
         try { this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" }) } catch (e) { }
         //try { this.renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: "high-performance" }) } catch (e) { }
-        if (!this.renderer) throw "no valid renderer found";
+        if (!this.renderer) throw new Error(`no valid renderer found`);
 
         this.renderer.setSize(frame.width, frame.height);
         this.renderer.setPixelRatio(window.devicePixelRatio); // enable ssaa by *1.5 (bad for performance)

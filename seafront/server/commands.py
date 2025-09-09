@@ -209,6 +209,10 @@ class CoreCurrentState(BaseModel):
     current_acquisition_id: str | None
     is_streaming: bool
     "True if live streaming/acquisition is currently active"
+    last_acquisition_error: str | None = None
+    "Last acquisition error message for display in GUI"
+    last_acquisition_error_timestamp: str | None = None
+    "ISO timestamp of the last acquisition error"
 
 
 class BasicSuccessResponse(BaseModel):

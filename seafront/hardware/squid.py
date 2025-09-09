@@ -1026,6 +1026,9 @@ class SquidAdapter(Microscope):
         )
 
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
+        # Validate command against hardware limits first
+        self.validate_command(command)
+        
         # Handle ChannelStreamEnd without locking to avoid deadlock
         if isinstance(command, cmd.ChannelStreamEnd):
             if self.stream_callback is None:
@@ -1822,3 +1825,78 @@ class SquidAdapter(Microscope):
             except IOError as e:
                 logger.critical("squid - lost connection to microcontroller")
                 raise DisconnectError() from e
+
+    def _validate_parameter_range(self, value: float, limit_dict: dict, param_name: str) -> None:
+        """Validate a parameter is within specified range and step."""
+        min_val = limit_dict.get("min")
+        max_val = limit_dict.get("max") 
+        step = limit_dict.get("step")
+
+        if min_val is not None and value < min_val:
+            cmd.error_internal(detail=f"{param_name} value {value} is below minimum {min_val}")
+        if max_val is not None and value > max_val:
+            cmd.error_internal(detail=f"{param_name} value {value} is above maximum {max_val}")
+        if step is not None and step > 0:
+            if min_val is not None:
+                offset = value - min_val
+                if abs(offset % step) > 1e-10:  # Allow for floating point precision
+                    cmd.error_internal(detail=f"{param_name} value {value} does not match step increment of {step} (minimum: {min_val})")
+
+    def _validate_imaging_parameters(self, **params) -> None:
+        """Validate imaging parameters against hardware limits."""
+        limits = self.get_hardware_limits()
+        
+        # Validate each parameter if provided
+        if 'exposure_time_ms' in params:
+            self._validate_parameter_range(params['exposure_time_ms'], limits.imaging_exposure_time_ms, "exposure_time_ms")
+        if 'analog_gain_db' in params:
+            self._validate_parameter_range(params['analog_gain_db'], limits.imaging_analog_gain_db, "analog_gain_db")
+        if 'z_offset_um' in params:
+            self._validate_parameter_range(params['z_offset_um'], limits.imaging_focus_offset_um, "z_offset_um")
+        if 'illum_perc' in params:
+            self._validate_parameter_range(params['illum_perc'], limits.imaging_illum_perc, "illum_perc")
+        if 'num_z_planes' in params:
+            self._validate_parameter_range(params['num_z_planes'], limits.imaging_number_z_planes, "num_z_planes")
+        if 'delta_z_um' in params:
+            self._validate_parameter_range(params['delta_z_um'], limits.imaging_delta_z_um, "delta_z_um")
+
+    def _validate_acquisition_config(self, config: sc.AcquisitionConfig) -> None:
+        """Validate all channels in an acquisition config."""
+        for channel in config.channels:
+            if not channel.enabled:
+                continue
+            self._validate_imaging_parameters(
+                exposure_time_ms=channel.exposure_time_ms,
+                analog_gain_db=channel.analog_gain,
+                z_offset_um=channel.z_offset_um,
+                illum_perc=channel.illum_perc,
+                num_z_planes=channel.num_z_planes,
+                delta_z_um=channel.delta_z_um
+            )
+
+    def validate_command(self, command: cmd.BaseCommand[tp.Any]) -> None:
+        """Validate command parameters against hardware limits."""
+        if isinstance(command, cmd.ChannelSnapshot):
+            self._validate_imaging_parameters(
+                exposure_time_ms=command.channel.exposure_time_ms,
+                analog_gain_db=command.channel.analog_gain,
+                z_offset_um=command.channel.z_offset_um,
+                illum_perc=command.channel.illum_perc,
+                num_z_planes=command.channel.num_z_planes,
+                delta_z_um=command.channel.delta_z_um
+            )
+            
+        elif isinstance(command, cmd.ChannelStreamBegin):
+            self._validate_imaging_parameters(
+                exposure_time_ms=command.channel.exposure_time_ms,
+                analog_gain_db=command.channel.analog_gain,
+                z_offset_um=command.channel.z_offset_um,
+                illum_perc=command.channel.illum_perc,
+                num_z_planes=command.channel.num_z_planes,
+                delta_z_um=command.channel.delta_z_um
+            )
+        
+        elif isinstance(command, (cmd.ChannelSnapSelection, cmd.AutofocusMeasureDisplacement)):
+            self._validate_acquisition_config(command.config_file)
+        
+        # Other commands don't require validation (movement, connection, etc.)

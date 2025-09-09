@@ -142,7 +142,7 @@ export class ChannelImageView {
      */
     getRect() {
         const parent = this.renderer.domElement.parentElement
-        if (!parent) throw `parent is undefined`
+        if (!parent) throw new Error(`parent is undefined`);
         let parentRect = parent.getBoundingClientRect()
         return parentRect
     }
@@ -223,7 +223,7 @@ export class ChannelImageView {
                 break;
             }
             default:
-                throw `unknown bitdepth ${imageinfo.bit_depth} ${Array.from(Object.keys(imageinfo))}`;
+                throw new Error(`unknown bitdepth ${imageinfo.bit_depth} ${Array.from(Object.keys(imageinfo))}`);
         }
 
         return { imgdata, datatype }
@@ -347,7 +347,7 @@ export class ChannelImageView {
                 e => e.parentElement?.getAttribute(`channelhandle`) == channelhandle
             )
 
-            if (!(new_element instanceof HTMLElement)) { throw `element not found or invalid ${new_element}` }
+            if (!(new_element instanceof HTMLElement)) { throw new Error(`element not found or invalid ${new_element}`); }
             sceneInfo.elem = new_element
         }
 
