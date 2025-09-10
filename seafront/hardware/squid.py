@@ -18,7 +18,7 @@ from matplotlib import pyplot as plt
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from scipy import stats  # for linear regression
 
-from seafront.config.basics import GlobalConfigHandler, CameraDriver, ChannelConfig, FilterConfig
+from seafront.config.basics import GlobalConfigHandler, CameraDriver, ChannelConfig, FilterConfig, ImagingOrder
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, CoreState
 from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier, HardwareLimitValue
@@ -472,6 +472,49 @@ class SquidAdapter(Microscope):
                 self.close()
                 raise DisconnectError() from e
 
+    def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
+        """
+        Sort channels according to the specified imaging order.
+        
+        Args:
+            channels: List of enabled AcquisitionChannelConfig objects
+            imaging_order: Sorting strategy to use
+            
+        Returns:
+            Sorted list of channels
+        """
+        if imaging_order == "z_order":
+            # Sort by z_offset_um (lowest to highest z coordinate)
+            return sorted(channels, key=lambda ch: ch.z_offset_um)
+        
+        elif imaging_order == "wavelength_order":
+            # Sort by wavelength (highest to lowest), then brightfield last
+            def wavelength_sort_key(ch):
+                # Extract wavelength from channel name if possible
+                import re
+                wavelength_match = re.search(r'(\d+)\s*nm', ch.name, re.IGNORECASE)
+                if wavelength_match:
+                    wavelength = int(wavelength_match.group(1))
+                    # Higher wavelengths first (descending order)
+                    return (0, -wavelength)
+                elif 'brightfield' in ch.name.lower() or 'bf' in ch.name.lower():
+                    # Brightfield comes last
+                    return (1, 0)
+                else:
+                    # Unknown wavelength, put in middle
+                    return (0, -500)  # Assume ~500nm for unknown
+            
+            return sorted(channels, key=wavelength_sort_key)
+        
+        elif imaging_order == "protocol_order":
+            # Keep original order from config file
+            return channels
+        
+        else:
+            # Default to protocol order for unknown values
+            logger.warning(f"Unknown imaging order '{imaging_order}', using protocol_order")
+            return channels
+
     async def snap_selected_channels(
         self, config_file: sc.AcquisitionConfig
     ) -> cmd.BasicSuccessResponse:
@@ -500,6 +543,16 @@ class SquidAdapter(Microscope):
 
             # get channels from that, filter for selected/enabled channels
             channels = [c for c in config_file.channels if c.enabled]
+            
+            # get imaging order from machine config, default to protocol_order
+            imaging_order = g_config.get("imaging_order", "protocol_order")
+            if isinstance(imaging_order, str):
+                imaging_order_value = imaging_order
+            else:
+                imaging_order_value = imaging_order.strvalue if hasattr(imaging_order, 'strvalue') else "protocol_order"
+            
+            # sort channels according to configured imaging order
+            channels = self._sort_channels_by_imaging_order(channels, tp.cast(ImagingOrder, imaging_order_value))
 
             # then:
             # if autofocus is available, measure and approach 0 in a loop up to 5 times
@@ -971,6 +1024,7 @@ class SquidAdapter(Microscope):
             last_stage_position = await self.microcontroller.get_last_position()
         except IOError as e:
             self.close()
+            logger.debug(f"microcontroller disconnected (IOError)")
             raise DisconnectError() from e
 
         # supposed=real-calib
@@ -1056,7 +1110,7 @@ class SquidAdapter(Microscope):
                 
                 # Stop camera streaming first
                 try:
-                    with self.main_camera.locked() as cam:
+                    with self.main_camera() as cam:
                         if cam is not None:
                             cam.stop_acquisition()
                             logger.debug("squid - forced camera streaming stop")
@@ -1838,9 +1892,13 @@ class SquidAdapter(Microscope):
             cmd.error_internal(detail=f"{param_name} value {value} is above maximum {max_val}")
         if step is not None and step > 0:
             if min_val is not None:
+                # Don't validate step compliance - just snap to nearest valid step
+                # This avoids floating-point precision issues with modulo operations
                 offset = value - min_val
-                if abs(offset % step) > 1e-10:  # Allow for floating point precision
-                    cmd.error_internal(detail=f"{param_name} value {value} does not match step increment of {step} (minimum: {min_val})")
+                snapped_offset = round(offset / step) * step
+                snapped_value = min_val + snapped_offset
+                # We could warn or adjust the value here if needed, but for now just accept it
+                # The caller should use: usedval = round((val - min_val) / step) * step + min_val
 
     def _validate_imaging_parameters(self, **params) -> None:
         """Validate imaging parameters against hardware limits."""

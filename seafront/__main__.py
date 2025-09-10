@@ -42,7 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 from pydantic.fields import FieldInfo
 from seaconfig.acquisition import AcquisitionConfig
 
-from seafront.config.basics import ChannelConfig, ConfigItem, CriticalMachineConfig, GlobalConfigHandler, ServerConfig
+from seafront.config.basics import ChannelConfig, ConfigItem, CriticalMachineConfig, GlobalConfigHandler, ImagingOrder, ServerConfig
 from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.hardware.mock_microscope import MockMicroscope
 from seafront.hardware.microscope import Microscope, HardwareLimits
@@ -1622,10 +1622,25 @@ class Core:
         
         # Get enabled channels
         enabled_channels = [c for c in config_file.channels if c.enabled]
-        total_channels = len(enabled_channels)
         
-        if total_channels == 0:
+        if len(enabled_channels) == 0:
             error_internal(detail="no channels selected")
+            
+        # Get imaging order from machine config and sort channels
+        g_config = GlobalConfigHandler.get_dict()
+        imaging_order = g_config.get("imaging_order", "protocol_order")
+        if isinstance(imaging_order, str):
+            imaging_order_value = imaging_order
+        else:
+            imaging_order_value = imaging_order.strvalue if hasattr(imaging_order, 'strvalue') else "protocol_order"
+        
+        # Use microscope's sorting function to maintain consistent ordering logic
+        with self.microscope.lock() as microscope:
+            if microscope is None:
+                error_internal(detail="microscope is busy")
+            enabled_channels = microscope._sort_channels_by_imaging_order(enabled_channels, tp.cast(ImagingOrder, imaging_order_value))
+        
+        total_channels = len(enabled_channels)
         
         # Start background task for progressive snapping
         async def progressive_snap_task():

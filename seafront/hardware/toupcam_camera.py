@@ -245,6 +245,14 @@ class ToupCamCamera(Camera):
     def set_acquisition_mode_trigger(self):
         self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
+    def stop_acquisition(self) -> None:
+        """
+        Force stop any ongoing acquisition.
+        """
+        if self.acquisition_ongoing:
+            self.acquisition_ongoing = False
+            logger.debug("toupcam camera - acquisition stopped")
+
     def _set_acquisition_mode(
         self,
         acq_mode: AcquisitionMode,

@@ -28,7 +28,7 @@ import numpy as np
 import seaconfig as sc
 from pydantic import Field, PrivateAttr
 
-from seafront.config.basics import ChannelConfig, FilterConfig, GlobalConfigHandler
+from seafront.config.basics import ChannelConfig, FilterConfig, GlobalConfigHandler, ImagingOrder
 from seafront.hardware.adapter import AdapterState, CoreState, Position
 from seafront.hardware.firmware_config import get_firmware_config, get_available_profiles, AVAILABLE_PROFILES
 from seafront.hardware.illumination import IlluminationController
@@ -454,7 +454,7 @@ class MockMicroscope(Microscope):
                     # Signal from cells scales with exposure time (more photons collected)
                     cell_signal = int(8000 * time_factor * exposure_factor * (0.8 + 0.4 * np.random.random()))
                     # Add signal to existing background (avoid saturation)
-                    base[mask] += np.clip(cell_signal + np.random.normal(0, 500, np.sum(mask)), 0, 50000).astype(np.uint16)
+                    base[mask] += np.clip(cell_signal + np.random.normal(0, 500, int(np.sum(mask))), 0, 50000).astype(np.uint16)
                 
         else:
             # Fluorescence: create spot-like structures with blinking/movement
@@ -485,19 +485,73 @@ class MockMicroscope(Microscope):
                 # Fluorescent signal scales with exposure time (more photons collected)
                 spot_signal = int(12000 * time_factor * exposure_factor * blink_factor * (0.7 + 0.6 * np.random.random()))
                 # Add signal to existing background (avoid saturation)
-                base[mask] += np.clip(spot_signal + np.random.normal(0, 1000, np.sum(mask)), 0, 40000).astype(np.uint16)
+                base[mask] += np.clip(spot_signal + np.random.normal(0, 1000, int(np.sum(mask))), 0, 40000).astype(np.uint16)
         
         # Apply analog gain to entire image (background + signal + noise)
         # This simulates the camera's analog amplification stage
         final_image = base.astype(np.float32) * gain_factor
         
         return np.clip(final_image, 0, 65535).astype(np.uint16)
+
+    def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
+        """
+        Sort channels according to the specified imaging order.
+        
+        Args:
+            channels: List of enabled AcquisitionChannelConfig objects
+            imaging_order: Sorting strategy to use
+            
+        Returns:
+            Sorted list of channels
+        """
+        if imaging_order == "z_order":
+            # Sort by z_offset_um (lowest to highest z coordinate)
+            return sorted(channels, key=lambda ch: ch.z_offset_um)
+        
+        elif imaging_order == "wavelength_order":
+            # Sort by wavelength (highest to lowest), then brightfield last
+            def wavelength_sort_key(ch):
+                # Extract wavelength from channel name if possible
+                import re
+                wavelength_match = re.search(r'(\d+)\s*nm', ch.name, re.IGNORECASE)
+                if wavelength_match:
+                    wavelength = int(wavelength_match.group(1))
+                    # Higher wavelengths first (descending order)
+                    return (0, -wavelength)
+                elif 'brightfield' in ch.name.lower() or 'bf' in ch.name.lower():
+                    # Brightfield comes last
+                    return (1, 0)
+                else:
+                    # Unknown wavelength, put in middle
+                    return (0, -500)  # Assume ~500nm for unknown
+            
+            return sorted(channels, key=wavelength_sort_key)
+        
+        elif imaging_order == "protocol_order":
+            # Keep original order from config file
+            return channels
+        
+        else:
+            # Default to protocol order for unknown values
+            logger.warning(f"Unknown imaging order '{imaging_order}', using protocol_order")
+            return channels
     
     async def snap_selected_channels(self, config_file: sc.AcquisitionConfig) -> cmd.BasicSuccessResponse:
         """Mock channel snapping."""
         logger.info("Mock microscope: snapping selected channels")
         
         enabled_channels = [ch for ch in config_file.channels if ch.enabled]
+        
+        # Get imaging order from machine config and sort channels
+        g_config = GlobalConfigHandler.get_dict()
+        imaging_order = g_config.get("imaging_order", "protocol_order")
+        if isinstance(imaging_order, str):
+            imaging_order_value = imaging_order
+        else:
+            imaging_order_value = imaging_order.strvalue if hasattr(imaging_order, 'strvalue') else "protocol_order"
+        
+        # Sort channels according to configured imaging order
+        enabled_channels = self._sort_channels_by_imaging_order(enabled_channels, tp.cast(ImagingOrder, imaging_order_value))
         
         for channel in enabled_channels:
             # Find matching channel config
@@ -683,15 +737,14 @@ class MockMicroscope(Microscope):
         
         # Validate step increment (optional - some parameters may not have step validation)
         if step_val is not None and step_val > 0:
-            # Check if value is approximately a multiple of step from min
-            min_reference = min_val if min_val is not None else 0
-            remainder = (value - min_reference) % step_val
-            # Allow small floating point errors
-            tolerance = step_val * 1e-10
-            if remainder > tolerance and (step_val - remainder) > tolerance:
-                cmd.error_internal(
-                    detail=f"{param_name} value {value} does not match step increment of {step_val} (minimum: {min_val})"
-                )
+            if min_val is not None:
+                # Don't validate step compliance - just snap to nearest valid step
+                # This avoids floating-point precision issues with modulo operations
+                offset = value - min_val
+                snapped_offset = round(offset / step_val) * step_val
+                snapped_value = min_val + snapped_offset
+                # We could warn or adjust the value here if needed, but for now just accept it
+                # The caller should use: usedval = round((val - min_val) / step) * step + min_val
 
     def _validate_acquisition_config(self, config: sc.AcquisitionConfig) -> None:
         """

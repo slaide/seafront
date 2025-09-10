@@ -162,6 +162,14 @@ class GalaxyCamera(Camera):
     def set_acquisition_mode_trigger(self):
         self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
+    def stop_acquisition(self) -> None:
+        """
+        Force stop any ongoing acquisition.
+        """
+        if self.acquisition_ongoing:
+            self.acquisition_ongoing = False
+            logger.debug("galaxy camera - acquisition stopped")
+
     def _set_acquisition_mode(
         self,
         acq_mode: AcquisitionMode,
@@ -206,6 +214,10 @@ class GalaxyCamera(Camera):
                     with_cb(img)
 
                 self.handle.data_stream[0].register_capture_callback(galaxy_fwd_image)
+                
+                # Force stream restart when switching from trigger mode to ensure continuous acquisition works
+                if self.acq_mode == AcquisitionMode.ON_TRIGGER:
+                    was_streaming = True
 
         # set acquisition mode
         self.handle.AcquisitionMode.set(gxiapi.GxAcquisitionModeEntry.CONTINUOUS)
@@ -349,6 +361,10 @@ class GalaxyCamera(Camera):
         match mode:
             case "once":
                 assert self.handle is not None
+                
+                # Ensure camera is in trigger mode before sending software trigger
+                self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
+
                 # send command to trigger acquisition
                 self.handle.TriggerSoftware.send_command()
 

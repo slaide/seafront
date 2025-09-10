@@ -15,7 +15,7 @@ import numpy as np
 import seaconfig as sc
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from seafront.config.basics import ChannelConfig, FilterConfig
+from seafront.config.basics import ChannelConfig, FilterConfig, ImagingOrder
 from seafront.hardware.adapter import AdapterState, CoreState
 from seafront.hardware.camera import HardwareLimitValue
 from seafront.server import commands as cmd
@@ -220,6 +220,20 @@ class Microscope(BaseModel, abc.ABC):
             
         Returns:
             None on success (raises exception on failure)
+        """
+        pass
+
+    @abc.abstractmethod
+    def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
+        """
+        Sort channels according to the specified imaging order.
+        
+        Args:
+            channels: List of enabled AcquisitionChannelConfig objects
+            imaging_order: Sorting strategy to use
+            
+        Returns:
+            Sorted list of channels
         """
         pass
 

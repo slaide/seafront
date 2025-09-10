@@ -141,6 +141,15 @@ class Camera(ABC):
         """
         pass
 
+    @abstractmethod
+    def stop_acquisition(self) -> None:
+        """
+        Force stop any ongoing acquisition.
+        
+        This method should interrupt continuous acquisition mode safely.
+        """
+        pass
+
 def get_all_cameras() -> list[Camera]:
     """
     Get all available cameras from all supported manufacturers.

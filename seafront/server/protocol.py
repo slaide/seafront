@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import seafront.server.commands as cmds
 from seafront.config import basics
+from seafront.config.basics import ImagingOrder
 from seafront.hardware import microcontroller as mc
 from seafront.logger import logger
 
@@ -235,6 +236,42 @@ class ProtocolGenerator(BaseModel):
     def channels(self):
         "selected channels"
         return [c for c in self.config_file.channels if c.enabled]
+
+    def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
+        """
+        Sort channels according to the specified imaging order.
+        
+        Args:
+            channels: List of enabled AcquisitionChannelConfig objects
+            imaging_order: Sorting strategy to use
+            
+        Returns:
+            Sorted list of channels
+        """
+        if imaging_order == "protocol_order":
+            # Keep original order from config file
+            return channels
+                
+        elif imaging_order == "wavelength_order":
+            # Sort by emission wavelength (high to low), then brightfield last
+            def wavelength_key(channel):
+                # Brightfield channels go last
+                if hasattr(channel, 'is_brightfield') and channel.is_brightfield:
+                    return (0, channel.name)  # Sort brightfield last with lowest priority
+                # Sort by emission wavelength descending (highest first)
+                emission_nm = getattr(channel, 'emission_wavelength_nm', 500)  # Default 500nm
+                return (emission_nm, channel.name)  # Positive for descending order when reversed
+                    
+            return sorted(channels, key=wavelength_key, reverse=True)
+                
+        elif imaging_order == "z_order":
+            # This case is handled in the z-stacking logic below
+            # For channel ordering, use protocol order as fallback
+            return channels
+        
+        else:
+            # Default fallback
+            return channels
 
     def get_greedy_well_order(self) -> list[sc.PlateWellConfig]:
         """
@@ -577,14 +614,22 @@ class ProtocolGenerator(BaseModel):
 
                         logger.debug("approached reference z")
 
+                    # Get imaging order configuration
+                    imaging_order_item = g_config["imaging_order"]
+                    assert imaging_order_item is not None
+                    imaging_order = tp.cast(ImagingOrder, imaging_order_item.value)
+                    
+                    # Sort channels according to imaging order configuration
+                    ordered_channels = self._sort_channels_by_imaging_order(self.channels, imaging_order)
+                    
                     # z stack may be different for each channel, hence:
-                    # 1. get list of (channel_z_index,channel,z_relative_to_reference), which may contain each channel more than once
-                    # 2. order by z, in ascending (low to high)
-                    # 3. move to lowest, start imaging while moving up
+                    # 1. get list of (channel_z_index,channel,z_relative_to_reference), which may contain each channel more than once  
+                    # 2. order by imaging order configuration (z_order/wavelength_order/protocol_order)
+                    # 3. move to appropriate starting position, execute imaging sequence
                     # 4. move to reference z again in preparation for next site
 
                     image_pos_z_list: list[tuple[int, float, sc.AcquisitionChannelConfig]] = []
-                    for channel in self.channels:
+                    for channel in ordered_channels:
                         channel_delta_z_mm = channel.delta_z_um * 1e-3
 
                         # <channel reference> is <site reference>+<channel z offset>
@@ -599,12 +644,14 @@ class ProtocolGenerator(BaseModel):
                             target_z_mm = base_z + i_offset_mm
                             image_pos_z_list.append((i, target_z_mm, channel))
 
-                    # TODO add flag to either
-                    #   1) image in z order (fastest), or
-                    #   2) image in order of wavelength (lower wavelength excitation will emit higher wavelength, which in turn may excite and bleach higher wavelengths -> image in reverse order for best image quality)
-
-                    # sort in z
-                    image_pos_z_list = sorted(image_pos_z_list, key=lambda v: v[1])
+                    # Apply final sorting based on imaging order
+                    if imaging_order == "z_order":
+                        # Sort by z coordinate (fastest - minimizes z movement)
+                        image_pos_z_list = sorted(image_pos_z_list, key=lambda v: v[1])
+                    else:  # wavelength_order or protocol_order
+                        # Keep channel-based ordering (best image quality - minimizes photobleaching)
+                        # No additional sorting needed as channels are already ordered correctly
+                        pass
 
                     res = yield cmds.MoveTo(
                         x_mm=None,

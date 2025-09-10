@@ -11,6 +11,7 @@ from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
 CameraDriver = tp.Literal["galaxy", "toupcam"]
 MicroscopeType = tp.Literal["squid", "mock"]
+ImagingOrder = tp.Literal["z_order", "wavelength_order", "protocol_order"]
 
 
 class PowerCalibration(BaseModel):
@@ -725,6 +726,26 @@ class GlobalConfigHandler:
             ),
             laser_autofocus_system_available_attribute,
             filter_wheel_system_available_attribute,
+            ConfigItem(
+                name="imaging order",
+                handle="imaging_order",
+                value_kind="option",
+                value="protocol_order",
+                options=[
+                    ConfigItemOption(
+                        name="Protocol Order (config file order)",
+                        handle="protocol_order",
+                    ),
+                    ConfigItemOption(
+                        name="Z-Order (bottom to top)",
+                        handle="z_order",
+                    ),
+                    ConfigItemOption(
+                        name="Wavelength Order (high to low, then brightfield)",
+                        handle="wavelength_order",
+                    ),
+                ],
+            ),
             *laser_autofocus_system_attributes,
             *filter_wheel_system_attributes,
             *main_camera_attributes,

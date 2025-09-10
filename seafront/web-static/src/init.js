@@ -835,9 +835,12 @@ document.addEventListener("alpine:init", () => {
         async updateMicroscopeStatus(data) {
             const timestamps = [];
 
-            for (let channelhandle of Object.keys(data.latest_imgs)) {
-                const channel = data.latest_imgs[channelhandle];
-                timestamps.push(channel.timestamp);
+            if(data.latest_imgs){
+                const img_keys=Object.keys(data.latest_imgs);
+                for (let channelhandle of img_keys) {
+                    const channel = data.latest_imgs[channelhandle];
+                    timestamps.push(channel.timestamp);
+                }
             }
             // console.log(`updateMicroscopeStatus with`, timestamps)
             // update state with data from 'data' object
