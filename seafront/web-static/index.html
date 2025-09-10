@@ -1020,6 +1020,7 @@
                                             #channelgrid {
                                                 display: grid;
                                                 grid-template-columns:
+                                                    2em /* drag handle */
                                                     repeat(3, max-content)
                                                     5em 5em 5em 5em 4em 7em 8em;
 
@@ -1044,8 +1045,42 @@
                                                         var(--text-color);
                                                 }
                                             }
+                                            .drag-handle {
+                                                cursor: grab;
+                                                display: flex;
+                                                align-items: center;
+                                                justify-content: center;
+                                                font-size: 1.2em;
+                                                user-select: none;
+                                                color: var(--text-color);
+                                                opacity: 0.6;
+                                                transition: opacity 0.2s ease;
+                                                padding: 0.2em;
+                                                border-radius: 3px;
+                                            }
+                                            .drag-handle:hover {
+                                                opacity: 1;
+                                                background-color: var(--weak-bg-color);
+                                            }
+                                            .drag-handle:active {
+                                                cursor: grabbing;
+                                                background-color: var(--highlight-color);
+                                            }
+                                            .channel-config-row-container.dragging {
+                                                opacity: 0.5;
+                                            }
+                                            .channel-config-row-container.drag-over {
+                                                border-top: 3px solid var(--highlight-color);
+                                            }
                                         </style>
 
+                                        <p
+                                            class="channel-config-header"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Drag to reorder channels (changes protocol_order)`"
+                                        >
+                                            ↕
+                                        </p>
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
@@ -1153,12 +1188,26 @@
                                         </style>
 
                                         <template
-                                            x-for="channel in microscope_config.channels"
+                                            x-for="(channel, index) in microscope_config.channels"
                                             :key="channel.handle"
                                         >
                                             <div
                                                 class="channel-config-row-container"
+                                                @dragover="handleChannelDragOver($event)"
+                                                @drop="handleChannelDrop($event, index)"
+                                                @dragenter="handleChannelDragEnter($event)"
+                                                @dragleave="handleChannelDragLeave($event)"
                                             >
+                                                <div
+                                                    class="drag-handle"
+                                                    draggable="true"
+                                                    @dragstart="startChannelDrag($event, index)"
+                                                    @dragend="endChannelDrag($event)"
+                                                    x-init="enabletooltip($el)"
+                                                    x-bind:tooltip="`Drag to reorder this channel`"
+                                                >
+                                                    ↕
+                                                </div>
                                                 <input
                                                     x-bind:id="`${channel.handle}-enabled`"
                                                     type="checkbox"

@@ -3012,5 +3012,75 @@ document.addEventListener("alpine:init", () => {
                 this.saveCurrentConfig();
             }
         },
+
+        // Channel drag-and-drop functionality
+        draggedChannelIndex: null,
+
+        startChannelDrag(event, index) {
+            this.draggedChannelIndex = index;
+            // Find the parent row container and add dragging class to it
+            const rowContainer = event.target.closest('.channel-config-row-container');
+            if (rowContainer) {
+                rowContainer.classList.add('dragging');
+            }
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/html', event.target.outerHTML);
+        },
+
+        handleChannelDragOver(event) {
+            if (this.draggedChannelIndex !== null) {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+            }
+        },
+
+        handleChannelDragEnter(event) {
+            if (this.draggedChannelIndex !== null) {
+                event.preventDefault();
+                event.target.closest('.channel-config-row-container')?.classList.add('drag-over');
+            }
+        },
+
+        handleChannelDragLeave(event) {
+            // Only remove drag-over class if we're actually leaving the element
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+                event.target.closest('.channel-config-row-container')?.classList.remove('drag-over');
+            }
+        },
+
+        handleChannelDrop(event, dropIndex) {
+            if (this.draggedChannelIndex === null) return;
+            
+            event.preventDefault();
+            event.target.closest('.channel-config-row-container')?.classList.remove('drag-over');
+            
+            const sourceIndex = this.draggedChannelIndex;
+            
+            if (sourceIndex !== dropIndex) {
+                // Create a new array with the moved channel
+                const channels = [...this.microscope_config.channels];
+                const [movedChannel] = channels.splice(sourceIndex, 1);
+                channels.splice(dropIndex, 0, movedChannel);
+                
+                // Update the channels array
+                this.microscope_config.channels = channels;
+                
+                // Save the configuration
+                this.saveCurrentConfig();
+            }
+        },
+
+        endChannelDrag(event) {
+            // Remove dragging class from the parent row container
+            const rowContainer = event.target.closest('.channel-config-row-container');
+            if (rowContainer) {
+                rowContainer.classList.remove('dragging');
+            }
+            // Remove drag-over class from all elements
+            document.querySelectorAll('.channel-config-row-container.drag-over').forEach(el => {
+                el.classList.remove('drag-over');
+            });
+            this.draggedChannelIndex = null;
+        },
     }));
 });
