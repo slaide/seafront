@@ -209,6 +209,11 @@ document.addEventListener("alpine:init", () => {
             // apply new theme
             el.classList.add(`theme-${this.theme}`);
             
+            // update channel view theme if it exists
+            if (this.view) {
+                this.view.updateTheme();
+            }
+            
             // save theme to localStorage
             localStorage.setItem("seafront-theme", this.theme);
         },

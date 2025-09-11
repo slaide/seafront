@@ -132,8 +132,14 @@ export class ChannelImageView {
     }
 
     setClearColorFromBody() {
-        const themeBgColor = document.body.computedStyleMap().get("--text-color")?.toString();
-        this.renderer.setClearColor(new THREE.Color(themeBgColor ?? 'rgb(255,255,255)'), 1);
+        const computedStyle = getComputedStyle(document.body);
+        const themeBgColor = computedStyle.getPropertyValue("--strong-bg-color").trim();
+        this.renderer.setClearColor(new THREE.Color(themeBgColor || 'rgb(255,255,255)'), 1);
+    }
+
+    /** Update theme colors - call this when theme changes */
+    updateTheme() {
+        this.setClearColorFromBody();
     }
 
     /**

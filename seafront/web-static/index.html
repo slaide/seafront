@@ -222,7 +222,7 @@
                             </div>
                             <canvas
                                 id="c"
-                                x-init="initChannelView($el);$watch('theme',()=>view.setClearColorFromBody())"
+                                x-init="initChannelView($el);$watch('theme',()=>view?.updateTheme())"
                             ></canvas>
                             <style>
                                 #c {
