@@ -592,6 +592,27 @@
                                         id="tooltips-enabled-checkbox"
                                         type="checkbox"
                                         x-model.boolean="tooltipConfig.enabled"
+                                        @change="saveTooltipSettings()"
+                                    />
+                                    
+                                    <label 
+                                        for="tooltip-delay-input"
+                                        x-bind:class="!tooltipConfig.enabled ? 'disabled' : ''"
+                                    >
+                                        Tooltip delay (ms):
+                                    </label>
+                                    <input
+                                        id="tooltip-delay-input"
+                                        type="number"
+                                        min="0"
+                                        max="2000"
+                                        step="50"
+                                        x-model.number="tooltipConfig.delayMs"
+                                        is="number-input"
+                                        x-init="registerNumberInput($el),enabletooltip($el)"
+                                        x-bind:tooltip="`How long to wait before showing tooltips when hovering. Range: 0-2000ms (0 = instant, 400 = default)`"
+                                        x-bind:disabled="!tooltipConfig.enabled"
+                                        @input="saveTooltipSettings()"
                                     />
                                     
                                     <label>Theme:</label>

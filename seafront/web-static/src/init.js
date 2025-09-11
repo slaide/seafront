@@ -27,7 +27,38 @@ Object.assign(window, { registerNumberInput });
 import { ChannelImageView } from "channelview";
 
 import { tooltipConfig, enabletooltip } from "tooltip";
-Object.assign(window, { enabletooltip });
+
+// Load tooltip settings from localStorage and apply them
+function loadTooltipSettings() {
+    try {
+        const saved = localStorage.getItem("seafront-tooltip-settings");
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.enabled !== undefined) tooltipConfig.enabled = parsed.enabled;
+            if (parsed.delayMs !== undefined) tooltipConfig.delayMs = parsed.delayMs;
+        }
+    } catch (error) {
+        console.warn("Failed to load tooltip settings from localStorage:", error);
+    }
+}
+
+// Save tooltip settings to localStorage
+function saveTooltipSettings() {
+    try {
+        localStorage.setItem("seafront-tooltip-settings", JSON.stringify({
+            enabled: tooltipConfig.enabled,
+            delayMs: tooltipConfig.delayMs,
+            savedAt: new Date().toISOString()
+        }));
+    } catch (error) {
+        console.warn("Failed to save tooltip settings to localStorage:", error);
+    }
+}
+
+// Load saved tooltip settings on startup
+loadTooltipSettings();
+
+Object.assign(window, { enabletooltip, tooltipConfig, saveTooltipSettings });
 
 import { initTabs } from "tabs";
 Object.assign(window, { initTabs });
