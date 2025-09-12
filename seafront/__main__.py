@@ -43,6 +43,7 @@ from pydantic.fields import FieldInfo
 from seaconfig.acquisition import AcquisitionConfig
 
 from seafront.config.basics import ChannelConfig, ConfigItem, CriticalMachineConfig, GlobalConfigHandler, ImagingOrder, ServerConfig
+from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.hardware.mock_microscope import MockMicroscope
 from seafront.hardware.microscope import Microscope, HardwareLimits
@@ -824,8 +825,7 @@ class Core:
         async def write_image_laseraf(cmd: AutofocusSnap, res: AutofocusSnapResult):
             "store new laser autofocus image"
 
-            g_config = GlobalConfigHandler.get_dict()
-            pixel_format = g_config["laser_autofocus_pixel_format"].strvalue
+            pixel_format = LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value_item.strvalue
 
             await self._store_new_image(
                 img=res._img, pixel_format=pixel_format, channel_config=res._channel
@@ -834,8 +834,7 @@ class Core:
         async def write_image(cmd: ChannelSnapshot, res: ImageAcquiredResponse):
             "store new regular image"
 
-            g_config = GlobalConfigHandler.get_dict()
-            pixel_format = g_config["main_camera_pixel_format"].strvalue
+            pixel_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue
 
             logger.debug(f"storing new image for {cmd.channel.handle}")
 
@@ -1287,7 +1286,7 @@ class Core:
         g_dict = GlobalConfigHandler.get_dict()
         
         # Get channels JSON string and parse it
-        channels_json = g_dict["channels"].strvalue
+        channels_json = g_dict["imaging.channels"].strvalue
         channels_data = json5.loads(channels_json)
         
         if channels_data is None:
@@ -1671,7 +1670,7 @@ class Core:
                         
                         # Store the image
                         g_dict = GlobalConfigHandler.get_dict()
-                        pixel_format = g_dict["main_camera_pixel_format"].strvalue
+                        pixel_format = g_dict["camera.main.pixel_format"].strvalue
                         await self._store_new_image(
                             img=result._img, 
                             pixel_format=pixel_format, 

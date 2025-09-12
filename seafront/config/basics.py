@@ -372,14 +372,14 @@ class GlobalConfigHandler:
         main_camera_attributes = [
             ConfigItem(
                 name="main camera model",
-                handle="main_camera_model",
+                handle="camera.main.model",
                 value_kind="text",
                 value=critical_machine_config.main_camera_model,
                 frozen=True,
             ),
             ConfigItem(
                 name="main camera driver",
-                handle="main_camera_driver",
+                handle="camera.main.driver",
                 value_kind="option",
                 value=critical_machine_config.main_camera_driver,
                 options=[
@@ -396,7 +396,7 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera objective",
-                handle="main_camera_objective",
+                handle="camera.main.objective",
                 value_kind="option",
                 value="20xolympus",
                 options=[
@@ -425,7 +425,7 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera trigger",
-                handle="main_camera_trigger",
+                handle="camera.main.trigger",
                 value_kind="option",
                 value="software",
                 options=[
@@ -441,7 +441,7 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera pixel format",
-                handle="main_camera_pixel_format",
+                handle="camera.main.pixel_format",
                 value_kind="option",
                 value="mono8",
                 options=[
@@ -461,19 +461,19 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera image width [px]",
-                handle="main_camera_image_width_px",
+                handle="camera.main.image.width_px",
                 value_kind="int",
                 value=2500,
             ),
             ConfigItem(
                 name="main camera image height [px]",
-                handle="main_camera_image_height_px",
+                handle="camera.main.image.height_px",
                 value_kind="int",
                 value=2500,
             ),
             ConfigItem(
                 name="main camera flip image horizontally",
-                handle="main_camera_image_flip_horizontal",
+                handle="camera.main.image.flip_horizontal",
                 value_kind="option",
                 value="no",
                 options=ConfigItemOption.get_bool_options(),
@@ -481,7 +481,7 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera flip image vertically",
-                handle="main_camera_image_flip_vertical",
+                handle="camera.main.image.flip_vertical",
                 value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
@@ -491,7 +491,7 @@ class GlobalConfigHandler:
 
         laser_autofocus_system_available_attribute = ConfigItem(
             name="laser autofocus system available",
-            handle="laser_autofocus_available",
+            handle="laser.autofocus.available",
             value_kind="option",
             value=critical_machine_config.laser_autofocus_available or "no",
             options=ConfigItemOption.get_bool_options(),
@@ -500,7 +500,7 @@ class GlobalConfigHandler:
 
         filter_wheel_system_available_attribute = ConfigItem(
             name="filter wheel system available",
-            handle="filter_wheel_available",
+            handle="filter.wheel.available",
             value_kind="option",
             value=critical_machine_config.filter_wheel_available or "no",
             options=ConfigItemOption.get_bool_options(),
@@ -514,14 +514,14 @@ class GlobalConfigHandler:
             laser_autofocus_system_attributes = [
                 ConfigItem(
                     name="laser autofocus camera model",
-                    handle="laser_autofocus_camera_model",
+                    handle="laser.autofocus.camera.model",
                     value_kind="text",
                     value=critical_machine_config.laser_autofocus_camera_model,
                     frozen=True,
                 ),
                 ConfigItem(
                     name="laser autofocus camera driver",
-                    handle="laser_autofocus_camera_driver",
+                    handle="laser.autofocus.camera.driver",
                     value_kind="option",
                     value=critical_machine_config.laser_autofocus_camera_driver,
                     options=[
@@ -538,26 +538,26 @@ class GlobalConfigHandler:
                 ),
                 ConfigItem(
                     name="laser autofocus exposure time [ms]",
-                    handle="laser_autofocus_exposure_time_ms",
+                    handle="laser.autofocus.exposure_time_ms",
                     value_kind="float",
                     value=5.0,
                 ),
                 ConfigItem(
                     name="laser autofocus camera analog gain",
-                    handle="laser_autofocus_analog_gain",
+                    handle="laser.autofocus.camera.analog_gain",
                     value_kind="float",
                     value=0.0,
                 ),
                 ConfigItem(
                     name="laser autofocus use glass top",
-                    handle="laser_autofocus_use_glass_top",
+                    handle="laser.autofocus.use_glass_top",
                     value_kind="option",
                     value="no",
                     options=ConfigItemOption.get_bool_options(),
                 ),
                 ConfigItem(
                     name="laser autofocus camera pixel format",
-                    handle="laser_autofocus_pixel_format",
+                    handle="laser.autofocus.camera.pixel_format",
                     value_kind="option",
                     value="mono8",
                     options=[
@@ -573,14 +573,14 @@ class GlobalConfigHandler:
                 ),
                 ConfigItem(
                     name="laser autofocus warm up laser",
-                    handle="laser_af_warm_up_laser",
+                    handle="laser.autofocus.warm_up_laser",
                     value_kind="action",
                     value="/api/action/laser_autofocus_warm_up_laser",
                 ),
                 # is calibrated flag
                 ConfigItem(
                     name="laser autofocus is calibrated",
-                    handle="laser_autofocus_is_calibrated",
+                    handle="laser.autofocus.calibration.is_calibrated",
                     value_kind="option",
                     value="no",
                     options=ConfigItemOption.get_bool_options(),
@@ -588,21 +588,21 @@ class GlobalConfigHandler:
                 # calibrated x on sensor
                 ConfigItem(
                     name="laser autofocus calibration: x peak pos",
-                    handle="laser_autofocus_calibration_x",
+                    handle="laser.autofocus.calibration.x_peak_pos",
                     value_kind="float",
                     value=0.0,
                 ),
                 # calibrated um/px on sensor
                 ConfigItem(
                     name="laser autofocus calibration: um per px",
-                    handle="laser_autofocus_calibration_umpx",
+                    handle="laser.autofocus.calibration.um_per_px",
                     value_kind="float",
                     value=0.0,
                 ),
                 # z coordinate at time of calibration
                 ConfigItem(
                     name="laser autofocus calibration: ref z in mm",
-                    handle="laser_autofocus_calibration_refzmm",
+                    handle="laser.autofocus.calibration.ref_z_mm",
                     value_kind="float",
                     value=0.0,
                 ),
@@ -614,7 +614,7 @@ class GlobalConfigHandler:
             filter_wheel_system_attributes = [
                 ConfigItem(
                     name="filter wheel configuration",
-                    handle="filters",
+                    handle="filter.wheel.configuration",
                     value_kind="text", 
                     value=critical_machine_config.filters,
                     frozen=True,
@@ -626,44 +626,44 @@ class GlobalConfigHandler:
         ret = [
             ConfigItem(
                 name="microscope name",
-                handle="microscope_name",
+                handle="system.microscope_name",
                 value_kind="text",
                 value=critical_machine_config.microscope_name,
                 frozen=True,
             ),
             ConfigItem(
                 name="calibrate top left of B2 here",
-                handle="calibrate_B2_here",
+                handle="calibration.calibrate_B2_here",
                 value_kind="action",
                 value="/api/action/calibrate_stage_xy_here",
             ),
             ConfigItem(
                 name="calibration offset x [mm]",
-                handle="calibration_offset_x_mm",
+                handle="calibration.offset.x_mm",
                 value_kind="float",
                 value=critical_machine_config.calibration_offset_x_mm,
             ),
             ConfigItem(
                 name="calibration offset y [mm]",
-                handle="calibration_offset_y_mm",
+                handle="calibration.offset.y_mm",
                 value_kind="float",
                 value=critical_machine_config.calibration_offset_y_mm,
             ),
             ConfigItem(
                 name="calibration offset z [mm]",
-                handle="calibration_offset_z_mm",
+                handle="calibration.offset.z_mm",
                 value_kind="float",
                 value=critical_machine_config.calibration_offset_z_mm,
             ),
             ConfigItem(
                 name="turn off all illumination",
-                handle="illumination_off",
+                handle="illumination.turn_off_all",
                 value_kind="action",
                 value="/api/action/turn_off_all_illumination",
             ),
             ConfigItem(
                 name="base output storage directory",
-                handle="base_image_output_dir",
+                handle="storage.base_image_output_dir",
                 value_kind="text",
                 value=critical_machine_config.base_image_output_dir,
             ),
@@ -674,52 +674,52 @@ class GlobalConfigHandler:
             # this flag indicates if the lower bits should be padded (and value bits shifted into upper bits)
             ConfigItem(
                 name="image file pad low",
-                handle="image_file_pad_low",
+                handle="image.file.pad_low",
                 value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
             ),
             ConfigItem(
                 name="image filename use channel name",
-                handle="image_filename_use_channel_name",
+                handle="image.filename.use_channel_name",
                 value_kind="option", 
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
             ),
             ConfigItem(
                 name="image filename xy index start",
-                handle="image_filename_xy_index_start",
+                handle="image.filename.xy_index_start",
                 value_kind="int",
                 value=0,
             ),
             ConfigItem(
                 name="image filename z index start", 
-                handle="image_filename_z_index_start",
+                handle="image.filename.z_index_start",
                 value_kind="int",
                 value=0,
             ),
             ConfigItem(
                 name="image filename site index start",
-                handle="image_filename_site_index_start", 
+                handle="image.filename.site_index_start", 
                 value_kind="int",
                 value=1,
             ),
             ConfigItem(
                 name="image filename zero pad column index",
-                handle="image_filename_zero_pad_column",
+                handle="image.filename.zero_pad_column",
                 value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
             ),
             ConfigItem(
                 name="forbidden wells",
-                handle="forbidden_wells",
+                handle="protocol.forbidden_wells",
                 value_kind="text",
                 value=critical_machine_config.forbidden_wells or "{}",
             ),
             ConfigItem(
                 name="imaging channels configuration",
-                handle="channels",
+                handle="imaging.channels",
                 value_kind="text",
                 value=critical_machine_config.channels,
                 frozen=True,
@@ -728,7 +728,7 @@ class GlobalConfigHandler:
             filter_wheel_system_available_attribute,
             ConfigItem(
                 name="imaging order",
-                handle="imaging_order",
+                handle="imaging.order",
                 value_kind="option",
                 value="protocol_order",
                 options=[

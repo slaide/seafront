@@ -6,6 +6,7 @@ import toupcam.toupcam as tc
 from seaconfig import AcquisitionChannelConfig
 
 from seafront.config.basics import GlobalConfigHandler
+from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
 from pydantic import BaseModel, ConfigDict 
@@ -392,12 +393,11 @@ class ToupCamCamera(Camera):
             return None
 
         # Set pixel format based on configuration
-        g_config = GlobalConfigHandler.get_dict()
         match self.device_type:
             case "main":
-                pixel_format_item = g_config["main_camera_pixel_format"]
+                pixel_format_item = CameraConfig.MAIN_PIXEL_FORMAT.value_item
             case "autofocus":
-                pixel_format_item = g_config["laser_autofocus_pixel_format"]
+                pixel_format_item = LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value_item
             case _:
                 raise RuntimeError(f"unsupported device type {self.device_type}")
 

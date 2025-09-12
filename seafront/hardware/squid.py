@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from scipy import stats  # for linear regression
 
 from seafront.config.basics import GlobalConfigHandler, CameraDriver, ChannelConfig, FilterConfig, ImagingOrder
+from seafront.config.handles import CameraConfig, LaserAutofocusConfig, ImageConfig, get_config_item_legacy
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, CoreState
 from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier, HardwareLimitValue
@@ -57,13 +58,11 @@ def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
     also pad so that top bits are used. e.g. if imaging bit depth is 12, top 12 bits will be set.
     """
 
-    g_config = GlobalConfigHandler.get_dict()
-
-    cam_img_width = g_config["main_camera_image_width_px"]
+    cam_img_width = CameraConfig.MAIN_IMAGE_WIDTH_PX.value_item
     assert cam_img_width is not None
     target_width: int = cam_img_width.intvalue
     assert isinstance(target_width, int), f"{type(target_width) = }"
-    cam_img_height = g_config["main_camera_image_height_px"]
+    cam_img_height = CameraConfig.MAIN_IMAGE_HEIGHT_PX.value_item
     assert cam_img_height is not None
     target_height: int = cam_img_height.intvalue
     assert isinstance(target_height, int), f"{type(target_height) = }"
@@ -87,17 +86,17 @@ def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
     # seemingly swap x and y because of numpy's row-major order
     ret = img[y_offset : y_offset + target_height, x_offset : x_offset + target_width]
 
-    flip_img_horizontal = g_config["main_camera_image_flip_horizontal"]
+    flip_img_horizontal = CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value_item
     assert flip_img_horizontal is not None
     if flip_img_horizontal.boolvalue:
         ret = np.flip(ret, axis=1)
 
-    flip_img_vertical = g_config["main_camera_image_flip_vertical"]
+    flip_img_vertical = CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value_item
     assert flip_img_vertical is not None
     if flip_img_vertical.boolvalue:
         ret = np.flip(ret, axis=0)
 
-    image_file_pad_low = g_config["image_file_pad_low"]
+    image_file_pad_low = ImageConfig.FILE_PAD_LOW.value_item
     assert image_file_pad_low is not None
     cambits = 0
 
@@ -187,10 +186,10 @@ class SquidAdapter(Microscope):
             raise RuntimeError(error_msg)
 
         # Get camera configuration
-        main_camera_model_name = g_dict["main_camera_model"].strvalue
-        main_camera_driver = g_dict["main_camera_driver"].strvalue
-        focus_camera_model_name = g_dict["laser_autofocus_camera_model"].strvalue
-        focus_camera_driver = g_dict["laser_autofocus_camera_driver"].strvalue
+        main_camera_model_name = g_dict["camera.main.model"].strvalue
+        main_camera_driver = g_dict["camera.main.driver"].strvalue
+        focus_camera_model_name = g_dict["laser.autofocus.camera.model"].strvalue
+        focus_camera_driver = g_dict["laser.autofocus.camera.driver"].strvalue
 
         # Validate camera drivers
         valid_drivers = tp.get_args(CameraDriver)  # Get valid values from the Literal type
@@ -249,7 +248,7 @@ class SquidAdapter(Microscope):
         focus_camera = camera_open(focus_camera_request)
 
         # Extract and parse channel and filter configurations (JSON-encoded strings)
-        channels_json = g_dict["channels"].strvalue
+        channels_json = g_dict["imaging.channels"].strvalue
         channels_data = json5.loads(channels_json)
         
         if channels_data is None:
@@ -260,7 +259,7 @@ class SquidAdapter(Microscope):
         # Only process filters if filter wheel is available
         filter_wheel_available = g_dict.get("filter_wheel_available")
         if filter_wheel_available and filter_wheel_available.boolvalue:
-            filters_json = g_dict["filters"].strvalue
+            filters_json = g_dict["filter.wheel.configuration"].strvalue
             filters_data = json5.loads(filters_json)
             
             if filters_data is None:
@@ -694,13 +693,11 @@ class SquidAdapter(Microscope):
             _leftmostxinsteadofestimatedz: if True, return the coordinate of the leftmost dot in the laser autofocus signal instead of the estimated z value that is based on this coordinate
         """
 
-        g_config = GlobalConfigHandler.get_dict()
-
-        conf_af_exp_ms_item = g_config["laser_autofocus_exposure_time_ms"]
+        conf_af_exp_ms_item = LaserAutofocusConfig.EXPOSURE_TIME_MS.value_item
         assert conf_af_exp_ms_item is not None
         conf_af_exp_ms = conf_af_exp_ms_item.floatvalue
 
-        conf_af_exp_ag_item = g_config["laser_autofocus_analog_gain"]
+        conf_af_exp_ag_item = LaserAutofocusConfig.CAMERA_ANALOG_GAIN.value_item
         assert conf_af_exp_ag_item is not None
         conf_af_exp_ag = conf_af_exp_ag_item.floatvalue
 
@@ -750,13 +747,11 @@ class SquidAdapter(Microscope):
             if qmc is None:
                 error_internal("microcontroller is busy")
 
-            g_config = GlobalConfigHandler.get_dict()
-
-            conf_af_exp_ms_item = g_config["laser_autofocus_exposure_time_ms"]
+            conf_af_exp_ms_item = LaserAutofocusConfig.EXPOSURE_TIME_MS.value_item
             assert conf_af_exp_ms_item is not None
             conf_af_exp_ms = conf_af_exp_ms_item.floatvalue
 
-            conf_af_exp_ag_item = g_config["laser_autofocus_analog_gain"]
+            conf_af_exp_ag_item = LaserAutofocusConfig.CAMERA_ANALOG_GAIN.value_item
             assert conf_af_exp_ag_item is not None
             conf_af_exp_ag = conf_af_exp_ag_item.floatvalue
 
@@ -1351,11 +1346,11 @@ class SquidAdapter(Microscope):
                     if command.config_file.machine_config is not None:
                         GlobalConfigHandler.override(command.config_file.machine_config)
 
-                    g_config = GlobalConfigHandler.get_dict()
-
-                    conf_af_if_calibrated = g_config.get("laser_autofocus_is_calibrated")
-                    conf_af_calib_x = g_config.get("laser_autofocus_calibration_x")
-                    conf_af_calib_umpx = g_config.get("laser_autofocus_calibration_umpx")
+                    g_config = LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.get_dict()
+                    
+                    conf_af_if_calibrated = g_config.get(str(LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED))
+                    conf_af_calib_x = g_config.get(str(LaserAutofocusConfig.CALIBRATION_X_PEAK_POS))
+                    conf_af_calib_umpx = g_config.get(str(LaserAutofocusConfig.CALIBRATION_UM_PER_PX))
                     if (
                         conf_af_if_calibrated is None
                         or conf_af_calib_x is None
@@ -1757,11 +1752,9 @@ class SquidAdapter(Microscope):
                     if self.state != CoreState.Idle:
                         cmd.error_internal(detail="cannot move while in non-idle state")
 
-                    g_config = GlobalConfigHandler.get_dict()
-
                     # get autofocus calibration data
-                    conf_af_calib_x = g_config["laser_autofocus_calibration_x"].floatvalue
-                    conf_af_calib_umpx = g_config["laser_autofocus_calibration_umpx"].floatvalue
+                    conf_af_calib_x = LaserAutofocusConfig.CALIBRATION_X_PEAK_POS.value_item.floatvalue
+                    conf_af_calib_umpx = LaserAutofocusConfig.CALIBRATION_UM_PER_PX.value_item.floatvalue
                     # autofocus_calib=LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx,x_reference=conf_af_calib_x,calibration_position=Position.zero())
 
                     # we are looking for a z coordinate where the measured dot_x is equal to this target_x.

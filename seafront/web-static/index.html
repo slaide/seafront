@@ -28,7 +28,8 @@
                     "channelview": "/src/channelview.js",
                     "tooltip": "/src/tooltip.js",
                     "tabs": "/src/tabs.js",
-                    "histogram": "/src/histogram.js"
+                    "histogram": "/src/histogram.js",
+                    "namespace-parser": "/src/namespace-parser.js"
                 }
             }
         </script>
@@ -54,6 +55,135 @@
             label[disabled] {
                 text-decoration: line-through;
                 text-decoration-thickness: 2px;
+            }
+
+            /* Machine Config Namespace Styles */
+            .machine-config-controls {
+                display: grid;
+                grid-template-columns: auto 1fr auto;
+                gap: 1em;
+                margin-bottom: 1em;
+                padding: 0.5em;
+                background-color: var(--bg-color);
+                border-radius: 4px;
+                align-items: center;
+            }
+
+            .button-row {
+                display: flex;
+                gap: 0.5em;
+                flex-wrap: wrap;
+            }
+
+            .namespace-tree {
+                border: 1px solid var(--border-color);
+                border-radius: 4px;
+                max-height: 600px;
+                overflow-y: auto;
+            }
+
+            .namespace-section {
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .namespace-section:last-child {
+                border-bottom: none;
+            }
+
+            .namespace-header {
+                display: flex;
+                align-items: center;
+                gap: 0.5em;
+                padding: 0.75em 1em;
+                background-color: var(--accent-bg-color);
+                border-bottom: 1px solid var(--border-color);
+                font-weight: bold;
+                user-select: none;
+            }
+
+            .namespace-header:hover {
+                background-color: var(--strong-bg-color);
+            }
+
+            .namespace-child .namespace-header {
+                background-color: var(--bg-color);
+                padding-left: 2em;
+                font-weight: normal;
+            }
+
+            .namespace-child .namespace-header:hover {
+                background-color: var(--accent-bg-color);
+            }
+
+            .item-count {
+                font-size: 0.85em;
+                color: var(--muted-text-color);
+                font-weight: normal;
+            }
+
+            .namespace-content {
+                padding: 0.5em;
+            }
+
+            .namespace-child .namespace-content {
+                padding-left: 2em;
+            }
+
+            .config-item {
+                margin: 0.5em 0;
+                padding: 0.75em;
+                border: 1px solid var(--border-color);
+                border-radius: 4px;
+                background-color: var(--bg-color);
+            }
+
+            .config-row {
+                display: grid;
+                grid-template-columns: auto 2fr 3fr auto;
+                gap: 1em;
+                align-items: start;
+            }
+
+            .config-frozen {
+                display: flex;
+                align-items: center;
+            }
+
+            .config-info {
+                display: flex;
+                flex-direction: column;
+                gap: 0.25em;
+            }
+
+            .config-handle {
+                font-weight: bold;
+                font-family: monospace;
+                color: var(--accent-color);
+            }
+
+            .config-name {
+                font-size: 0.9em;
+                color: var(--muted-text-color);
+            }
+
+            .config-value {
+                display: flex;
+                align-items: center;
+            }
+
+            .config-value input,
+            .config-value textarea,
+            .config-value select,
+            .config-value button {
+                width: 100%;
+                max-width: 300px;
+            }
+
+            .config-kind {
+                font-size: 0.8em;
+                color: var(--muted-text-color);
+                font-style: italic;
+                text-align: center;
             }
         </style>
 
@@ -424,21 +554,232 @@
                             </div>
                         </div>
                         <div tabname="Machine Config">
-                            <div>
-                                <label>filter handles</label>
-                                <input
-                                    type="text"
-                                    x-model="machineConfigHandleFilter"
-                                    placeholder="filter handles containing this"
-                                />
-                                <button @click="machineConfigReset">
-                                    reset all values
-                                </button>
-                                <button @click="machineConfigFlush">
-                                    flush local to server
-                                </button>
+                            <div class="machine-config-controls">
+                                <div>
+                                    <label>
+                                        <input type="checkbox" x-model="machineConfigUseNamespaces" />
+                                        Use hierarchical view
+                                    </label>
+                                </div>
+                                <div>
+                                    <label>filter handles</label>
+                                    <input
+                                        type="text"
+                                        x-model="machineConfigHandleFilter"
+                                        placeholder="filter handles containing this"
+                                    />
+                                </div>
+                                <div class="button-row">
+                                    <button @click="expandAllNamespaces()" x-show="machineConfigUseNamespaces">
+                                        Expand All
+                                    </button>
+                                    <button @click="collapseAllNamespaces()" x-show="machineConfigUseNamespaces">
+                                        Collapse All
+                                    </button>
+                                    <button @click="machineConfigReset">
+                                        Reset All
+                                    </button>
+                                    <button @click="machineConfigFlush">
+                                        Flush to Server
+                                    </button>
+                                </div>
                             </div>
-                            <table>
+
+                            <!-- Hierarchical namespace view -->
+                            <div x-show="machineConfigUseNamespaces" class="namespace-tree">
+                                <template x-for="namespace in machineConfigNamespaces" :key="namespace.path">
+                                    <div class="namespace-section">
+                                        <div 
+                                            class="namespace-header clickable"
+                                            @click="toggleNamespaceExpansion(namespace)"
+                                        >
+                                            <span x-text="namespace.isExpanded ? '▼' : '▶'"></span>
+                                            <strong x-text="namespace.name"></strong>
+                                            <span class="item-count" x-text="`(${namespace.items.length} items)`"></span>
+                                        </div>
+                                        
+                                        <!-- Items in this namespace -->
+                                        <div x-show="namespace.isExpanded" class="namespace-content">
+                                            <template x-for="config in namespace.items" :key="config.handle">
+                                                <div 
+                                                    class="config-item"
+                                                    x-show="!machineConfigHandleFilter || config.handle.toLowerCase().includes(machineConfigHandleFilter.toLowerCase())"
+                                                >
+                                                    <div class="config-row">
+                                                        <div class="config-frozen">
+                                                            <input
+                                                                x-bind:id="`machineconfig-${config.handle}-frozen`"
+                                                                type="checkbox"
+                                                                x-model.boolean="config.frozen"
+                                                                x-init="disableElement($el,()=>(config.frozen||config.value_kind=='action'))"
+                                                            />
+                                                        </div>
+                                                        <div class="config-info">
+                                                            <label
+                                                                x-bind:for="`machineconfig-${config.handle}-frozen`"
+                                                                class="config-handle"
+                                                                x-text="config.handle"
+                                                            ></label>
+                                                            <div class="config-name" x-text="config.name"></div>
+                                                        </div>
+                                                        <div class="config-value">
+                                                            <template x-if="config.value_kind=='int'">
+                                                                <input
+                                                                    type="number"
+                                                                    step="1"
+                                                                    x-model.number="config.value"
+                                                                    is="number-input"
+                                                                    x-init="registerNumberInput($el)"
+                                                                    x-effect="disableElement($el,()=>config.frozen)"
+                                                                />
+                                                            </template>
+                                                            <template x-if="config.value_kind=='float'">
+                                                                <input
+                                                                    type="number"
+                                                                    step="0.01"
+                                                                    x-model.number="config.value"
+                                                                    is="number-input"
+                                                                    x-init="registerNumberInput($el)"
+                                                                    x-effect="disableElement($el,()=>config.frozen)"
+                                                                />
+                                                            </template>
+                                                            <template x-if="config.value_kind=='text'">
+                                                                <textarea
+                                                                    rows="2"
+                                                                    wrap="soft"
+                                                                    x-model="config.value"
+                                                                    x-effect="disableElement($el,()=>config.frozen)"
+                                                                ></textarea>
+                                                            </template>
+                                                            <template x-if="config.value_kind=='action'">
+                                                                <button
+                                                                    x-text="config.value"
+                                                                    @click="await runMachineConfigAction(config)"
+                                                                ></button>
+                                                            </template>
+                                                            <template x-if="config.value_kind=='option'">
+                                                                <select
+                                                                    x-model="config.value"
+                                                                    x-init="$el.value=config.value"
+                                                                    x-effect="disableElement($el,()=>config.frozen)"
+                                                                >
+                                                                    <template x-for="option in config.options" :key="option.handle">
+                                                                        <optgroup x-bind:label="option.name">
+                                                                            <option
+                                                                                x-bind:value="option.handle"
+                                                                                x-text="option.handle"
+                                                                            ></option>
+                                                                        </optgroup>
+                                                                    </template>
+                                                                </select>
+                                                            </template>
+                                                        </div>
+                                                        <div class="config-kind" x-text="config.value_kind"></div>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                            
+                                            <!-- Child namespaces -->
+                                            <template x-for="childNamespace in namespace.children" :key="childNamespace.path">
+                                                <div class="namespace-child">
+                                                    <div 
+                                                        class="namespace-header clickable"
+                                                        @click="toggleNamespaceExpansion(childNamespace)"
+                                                    >
+                                                        <span x-text="childNamespace.isExpanded ? '▼' : '▶'"></span>
+                                                        <strong x-text="childNamespace.name"></strong>
+                                                        <span class="item-count" x-text="`(${childNamespace.items.length} items)`"></span>
+                                                    </div>
+                                                    
+                                                    <div x-show="childNamespace.isExpanded" class="namespace-content">
+                                                        <template x-for="config in childNamespace.items" :key="config.handle">
+                                                            <div 
+                                                                class="config-item"
+                                                                x-show="!machineConfigHandleFilter || config.handle.toLowerCase().includes(machineConfigHandleFilter.toLowerCase())"
+                                                            >
+                                                                <div class="config-row">
+                                                                    <div class="config-frozen">
+                                                                        <input
+                                                                            x-bind:id="`machineconfig-${config.handle}-frozen`"
+                                                                            type="checkbox"
+                                                                            x-model.boolean="config.frozen"
+                                                                            x-init="disableElement($el,()=>(config.frozen||config.value_kind=='action'))"
+                                                                        />
+                                                                    </div>
+                                                                    <div class="config-info">
+                                                                        <label
+                                                                            x-bind:for="`machineconfig-${config.handle}-frozen`"
+                                                                            class="config-handle"
+                                                                            x-text="config.handle"
+                                                                        ></label>
+                                                                        <div class="config-name" x-text="config.name"></div>
+                                                                    </div>
+                                                                    <div class="config-value">
+                                                                        <template x-if="config.value_kind=='int'">
+                                                                            <input
+                                                                                type="number"
+                                                                                step="1"
+                                                                                x-model.number="config.value"
+                                                                                is="number-input"
+                                                                                x-init="registerNumberInput($el)"
+                                                                                x-effect="disableElement($el,()=>config.frozen)"
+                                                                            />
+                                                                        </template>
+                                                                        <template x-if="config.value_kind=='float'">
+                                                                            <input
+                                                                                type="number"
+                                                                                step="0.01"
+                                                                                x-model.number="config.value"
+                                                                                is="number-input"
+                                                                                x-init="registerNumberInput($el)"
+                                                                                x-effect="disableElement($el,()=>config.frozen)"
+                                                                            />
+                                                                        </template>
+                                                                        <template x-if="config.value_kind=='text'">
+                                                                            <textarea
+                                                                                rows="2"
+                                                                                wrap="soft"
+                                                                                x-model="config.value"
+                                                                                x-effect="disableElement($el,()=>config.frozen)"
+                                                                            ></textarea>
+                                                                        </template>
+                                                                        <template x-if="config.value_kind=='action'">
+                                                                            <button
+                                                                                x-text="config.value"
+                                                                                @click="await runMachineConfigAction(config)"
+                                                                            ></button>
+                                                                        </template>
+                                                                        <template x-if="config.value_kind=='option'">
+                                                                            <select
+                                                                                x-model="config.value"
+                                                                                x-init="$el.value=config.value"
+                                                                                x-effect="disableElement($el,()=>config.frozen)"
+                                                                            >
+                                                                                <template x-for="option in config.options" :key="option.handle">
+                                                                                    <optgroup x-bind:label="option.name">
+                                                                                        <option
+                                                                                            x-bind:value="option.handle"
+                                                                                            x-text="option.handle"
+                                                                                        ></option>
+                                                                                    </optgroup>
+                                                                                </template>
+                                                                            </select>
+                                                                        </template>
+                                                                    </div>
+                                                                    <div class="config-kind" x-text="config.value_kind"></div>
+                                                                </div>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Fallback flat table view -->
+                            <table x-show="!machineConfigUseNamespaces">
                                 <tr>
                                     <th>frozen</th>
                                     <th>handle</th>
@@ -447,12 +788,10 @@
                                     <th>name</th>
                                 </tr>
                                 <template
-                                    x-for="config in microscope_config.machine_config.toSorted((a,b)=>(a.handle<b.handle)?-1:1)"
+                                    x-for="config in filteredMachineConfig"
                                     :key="config.handle"
                                 >
-                                    <tr
-                                        x-show="config.handle.indexOf(machineConfigHandleFilter)>=0"
-                                    >
+                                    <tr>
                                         <td>
                                             <input
                                                 x-bind:id="`machineconfig-${config.handle}-frozen`"
@@ -468,9 +807,7 @@
                                             ></label>
                                         </td>
                                         <td>
-                                            <template
-                                                x-if="config.value_kind=='int'"
-                                            >
+                                            <template x-if="config.value_kind=='int'">
                                                 <input
                                                     type="number"
                                                     step="1"
@@ -480,9 +817,7 @@
                                                     x-effect="disableElement($el,()=>config.frozen)"
                                                 />
                                             </template>
-                                            <template
-                                                x-if="config.value_kind=='float'"
-                                            >
+                                            <template x-if="config.value_kind=='float'">
                                                 <input
                                                     type="number"
                                                     step="0.01"
@@ -492,9 +827,7 @@
                                                     x-effect="disableElement($el,()=>config.frozen)"
                                                 />
                                             </template>
-                                            <template
-                                                x-if="config.value_kind=='text'"
-                                            >
+                                            <template x-if="config.value_kind=='text'">
                                                 <textarea
                                                     rows="3"
                                                     wrap="soft"
@@ -502,29 +835,20 @@
                                                     x-effect="disableElement($el,()=>config.frozen)"
                                                 ></textarea>
                                             </template>
-                                            <template
-                                                x-if="config.value_kind=='action'"
-                                            >
+                                            <template x-if="config.value_kind=='action'">
                                                 <button
                                                     x-text="config.value"
                                                     @click="await runMachineConfigAction(config)"
                                                 ></button>
                                             </template>
-                                            <template
-                                                x-if="config.value_kind=='option'"
-                                            >
+                                            <template x-if="config.value_kind=='option'">
                                                 <select
                                                     x-model="config.value"
                                                     x-init="$el.value=config.value"
                                                     x-effect="disableElement($el,()=>config.frozen)"
                                                 >
-                                                    <template
-                                                        x-for="option in config.options"
-                                                        :key="option.handle"
-                                                    >
-                                                        <optgroup
-                                                            x-bind:label="option.name"
-                                                        >
+                                                    <template x-for="option in config.options" :key="option.handle">
+                                                        <optgroup x-bind:label="option.name">
                                                             <option
                                                                 x-bind:value="option.handle"
                                                                 x-text="option.handle"

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import seafront.server.commands as cmds
 from seafront.config import basics
 from seafront.config.basics import ImagingOrder
+from seafront.config.handles import CameraConfig, ImagingConfig, StorageConfig
 from seafront.hardware import microcontroller as mc
 from seafront.logger import logger
 
@@ -375,17 +376,15 @@ class ProtocolGenerator(BaseModel):
         )
         "offset of top left site from top left corner of the well, in y, in mm"
 
-        g_config = basics.GlobalConfigHandler.get_dict()
-
         # calculate meta information about acquisition
-        cam_img_width = g_config["main_camera_image_width_px"]
+        cam_img_width = CameraConfig.MAIN_IMAGE_WIDTH_PX.value_item
         assert cam_img_width is not None
         target_width: int = cam_img_width.intvalue
-        cam_img_height = g_config["main_camera_image_height_px"]
+        cam_img_height = CameraConfig.MAIN_IMAGE_HEIGHT_PX.value_item
         assert cam_img_height is not None
         target_height: int = cam_img_height.intvalue
         # get byte size per pixel from config main camera pixel format
-        main_cam_pix_format = g_config["main_camera_pixel_format"]
+        main_cam_pix_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item
         assert main_cam_pix_format is not None
         match main_cam_pix_format.value:
             case "mono8":
@@ -407,7 +406,7 @@ class ProtocolGenerator(BaseModel):
         self.image_size_bytes = target_width * target_height * bytes_per_pixel
         self.max_storage_size_images_GB = self.num_images_total * self.image_size_bytes / 1024**3
 
-        base_storage_path_item = g_config["base_image_output_dir"]
+        base_storage_path_item = StorageConfig.BASE_IMAGE_OUTPUT_DIR.value_item
         assert base_storage_path_item is not None
         assert type(base_storage_path_item.value) is str
         base_storage_path = path.Path(base_storage_path_item.value)
@@ -615,7 +614,7 @@ class ProtocolGenerator(BaseModel):
                         logger.debug("approached reference z")
 
                     # Get imaging order configuration
-                    imaging_order_item = g_config["imaging_order"]
+                    imaging_order_item = ImagingConfig.ORDER.value_item
                     assert imaging_order_item is not None
                     imaging_order = tp.cast(ImagingOrder, imaging_order_item.value)
                     
@@ -739,7 +738,7 @@ class ProtocolGenerator(BaseModel):
                         image_storage_path = f"{self.project_output_path!s}/{formatted_well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.tiff"
 
                         image_store_entry = cmds.ImageStoreEntry(
-                            pixel_format=g_config["main_camera_pixel_format"].strvalue,
+                            pixel_format=CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue,
                             info=cmds.ImageStoreInfo(
                                 channel=channel,
                                 width_px=res._img.shape[1],

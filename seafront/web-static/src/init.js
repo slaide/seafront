@@ -28,6 +28,8 @@ import { ChannelImageView } from "channelview";
 
 import { tooltipConfig, enabletooltip } from "tooltip";
 
+import { parseConfigNamespaces, flattenNamespaceTree, toggleNamespaceExpansion, expandAllNamespaces, collapseAllNamespaces } from "./namespace-parser.js";
+
 // Load tooltip settings from localStorage and apply them
 function loadTooltipSettings() {
     try {
@@ -1110,7 +1112,7 @@ document.addEventListener("alpine:init", () => {
          * @returns {Array<{name: string, handle: string, slot: number}>}
          */
         get availableFilters() {
-            const filtersConfigItem = this.getMachineConfigItem('filters');
+            const filtersConfigItem = this.getMachineConfigItem('filter.wheel.configuration');
             if (!filtersConfigItem || !filtersConfigItem.value) {
                 return [];
             }
@@ -1134,7 +1136,7 @@ document.addEventListener("alpine:init", () => {
          * @returns {boolean}
          */
         get isFilterWheelAvailable() {
-            const filterWheelConfigItem = this.getMachineConfigItem('filter_wheel_available');
+            const filterWheelConfigItem = this.getMachineConfigItem('filter.wheel.available');
             return filterWheelConfigItem?.value === 'yes';
         },
 
@@ -1209,6 +1211,12 @@ document.addEventListener("alpine:init", () => {
 
         /** used to filter the machine config list */
         machineConfigHandleFilter: "",
+        
+        /** namespace tree for machine config */
+        machineConfigNamespaces: [],
+        
+        /** whether to use hierarchical view */
+        machineConfigUseNamespaces: true,
 
         /** indicate of connection to server is currently established */
         isConnectedToServer: false,
@@ -1436,6 +1444,9 @@ document.addEventListener("alpine:init", () => {
                 // Store the configIsStored status to restore later (after all initialization)
                 this._savedConfigIsStored = savedData.configIsStored;
             }
+
+            // Initialize namespace tree for machine config
+            this.refreshMachineConfigNamespaces();
 
             // init data
             const currentStateData = await fetch(
@@ -2423,6 +2434,7 @@ document.addEventListener("alpine:init", () => {
         async machineConfigReset() {
             this.microscope_config.machine_config =
                 await this.getMachineDefaults();
+            this.refreshMachineConfigNamespaces();
         },
         async machineConfigFlush() {
             /** @type {MachineConfigFlushRequest} */
@@ -2443,6 +2455,35 @@ document.addEventListener("alpine:init", () => {
                 .then((v) => {
                     return v;
                 });
+        },
+
+        // Namespace-related methods
+        refreshMachineConfigNamespaces() {
+            if (this.microscope_config?.machine_config) {
+                this.machineConfigNamespaces = parseConfigNamespaces(this.microscope_config.machine_config);
+            }
+        },
+
+        toggleNamespaceExpansion(node) {
+            toggleNamespaceExpansion(node);
+        },
+
+        expandAllNamespaces() {
+            expandAllNamespaces(this.machineConfigNamespaces);
+        },
+
+        collapseAllNamespaces() {
+            collapseAllNamespaces(this.machineConfigNamespaces);
+        },
+
+        get filteredMachineConfig() {
+            if (this.machineConfigUseNamespaces) {
+                return flattenNamespaceTree(this.machineConfigNamespaces, this.machineConfigHandleFilter);
+            } else {
+                return this.microscope_config?.machine_config?.filter(config => 
+                    config.handle.toLowerCase().includes(this.machineConfigHandleFilter.toLowerCase())
+                ).sort((a, b) => a.handle.localeCompare(b.handle)) || [];
+            }
         },
 
         /*
@@ -2489,14 +2530,14 @@ document.addEventListener("alpine:init", () => {
 
         get laserAutofocusIsCalibrated() {
             const is_calibrated =
-                (this.getMachineConfigItem("laser_autofocus_is_calibrated")
+                (this.getMachineConfigItem("laser.autofocus.calibration.is_calibrated")
                     ?.value ?? "no") == "yes";
             return is_calibrated;
         },
         get laserAutofocusReferenceText() {
             const is_calibrated = this.laserAutofocusIsCalibrated;
             const laser_autofocus_calibration_refzmm =
-                this.getMachineConfigItem("laser_autofocus_calibration_refzmm");
+                this.getMachineConfigItem("laser.autofocus.calibration.ref_z_mm");
             if (!is_calibrated || !laser_autofocus_calibration_refzmm) {
                 return "(none set)";
             }
@@ -2511,7 +2552,7 @@ document.addEventListener("alpine:init", () => {
         get laserAutofocusReferenceValue() {
             const is_calibrated = this.laserAutofocusIsCalibrated;
             const laser_autofocus_calibration_refzmm =
-                this.getMachineConfigItem("laser_autofocus_calibration_refzmm");
+                this.getMachineConfigItem("laser.autofocus.calibration.ref_z_mm");
             if (!is_calibrated || !laser_autofocus_calibration_refzmm) {
                 return 0;
             }
@@ -2533,7 +2574,7 @@ document.addEventListener("alpine:init", () => {
             console.log(`calibrated laser autofocus system`, calibration_data);
 
             const calibration_refzmm = this.getMachineConfigItem(
-                "laser_autofocus_calibration_refzmm",
+                "laser.autofocus.calibration.ref_z_mm",
             );
             if (!calibration_refzmm)
                 throw new Error(`machine config item calibration_refzmm not found during laser autofocus calibration`);
@@ -2543,7 +2584,7 @@ document.addEventListener("alpine:init", () => {
                 calibration_data.calibration_data.calibration_position.z_pos_mm;
 
             const calibration_umpx = this.getMachineConfigItem(
-                "laser_autofocus_calibration_umpx",
+                "laser.autofocus.calibration.um_per_px",
             );
             if (!calibration_umpx)
                 throw new Error(`machine config item calibration_umpx not found during laser autofocus calibration`);
@@ -2553,7 +2594,7 @@ document.addEventListener("alpine:init", () => {
                 calibration_data.calibration_data.um_per_px;
 
             const calibration_x = this.getMachineConfigItem(
-                "laser_autofocus_calibration_x",
+                "laser.autofocus.calibration.x_peak_pos",
             );
             if (!calibration_x)
                 throw new Error(`machine config item calibration_x not found during laser autofocus calibration`);
@@ -2562,7 +2603,7 @@ document.addEventListener("alpine:init", () => {
             calibration_x.value = calibration_data.calibration_data.x_reference;
 
             const is_calibrated = this.getMachineConfigItem(
-                "laser_autofocus_is_calibrated",
+                "laser.autofocus.calibration.is_calibrated",
             );
             if (!is_calibrated)
                 throw new Error(`machine config item is_calibrated not found during laser autofocus calibration`);
@@ -2604,7 +2645,7 @@ document.addEventListener("alpine:init", () => {
             // 1) approach ref z
             /** @ts-ignore @type {number} */
             const refz_mm = this.getMachineConfigItem(
-                "laser_autofocus_calibration_refzmm",
+                "laser.autofocus.calibration.ref_z_mm",
             ).value;
             await this.Actions.moveTo({ z_mm: refz_mm });
 
@@ -2641,11 +2682,11 @@ document.addEventListener("alpine:init", () => {
             const lafSnapRes = await this.Actions.laserAutofocusSnap({
                 // @ts-ignore
                 exposure_time_ms: this.getMachineConfigItem(
-                    "laser_autofocus_exposure_time_ms",
+                    "laser.autofocus.exposure_time_ms",
                 ).value,
                 // @ts-ignore
                 analog_gain: this.getMachineConfigItem(
-                    "laser_autofocus_analog_gain",
+                    "laser.autofocus.camera.analog_gain",
                 ).value,
             });
 

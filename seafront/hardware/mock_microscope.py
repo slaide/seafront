@@ -246,7 +246,7 @@ class MockMicroscope(Microscope):
         logger.info("Creating mock microscope instance")
         
         # Parse channels from configuration
-        channels_json = g_dict["channels"].strvalue
+        channels_json = g_dict["imaging.channels"].strvalue
         channels_data = json5.loads(channels_json)
         if not isinstance(channels_data, list):
             raise ValueError("Invalid channels configuration: expected list")
@@ -258,8 +258,8 @@ class MockMicroscope(Microscope):
         
         # Parse filters from configuration (may not exist in global config)
         filter_configs = []
-        if "filters" in g_dict:
-            filters_json = g_dict["filters"].strvalue
+        if "filter.wheel.configuration" in g_dict:
+            filters_json = g_dict["filter.wheel.configuration"].strvalue
             filters_data = json5.loads(filters_json)
             if not isinstance(filters_data, list):
                 raise ValueError("Invalid filters configuration: expected list")
@@ -336,9 +336,9 @@ class MockMicroscope(Microscope):
         """Get calibrated stage offset from configuration."""
         g_dict = GlobalConfigHandler.get_dict()
         
-        x_offset = g_dict["calibration_offset_x_mm"].floatvalue
-        y_offset = g_dict["calibration_offset_y_mm"].floatvalue  
-        z_offset = g_dict["calibration_offset_z_mm"].floatvalue
+        x_offset = g_dict["calibration.offset.x_mm"].floatvalue
+        y_offset = g_dict["calibration.offset.y_mm"].floatvalue  
+        z_offset = g_dict["calibration.offset.z_mm"].floatvalue
         
         return (x_offset, y_offset, z_offset)
     
