@@ -78,8 +78,6 @@
             .namespace-tree {
                 border: 1px solid var(--border-color);
                 border-radius: 4px;
-                max-height: 600px;
-                overflow-y: auto;
             }
 
             .namespace-section {
@@ -553,7 +551,7 @@
                                 </button>
                             </div>
                         </div>
-                        <div tabname="Machine Config">
+                        <div id="machineconfigtab" tabname="Machine Config">
                             <div class="machine-config-controls">
                                 <div>
                                     <label>
@@ -968,7 +966,8 @@
                 </div>
 
                 <style>
-                    #acquisitioncontroltab {
+                    #acquisitioncontroltab,
+                    #machineconfigtab {
                         height: 100%;
                         overflow-y: auto;
                     }
