@@ -43,7 +43,7 @@ from pydantic.fields import FieldInfo
 from seaconfig.acquisition import AcquisitionConfig
 
 from seafront.config.basics import ChannelConfig, ConfigItem, CriticalMachineConfig, GlobalConfigHandler, ImagingOrder, ServerConfig
-from seafront.config.handles import CameraConfig, LaserAutofocusConfig
+from seafront.config.handles import CalibrationConfig, CameraConfig, LaserAutofocusConfig
 from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.hardware.mock_microscope import MockMicroscope
 from seafront.hardware.microscope import Microscope, HardwareLimits
@@ -598,6 +598,18 @@ class Core:
             methods=["POST"],
         )
 
+        async def _safe_send_json(ws: WebSocket, payload: tp.Any) -> None:
+            try:
+                await ws.send_json(payload)
+            except Exception as exc:
+                logger.debug("websocket send_json failed: %s", exc)
+
+        async def _safe_send_bytes(ws: WebSocket, payload: bytes) -> None:
+            try:
+                await ws.send_bytes(payload)
+            except Exception as exc:
+                logger.debug("websocket send_bytes failed: %s", exc)
+
         @app.websocket("/ws/get_info/current_state")
         async def ws_get_info_current_state(ws: WebSocket):
             """
@@ -614,7 +626,7 @@ class Core:
 
                     try:
                         current_state = await self.get_current_state()
-                        await ws.send_json(current_state.model_dump())
+                        await _safe_send_json(ws, current_state.model_dump())
                     except Exception as e:
                         # Handle hardware disconnects and other errors gracefully
                         error_msg = {
@@ -622,7 +634,7 @@ class Core:
                             "message": str(e),
                             "timestamp": time.time()
                         }
-                        await ws.send_json(error_msg)
+                        await _safe_send_json(ws, error_msg)
                         # Don't close the connection - let client decide
                         
             except WebSocketDisconnect:
@@ -646,12 +658,12 @@ class Core:
 
                     img = self.latest_images.get(channel_handle)
                     if img is None:
-                        await ws.send_json({})
+                        await _safe_send_json(ws, {})
                     else:
                         # downsample image for preview
                         img_data = img._img
 
-                        await ws.send_json(
+                        await _safe_send_json(ws,
                             {
                                 "width": img_data.shape[1],
                                 "height": img_data.shape[0],
@@ -665,7 +677,7 @@ class Core:
 
                         img_bytes = np.ascontiguousarray(img_data[::factor, ::factor]).tobytes()
 
-                        await ws.send_bytes(img_bytes)
+                        await _safe_send_bytes(ws, img_bytes)
 
             except WebSocketDisconnect:
                 pass
@@ -727,7 +739,7 @@ class Core:
                 while True:
                     # await message, but ignore its contents
                     args = await ws.receive_json()
-                    await ws.send_json((await self.get_acquisition_status(**args)).model_dump())
+                    await _safe_send_json(ws, (await self.get_acquisition_status(**args)).model_dump())
             except WebSocketDisconnect:
                 pass
 
@@ -752,7 +764,7 @@ class Core:
                 def send_status_update(status: ChannelSnapProgressiveStatus):
                     try:
                         # Create a task to send the WebSocket message
-                        asyncio.create_task(ws.send_json(status.model_dump()))
+                        asyncio.create_task(_safe_send_json(ws, status.model_dump()))
                     except Exception as e:
                         logger.warning(f"Failed to send progressive snap status: {e}")
                 
@@ -1141,21 +1153,21 @@ class Core:
         # new_config_items:tp.Union[tp.Dict[str,ConfigItem
         GlobalConfigHandler.override(
             {
-                "calibration_offset_x_mm": ConfigItem(
+                CalibrationConfig.OFFSET_X_MM.value: ConfigItem(
                     name="ignored",
-                    handle="calibration_offset_x_mm",
+                    handle=CalibrationConfig.OFFSET_X_MM.value,
                     value_kind="float",
                     value=ref_x_mm,
                 ),
-                "calibration_offset_y_mm": ConfigItem(
+                CalibrationConfig.OFFSET_Y_MM.value: ConfigItem(
                     name="ignored",
-                    handle="calibration_offset_y_mm",
+                    handle=CalibrationConfig.OFFSET_Y_MM.value,
                     value_kind="float",
                     value=ref_y_mm,
                 ),
-                "calibration_offset_z_mm": ConfigItem(
+                CalibrationConfig.OFFSET_Z_MM.value: ConfigItem(
                     name="ignored",
-                    handle="calibration_offset_z_mm",
+                    handle=CalibrationConfig.OFFSET_Z_MM.value,
                     value_kind="float",
                     value=ref_z_mm,
                 ),

@@ -504,10 +504,7 @@ class ProtocolGenerator(BaseModel):
         optimized_wells = self.get_greedy_well_order()
 
         # Initialize position tracking (start from reference position if autofocus enabled)
-        if self.config_file.autofocus_enabled and reference_z_mm is not None:
-            current_position = (0.0, 0.0)  # Start from reference position
-        else:
-            current_position = (0.0, 0.0)  # Start from origin
+        current_position = (0.0, 0.0)
 
         # for each timepoint, starting at 1
         for timepoint in range(1, self.config_file.grid.num_t + 1):

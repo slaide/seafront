@@ -1488,23 +1488,18 @@ document.addEventListener("alpine:init", () => {
          * @param {HTMLElement} channelElement must be a valid channel display (with class channel-box-image)
          */
         updateChannelCache(channelElement) {
-            const channelhandle =
-                channelElement.parentElement?.getAttribute("channelhandle");
-            // console.log(`updating ${channelhandle}`)
-            if (!channelhandle) {
-                const error = `element is not a valid channel-box-image`;
-                console.error(error);
-                throw error;
-            }
-            const cachedImage = this.cached_channel_image.get(channelhandle);
-            if (!cachedImage) return null;
-
             if (!this.view) return null;
 
-            const channelView = this.view.sceneInfos.find(
-                (s) => s.elem == channelElement,
-            );
-            if (!channelView) return null;
+            let channelView;
+            try {
+                channelView = this.view.ensureSceneForElement(channelElement);
+            } catch (error) {
+                console.error(error);
+                return null;
+            }
+
+            const cachedImage = this.cached_channel_image.get(channelView.channelhandle);
+            if (!cachedImage) return null;
 
             this.view.updateTextureData(channelView, cachedImage);
         },

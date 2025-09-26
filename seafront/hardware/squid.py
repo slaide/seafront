@@ -19,7 +19,12 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from scipy import stats  # for linear regression
 
 from seafront.config.basics import GlobalConfigHandler, CameraDriver, ChannelConfig, FilterConfig, ImagingOrder
-from seafront.config.handles import CameraConfig, LaserAutofocusConfig, ImageConfig, get_config_item_legacy
+from seafront.config.handles import (
+    CameraConfig,
+    CalibrationConfig,
+    LaserAutofocusConfig,
+    ImageConfig,
+)
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, CoreState
 from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier, HardwareLimitValue
@@ -606,9 +611,22 @@ class SquidAdapter(Microscope):
         return calibrated XY stage offset from GlobalConfigHandler in order (x_mm,y_mm)
         """
 
-        off_x_mm = GlobalConfigHandler.get_dict()["calibration_offset_x_mm"].floatvalue
-        off_y_mm = GlobalConfigHandler.get_dict()["calibration_offset_y_mm"].floatvalue
-        off_z_mm = GlobalConfigHandler.get_dict()["calibration_offset_z_mm"].floatvalue
+        g_config = GlobalConfigHandler.get_dict()
+
+        def _get_offset(handle: CalibrationConfig, default: float = 0.0) -> float:
+            item = g_config.get(handle.value)
+            if item is None:
+                logger.debug(
+                    "calibration offset '%s' missing in config; falling back to %s",
+                    handle.value,
+                    default,
+                )
+                return default
+            return item.floatvalue
+
+        off_x_mm = _get_offset(CalibrationConfig.OFFSET_X_MM)
+        off_y_mm = _get_offset(CalibrationConfig.OFFSET_Y_MM)
+        off_z_mm = _get_offset(CalibrationConfig.OFFSET_Z_MM)
 
         return (off_x_mm, off_y_mm, off_z_mm)
 
@@ -1773,22 +1791,26 @@ class SquidAdapter(Microscope):
                     initial_z = current_z
 
                     if command.pre_approach_refz:
-                        gconfig_refzmm_item = g_config.get("laser_autofocus_calibration_refzmm")
-                        if gconfig_refzmm_item is None:
+                        refz_item = None
+                        try:
+                            refz_item = LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value_item
+                        except KeyError:
                             cmd.error_internal(
                                 detail="laser_autofocus_calibration_refzmm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set"
                             )
 
+                        assert refz_item is not None
+
                         # move to reference z, only if it is far enough away to make a move worth it
                         if (
-                            math.fabs(current_z - gconfig_refzmm_item.floatvalue)
+                            math.fabs(current_z - refz_item.floatvalue)
                             > OFFSET_MOVEMENT_THRESHOLD_MM
                         ):
                             res = await self.execute(
                                 cmd.MoveTo(
                                     x_mm=None,
                                     y_mm=None,
-                                    z_mm=gconfig_refzmm_item.floatvalue,
+                                    z_mm=refz_item.floatvalue,
                                 )
                             )
 
