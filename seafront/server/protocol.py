@@ -858,14 +858,17 @@ class ProtocolGenerator(BaseModel):
             # sleep for additional time, maybe
             end_time=time.time()
             if self.config_file.grid.num_t>timepoint:
-                time_elapsed=end_time-start_time
+                time_elapsed_s=end_time-start_time
 
                 delta_t_s=self.config_file.grid.delta_t.h*3600+self.config_file.grid.delta_t.m*60+self.config_file.grid.delta_t.s
 
                 # sleep through remaining time in small intervals to process inputs (e.g. cancel acquisition)
-                time_remaining=delta_t_s-time_elapsed
+                time_remaining=delta_t_s-time_elapsed_s
 
                 logger.debug(f"protocol - time remaining before starting next time series acquisition: {time_remaining}s")
+
+                if time_remaining<0:
+                    logger.warning(f"protocol - took longer to acquire one time point than the specified delta time between acquisitions (took {time_elapsed_s}s but delta time is {delta_t_s}s )")
 
                 timeslice_s=0.5
                 while time_remaining>0:
@@ -873,6 +876,7 @@ class ProtocolGenerator(BaseModel):
 
                     await asyncio.sleep(min(time_remaining,timeslice_s))
                     time_remaining-=timeslice_s
+                    
 
         logger.debug("protocol - finished protocol steps")
 
