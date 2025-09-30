@@ -175,9 +175,13 @@ async def store_image(
     image_storage_path = image_entry.info.storage_path
     assert isinstance(image_storage_path, str), f"{image_entry.info.storage_path} is not str"
 
+    # ensure parent dir exists (primarily for time series)
+    storage_path = path.Path(image_storage_path)
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+
     # takes 70-250ms
     tifffile.imwrite(
-        image_storage_path,
+        storage_path,
         image_entry._img,
         compression=img_compression_algorithm,
         compressionargs={},  # for zlib: {'level': 8},
