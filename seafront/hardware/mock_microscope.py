@@ -29,6 +29,7 @@ import seaconfig as sc
 from pydantic import Field, PrivateAttr
 
 from seafront.config.basics import ChannelConfig, FilterConfig, GlobalConfigHandler, ImagingOrder
+from seafront.config.handles import ImagingConfig
 from seafront.hardware.adapter import AdapterState, CoreState, Position
 from seafront.hardware.firmware_config import get_firmware_config, get_available_profiles, AVAILABLE_PROFILES
 from seafront.hardware.illumination import IlluminationController
@@ -544,7 +545,7 @@ class MockMicroscope(Microscope):
         
         # Get imaging order from machine config and sort channels
         g_config = GlobalConfigHandler.get_dict()
-        imaging_order = g_config.get("imaging_order", "protocol_order")
+        imaging_order = g_config.get(ImagingConfig.ORDER.value, "protocol_order")
         if isinstance(imaging_order, str):
             imaging_order_value = imaging_order
         else:

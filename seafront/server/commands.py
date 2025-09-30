@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from seafront.config.basics import GlobalConfigHandler
+from seafront.config.handles import ProtocolConfig
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, Position
 
@@ -64,7 +65,7 @@ def error_internal(detail: str) -> tp.NoReturn:
 def wellIsForbidden(well_name: str, plate_type: sc.Wellplate) -> bool:
     """check if a well if forbidden, as indicated by global config"""
     g_config = GlobalConfigHandler.get_dict()
-    forbidden_wells_entry = g_config.get("forbidden_wells")
+    forbidden_wells_entry = g_config.get(ProtocolConfig.FORBIDDEN_WELLS.value)
     if forbidden_wells_entry is None:
         error_internal(detail="forbidden_wells entry not found in global config")
 

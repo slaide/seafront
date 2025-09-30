@@ -43,7 +43,7 @@ from pydantic.fields import FieldInfo
 from seaconfig.acquisition import AcquisitionConfig
 
 from seafront.config.basics import ChannelConfig, ConfigItem, CriticalMachineConfig, GlobalConfigHandler, ImagingOrder, ServerConfig
-from seafront.config.handles import CalibrationConfig, CameraConfig, LaserAutofocusConfig
+from seafront.config.handles import CalibrationConfig, CameraConfig, ImagingConfig, LaserAutofocusConfig
 from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.hardware.mock_microscope import MockMicroscope
 from seafront.hardware.microscope import Microscope, HardwareLimits
@@ -622,7 +622,10 @@ class Core:
             try:
                 while True:
                     # await message, but ignore its contents
-                    _ = await ws.receive()
+                    message = await ws.receive()
+                    msg_type = message.get("type")
+                    if msg_type in {"websocket.disconnect", "websocket.close"}:
+                        break
 
                     try:
                         current_state = await self.get_current_state()
@@ -866,7 +869,7 @@ class Core:
         )
 
         async def write_images(cmd: ChannelSnapSelection, res: ChannelSnapSelectionResult):
-            pixel_format = GlobalConfigHandler.get_dict()["main_camera_pixel_format"].strvalue
+            pixel_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue
 
             for channel_handle, img in res._images.items():
                 channel = [c for c in cmd.config_file.channels if c.handle == channel_handle]
@@ -902,9 +905,7 @@ class Core:
                 self.image_store_threadpool.run(
                     self._store_new_image(
                         img=img,
-                        pixel_format=GlobalConfigHandler.get_dict()[
-                            "main_camera_pixel_format"
-                        ].strvalue,
+                        pixel_format=CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue,
                         channel_config=stream_info["channel"],
                     )
                 )
@@ -1401,7 +1402,9 @@ class Core:
                 error_internal(detail=f"well {well.well_name} is not allowed on this plate")
 
         if config_file.autofocus_enabled:
-            laser_autofocus_is_calibrated_item = g_config.get("laser_autofocus_is_calibrated")
+            laser_autofocus_is_calibrated_item = g_config.get(
+                LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.value
+            )
 
             laser_autofocus_is_calibrated = (
                 laser_autofocus_is_calibrated_item is not None
@@ -1515,9 +1518,7 @@ class Core:
                                 if result is not None and isinstance(next_step, ChannelSnapshot):
                                     await self._store_new_image(
                                         img=result._img,
-                                        pixel_format=GlobalConfigHandler.get_dict()[
-                                            "main_camera_pixel_format"
-                                        ].strvalue,
+                                        pixel_format=CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue,
                                         channel_config=next_step.channel,
                                     )
 
@@ -1639,7 +1640,7 @@ class Core:
             
         # Get imaging order from machine config and sort channels
         g_config = GlobalConfigHandler.get_dict()
-        imaging_order = g_config.get("imaging_order", "protocol_order")
+        imaging_order = g_config.get(ImagingConfig.ORDER.value, "protocol_order")
         if isinstance(imaging_order, str):
             imaging_order_value = imaging_order
         else:

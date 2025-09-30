@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import seafront.server.commands as cmds
 from seafront.config import basics
 from seafront.config.basics import ImagingOrder
-from seafront.config.handles import CameraConfig, ImagingConfig, StorageConfig
+from seafront.config.handles import CameraConfig, ImagingConfig, LaserAutofocusConfig, StorageConfig
 from seafront.hardware import microcontroller as mc
 from seafront.logger import logger
 
@@ -490,7 +490,7 @@ class ProtocolGenerator(BaseModel):
         reference_z_mm = last_position.z_pos_mm
 
         # if laser autofocus is enabled, use autofocus z reference as initial z reference
-        gconfig_refzmm_item = g_config.get("laser_autofocus_calibration_refzmm")
+        gconfig_refzmm_item = g_config.get(LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value)
         if self.config_file.autofocus_enabled and gconfig_refzmm_item is not None:
             reference_z_mm = gconfig_refzmm_item.floatvalue
 

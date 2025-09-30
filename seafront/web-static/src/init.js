@@ -2538,7 +2538,7 @@ document.addEventListener("alpine:init", () => {
             }
 
             if (laser_autofocus_calibration_refzmm.value_kind != "float") {
-                throw new Error(`machine config laser_autofocus_calibration_refzmm has unexpected value kind ${laser_autofocus_calibration_refzmm.value_kind}`);
+                throw new Error(`machine config laser.autofocus.calibration.ref_z_mm has unexpected value kind ${laser_autofocus_calibration_refzmm.value_kind}`);
             }
 
             const reference_z_mm = laser_autofocus_calibration_refzmm.value;
@@ -2572,9 +2572,9 @@ document.addEventListener("alpine:init", () => {
                 "laser.autofocus.calibration.ref_z_mm",
             );
             if (!calibration_refzmm)
-                throw new Error(`machine config item calibration_refzmm not found during laser autofocus calibration`);
+                throw new Error(`machine config item laser.autofocus.calibration.ref_z_mm not found during laser autofocus calibration`);
             if (calibration_refzmm.value_kind != "float")
-                throw new Error(`machine config item calibration_refzmm has unexpected type ${calibration_refzmm.value_kind}`);
+                throw new Error(`machine config item laser.autofocus.calibration.ref_z_mm has unexpected type ${calibration_refzmm.value_kind}`);
             calibration_refzmm.value =
                 calibration_data.calibration_data.calibration_position.z_pos_mm;
 
@@ -2582,9 +2582,9 @@ document.addEventListener("alpine:init", () => {
                 "laser.autofocus.calibration.um_per_px",
             );
             if (!calibration_umpx)
-                throw new Error(`machine config item calibration_umpx not found during laser autofocus calibration`);
+                throw new Error(`machine config item laser.autofocus.calibration.um_per_px not found during laser autofocus calibration`);
             if (calibration_umpx.value_kind != "float")
-                throw new Error(`machine config item calibration_umpx has unexpected type ${calibration_umpx.value_kind}`);
+                throw new Error(`machine config item laser.autofocus.calibration.um_per_px has unexpected type ${calibration_umpx.value_kind}`);
             calibration_umpx.value =
                 calibration_data.calibration_data.um_per_px;
 
@@ -2592,18 +2592,18 @@ document.addEventListener("alpine:init", () => {
                 "laser.autofocus.calibration.x_peak_pos",
             );
             if (!calibration_x)
-                throw new Error(`machine config item calibration_x not found during laser autofocus calibration`);
+                throw new Error(`machine config item laser.autofocus.calibration.x_peak_pos not found during laser autofocus calibration`);
             if (calibration_x.value_kind != "float")
-                throw new Error(`machine config item calibration_x has unexpected type ${calibration_x.value_kind}`);
+                throw new Error(`machine config item laser.autofocus.calibration.x_peak_pos has unexpected type ${calibration_x.value_kind}`);
             calibration_x.value = calibration_data.calibration_data.x_reference;
 
             const is_calibrated = this.getMachineConfigItem(
                 "laser.autofocus.calibration.is_calibrated",
             );
             if (!is_calibrated)
-                throw new Error(`machine config item is_calibrated not found during laser autofocus calibration`);
+                throw new Error(`machine config item laser.autofocus.calibration.is_calibrated not found during laser autofocus calibration`);
             if (is_calibrated.value_kind != "option")
-                throw new Error(`machine config item is_calibrated has unexpected type ${is_calibrated.value_kind}`);
+                throw new Error(`machine config item laser.autofocus.calibration.is_calibrated has unexpected type ${is_calibrated.value_kind}`);
             is_calibrated.value = "yes";
         },
 

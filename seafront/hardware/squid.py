@@ -22,6 +22,8 @@ from seafront.config.basics import GlobalConfigHandler, CameraDriver, ChannelCon
 from seafront.config.handles import (
     CameraConfig,
     CalibrationConfig,
+    FilterWheelConfig,
+    ImagingConfig,
     LaserAutofocusConfig,
     ImageConfig,
 )
@@ -262,7 +264,7 @@ class SquidAdapter(Microscope):
         channel_configs = [ChannelConfig(**ch) for ch in channels_data] #type: ignore
         
         # Only process filters if filter wheel is available
-        filter_wheel_available = g_dict.get("filter_wheel_available")
+        filter_wheel_available = g_dict.get(FilterWheelConfig.AVAILABLE.value)
         if filter_wheel_available and filter_wheel_available.boolvalue:
             filters_json = g_dict["filter.wheel.configuration"].strvalue
             filters_data = json5.loads(filters_json)
@@ -452,7 +454,7 @@ class SquidAdapter(Microscope):
 
                 # Only initialize filter wheel if it's available
                 g_dict = GlobalConfigHandler.get_dict()
-                filter_wheel_available = g_dict.get("filter_wheel_available")
+                filter_wheel_available = g_dict.get(FilterWheelConfig.AVAILABLE.value)
                 if filter_wheel_available and filter_wheel_available.boolvalue:
                     # Initialize filter wheel with homing sequence (matching Squid behavior)
                     logger.info("initializing filter wheel...")
@@ -543,13 +545,15 @@ class SquidAdapter(Microscope):
 
             g_config = GlobalConfigHandler.get_dict()
 
-            laf_is_calibrated = g_config.get("laser_autofocus_is_calibrated")
+            laf_is_calibrated = g_config.get(
+                LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.value
+            )
 
             # get channels from that, filter for selected/enabled channels
             channels = [c for c in config_file.channels if c.enabled]
             
             # get imaging order from machine config, default to protocol_order
-            imaging_order = g_config.get("imaging_order", "protocol_order")
+            imaging_order = g_config.get(ImagingConfig.ORDER.value, "protocol_order")
             if isinstance(imaging_order, str):
                 imaging_order_value = imaging_order
             else:
@@ -1796,7 +1800,7 @@ class SquidAdapter(Microscope):
                             refz_item = LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value_item
                         except KeyError:
                             cmd.error_internal(
-                                detail="laser_autofocus_calibration_refzmm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set"
+                                detail="laser.autofocus.calibration.ref_z_mm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set"
                             )
 
                         assert refz_item is not None

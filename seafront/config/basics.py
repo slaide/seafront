@@ -179,22 +179,60 @@ class GlobalConfigHandler:
         # store critical config items from current config
         store_dict = {}
         current_config = GlobalConfigHandler.get_dict()
-        
+
+        from seafront.config.handles import (
+            CalibrationConfig,
+            CameraConfig,
+            FilterWheelConfig,
+            ImagingConfig,
+            LaserAutofocusConfig,
+            ProtocolConfig,
+            StorageConfig,
+            SystemConfig,
+        )
+
+        handle_lookup: dict[str, str] = {
+            "microscope_name": SystemConfig.MICROSCOPE_NAME.value,
+            "main_camera_model": CameraConfig.MAIN_MODEL.value,
+            "main_camera_driver": CameraConfig.MAIN_DRIVER.value,
+            "base_image_output_dir": StorageConfig.BASE_IMAGE_OUTPUT_DIR.value,
+            "calibration_offset_x_mm": CalibrationConfig.OFFSET_X_MM.value,
+            "calibration_offset_y_mm": CalibrationConfig.OFFSET_Y_MM.value,
+            "calibration_offset_z_mm": CalibrationConfig.OFFSET_Z_MM.value,
+            "laser_autofocus_available": LaserAutofocusConfig.AVAILABLE.value,
+            "laser_autofocus_camera_model": LaserAutofocusConfig.CAMERA_MODEL.value,
+            "laser_autofocus_camera_driver": LaserAutofocusConfig.CAMERA_DRIVER.value,
+            "filter_wheel_available": FilterWheelConfig.AVAILABLE.value,
+            "filters": FilterWheelConfig.CONFIGURATION.value,
+            "channels": ImagingConfig.CHANNELS.value,
+            "forbidden_wells": ProtocolConfig.FORBIDDEN_WELLS.value,
+        }
+
+        def _get_config_item(handle_key: str):
+            lookup_key = handle_lookup.get(handle_key, handle_key)
+            return current_config.get(lookup_key)
+
         # Find the existing microscope config to use as fallback
-        current_microscope_name = current_config.get("microscope_name")
+        current_microscope_name_item = _get_config_item("microscope_name")
+        current_microscope_name = (
+            current_microscope_name_item.value if current_microscope_name_item else None
+        )
         existing_microscope_config = None
         if current_microscope_name:
             for microscope_config in server_config.microscopes:
-                if microscope_config.microscope_name == current_microscope_name.value:
+                if microscope_config.microscope_name == current_microscope_name:
                     existing_microscope_config = microscope_config
                     break
         
         for key in critical_machine_config.keys():
-            if key in current_config:
-                store_dict[key] = current_config[key].value
+            config_item = _get_config_item(key)
+            if config_item is not None:
+                store_dict[key] = config_item.value
             elif existing_microscope_config and hasattr(existing_microscope_config, key):
                 # Fallback to existing config value for missing keys
                 store_dict[key] = getattr(existing_microscope_config, key)
+            else:
+                store_dict[key] = critical_machine_config[key]
 
         store_config = CriticalMachineConfig(**store_dict)
 

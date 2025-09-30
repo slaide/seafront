@@ -1965,7 +1965,7 @@
                                     style="width: 100%;"
                                 />
                                 <label>Microscope:</label>
-                                <span x-text="getMachineConfigItem('microscope_name')?.value??'(none)'"></span>
+                                <span x-text="getMachineConfigItem('system.microscope_name')?.value ?? '(none)'"></span>
                                 <label>Status:</label>
                                 <span x-text="isConnectedToServer ? 'Connected' : 'Disconnected'"></span>
                             </div>
