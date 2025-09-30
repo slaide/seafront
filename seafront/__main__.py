@@ -1502,7 +1502,7 @@ class Core:
                         # send none on first yield
                         result = None
                         # protocol generates None to indicate that protocol is finished
-                        while (next_step := protocol_generator.send(result)) is not None:
+                        while (next_step := await protocol_generator.asend(result)) is not None:
                             logger.debug(f"protocol - next step {type(next_step)}")
                             if isinstance(next_step, str):
                                 result = None
@@ -1512,7 +1512,7 @@ class Core:
                                     result = await microscope.execute(next_step)
                                 except DisconnectError as e:
                                     logger.debug(f"executing protocol step generated error {e}")
-                                    protocol_generator.throw(e)
+                                    await protocol_generator.athrow(e)
                                     # TODO what should we do here?! break?
 
                                 if result is not None and isinstance(next_step, ChannelSnapshot):

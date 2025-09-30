@@ -8,6 +8,7 @@ import time
 import typing as tp
 from concurrent.futures import Future as ConcurrentFuture
 from threading import Thread
+import asyncio
 
 import seaconfig as sc
 import tifffile
@@ -218,6 +219,7 @@ class ProtocolGenerator(BaseModel):
     num_channels: int = -1
     num_channel_z_combinations: int = -1
     num_images_total: int = -1
+    num_timepoints: int = 1
     site_topleft_x_mm: float = -1
     site_topleft_y_mm: float = -1
     image_size_bytes: int = -1
@@ -366,7 +368,9 @@ class ProtocolGenerator(BaseModel):
         self.num_sites = len(self.well_sites)
         self.num_channels = len(self.channels)
         self.num_channel_z_combinations = sum(c.num_z_planes for c in self.channels)
-        self.num_images_total = self.num_wells * self.num_sites * self.num_channel_z_combinations
+        self.num_timepoints = self.config_file.grid.num_t
+
+        self.num_images_total = self.num_timepoints * self.num_wells * self.num_sites * self.num_channel_z_combinations
 
         # the grid is centered around the center of the well
         self.site_topleft_x_mm = (
@@ -447,9 +451,9 @@ class ProtocolGenerator(BaseModel):
         )
 
     @logger.catch
-    def generate(
+    async def generate(
         self,
-    ) -> tp.Generator[
+    ) -> tp.AsyncGenerator[
         # yielded types: None means done, str is returned on first iter, other types are BaseCommands
         None | tp.Literal["ready"] | cmds.BaseCommand,
         # received types (at runtime must match return type of <yielded type>.run().ResultType)
@@ -510,9 +514,16 @@ class ProtocolGenerator(BaseModel):
         # Initialize position tracking (start from reference position if autofocus enabled)
         current_position = (0.0, 0.0)
 
+        is_timeseries_acquisition=self.config_file.grid.num_t>1
+
         # for each timepoint, starting at 1
         for timepoint in range(1, self.config_file.grid.num_t + 1):
             logger.info(f"protocol - started timepoint {timepoint}/{self.config_file.grid.num_t}")
+
+            # keep track of time
+            start_time=time.time()
+
+            self.handle_q_in()
 
             for well_index, well in enumerate(optimized_wells):
                 # these are xy sites
@@ -736,7 +747,14 @@ class ProtocolGenerator(BaseModel):
                             # Use well name as-is without zero-padding
                             formatted_well_name = well.well_name
                         
-                        image_storage_path = f"{self.project_output_path!s}/{formatted_well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.tiff"
+                        image_filename=f"{formatted_well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.tiff"
+                        if is_timeseries_acquisition:
+                            #timepoints start at 1, but we use 0 for the first one in dir
+                            assert timepoint>=1
+                            timepoint_name=str(timepoint-1)
+                            image_storage_path = f"{self.project_output_path!s}/{timepoint_name}/{image_filename}"
+                        else:
+                            image_storage_path = f"{self.project_output_path!s}/{image_filename}"
 
                         image_store_entry = cmds.ImageStoreEntry(
                             pixel_format=CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue,
@@ -836,6 +854,25 @@ class ProtocolGenerator(BaseModel):
                             acquisition_config=self.config_file,
                             message=f"Acquisition is {(100 * num_images_acquired / self.num_images_total):.2f}% complete",
                         )
+
+            # sleep for additional time, maybe
+            end_time=time.time()
+            if self.config_file.grid.num_t>timepoint:
+                time_elapsed=end_time-start_time
+
+                delta_t_s=self.config_file.grid.delta_t.h*3600+self.config_file.grid.delta_t.m*60+self.config_file.grid.delta_t.s
+
+                # sleep through remaining time in small intervals to process inputs (e.g. cancel acquisition)
+                time_remaining=delta_t_s-time_elapsed
+
+                logger.debug(f"protocol - time remaining before starting next time series acquisition: {time_remaining}s")
+
+                timeslice_s=0.5
+                while time_remaining>0:
+                    self.handle_q_in()
+
+                    await asyncio.sleep(min(time_remaining,timeslice_s))
+                    time_remaining-=timeslice_s
 
         logger.debug("protocol - finished protocol steps")
 
