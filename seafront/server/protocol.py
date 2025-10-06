@@ -752,7 +752,7 @@ class ProtocolGenerator(BaseModel):
                             #timepoints start at 1, but we use 0 for the first one in dir
                             assert timepoint>=1
                             timepoint_name=str(timepoint-1)
-                            image_storage_path = f"{self.project_output_path!s}/{timepoint_name}/{image_filename}"
+                            image_storage_path = f"{self.project_output_path!s}/t{timepoint_name}/{image_filename}"
                         else:
                             image_storage_path = f"{self.project_output_path!s}/{image_filename}"
 
