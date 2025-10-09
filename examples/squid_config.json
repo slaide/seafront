@@ -3,6 +3,7 @@
     "microscopes": [
         {
             "microscope_name": "unnamed HCS SQUID",
+            "microscope_type": "squid",
             "main_camera_model": "MER2-1220-32U3M",
             "main_camera_driver": "galaxy",
             "base_image_output_dir": "/home/scientist/seafront/images",

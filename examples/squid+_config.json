@@ -3,6 +3,7 @@
     "microscopes": [
         {
             "microscope_name": "Squid+",
+            "microscope_type": "squid",
             "main_camera_model": "ITR3CMOS26000KMA",
             "main_camera_driver": "toupcam",
             "base_image_output_dir": "/home/scientist/seafront/images",
