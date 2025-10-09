@@ -11,6 +11,27 @@ and more fundamental separation of low level control from display functionality.
 
 note: issues encountered during operation or installation should be reported in this repository.
 
+# setup workflow
+
+1. **Install seafront** - Download, install dependencies, and set up environment ([details](#install))
+2. **List hardware** - Identify connected cameras and devices
+   ```bash
+   uv run python scripts/list_squid_hardware.py
+   ```
+3. **Configure microscope** - Copy example config and adjust for your hardware ([details](#configuration))
+   ```bash
+   cp examples/squid_config.json ~/seafront/config.json
+   # Edit ~/seafront/config.json with your camera models and settings
+   ```
+4. **Generate default protocol** - Create required startup configuration
+   ```bash
+   uv run python scripts/generate_default_protocol.py --microscope "your-microscope-name"
+   ```
+5. **Run seafront** - Start the server with your microscope configuration
+   ```bash
+   uv run python -m seafront --microscope "your-microscope-name"
+   ```
+
 # install
 
 lines with `# instruction:` need to be followed manually.
@@ -54,13 +75,12 @@ bash install/all.sh
 # instruction: plug microscope power in, wait for motors to engage (makes a 'clonk' sound)
 # instruction: plug in microscope via usb (all cameras + microcontroller. i recommend using an external usb hub to simplify this.)
 
-# run software, via:
-bash run.sh
-
-# note: config file is now in ~/seafront/config.json (change and reload software to apply)
+# installation complete - continue with hardware listing and configuration (see setup workflow above)
 ```
 
 ## configuration
+
+**Note:** Follow the [setup workflow](#setup-workflow) for the complete configuration process including hardware detection.
 
 See `examples/` directory for complete configuration examples:
 - **`examples/squid_config.json`**: Standard SQUID microscope with Galaxy cameras and power calibration
@@ -175,10 +195,10 @@ Environment variable `MOCK_NO_DELAYS`:
 
 ```bash
 # Instant operations
-MOCK_NO_DELAYS=1 uv run python -m seafront
+MOCK_NO_DELAYS=1 uv run python -m seafront --microscope "Mock SQUID for Testing"
 
-# Realistic timing (default)  
-uv run python -m seafront
+# Realistic timing (default)
+uv run python -m seafront --microscope "Mock SQUID for Testing"
 ```
 
 ### additional parameters
@@ -256,16 +276,9 @@ DAC 75% → measure power → 45.0 mW
 DAC 100% → measure power → 80.0 mW
 ```
 
-### benefits
-
-- **Consistent intensity meaning**: 25% intensity always means 25% of maximum optical power, regardless of hardware non-linearity  
-- **Hardware compensation**: Automatically adjusts for non-linear LED/laser response curves
-- **Predictable results**: Same intensity percentage produces same optical power across acquisitions
-- **User-friendly interface**: Still use familiar percentage interface, but with calibrated output
-- **Per-channel flexibility**: Enable calibration only for sources that need it
-- **Dynamic configuration**: Channels are loaded from microscope config, not hardcoded
-
 ## default protocol configuration
+
+**Note:** This is step 4 in the [setup workflow](#setup-workflow).
 
 Seafront requires a default protocol configuration file at startup. This file provides default acquisition settings and wellplate configuration that the interface loads when first started.
 
@@ -313,7 +326,7 @@ When you update the microscope configuration with new channel names or other def
 
 4. **Load protocol in GUI**: Start seafront and verify the new channel names appear correctly in the interface
    ```bash
-   bash run.sh
+   uv run python -m seafront --microscope "your-microscope-name"
    ```
 
 5. **Reset machine config values**: In the web interface, go to "Machine Config" → "reset all values" to ensure all configuration values match the updated defaults
@@ -321,6 +334,25 @@ When you update the microscope configuration with new channel names or other def
 6. **Reload interface**: Refresh (not hard reload) the browser page to apply all changes
 
 7. **Done**: The interface now uses the updated channel names (e.g., "BF LED matrix full" instead of "BF LED Full") and any other configuration changes
+
+# run
+
+**Note:** This is step 5 in the [setup workflow](#setup-workflow).
+
+After completing installation, configuration, and protocol generation, start the seafront server:
+
+```bash
+# Start seafront with your microscope configuration
+uv run python -m seafront --microscope "your-microscope-name"
+
+# For mock microscope (development/testing)
+uv run python -m seafront --microscope "Mock SQUID for Testing"
+
+# With environment variable for instant mock operations
+MOCK_NO_DELAYS=1 uv run python -m seafront --microscope "Mock SQUID for Testing"
+```
+
+The web interface will be available at `http://localhost:5002` (or the port specified in your config).
 
 ## browser configuration persistence
 
@@ -370,18 +402,6 @@ changes made in this interface remain active until the interface is reset, resta
 the helper function "microscopeConfigReset()" can be used in the browser terminal to reset the values to the defaults sent from
 the microscope server.
 
-# run
-
-```sh
-# enter seafront repo directory
-cd seafront
-# activate python environment
-source python_env/activate.sh
-# run software
-python3 -m seafront
-# note: this is optional! deactivate the python environment with
-source python_env/deactivate.sh
-```
 
 # documentation
 
