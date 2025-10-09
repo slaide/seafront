@@ -365,7 +365,7 @@ class GlobalConfigHandler:
         return CriticalMachineConfig(
             main_camera_model="MER2-1220-32U3M",
             laser_autofocus_camera_model="MER2-630-60U3M",
-            microscope_name="unnamed HCS SQUID",
+            microscope_name="squid",
             microscope_type="squid",
             base_image_output_dir=str(GlobalConfigHandler.home() / "images"),
             laser_autofocus_available="yes",

@@ -25,11 +25,11 @@ note: issues encountered during operation or installation should be reported in 
    ```
 4. **Generate default protocol** - Create required startup configuration
    ```bash
-   uv run python scripts/generate_default_protocol.py --microscope "your-microscope-name"
+   uv run python scripts/generate_default_protocol.py --microscope "squid"
    ```
 5. **Run seafront** - Start the server with your microscope configuration
    ```bash
-   uv run python -m seafront --microscope "your-microscope-name"
+   uv run python -m seafront --microscope "squid"
    ```
 
 # install
@@ -95,7 +95,7 @@ Place your configuration file at `~/seafront/config.json` (JSON5 format supporte
     "port": 5002,
     "microscopes": [
         {
-            "microscope_name": "unnamed HCS SQUID",
+            "microscope_name": "squid",
             "main_camera_model": "MER2-1220-32U3M", 
             "main_camera_driver": "galaxy",
             "base_image_output_dir": "/home/scientist/seafront/images",
