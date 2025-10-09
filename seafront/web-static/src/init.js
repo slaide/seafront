@@ -30,37 +30,64 @@ import { tooltipConfig, enabletooltip } from "tooltip";
 
 import { parseConfigNamespaces, flattenNamespaceTree, toggleNamespaceExpansion, expandAllNamespaces, collapseAllNamespaces } from "./namespace-parser.js";
 
-// Load tooltip settings from localStorage and apply them
-function loadTooltipSettings() {
+// Interface settings with defaults
+const defaultInterfaceSettings = {
+    tooltip: {
+        enabled: true,
+        delayMs: 400
+    },
+    busyIndicator: {
+        lingerMs: 700
+    }
+};
+
+// Current interface settings (will be merged with saved settings)
+const interfaceSettings = structuredClone(defaultInterfaceSettings);
+
+// Load interface settings from localStorage and apply them
+function loadInterfaceSettings() {
     try {
-        const saved = localStorage.getItem("seafront-tooltip-settings");
+        const saved = localStorage.getItem("seafront-interface-settings");
         if (saved) {
             const parsed = JSON.parse(saved);
-            if (parsed.enabled !== undefined) tooltipConfig.enabled = parsed.enabled;
-            if (parsed.delayMs !== undefined) tooltipConfig.delayMs = parsed.delayMs;
+            // Merge each section separately to handle nested objects
+            if (parsed.tooltip) Object.assign(interfaceSettings.tooltip, parsed.tooltip);
+            if (parsed.busyIndicator) Object.assign(interfaceSettings.busyIndicator, parsed.busyIndicator);
         }
+
+        // Apply to tooltipConfig
+        Object.assign(tooltipConfig, interfaceSettings.tooltip);
     } catch (error) {
-        console.warn("Failed to load tooltip settings from localStorage:", error);
+        console.warn("Failed to load interface settings from localStorage:", error);
     }
 }
 
-// Save tooltip settings to localStorage
-function saveTooltipSettings() {
+// Save interface settings to localStorage
+function saveInterfaceSettings() {
     try {
-        localStorage.setItem("seafront-tooltip-settings", JSON.stringify({
-            enabled: tooltipConfig.enabled,
-            delayMs: tooltipConfig.delayMs,
+        // Update from current tooltip config
+        Object.assign(interfaceSettings.tooltip, tooltipConfig);
+
+        const toSave = {
+            ...interfaceSettings,
             savedAt: new Date().toISOString()
-        }));
+        };
+
+        localStorage.setItem("seafront-interface-settings", JSON.stringify(toSave));
     } catch (error) {
-        console.warn("Failed to save tooltip settings to localStorage:", error);
+        console.warn("Failed to save interface settings to localStorage:", error);
     }
 }
 
-// Load saved tooltip settings on startup
-loadTooltipSettings();
+// Wrapper for tooltip settings
+function saveTooltipSettings() {
+    saveInterfaceSettings();
+}
 
-Object.assign(window, { enabletooltip, tooltipConfig, saveTooltipSettings });
+// Load saved interface settings on startup
+loadInterfaceSettings();
+
+Object.assign(window, { enabletooltip, tooltipConfig, saveTooltipSettings, saveInterfaceSettings });
 
 import { initTabs } from "tabs";
 Object.assign(window, { initTabs });
@@ -160,6 +187,7 @@ document.addEventListener("alpine:init", () => {
         tooltipConfig,
 
         // Central error modal state
+        /** @type {{ show: boolean, title: string, message: string, timestamp: Date | null }} */
         centralError: {
             show: false,
             title: '',
@@ -175,13 +203,69 @@ document.addEventListener("alpine:init", () => {
         
         /** Selection mode for plate navigator: 'wells' or 'sites' */
         plateSelectionMode: "wells",
+
+        // Busy indicator state
+        showBusyIndicator: false,
+        busyIndicatorHiding: false,
+        /** @type {number|null} */
+        busyIndicatorTimeout: null,
+        busyLingerMs: interfaceSettings.busyIndicator.lingerMs, // Load from saved settings
+
+        get busyIndicatorClass() {
+            return {
+                'busy-indicator': this.showBusyIndicator && !this.busyIndicatorHiding,
+                'hide': this.busyIndicatorHiding
+            };
+        },
+
         // Central error display method
+        /**
+         * @param {string} title
+         * @param {string} message
+         */
         showError(title, message) {
             console.log(`showError called: ${title} - ${message}`);
             this.centralError.title = title;
             this.centralError.message = message;
             this.centralError.timestamp = new Date();
             this.centralError.show = true;
+        },
+
+        /**
+         * Handle busy indicator with 1.5s delay after becoming not busy
+         * @param {boolean} isBusy 
+         */
+        handleBusyIndicator(isBusy) {
+            if (isBusy) {
+                // Microscope is busy - show indicator immediately
+                if (this.busyIndicatorTimeout) {
+                    clearTimeout(this.busyIndicatorTimeout);
+                    this.busyIndicatorTimeout = null;
+                }
+                this.busyIndicatorHiding = false;
+                this.showBusyIndicator = true;
+            } else {
+                // Microscope is not busy - hide after 1.5s delay
+                if (this.showBusyIndicator && !this.busyIndicatorTimeout) {
+                    this.busyIndicatorTimeout = setTimeout(() => {
+                        this.busyIndicatorHiding = true;
+                        // Hide completely after animation finishes
+                        setTimeout(() => {
+                            this.showBusyIndicator = false;
+                            this.busyIndicatorHiding = false;
+                            this.busyIndicatorTimeout = null;
+                        }, 200); // Match the CSS animation duration
+                    }, this.busyLingerMs);
+                }
+            }
+        },
+
+        // Save busy settings to localStorage
+        saveBusySettings() {
+            // Update the unified settings
+            interfaceSettings.busyIndicator.lingerMs = this.busyLingerMs;
+            // Save using the unified interface settings system
+            saveInterfaceSettings();
         },
 
         // Computed property for formatted timestamp in 24-hour format
@@ -883,7 +967,10 @@ document.addEventListener("alpine:init", () => {
             // console.log(`updateMicroscopeStatus with`, timestamps)
             // update state with data from 'data' object
             this.state = data;
-            
+
+            // Handle busy indicator with delay
+            this.handleBusyIndicator(data.is_busy);
+
             // Sync streaming state from server
             if (data.is_streaming !== undefined) {
                 this.isStreaming = data.is_streaming;

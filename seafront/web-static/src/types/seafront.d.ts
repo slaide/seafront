@@ -62,6 +62,7 @@ declare global {
         };
         current_acquisition_id: string | undefined;
         is_streaming: boolean;
+        is_busy: boolean;
     };
     type Version = {
         major: int;

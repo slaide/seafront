@@ -1243,11 +1243,21 @@ class Core:
         # Check if streaming is currently active by looking at the stream callback
         is_streaming = self.microscope.stream_callback is not None
 
+        # Check if microscope is busy by attempting a non-blocking lock
+        is_busy = False
+        try:
+            with self.microscope.lock(blocking=False) as microscope:
+                if microscope is None:
+                    is_busy = True
+        except Exception:
+            is_busy = True
+
         return CoreCurrentState(
             adapter_state=microscope_adapter_state,
             latest_imgs={key: entry.info for key, entry in self.latest_images.items()},
             current_acquisition_id=current_acquisition_id,
             is_streaming=is_streaming,
+            is_busy=is_busy,
             last_acquisition_error=self._last_acquisition_error,
             last_acquisition_error_timestamp=self._last_acquisition_error_timestamp,
         )

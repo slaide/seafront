@@ -210,6 +210,8 @@ class CoreCurrentState(BaseModel):
     current_acquisition_id: str | None
     is_streaming: bool
     "True if live streaming/acquisition is currently active"
+    is_busy: bool
+    "True if the microscope is currently busy and cannot accept new commands"
     last_acquisition_error: str | None = None
     "Last acquisition error message for display in GUI"
     last_acquisition_error_timestamp: str | None = None

@@ -45,6 +45,40 @@
                 cursor: pointer;
             }
 
+            .microscope-busy {
+                cursor: wait !important;
+            }
+
+            .busy-indicator {
+                animation: busyPopIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            }
+
+            .busy-indicator.hide {
+                animation: busyPopOut 0.2s ease-in forwards;
+            }
+
+            @keyframes busyPopIn {
+                from {
+                    opacity: 0;
+                    transform: translateX(-50%) scale(0.8);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(-50%) scale(1);
+                }
+            }
+
+            @keyframes busyPopOut {
+                from {
+                    opacity: 1;
+                    transform: translateX(-50%) scale(1);
+                }
+                to {
+                    opacity: 0;
+                    transform: translateX(-50%) scale(0.8);
+                }
+            }
+
             .noselect {
                 user-select: none;
             }
@@ -189,13 +223,14 @@
         <link href="/css/tabs.css" rel="stylesheet" />
     </head>
 
-    <body 
-        x-data="microscope_state" 
-        x-init="await manualInit(); 
+    <body
+        x-data="microscope_state"
+        x-bind:class="{ 'microscope-busy': state && state.is_busy }"
+        x-init="await manualInit();
                 // Set up watcher after init is complete
                 if(_microscope_config) {
-                    $watch('_microscope_config', () => { 
-                        saveCurrentConfig(); 
+                    $watch('_microscope_config', () => {
+                        saveCurrentConfig();
                     }, { deep: true });
                     console.log('Config localStorage watcher initialized - watching _microscope_config with deep:true');
                 }"
@@ -245,6 +280,16 @@
 
         <template x-if="initDone">
             <div id="content">
+                <!-- Microscope Busy Indicator -->
+                <div x-show="showBusyIndicator"
+                     x-bind:class="busyIndicatorClass"
+                     style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 9999;
+                            background: #ff6b6b; color: white; padding: 12px 24px; border-radius: 8px;
+                            font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-size: 16px;
+                            border: 2px solid #ff5252;">
+                    🔒 Microscope is busy, please wait...
+                </div>
+
                 <style>
                     #content {
                         width: 100vw;
@@ -936,7 +981,21 @@
                                         x-bind:disabled="!tooltipConfig.enabled"
                                         @input="saveTooltipSettings()"
                                     />
-                                    
+
+                                    <label for="busy-linger-input">Busy indicator linger (ms):</label>
+                                    <input
+                                        id="busy-linger-input"
+                                        type="number"
+                                        min="0"
+                                        max="5000"
+                                        step="100"
+                                        x-model.number="busyLingerMs"
+                                        is="number-input"
+                                        x-init="registerNumberInput($el),enabletooltip($el)"
+                                        x-bind:tooltip="`How long the busy indicator stays visible after microscope becomes available. Range: 0-5000ms (0 = disappear immediately, 700 = default)`"
+                                        @input="saveBusySettings()"
+                                    />
+
                                     <label>Theme:</label>
                                     <select
                                         x-model="theme"
