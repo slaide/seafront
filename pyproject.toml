@@ -4,25 +4,25 @@ version = "2.6.1"
 requires-python = ">=3.13"
 authors = [{ name = "Patrick Hennig", email = "patrick.hennig@uu.se" }]
 dependencies = [
-    "gxipy @ git+https://github.com/slaide/daheng-imaging-gxipy@v1.0.0",# galaxy camera API
-    "toupcam @ git+https://github.com/slaide/toupcam-sdk@v1.0.3",         # touptek camera API
+    "gxipy @ git+https://github.com/slaide/daheng-imaging-gxipy@v1.0.0", # galaxy camera API
+    "toupcam @ git+https://github.com/slaide/toupcam-sdk@v1.0.3", # touptek camera API
     "seaconfig @ git+https://github.com/slaide/seafront-config@v6.2.0", # configuration file handling
-    "pyserial==3.5",                                                    # for microcontroller communication
-    "crc>=1.3,<1.4",                                                    # for basic microcontroller packet communication
-    "pillow>=11.1,<11.2",                                               # for image format conversion to store to disk/send to client for display
-    "scipy>=1.15,<1.16",                                                # for laser aufocus system signal processing
-    "numpy>=2,<3",                                                      # for signal processing and various math
-    "tifffile==2025.1.10",                                              # for tiff image format
-    "imagecodecs==2024.12.30",                                          # for image compression
-    "matplotlib>=3,<4",                                                 # for debug functionality
-    "fastapi==0.115.8",                                                 # http server
-    "uvicorn[standard]>=0.34,<0.35",                                    # http server with threading support
-    "websockets>=14.2,<14.3",                                           # to enable uvicorn websocket capabilities
-    "pydantic>=2.9,<2.10",                                              # python type model verification
-    "ome-types",                                                        # for ome info in image files
-    "opencv-python>=4.11,<4.12",                                        # fast gaussian blur for noise autofocus images
-    "loguru==0.7.3",                                                    # logging
-    "json5",                                                            # better json file formatting
+    "pyserial==3.5", # for microcontroller communication
+    "crc>=1.3,<1.4", # for basic microcontroller packet communication
+    "pillow>=11.1,<11.2", # for image format conversion to store to disk/send to client for display
+    "scipy>=1.15,<1.16", # for laser aufocus system signal processing
+    "numpy>=2,<3", # for signal processing and various math
+    "tifffile==2025.1.10", # for tiff image format
+    "imagecodecs==2024.12.30", # for image compression
+    "matplotlib>=3,<4", # for debug functionality
+    "fastapi==0.115.8", # http server
+    "uvicorn[standard]>=0.34,<0.35", # http server with threading support
+    "websockets>=14.2,<14.3", # to enable uvicorn websocket capabilities
+    "pydantic>=2.9,<2.10", # python type model verification
+    "ome-types", # for ome info in image files
+    "opencv-python>=4.11,<4.12", # fast gaussian blur for noise autofocus images
+    "loguru==0.7.3", # logging
+    "json5", # better json file formatting
 ]
 
 [project.optional-dependencies]

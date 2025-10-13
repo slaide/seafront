@@ -114,8 +114,9 @@ class FilterWheelConfig(ConfigHandle):
 
 class ProtocolConfig(ConfigHandle):
     """Protocol and acquisition workflow configuration handles."""
-    
+
     FORBIDDEN_WELLS = "protocol.forbidden_wells"
+    FORBIDDEN_AREAS = "protocol.forbidden_areas"
 
 
 class SystemConfig(ConfigHandle):

@@ -79,8 +79,24 @@ export function calculateSitePositionPython(wellX_mm, wellY_mm, wellSizeX_mm, we
 }
 
 /**
+ * Transform coordinates from backend physical system to display coordinate system
+ * @param {number} x_mm - X coordinate in mm (backend coordinates)
+ * @param {number} y_mm - Y coordinate in mm (backend coordinates)
+ * @param {Wellplate} plate - Plate configuration for coordinate bounds
+ * @returns {{x: number, y: number}} Coordinates transformed for display system
+ */
+export function transformBackendToDisplayCoordinates(x_mm, y_mm, plate) {
+    // X coordinate stays the same
+    // Y coordinate needs to be flipped: display_y = plate_height - backend_y
+    return {
+        x: x_mm,
+        y: plate.Width_mm - y_mm
+    };
+}
+
+/**
  * make well name
- * 
+ *
  * Example:
  * ```js
  * makeWellName(0,0)=="A01"
@@ -88,8 +104,8 @@ export function calculateSitePositionPython(wellX_mm, wellY_mm, wellSizeX_mm, we
  * makeWellName(0,10)=="A11"
  * makeWellName(26,20)=="a21"
  * ```
- * @param {number} x 
- * @param {number} y 
+ * @param {number} x
+ * @param {number} y
  * @returns {string}
  */
 export function makeWellName(x, y) {
@@ -236,12 +252,14 @@ let objectNameWells = "wells";
 let objectNameWellsSelected = "wellsSelected";
 let objectNameSites = "sites";
 let objectNameText = "wellLabels";
+let objectNameForbiddenAreas = "forbiddenAreas";
 export let matTextColor = 0xFFFFFF;
 export let matWellColor = 0x006699;
 let matWellSelectedColor = 0x0099FF; // Brighter blue for selected wells
 export let matSiteColor = 0xFF8800;
 export let matPlateColor = 0x222222;
 export let matFovColor = 0xAA1111;
+export let matForbiddenAreaColor = 0x8B0000; // Dark red for forbidden areas
 
 /**
  * @typedef {Object} SelectionState
@@ -260,11 +278,14 @@ export let matFovColor = 0xAA1111;
 
 export class PlateNavigator {
     /**
-     * 
-     * @param {HTMLElement} containerel 
-     * @returns 
+     *
+     * @param {HTMLElement} containerel
+     * @param {object} alpineComponent - Alpine.js component for updating reactive data
+     * @returns
      */
-    constructor(containerel) {
+    constructor(containerel, alpineComponent = null) {
+        // Store reference to Alpine component for updating cursor position
+        this.alpineComponent = alpineComponent;
         /** @type {THREE.Scene} */
         this.scene = new THREE.Scene();
 
@@ -368,11 +389,17 @@ export class PlateNavigator {
             this.handleDoubleClick(event);
         });
         el.addEventListener("mousemove", event => {
+            // Update cursor position display
+            const plateCoords = this.mouseToPlateCoordinates(event);
+            if (plateCoords && this.alpineComponent) {
+                this.alpineComponent.plateCursorPosition = plateCoords;
+            }
+
             if (selection.active) {
                 // Prevent default behavior when in selection mode
                 event.preventDefault();
                 event.stopPropagation();
-                
+
                 // Update selection box
                 selection.current.x = event.offsetX;
                 selection.current.y = event.offsetY;
@@ -387,8 +414,16 @@ export class PlateNavigator {
                 drag.last.x = event.offsetX;
                 drag.last.y = event.offsetY;
             }
-            
+
         });
+
+        // Clear cursor position when mouse leaves the plate area
+        el.addEventListener("mouseleave", event => {
+            if (this.alpineComponent) {
+                this.alpineComponent.plateCursorPosition = null;
+            }
+        });
+
         // Prevent context menu when shift+right-clicking
         el.addEventListener("contextmenu", event => {
             if (event.shiftKey) {
@@ -479,6 +514,13 @@ export class PlateNavigator {
             side: THREE.DoubleSide,
             transparent: true,
             opacity: 0.5,
+        });
+        /** @type {THREE.MeshBasicMaterial} */
+        this.matForbiddenArea = new THREE.MeshBasicMaterial({
+            color: matForbiddenAreaColor,
+            transparent: true,
+            opacity: 0.7,
+            side: THREE.DoubleSide,
         });
 
         /** @type {{fovx:number,fovy:number}} */
@@ -604,6 +646,7 @@ export class PlateNavigator {
         this.plate = plate;
 
         let plate_z = -0.1;
+        let forbidden_area_z = -0.05;
         let well_z = 0;
         let site_z = 0.1;
         let welltext_z = 0.5;
@@ -618,6 +661,44 @@ export class PlateNavigator {
         platemesh.position.z = plate_z;
         platemesh.name = objectNamePlate;
         this.scene.add(platemesh);
+
+        // Render forbidden areas
+        try {
+            const forbiddenAreas = await this.fetchForbiddenAreas();
+            if (forbiddenAreas.length > 0) {
+                console.log(`🔴 FOUND ${forbiddenAreas.length} forbidden areas:`, forbiddenAreas);
+
+                for (let i = 0; i < forbiddenAreas.length; i++) {
+                    const area = forbiddenAreas[i];
+
+                    // Validate area bounds
+                    if (typeof area.min_x_mm !== 'number' || typeof area.max_x_mm !== 'number' ||
+                        typeof area.min_y_mm !== 'number' || typeof area.max_y_mm !== 'number') {
+                        console.warn(`Skipping invalid forbidden area: ${area.name || 'unnamed'}`);
+                        continue;
+                    }
+
+                    // Transform backend coordinates to display coordinates
+                    const minCoords = transformBackendToDisplayCoordinates(area.min_x_mm, area.min_y_mm, plate);
+                    const maxCoords = transformBackendToDisplayCoordinates(area.max_x_mm, area.max_y_mm, plate);
+
+                    const area_aabb = {
+                        ax: minCoords.x,
+                        ay: Math.min(minCoords.y, maxCoords.y), // Ensure min is actually minimum after transformation
+                        bx: maxCoords.x,
+                        by: Math.max(minCoords.y, maxCoords.y), // Ensure max is actually maximum after transformation
+                    };
+
+                    const forbiddenMesh = makeQuad(area_aabb, this.matForbiddenArea);
+                    forbiddenMesh.position.z = forbidden_area_z;
+                    forbiddenMesh.name = `${objectNameForbiddenAreas}_${i}`;
+                    console.log(`🔴 Adding forbidden area mesh: ${area.name}`, { mesh: forbiddenMesh, aabb: area_aabb });
+                    this.scene.add(forbiddenMesh);
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to render forbidden areas:', error);
+        }
 
         //this.cameraFit(plate_aabb)
 
@@ -880,6 +961,19 @@ export class PlateNavigator {
             ]);
         }
 
+        // Always remove forbidden areas since they depend on machine configuration
+        // and may change independently of plate configuration
+        for (let i = 0; i < 100; i++) { // Remove up to 100 forbidden areas (generous limit)
+            const forbiddenAreaName = `${objectNameForbiddenAreas}_${i}`;
+            const forbiddenObject = this.scene.getObjectByName(forbiddenAreaName);
+            if (forbiddenObject) {
+                this.scene.remove(forbiddenObject);
+            } else if (i > 10) {
+                // If we haven't found any objects for 10 consecutive attempts, stop looking
+                break;
+            }
+        }
+
         for (const objectname of objectNamesToRemove) {
             // from https://stackoverflow.com/questions/18357529/threejs-remove-object-from-scene
             let object_to_remove = this.scene.getObjectByName(objectname);
@@ -901,10 +995,50 @@ export class PlateNavigator {
 
         // Convert mouse coordinates to plate coordinates
         const plateCoords = this.mouseToPlateCoordinates(event);
-        
+
         if (plateCoords && this.onObjectiveMoveTo) {
-            this.onObjectiveMoveTo(plateCoords.x, plateCoords.y);
+            // Validate coordinates before sending to server
+            if (this.isPositionValid(plateCoords.x, plateCoords.y)) {
+                this.onObjectiveMoveTo(plateCoords.x, plateCoords.y);
+            } else {
+                // Show user-friendly error message
+                this.showForbiddenAreaWarning(plateCoords.x, plateCoords.y);
+            }
         }
+    }
+
+    /**
+     * Basic client-side validation for movement positions
+     * Note: This is a preliminary check - the server will do the authoritative validation
+     * @param {number} x_mm - X coordinate in mm
+     * @param {number} y_mm - Y coordinate in mm
+     * @returns {boolean} True if position appears valid for movement
+     */
+    isPositionValid(x_mm, y_mm) {
+        if (!this.plate) return false;
+
+        // Check if position is within plate boundaries
+        if (x_mm < 0 || x_mm > this.plate.Length_mm ||
+            y_mm < 0 || y_mm > this.plate.Width_mm) {
+            return false;
+        }
+
+        // Basic sanity checks passed - server will do hardware validation
+        return true;
+    }
+
+    /**
+     * Show warning message when user tries to move to a forbidden area
+     * @param {number} x_mm - X coordinate in mm
+     * @param {number} y_mm - Y coordinate in mm
+     */
+    showForbiddenAreaWarning(x_mm, y_mm) {
+        // Create a simple alert for now - could be replaced with a more sophisticated UI
+        const message = `Cannot move to position (${x_mm.toFixed(1)}, ${y_mm.toFixed(1)}) mm.\n` +
+                       `This position is outside the valid movement area.`;
+        alert(message);
+
+        console.warn(`Blocked movement to potentially forbidden position: (${x_mm}, ${y_mm})`);
     }
 
     /**
@@ -945,11 +1079,72 @@ export class PlateNavigator {
     }
 
     /**
+     * Set callback function for handling movement errors (e.g., forbidden areas)
+     * @param {function(string): void} callback - Callback function that receives error message
+     */
+    setMovementErrorCallback(callback) {
+        this.onMovementError = callback;
+    }
+
+    /**
+     * Handle movement errors from the server (e.g., forbidden area violations)
+     * @param {string} errorMessage - Error message from server
+     */
+    handleMovementError(errorMessage) {
+        if (this.onMovementError) {
+            this.onMovementError(errorMessage);
+        } else {
+            // Fallback to alert if no custom error handler is set
+            alert(`Movement Error: ${errorMessage}`);
+        }
+        console.error(`Server rejected movement: ${errorMessage}`);
+    }
+
+    /**
      * Set callback function for well selection requests
      * @param {function(string[], string): void} callback - Callback function that receives array of well names and mode ('select' or 'deselect')
      */
     setWellSelectionCallback(callback) {
         this.onWellSelection = callback;
+    }
+
+    /**
+     * Fetch forbidden areas configuration from server
+     * @returns {Promise<Array>} Array of forbidden area objects
+     */
+    async fetchForbiddenAreas() {
+        console.log('🔍 fetchForbiddenAreas() called');
+        try {
+            const response = await fetch('/api/get_features/machine_defaults', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            if (!response.ok) {
+                console.warn('Failed to fetch machine defaults for forbidden areas');
+                return [];
+            }
+
+            const configItems = await response.json();
+
+            // Find the forbidden areas config item
+            const forbiddenAreasItem = configItems.find(item => item.handle === 'protocol.forbidden_areas');
+
+            if (!forbiddenAreasItem || !forbiddenAreasItem.value) {
+                console.log('No forbidden areas configuration found');
+                return [];
+            }
+
+            // Parse the JSON configuration (array of forbidden area objects)
+            const forbiddenAreasConfig = JSON.parse(forbiddenAreasItem.value);
+            return forbiddenAreasConfig || [];
+
+        } catch (error) {
+            console.warn('Error fetching forbidden areas:', error);
+            return [];
+        }
     }
 
     /**

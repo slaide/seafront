@@ -22,6 +22,46 @@ from seafront.hardware import microcontroller as mc
 from seafront.logger import logger
 
 
+# Supporting data classes for protocol iterators
+class WellInfo(BaseModel):
+    """Information about a well with metadata for protocol iteration"""
+    well: sc.PlateWellConfig
+    well_index: int
+    physical_center: tuple[float, float]
+    "Physical coordinates of well center (x_mm, y_mm)"
+
+
+class PositionInfo(BaseModel):
+    """Information about a specific well+site position with metadata"""
+    well: sc.PlateWellConfig
+    site: sc.AcquisitionWellSiteConfigurationSiteSelectionItem
+    well_index: int
+    site_index: int
+    physical_position: tuple[float, float]
+    "Physical coordinates of this site position (x_mm, y_mm)"
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class ChannelInfo(BaseModel):
+    """Information about a channel with imaging order metadata"""
+    channel: sc.AcquisitionChannelConfig
+    channel_index: int
+    imaging_order: ImagingOrder
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class ZPositionInfo(BaseModel):
+    """Information about a z-position with channel metadata"""
+    plane_index: int
+    z_position_mm: float
+    channel: sc.AcquisitionChannelConfig
+    channel_info: ChannelInfo
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
 class AsyncThreadPool(BaseModel):
     """
     Thread pool for running async future/coroutines
@@ -307,13 +347,39 @@ class ProtocolGenerator(BaseModel):
         logger.info(f"protocol - greedy well traversal: {len(optimized_wells)} wells")
         return optimized_wells
 
-    def get_optimized_site_order_for_well(self, 
+    def get_physical_position_for_well_site(self, well: sc.PlateWellConfig, site: sc.AcquisitionWellSiteConfigurationSiteSelectionItem) -> tuple[float, float]:
+        """
+        Get physical coordinates for a specific well+site combination.
+
+        This is the single source of truth for position calculation, used by both
+        the optimization algorithms and the iterator methods.
+
+        Args:
+            well: The well configuration
+            site: The site within the well
+
+        Returns:
+            Tuple of (x_mm, y_mm) physical coordinates
+        """
+        site_x_mm = (
+            self.plate.get_well_offset_x(well.well_name)
+            + self.site_topleft_x_mm
+            + site.col * self.config_file.grid.delta_x_mm
+        )
+        site_y_mm = (
+            self.plate.get_well_offset_y(well.well_name)
+            + self.site_topleft_y_mm
+            + site.row * self.config_file.grid.delta_y_mm
+        )
+        return (site_x_mm, site_y_mm)
+
+    def get_optimized_site_order_for_well(self,
                                           current_well: sc.PlateWellConfig,
                                           last_position: tuple[float, float]) -> list[sc.AcquisitionWellSiteConfigurationSiteSelectionItem]:
         """
         Get sites in optimal traversal order for maximum efficiency within a single well.
         Starts with the site closest to the current physical position and uses greedy traversal.
-        
+
         Args:
             current_well: The well we're about to enter
             last_position: Current physical position (x_mm, y_mm)
@@ -321,44 +387,35 @@ class ProtocolGenerator(BaseModel):
         sites = self.well_sites.copy()
         if len(sites) <= 1:
             return sites
-        
-        def site_distance(s1: sc.AcquisitionWellSiteConfigurationSiteSelectionItem, 
+
+        def site_distance(s1: sc.AcquisitionWellSiteConfigurationSiteSelectionItem,
                          s2: sc.AcquisitionWellSiteConfigurationSiteSelectionItem) -> float:
             return math.sqrt((s1.col - s2.col)**2 + (s1.row - s2.row)**2)
-        
-        def physical_distance_to_site(site: sc.AcquisitionWellSiteConfigurationSiteSelectionItem, 
+
+        def physical_distance_to_site(site: sc.AcquisitionWellSiteConfigurationSiteSelectionItem,
                                      position: tuple[float, float]) -> float:
             """Calculate physical distance from current position to a site in the target well"""
-            # Calculate the physical position of this site
-            site_x_mm = (
-                self.plate.get_well_offset_x(current_well.well_name)
-                + self.site_topleft_x_mm
-                + site.col * self.config_file.grid.delta_x_mm
-            )
-            site_y_mm = (
-                self.plate.get_well_offset_y(current_well.well_name)
-                + self.site_topleft_y_mm
-                + site.row * self.config_file.grid.delta_y_mm
-            )
-            
+            # Use the single source of truth for position calculation
+            site_x_mm, site_y_mm = self.get_physical_position_for_well_site(current_well, site)
+
             # Calculate distance from current position to this site
             return math.sqrt((site_x_mm - position[0])**2 + (site_y_mm - position[1])**2)
-        
+
         # Find the site closest to our current physical position
         start_site = min(sites, key=lambda s: physical_distance_to_site(s, last_position))
         start_distance = physical_distance_to_site(start_site, last_position)
-        
+
         sites.remove(start_site)
         optimized_sites = [start_site]
         current_site = start_site
-        
+
         # Greedily pick the nearest remaining site within this well
         while sites:
             nearest_site = min(sites, key=lambda s: site_distance(current_site, s))
             sites.remove(nearest_site)
             optimized_sites.append(nearest_site)
             current_site = nearest_site
-        
+
         logger.debug(f"protocol - optimized site order for well {current_well.well_name}: {len(optimized_sites)} sites, starting with site ({start_site.col},{start_site.row}) at distance {start_distance:.2f}mm")
         return optimized_sites
 
@@ -450,6 +507,82 @@ class ProtocolGenerator(BaseModel):
             message="scheduled",
         )
 
+    # Iterator methods for protocol traversal
+    def iter_wells(self) -> tp.Iterator[WellInfo]:
+        """Iterator over selected wells with metadata"""
+        for well_index, well in enumerate(self.plate_wells):
+            yield WellInfo(
+                well=well,
+                well_index=well_index,
+                physical_center=(
+                    self.plate.get_well_offset_x(well.well_name),
+                    self.plate.get_well_offset_y(well.well_name)
+                )
+            )
+
+    def iter_positions(self) -> tp.Iterator[PositionInfo]:
+        """Iterator over all well+site combinations with physical positions"""
+        for well_info in self.iter_wells():
+            for site_index, site in enumerate(self.well_sites):
+                # Use single source of truth for position calculation
+                physical_position = self.get_physical_position_for_well_site(well_info.well, site)
+                yield PositionInfo(
+                    well=well_info.well,
+                    site=site,
+                    well_index=well_info.well_index,
+                    site_index=site_index,
+                    physical_position=physical_position
+                )
+
+    def iter_channels(self) -> tp.Iterator[ChannelInfo]:
+        """Iterator over channels with imaging order applied"""
+        g_config = basics.GlobalConfigHandler.get_dict()
+        imaging_order_item = ImagingConfig.ORDER.value_item
+        assert imaging_order_item is not None
+        imaging_order = tp.cast(ImagingOrder, imaging_order_item.value)
+
+        ordered_channels = self._sort_channels_by_imaging_order(self.channels, imaging_order)
+        for channel_index, channel in enumerate(ordered_channels):
+            yield ChannelInfo(
+                channel=channel,
+                channel_index=channel_index,
+                imaging_order=imaging_order
+            )
+
+    def iter_z_positions(self, reference_z_mm: float) -> tp.Iterator[ZPositionInfo]:
+        """Iterator over Z positions with channel information and imaging order"""
+        # Encapsulate the complex z-stacking logic from the generate method
+        image_pos_z_list = []
+
+        for channel_info in self.iter_channels():
+            channel = channel_info.channel
+            channel_delta_z_mm = channel.delta_z_um * 1e-3
+
+            # <channel reference> is <site reference>+<channel z offset>
+            base_z = reference_z_mm + channel.z_offset_um * 1e-3
+
+            # lower z base is <channel reference> adjusted for z stack, where
+            # n-1 z movements are performed, half of those below, half above <channel ref>
+            base_z -= ((channel.num_z_planes - 1) / 2) * channel_delta_z_mm
+
+            for plane_index in range(channel.num_z_planes):
+                i_offset_mm = plane_index * channel_delta_z_mm
+                target_z_mm = base_z + i_offset_mm
+                image_pos_z_list.append((plane_index, target_z_mm, channel, channel_info))
+
+        # Apply final sorting based on imaging order
+        if len(image_pos_z_list) > 0 and image_pos_z_list[0][3].imaging_order == "z_order":
+            # Sort by z coordinate (fastest - minimizes z movement)
+            image_pos_z_list = sorted(image_pos_z_list, key=lambda v: v[1])
+
+        for plane_index, z_position_mm, channel, channel_info in image_pos_z_list:
+            yield ZPositionInfo(
+                plane_index=plane_index,
+                z_position_mm=z_position_mm,
+                channel=channel,
+                channel_info=channel_info
+            )
+
     @logger.catch
     async def generate(
         self,
@@ -540,20 +673,11 @@ class ProtocolGenerator(BaseModel):
                     self.handle_q_in()
 
                     # go to site
-                    site_x_mm = (
-                        self.plate.get_well_offset_x(well.well_name)
-                        + self.site_topleft_x_mm
-                        + site.col * self.config_file.grid.delta_x_mm
-                    )
-                    site_y_mm = (
-                        self.plate.get_well_offset_y(well.well_name)
-                        + self.site_topleft_y_mm
-                        + site.row * self.config_file.grid.delta_y_mm
-                    )
+                    site_x_mm, site_y_mm = self.get_physical_position_for_well_site(well, site)
 
                     res = yield cmds.MoveTo(x_mm=site_x_mm, y_mm=site_y_mm)
                     assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
-                    
+
                     # Update current position for distance calculations
                     current_position = (site_x_mm, site_y_mm)
 
@@ -625,57 +749,30 @@ class ProtocolGenerator(BaseModel):
 
                         logger.debug("approached reference z")
 
-                    # Get imaging order configuration
-                    imaging_order_item = ImagingConfig.ORDER.value_item
-                    assert imaging_order_item is not None
-                    imaging_order = tp.cast(ImagingOrder, imaging_order_item.value)
-                    
-                    # Sort channels according to imaging order configuration
-                    ordered_channels = self._sort_channels_by_imaging_order(self.channels, imaging_order)
-                    
-                    # z stack may be different for each channel, hence:
-                    # 1. get list of (channel_z_index,channel,z_relative_to_reference), which may contain each channel more than once  
-                    # 2. order by imaging order configuration (z_order/wavelength_order/protocol_order)
-                    # 3. move to appropriate starting position, execute imaging sequence
-                    # 4. move to reference z again in preparation for next site
+                    # Use iterator for z-positions with proper imaging order and channel information
+                    z_positions_list = list(self.iter_z_positions(reference_z_mm))
 
-                    image_pos_z_list: list[tuple[int, float, sc.AcquisitionChannelConfig]] = []
-                    for channel in ordered_channels:
-                        channel_delta_z_mm = channel.delta_z_um * 1e-3
+                    if len(z_positions_list) == 0:
+                        continue  # No z-positions to acquire for this site
 
-                        # <channel reference> is <site reference>+<channel z offset>
-                        base_z = reference_z_mm + channel.z_offset_um * 1e-3
-
-                        # lower z base is <channel reference> adjusted for z stack, where \
-                        # n-1 z movements are performed, half of those below, half above <channel ref>
-                        base_z -= ((channel.num_z_planes - 1) / 2) * channel_delta_z_mm
-
-                        for i in range(channel.num_z_planes):
-                            i_offset_mm = i * channel_delta_z_mm
-                            target_z_mm = base_z + i_offset_mm
-                            image_pos_z_list.append((i, target_z_mm, channel))
-
-                    # Apply final sorting based on imaging order
-                    if imaging_order == "z_order":
-                        # Sort by z coordinate (fastest - minimizes z movement)
-                        image_pos_z_list = sorted(image_pos_z_list, key=lambda v: v[1])
-                    else:  # wavelength_order or protocol_order
-                        # Keep channel-based ordering (best image quality - minimizes photobleaching)
-                        # No additional sorting needed as channels are already ordered correctly
-                        pass
-
+                    # Move to starting z position with backlash compensation
+                    first_z_mm = z_positions_list[0].z_position_mm
                     res = yield cmds.MoveTo(
                         x_mm=None,
                         y_mm=None,
-                        z_mm=image_pos_z_list[0][1] - Z_STACK_COUNTER_BACKLASH_MM,
+                        z_mm=first_z_mm - Z_STACK_COUNTER_BACKLASH_MM,
                     )
                     assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
-                    res = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=image_pos_z_list[0][1])
+                    res = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=first_z_mm)
                     assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
 
                     logger.debug("protocol - moved to z order bottom")
 
-                    for plane_index, channel_z_mm, channel in image_pos_z_list:
+                    for z_pos_info in z_positions_list:
+                        plane_index = z_pos_info.plane_index
+                        channel_z_mm = z_pos_info.z_position_mm
+                        channel = z_pos_info.channel
+
                         logger.debug(
                             f"protocol - imaging plane {plane_index} at site with {channel_z_mm=:.4f} {channel.name=}"
                         )

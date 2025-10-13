@@ -107,7 +107,50 @@ class MockMicroscope(Microscope):
     def _realistic_delays_enabled(self) -> bool:
         """Check if realistic delays should be simulated (default: True, disable with MOCK_NO_DELAYS=1)"""
         return os.environ.get("MOCK_NO_DELAYS", "0").lower() not in ("1", "true", "yes")
-    
+
+    def is_position_forbidden(self, x_mm: float, y_mm: float, safety_radius_mm: float = 0.0) -> tuple[bool, str]:
+        """
+        Check if a position is forbidden for movement.
+
+        Args:
+            x_mm: X coordinate in mm
+            y_mm: Y coordinate in mm
+            safety_radius_mm: Safety margin radius around the position (default: 0.0)
+
+        Returns:
+            Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
+        """
+        from seafront.config.handles import ProtocolConfig
+        from seafront.hardware.forbidden_areas import ForbiddenAreaList
+
+        g_config = GlobalConfigHandler.get_dict()
+        forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
+
+        # If no forbidden areas config is found, allow the movement
+        if forbidden_areas_entry is None:
+            return False, ""
+
+        forbidden_areas_str = forbidden_areas_entry.value
+        if not isinstance(forbidden_areas_str, str):
+            logger.warning("forbidden_areas entry is not a string, allowing movement")
+            return False, ""
+
+        try:
+            forbidden_areas = ForbiddenAreaList.from_json_string(forbidden_areas_str)
+        except ValueError as e:
+            logger.warning(f"Invalid forbidden areas configuration: {e}, allowing movement")
+            return False, ""
+
+        # Check if movement is safe considering safety radius
+        is_safe, conflicting_area = forbidden_areas.is_movement_safe(x_mm, y_mm, safety_radius_mm)
+
+        if not is_safe and conflicting_area is not None:
+            reason_text = f" ({conflicting_area.reason})" if conflicting_area.reason else ""
+            error_msg = f"Movement to ({x_mm:.1f}, {y_mm:.1f}) mm is forbidden - conflicts with area '{conflicting_area.name}'{reason_text}"
+            return True, error_msg
+
+        return False, ""
+
     def _calculate_axis_movement_time(self, distance_mm: float, max_vel_mm_s: float, accel_mm_s2: float) -> tuple[float, float]:
         """
         Calculate movement time and max velocity reached for a single axis.
@@ -852,7 +895,15 @@ class MockMicroscope(Microscope):
             # Check if streaming is active
             if self.stream_callback is not None:
                 cmd.error_internal(detail="already streaming")
-            
+
+            # Check forbidden areas if we have complete X,Y coordinates
+            if command.x_mm is not None and command.y_mm is not None:
+                is_forbidden, error_message = cmd.positionIsForbidden(
+                    command.x_mm, command.y_mm, safety_radius_mm=1.0
+                )
+                if is_forbidden:
+                    cmd.error_internal(detail=error_message)
+
             # Calculate target position (use current position for unspecified axes)
             target_x = command.x_mm if command.x_mm is not None else self._pos_x_measured_to_real(self._current_position.x_pos_mm)
             target_y = command.y_mm if command.y_mm is not None else self._pos_y_measured_to_real(self._current_position.y_pos_mm)
@@ -901,10 +952,22 @@ class MockMicroscope(Microscope):
             # Check if streaming is active
             if self.stream_callback is not None:
                 cmd.error_internal(detail="already streaming")
-            
+
+            # Check if well is forbidden
+            plate = command.plate_type
+            if cmd.wellIsForbidden(command.well_name, plate):
+                cmd.error_internal(detail="well is forbidden")
+
             # Calculate well center position (offset + half well size)
             well_x = command.plate_type.get_well_offset_x(command.well_name) + command.plate_type.Well_size_x_mm / 2
             well_y = command.plate_type.get_well_offset_y(command.well_name) + command.plate_type.Well_size_y_mm / 2
+
+            # Check if well center position is in forbidden area
+            is_forbidden, error_message = cmd.positionIsForbidden(
+                well_x, well_y, safety_radius_mm=1.0
+            )
+            if is_forbidden:
+                cmd.error_internal(detail=f"Well {command.well_name} center position is in forbidden area - {error_message}")
             
             # Current Z position doesn't change for well moves
             current_z = self._pos_z_measured_to_real(self._current_position.z_pos_mm)

@@ -79,16 +79,19 @@ class CriticalMachineConfig(BaseModel):
     forbidden_wells: str | None = None
     "must be json-like string"
 
+    forbidden_areas: str | None = None
+    "JSON string defining forbidden areas as AABBs in physical coordinates (mm)"
+
     laser_autofocus_available: tp.Literal["yes", "no"] | None = None
     laser_autofocus_camera_model: str | None = None
     "if laser_autofocus_available is yes, then this must be present"
     laser_autofocus_camera_driver: CameraDriver = "galaxy"
-    
+
     filter_wheel_available: tp.Literal["yes", "no"] | None = None
 
     channels: str = Field(default="[]")
     "Available imaging channels with their illumination source slots (JSON-encoded string)"
-    
+
     filters: str = Field(default="[]")
     "Available filters with their wheel positions (JSON-encoded string)"
 
@@ -206,6 +209,7 @@ class GlobalConfigHandler:
             "filters": FilterWheelConfig.CONFIGURATION.value,
             "channels": ImagingConfig.CHANNELS.value,
             "forbidden_wells": ProtocolConfig.FORBIDDEN_WELLS.value,
+            "forbidden_areas": ProtocolConfig.FORBIDDEN_AREAS.value,
         }
 
         def _get_config_item(handle_key: str):
@@ -341,27 +345,64 @@ class GlobalConfigHandler:
             dac_percent=[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
             optical_power_mw=[0.0, 0.2, 0.8, 1.8, 3.2, 5.0, 7.2, 9.8, 12.8, 16.2, 20.0, 24.2, 28.8, 33.8, 39.2, 45.0, 51.2, 57.8, 64.8, 72.2, 80.0]
         )
-        
+
         # Default channel configuration with traditional illumination sources using proper constructors
         default_channels = [
             ChannelConfig(name="Fluorescence 405 nm Ex", handle="fluo405", source_slot=11),
-            ChannelConfig(name="Fluorescence 488 nm Ex", handle="fluo488", source_slot=12), 
+            ChannelConfig(name="Fluorescence 488 nm Ex", handle="fluo488", source_slot=12),
             ChannelConfig(name="Fluorescence 561 nm Ex", handle="fluo561", source_slot=14),
             ChannelConfig(name="Fluorescence 638 nm Ex", handle="fluo638", source_slot=13),
             ChannelConfig(name="Fluorescence 730 nm Ex", handle="fluo730", source_slot=15),
-            ChannelConfig(name="BF LED matrix full", handle="bfledfull", source_slot=0, 
+            ChannelConfig(name="BF LED matrix full", handle="bfledfull", source_slot=0,
                          use_power_calibration=True, power_calibration=bfled_calibration),
             ChannelConfig(name="BF LED matrix left half", handle="bfledleft", source_slot=1),
             ChannelConfig(name="BF LED matrix right half", handle="bfledright", source_slot=2)
         ]
-        
+
         # Default filter configuration - empty by default since filter wheel is optional
         default_filters = []
-        
+
+        # Default forbidden areas - typical problematic areas for SQUID microscope
+        default_forbidden_areas = [
+            {
+                "name": "Top-left plate corner",
+                "min_x_mm": 0.0,
+                "max_x_mm": 8.0,
+                "min_y_mm": 77.0,
+                "max_y_mm": 85.0,
+                "reason": "Plate holder interference risk"
+            },
+            {
+                "name": "Top-right plate corner",
+                "min_x_mm": 119.0,
+                "max_x_mm": 127.0,
+                "min_y_mm": 77.0,
+                "max_y_mm": 85.0,
+                "reason": "Plate holder interference risk"
+            },
+            {
+                "name": "Bottom-left plate corner",
+                "min_x_mm": 0.0,
+                "max_x_mm": 8.0,
+                "min_y_mm": 0.0,
+                "max_y_mm": 8.0,
+                "reason": "Plate holder interference risk"
+            },
+            {
+                "name": "Bottom-right plate corner",
+                "min_x_mm": 119.0,
+                "max_x_mm": 127.0,
+                "min_y_mm": 0.0,
+                "max_y_mm": 8.0,
+                "reason": "Plate holder interference risk"
+            }
+        ]
+
         # Convert to JSON strings for storage
         channels_json = json.dumps([ch.model_dump() for ch in default_channels])
         filters_json = json.dumps([f.model_dump() for f in default_filters])
-        
+        forbidden_areas_json = json.dumps(default_forbidden_areas)
+
         return CriticalMachineConfig(
             main_camera_model="MER2-1220-32U3M",
             laser_autofocus_camera_model="MER2-630-60U3M",
@@ -374,6 +415,7 @@ class GlobalConfigHandler:
             calibration_offset_y_mm=0.0,
             calibration_offset_z_mm=0.0,
             forbidden_wells="""{"1":[],"4":[],"96":[],"384":["A01","A24","P01","P24"],"1536":[]}""",
+            forbidden_areas=forbidden_areas_json,
             channels=channels_json,
             filters=filters_json,
         )
@@ -756,6 +798,12 @@ class GlobalConfigHandler:
                 value=critical_machine_config.forbidden_wells or "{}",
             ),
             ConfigItem(
+                name="forbidden areas",
+                handle="protocol.forbidden_areas",
+                value_kind="text",
+                value=critical_machine_config.forbidden_areas or '{"forbidden_areas":[]}',
+            ),
+            ConfigItem(
                 name="imaging channels configuration",
                 handle="imaging.channels",
                 value_kind="text",
@@ -858,6 +906,23 @@ class GlobalConfigHandler:
                     GlobalConfigHandler._config_list.append(item)
                 else:
                     GlobalConfigHandler._config_list[index].override(item)
+
+    @staticmethod
+    def get_dict() -> dict[str, ConfigItem]:
+        """
+        Get current configuration as a dictionary where keys are config handles
+        and values are ConfigItem objects.
+
+        Returns:
+            Dictionary mapping config handles to ConfigItem objects
+        """
+        if GlobalConfigHandler._config_list is None:
+            return {}
+
+        result = {}
+        for item in GlobalConfigHandler._config_list:
+            result[item.handle] = item
+        return result
 
     @staticmethod
     def reset(microscope_name: str | None = None):

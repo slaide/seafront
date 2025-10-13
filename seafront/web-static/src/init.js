@@ -199,6 +199,9 @@ document.addEventListener("alpine:init", () => {
         limits: null,
 
         themes: ["light", "dark"],
+
+        /** @type {{x: number, y: number}|null} */
+        plateCursorPosition: null,
         theme: localStorage.getItem("seafront-theme") || "light",
         
         /** Selection mode for plate navigator: 'wells' or 'sites' */
@@ -1051,8 +1054,8 @@ document.addEventListener("alpine:init", () => {
          *
          * @param {HTMLElement} el
          */
-        initPlateNavigator(el) {
-            this.plateNavigator = new PlateNavigator(el);
+        initPlateNavigator(el, alpineComponent) {
+            this.plateNavigator = new PlateNavigator(el, alpineComponent || this);
 
             this.plateNavigator.cameraFit({
                 ax: 0,
@@ -1154,7 +1157,8 @@ document.addEventListener("alpine:init", () => {
         /** @returns {CoreCurrentState} */
         get state() {
             if (Object.keys(this._state).length == 0) {
-                throw new Error(`bug in state`);
+                // Return a default state during initialization instead of throwing
+                return { is_busy: false, adapter_state: null };
             }
             //@ts-ignore
             return this._state;

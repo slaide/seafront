@@ -11,6 +11,7 @@
             "calibration_offset_y_mm": 0.0,
             "calibration_offset_z_mm": 0.0,
             "forbidden_wells": "{\"384\":[\"A01\",\"A24\",\"P01\",\"P24\"]}",
+            "forbidden_areas": "[{\"name\": \"Top-left plate corner\", \"min_x_mm\": 0.0, \"max_x_mm\": 8.0, \"min_y_mm\": 77.0, \"max_y_mm\": 85.0, \"reason\": \"Plate holder interference risk\"}, {\"name\": \"Top-right plate corner\", \"min_x_mm\": 119.0, \"max_x_mm\": 127.0, \"min_y_mm\": 77.0, \"max_y_mm\": 85.0, \"reason\": \"Plate holder interference risk\"}, {\"name\": \"Bottom-left plate corner\", \"min_x_mm\": 0.0, \"max_x_mm\": 8.0, \"min_y_mm\": 0.0, \"max_y_mm\": 8.0, \"reason\": \"Plate holder interference risk\"}, {\"name\": \"Bottom-right plate corner\", \"min_x_mm\": 119.0, \"max_x_mm\": 127.0, \"min_y_mm\": 0.0, \"max_y_mm\": 8.0, \"reason\": \"Plate holder interference risk\"}]",
             "laser_autofocus_available": "yes",
             "laser_autofocus_camera_model": "MockAutofocusCamera",
             "laser_autofocus_camera_driver": "galaxy",

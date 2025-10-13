@@ -331,7 +331,7 @@
                             <div
                                 id="plate"
                                 style="width: 100%; aspect-ratio: 3/2"
-                                x-init="initPlateNavigator($el)"
+                                x-init="initPlateNavigator($el, this)"
                             ></div>
                             
                             
@@ -349,12 +349,17 @@
                                     x-bind:style="`background:#${matFovColor.toString(16).padStart(6,'0')}D0;`"
                                     >Current FOV</span
                                 >
-                                <span 
+                                <span
                                     style="display: inline-block; margin-left: 10px; padding: 2px 6px; border-radius: 3px; font-size: 0.85em; border: 1px solid var(--text-color); background: var(--weak-bg-color); color: var(--text-color); cursor: help;"
                                     x-init="enabletooltip($el)"
                                     x-bind:tooltip="plateSelectionMode === 'wells' ? '• Drag = pan view<br>• Double-click = move objective<br>• Shift+left-click = select single well<br>• Shift+left-drag = select wells in area<br>• Shift+right-click = deselect single well<br>• Shift+right-drag = deselect wells in area' : '• Drag = pan view<br>• Double-click = move objective<br>• Shift+left-click = select sites in area<br>• Shift+left-drag = select sites in area<br>• Shift+right-click = deselect sites in area<br>• Shift+right-drag = deselect sites in area'"
                                 >
                                     Controls ?
+                                </span>
+                                <span
+                                    style="display: inline-block; margin-left: 10px; padding: 2px 6px; border-radius: 3px; font-size: 0.85em; font-family: monospace; background: var(--weak-bg-color); color: var(--text-color); border: 1px solid var(--text-color);"
+                                    x-text="plateCursorPosition ? `${plateCursorPosition.x.toFixed(1)}, ${plateCursorPosition.y.toFixed(1)} mm` : 'Move mouse over plate'"
+                                >
                                 </span>
                             </p>
                             

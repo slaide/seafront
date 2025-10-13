@@ -63,7 +63,6 @@ from seafront.server.commands import (
     BasicSuccessResponse,
     ChannelSnapSelection,
     ChannelSnapSelectionResult,
-    ChannelSnapProgressiveStart,
     ChannelSnapProgressiveStatus,
     ChannelSnapshot,
     ChannelStreamBegin,
@@ -88,6 +87,7 @@ from seafront.server.commands import (
     SitePosition,
     StreamingStartedResponse,
     error_internal,
+    positionIsForbidden,
     wellIsForbidden,
 )
 from seafront.server.protocol import (
@@ -1470,6 +1470,16 @@ class Core:
             protocol.acquisition_status.last_status.message = error_detail
 
             error_internal(detail=error_detail)
+
+        # Validate that no site positions fall within forbidden areas
+        # This catches forbidden positions during preparation instead of during execution
+        for position_info in protocol.iter_positions():
+            site_x_mm, site_y_mm = position_info.physical_position
+
+            # Check if this position is forbidden
+            is_forbidden, error_message = positionIsForbidden(site_x_mm, site_y_mm)
+            if is_forbidden:
+                error_internal(detail=f"Site position in well {position_info.well.well_name} (site {position_info.site.col},{position_info.site.row}) is forbidden: {error_message}")
 
         # this function internally locks the microscope
         async def run_acquisition(

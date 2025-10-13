@@ -1096,6 +1096,26 @@ class SquidAdapter(Microscope):
             imaging_delta_z_um=z_spacing_limits.to_dict(),
         )
 
+    def is_position_forbidden(self, x_mm: float, y_mm: float, safety_radius_mm: float = 0.0) -> tuple[bool, str]:
+        """Check if a position is forbidden for movement."""
+        from seafront.config.handles import ProtocolConfig
+        from seafront.hardware.forbidden_areas import ForbiddenAreaList
+
+        g_config = GlobalConfigHandler.get_dict()
+        forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
+
+        if forbidden_areas_entry is None:
+            # No forbidden areas configured - position is allowed
+            return False, ""
+
+        try:
+            forbidden_areas = ForbiddenAreaList.from_json_string(forbidden_areas_entry.strvalue)
+            return forbidden_areas.is_position_forbidden(x_mm, y_mm, safety_radius_mm)
+        except Exception as e:
+            logger.warning(f"Failed to parse forbidden areas configuration: {e}")
+            # If we can't parse the forbidden areas, default to allowing the position
+            return False, ""
+
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         # Validate command against hardware limits first
         self.validate_command(command)
@@ -1266,6 +1286,14 @@ class SquidAdapter(Microscope):
                     if command.z_mm is not None and command.z_mm < 0:
                         cmd.error_internal(detail=f"z coordinate out of bounds {command.z_mm = }")
 
+                    # Check forbidden areas if we have complete X,Y coordinates
+                    if command.x_mm is not None and command.y_mm is not None:
+                        is_forbidden, error_message = self.is_position_forbidden(
+                            command.x_mm, command.y_mm, safety_radius_mm=1.0
+                        )
+                        if is_forbidden:
+                            cmd.error_internal(detail=error_message)
+
                     prev_state = self.state
                     self.state = CoreState.Moving
 
@@ -1354,6 +1382,13 @@ class SquidAdapter(Microscope):
 
                     x_mm = plate.get_well_offset_x(command.well_name) + plate.Well_size_x_mm / 2
                     y_mm = plate.get_well_offset_y(command.well_name) + plate.Well_size_y_mm / 2
+
+                    # Check forbidden areas for the target well center position
+                    is_forbidden, error_message = self.is_position_forbidden(
+                        x_mm, y_mm, safety_radius_mm=1.0
+                    )
+                    if is_forbidden:
+                        cmd.error_internal(detail=f"Well {command.well_name} center position is in forbidden area - {error_message}")
 
                     # move in 2d grid, no diagonals (slower, but safer)
                     res = await self.execute(cmd.MoveTo(x_mm=x_mm, y_mm=None))

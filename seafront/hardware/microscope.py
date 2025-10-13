@@ -224,14 +224,32 @@ class Microscope(BaseModel, abc.ABC):
         pass
 
     @abc.abstractmethod
+    def is_position_forbidden(self, x_mm: float, y_mm: float, safety_radius_mm: float = 0.0) -> tuple[bool, str]:
+        """
+        Check if a position is forbidden for movement.
+
+        This method validates whether the microscope can safely move to the given
+        coordinates, considering any hardware-specific forbidden areas or constraints.
+
+        Args:
+            x_mm: X coordinate in mm
+            y_mm: Y coordinate in mm
+            safety_radius_mm: Safety margin radius around the position (default: 0.0)
+
+        Returns:
+            Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
+        """
+        pass
+
+    @abc.abstractmethod
     def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
         """
         Sort channels according to the specified imaging order.
-        
+
         Args:
             channels: List of enabled AcquisitionChannelConfig objects
             imaging_order: Sorting strategy to use
-            
+
         Returns:
             Sorted list of channels
         """
