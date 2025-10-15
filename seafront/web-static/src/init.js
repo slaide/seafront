@@ -28,7 +28,13 @@ import { ChannelImageView } from "channelview";
 
 import { tooltipConfig, enabletooltip } from "tooltip";
 
-import { parseConfigNamespaces, flattenNamespaceTree, toggleNamespaceExpansion, expandAllNamespaces, collapseAllNamespaces } from "./namespace-parser.js";
+import {
+    parseConfigNamespaces,
+    flattenNamespaceTree,
+    toggleNamespaceExpansion,
+    expandAllNamespaces,
+    collapseAllNamespaces
+} from "./namespace-parser.js";
 
 // Interface settings with defaults
 const defaultInterfaceSettings = {
@@ -134,7 +140,7 @@ function cloneObject(o) {
 
 /**
  * @template T
- * @template {object} E
+ * @template {object & {detail?:string,message?:string}} E
  * @type {CheckMapSquidRequestFn<T,E>}
  */
 async function checkMapSquidRequest(v, context = 'API request', showError = true, microscope_state = null) {

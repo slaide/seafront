@@ -168,6 +168,9 @@ declare global {
 declare global {
     type CheckMapSquidRequestFn<T, E extends object> = (
         v: Response,
+        context?:string,
+        showError?:boolean,
+        microscope_state?:null // ,|{showError:(a:string,b:string)=>void},
     ) => Promise<T>;
 
     type Wellplate = {
