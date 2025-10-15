@@ -1,11 +1,11 @@
 import hashlib
 import json
-import json5
 import os
 import re
 import typing as tp
 from pathlib import Path
 
+import json5
 from pydantic import BaseModel, Field
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
@@ -20,7 +20,7 @@ class PowerCalibration(BaseModel):
     "DAC percentage values (0-100)"
     optical_power_mw: list[float]
     "Corresponding optical power in milliwatts (used for calibration curve generation)"
-    
+
     def validate_data(self) -> None:
         """Validate that calibration data is consistent"""
         if len(self.dac_percent) != len(self.optical_power_mw):
@@ -45,7 +45,7 @@ class ChannelConfig(BaseModel):
     "Whether to use power calibration for this channel"
     power_calibration: PowerCalibration | None = None
     "Power calibration data (required if use_power_calibration is True)"
-    
+
     def validate_calibration(self) -> None:
         """Validate that calibration settings are consistent"""
         if self.use_power_calibration and self.power_calibration is None:
@@ -227,7 +227,7 @@ class GlobalConfigHandler:
                 if microscope_config.microscope_name == current_microscope_name:
                     existing_microscope_config = microscope_config
                     break
-        
+
         for key in critical_machine_config.keys():
             config_item = _get_config_item(key)
             if config_item is not None:
@@ -288,24 +288,24 @@ class GlobalConfigHandler:
         # Validate input - reject empty or whitespace-only names
         if not microscope_name or not microscope_name.strip():
             raise ValueError("Microscope name cannot be empty or contain only whitespace")
-        
+
         # Generate 6-digit hash of original name
         name_hash = hashlib.sha256(microscope_name.encode()).hexdigest()[:6]
-        
+
         # Convert to lowercase and replace spaces with dashes
         sanitized = microscope_name.lower().replace(' ', '-')
-        
+
         # Remove non-alphanumeric characters (keep dashes)
         sanitized = re.sub(r'[^a-z0-9\-]', '', sanitized)
-        
+
         # Remove consecutive dashes and trim dashes from ends
         sanitized = re.sub(r'-+', '-', sanitized).strip('-')
-        
+
         # If sanitization resulted in empty string (e.g., name was only special chars),
         # use 'microscope' as base name
         if not sanitized:
             sanitized = 'microscope'
-            
+
         return f"{sanitized}-{name_hash}"
 
     @staticmethod
@@ -320,19 +320,19 @@ class GlobalConfigHandler:
         Raises ValueError if no microscope name is available (shared directory fallback removed).
         """
         base_dir = GlobalConfigHandler.home() / "acquisition_configs"  # type: ignore
-        
+
         # Use provided microscope name or fall back to current microscope
         # Empty strings are treated as None (falsy)
-        target_microscope = (microscope_name if microscope_name and microscope_name.strip() 
+        target_microscope = (microscope_name if microscope_name and microscope_name.strip()
                            else GlobalConfigHandler._current_microscope_name)
-        
+
         if target_microscope is None:
             raise ValueError("Microscope name is required - shared directory fallback has been removed")
-            
+
         # Use microscope-specific subdirectory with safe directory name
         safe_dir_name = GlobalConfigHandler._sanitize_microscope_name_for_directory(target_microscope)
         config_dir = base_dir / safe_dir_name
-            
+
         if not config_dir.exists():
             config_dir.mkdir(parents=True)
 
@@ -695,7 +695,7 @@ class GlobalConfigHandler:
                 ConfigItem(
                     name="filter wheel configuration",
                     handle="filter.wheel.configuration",
-                    value_kind="text", 
+                    value_kind="text",
                     value=critical_machine_config.filters,
                     frozen=True,
                 ),
@@ -762,7 +762,7 @@ class GlobalConfigHandler:
             ConfigItem(
                 name="image filename use channel name",
                 handle="image.filename.use_channel_name",
-                value_kind="option", 
+                value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
             ),
@@ -773,14 +773,14 @@ class GlobalConfigHandler:
                 value=0,
             ),
             ConfigItem(
-                name="image filename z index start", 
+                name="image filename z index start",
                 handle="image.filename.z_index_start",
                 value_kind="int",
                 value=0,
             ),
             ConfigItem(
                 name="image filename site index start",
-                handle="image.filename.site_index_start", 
+                handle="image.filename.site_index_start",
                 value_kind="int",
                 value=1,
             ),
@@ -852,19 +852,6 @@ class GlobalConfigHandler:
 
         return ret
 
-    @staticmethod
-    def get_dict() -> dict[str, ConfigItem]:
-        ret = {}
-        for c in GlobalConfigHandler.get():
-            assert isinstance(c, ConfigItem)
-
-            # make sure it does not exist already
-            if c.handle in ret:
-                raise ValueError("duplicate handle found in config list")
-
-            ret[c.handle] = c
-
-        return ret
 
     @staticmethod
     def override(new_config_items: dict[str, ConfigItem] | list[ConfigItem]):
@@ -909,20 +896,17 @@ class GlobalConfigHandler:
 
     @staticmethod
     def get_dict() -> dict[str, ConfigItem]:
-        """
-        Get current configuration as a dictionary where keys are config handles
-        and values are ConfigItem objects.
+        ret = {}
+        for c in GlobalConfigHandler.get():
+            assert isinstance(c, ConfigItem)
 
-        Returns:
-            Dictionary mapping config handles to ConfigItem objects
-        """
-        if GlobalConfigHandler._config_list is None:
-            return {}
+            # make sure it does not exist already
+            if c.handle in ret:
+                raise ValueError("duplicate handle found in config list")
 
-        result = {}
-        for item in GlobalConfigHandler._config_list:
-            result[item.handle] = item
-        return result
+            ret[c.handle] = c
+
+        return ret
 
     @staticmethod
     def reset(microscope_name: str | None = None):

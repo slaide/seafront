@@ -1,8 +1,8 @@
 import asyncio
-import json5
 import typing as tp
 from enum import Enum
 
+import json5
 import numpy as np
 import seaconfig as sc
 from fastapi import HTTPException
@@ -384,7 +384,7 @@ class HardwareCapabilitiesResponse(BaseModel):
         description="list of imaging channels that the microscope is capable of",
     )
     "list of imaging channels that the microscope is capable of"
-    hardware_limits: dict[str, dict[str, tp.Union[float, int]]] = Field(
+    hardware_limits: dict[str, dict[str, float | int]] = Field(
         ...,
         title="Hardware Limits",
         description="numerical limits of configurable parameters based on actual hardware capabilities",
@@ -487,7 +487,7 @@ class ChannelSnapSelection(BaseModel, BaseCommand[ChannelSnapSelectionResult]):
 
 class ChannelSnapProgressiveStatus(BaseModel):
     """Progressive channel snap status update"""
-    
+
     channel_handle: str
     channel_name: str
     status: tp.Literal["starting", "completed", "error", "finished"]
@@ -504,9 +504,9 @@ class ChannelSnapProgressiveStart(BaseModel, BaseCommand[BasicSuccessResponse]):
     Unlike ChannelSnapSelection, this returns immediately and sends status updates
     via callback mechanism. Each channel result is available as soon as acquired.
     """
-    
+
     config_file: sc.AcquisitionConfig
-    
+
     _ReturnValue: type = PrivateAttr(default=BasicSuccessResponse)
 
 

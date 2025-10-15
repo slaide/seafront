@@ -10,12 +10,12 @@ from seafront.config.handles import ConfigHandle
 
 class SquidConfig(ConfigHandle):
     """SQUID microscope-specific configuration handles."""
-    
+
     # SQUID-specific imaging settings
     SQUID_IMAGING_MODE = "squid.imaging.mode"
     SQUID_STAGE_SPEED = "squid.stage.speed"
     SQUID_AUTOFOCUS_ALGORITHM = "squid.autofocus.algorithm"
-    
+
     # SQUID hardware limits and capabilities
     SQUID_MAX_EXPOSURE_MS = "squid.limits.max_exposure_ms"
     SQUID_MIN_EXPOSURE_MS = "squid.limits.min_exposure_ms"
@@ -26,7 +26,7 @@ class SquidConfig(ConfigHandle):
 
 class GalaxyCameraConfig(ConfigHandle):
     """Galaxy camera-specific configuration handles."""
-    
+
     # Galaxy camera specific settings
     GALAXY_GAIN_MODE = "camera.galaxy.gain_mode"
     GALAXY_TRIGGER_DELAY = "camera.galaxy.trigger_delay"
@@ -37,7 +37,7 @@ class GalaxyCameraConfig(ConfigHandle):
 
 class ToupCamConfig(ConfigHandle):
     """ToupCam camera-specific configuration handles."""
-    
+
     # ToupCam specific settings
     TOUPCAM_TEMPERATURE = "camera.toupcam.temperature"
     TOUPCAM_GAIN = "camera.toupcam.gain"

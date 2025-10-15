@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from seafront.config.basics import ChannelConfig, FilterConfig, ImagingOrder
 from seafront.hardware.adapter import AdapterState, CoreState
-from seafront.hardware.camera import HardwareLimitValue
 from seafront.server import commands as cmd
 
 
@@ -26,16 +25,16 @@ class HardwareLimits:
     """
     Complete hardware limits structure that mirrors the TypeScript HardwareLimits type.
     """
-    imaging_exposure_time_ms: dict[str, tp.Union[float, int]]
-    imaging_analog_gain_db: dict[str, tp.Union[float, int]]
-    imaging_focus_offset_um: dict[str, tp.Union[float, int]]
-    imaging_illum_perc: dict[str, tp.Union[float, int]]
-    imaging_illum_perc_fluorescence: dict[str, tp.Union[float, int]]
-    imaging_illum_perc_brightfield: dict[str, tp.Union[float, int]]
-    imaging_number_z_planes: dict[str, tp.Union[float, int]]
-    imaging_delta_z_um: dict[str, tp.Union[float, int]]
-    
-    def to_dict(self) -> dict[str, dict[str, tp.Union[float, int]]]:
+    imaging_exposure_time_ms: dict[str, float | int]
+    imaging_analog_gain_db: dict[str, float | int]
+    imaging_focus_offset_um: dict[str, float | int]
+    imaging_illum_perc: dict[str, float | int]
+    imaging_illum_perc_fluorescence: dict[str, float | int]
+    imaging_illum_perc_brightfield: dict[str, float | int]
+    imaging_number_z_planes: dict[str, float | int]
+    imaging_delta_z_um: dict[str, float | int]
+
+    def to_dict(self) -> dict[str, dict[str, float | int]]:
         """Convert to dictionary format for API responses."""
         return {
             "imaging_exposure_time_ms": self.imaging_exposure_time_ms,
@@ -56,29 +55,29 @@ class Microscope(BaseModel, abc.ABC):
     This class defines the common interface that all microscope implementations
     must provide, enabling hardware-agnostic operation.
     """
-    
+
     # Common state attributes
     channels: list[ChannelConfig]
     filters: list[FilterConfig]
     state: CoreState = CoreState.Idle
     is_connected: bool = False
     is_in_loading_position: bool = False
-    
+
     stream_callback: tp.Callable[[np.ndarray | bool], bool] | None = Field(default=None)
     """
     call with either:
         image, then return if should stop or not
         or call with bool, which indicates if should stop (return value then ignored)
     """
-    
+
     last_state: AdapterState | None = None
-    
+
     _lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
     _stop_streaming_flag: bool = PrivateAttr(default=False)
     "indicate that streaming should stop, without locking hardware"
-    
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     @contextmanager
     @abc.abstractmethod
     def lock(self, blocking: bool = True) -> tp.Iterator[tp.Self | None]:
@@ -92,7 +91,7 @@ class Microscope(BaseModel, abc.ABC):
             Self if lock acquired, None if blocking=False and lock unavailable
         """
         pass
-    
+
     @classmethod
     @abc.abstractmethod
     def make(cls) -> "Microscope":
@@ -103,7 +102,7 @@ class Microscope(BaseModel, abc.ABC):
             An unconnected microscope instance
         """
         pass
-    
+
     @abc.abstractmethod
     def open_connections(self) -> None:
         """
@@ -113,7 +112,7 @@ class Microscope(BaseModel, abc.ABC):
         and any other hardware components.
         """
         pass
-    
+
     @abc.abstractmethod
     def close(self) -> None:
         """
@@ -122,7 +121,7 @@ class Microscope(BaseModel, abc.ABC):
         Should be safe to call even if some devices are already disconnected.
         """
         pass
-    
+
     @abc.abstractmethod
     async def home(self) -> None:
         """
@@ -135,7 +134,7 @@ class Microscope(BaseModel, abc.ABC):
         - Filter wheel initialization (if present)
         """
         pass
-    
+
     @abc.abstractmethod
     async def get_current_state(self) -> AdapterState:
         """
@@ -145,7 +144,7 @@ class Microscope(BaseModel, abc.ABC):
             Current state with calibrated positions
         """
         pass
-    
+
     @property
     @abc.abstractmethod
     def calibrated_stage_position(self) -> tuple[float, float, float]:
@@ -156,7 +155,7 @@ class Microscope(BaseModel, abc.ABC):
             (x_mm, y_mm, z_mm) calibration offset tuple
         """
         pass
-    
+
     @abc.abstractmethod
     async def snap_selected_channels(self, config_file: sc.AcquisitionConfig) -> cmd.BasicSuccessResponse:
         """
@@ -169,7 +168,7 @@ class Microscope(BaseModel, abc.ABC):
             Success response
         """
         pass
-    
+
     @abc.abstractmethod
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         """
@@ -185,7 +184,7 @@ class Microscope(BaseModel, abc.ABC):
             Command execution result
         """
         pass
-    
+
     @abc.abstractmethod
     def get_hardware_limits(self) -> HardwareLimits:
         """
@@ -202,7 +201,7 @@ class Microscope(BaseModel, abc.ABC):
             HardwareLimits object with strongly-typed limit values
         """
         pass
-    
+
     @abc.abstractmethod
     def validate_command(self, command: cmd.BaseCommand[tp.Any]) -> None:
         """

@@ -17,7 +17,7 @@ import serial.tools.list_ports
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from seafront.hardware.adapter import Position as AdapterPosition
-from seafront.hardware.firmware_config import get_firmware_config, FirmwareConfig
+from seafront.hardware.firmware_config import get_firmware_config
 from seafront.logger import logger
 
 # Global firmware configuration instance
@@ -75,7 +75,7 @@ SerialDeviceInfo = tp.Any
 
 class HOME_OR_ZERO:
     HOME_POSITIVE = 0  # motor moves along the positive direction (MCU coordinates)
-    HOME_NEGATIVE = 1  # motor moves along the negative direction (MCU coordinates)  
+    HOME_NEGATIVE = 1  # motor moves along the negative direction (MCU coordinates)
     ZERO = 2
 
 
@@ -736,7 +736,7 @@ class Command:
     @staticmethod
     def af_laser_illum_end() -> "Command":
         return Command.set_pin_level(pin=MCU_PINS.AF_LASER, level=0)
-    
+
     @staticmethod
     def filter_wheel_init() -> "Command":
         cmd = Command()
@@ -803,7 +803,7 @@ class Microcontroller(BaseModel):
 
     terminate_reading_received_packet_thread: bool = False
     last_position: Position = Field(default_factory=lambda: Position(0, 0, 0))
-    
+
     # Filter wheel state
     filter_wheel_position: int = Field(default=firmware_config.FILTERWHEEL_MIN_INDEX)
 
@@ -1095,7 +1095,7 @@ class Microcontroller(BaseModel):
         """
         if not (firmware_config.FILTERWHEEL_MIN_INDEX <= position <= firmware_config.FILTERWHEEL_MAX_INDEX):
             raise ValueError(f"Position {position} out of range [{firmware_config.FILTERWHEEL_MIN_INDEX}, {firmware_config.FILTERWHEEL_MAX_INDEX}]")
-            
+
         if position != self.filter_wheel_position:
             # Calculate movement needed
             delta_positions = position - self.filter_wheel_position
@@ -1103,21 +1103,21 @@ class Microcontroller(BaseModel):
                 firmware_config.FILTERWHEEL_MAX_INDEX - firmware_config.FILTERWHEEL_MIN_INDEX + 1
             )
             distance_mm = delta_positions * distance_per_position
-            
+
             # Convert to microsteps and move
             usteps = firmware_config.mm_to_ustep_w(distance_mm)
             move_commands = Command.move_w_usteps(usteps)
-            
+
             await self.send_cmd(move_commands)
-            
+
             # Update internal position tracking
             self.filter_wheel_position = position
 
-    @microcontroller_exclusive  
+    @microcontroller_exclusive
     async def filter_wheel_init(self):
         """Initialize the filter wheel"""
         await self.send_cmd(Command.filter_wheel_init())
-        
+
     @microcontroller_exclusive
     async def filter_wheel_configure_actuator(self):
         """Configure the filter wheel (W axis) motor parameters before homing"""
@@ -1164,16 +1164,16 @@ class Microcontroller(BaseModel):
         # Home the W axis - this moves to the physical limit switch
         # The home command is marked as a move command so send_cmd will wait for completion
         await self.send_cmd(Command.home("w"))
-        
-        # Apply small offset to move away from the limit switch 
+
+        # Apply small offset to move away from the limit switch
         # This matches SQUID_FILTERWHEEL_OFFSET from the original Squid code
         offset_usteps = firmware_config.mm_to_ustep_w(firmware_config.FILTERWHEEL_OFFSET_MM)
         move_commands = Command.move_w_usteps(offset_usteps)
         await self.send_cmd(move_commands)
-        
+
         # Reset position tracking to minimum index (position 1)
         self.filter_wheel_position = firmware_config.FILTERWHEEL_MIN_INDEX
-        
+
     def filter_wheel_get_position(self) -> int:
         """Get the current filter wheel position (non-blocking)"""
         return self.filter_wheel_position

@@ -6,7 +6,7 @@ import asyncio
 import datetime as dt
 import faulthandler
 import inspect
-import json5, json
+import json
 import os
 import pathlib as path
 import re
@@ -15,11 +15,12 @@ import threading
 import time
 import traceback
 import typing as tp
-
 from concurrent.futures import Future as CCFuture
 from enum import Enum
 from functools import wraps
 from types import MethodType
+
+import json5
 
 # math and image dependencies
 import numpy as np
@@ -42,11 +43,23 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 from pydantic.fields import FieldInfo
 from seaconfig.acquisition import AcquisitionConfig
 
-from seafront.config.basics import ChannelConfig, ConfigItem, CriticalMachineConfig, GlobalConfigHandler, ImagingOrder, ServerConfig
-from seafront.config.handles import CalibrationConfig, CameraConfig, ImagingConfig, LaserAutofocusConfig
-from seafront.hardware.squid import DisconnectError, SquidAdapter
+from seafront.config.basics import (
+    ChannelConfig,
+    ConfigItem,
+    CriticalMachineConfig,
+    GlobalConfigHandler,
+    ImagingOrder,
+    ServerConfig,
+)
+from seafront.config.handles import (
+    CalibrationConfig,
+    CameraConfig,
+    ImagingConfig,
+    LaserAutofocusConfig,
+)
+from seafront.hardware.microscope import HardwareLimits, Microscope
 from seafront.hardware.mock_microscope import MockMicroscope
-from seafront.hardware.microscope import Microscope, HardwareLimits
+from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.logger import logger
 from seafront.server.commands import (
     AcquisitionCommand,
@@ -61,9 +74,9 @@ from seafront.server.commands import (
     AutofocusSnapResult,
     BaseCommand,
     BasicSuccessResponse,
+    ChannelSnapProgressiveStatus,
     ChannelSnapSelection,
     ChannelSnapSelectionResult,
-    ChannelSnapProgressiveStatus,
     ChannelSnapshot,
     ChannelStreamBegin,
     ChannelStreamEnd,
@@ -95,6 +108,7 @@ from seafront.server.protocol import (
     ProtocolGenerator,
     make_unique_acquisition_id,
 )
+
 
 # Custom exception for acquisition cancellation
 class AcquisitionCancelledError(Exception):
@@ -173,7 +187,7 @@ def get_machine_defaults() -> list[ConfigItem]:
     """
 
     config_items = GlobalConfigHandler.get()
-    
+
     # Convert JSON5 strings to standard JSON for browser compatibility
     for item in config_items:
         if item.handle in ['channels', 'filters'] and item.value_kind == 'text':
@@ -184,7 +198,7 @@ def get_machine_defaults() -> list[ConfigItem]:
             except Exception as e:
                 # If parsing fails, leave the original value
                 print(f"Warning: Failed to convert {item.handle} from JSON5 to JSON: {e}")
-    
+
     return config_items
 
 
@@ -342,9 +356,9 @@ class Core:
             g_dict = GlobalConfigHandler.get_dict()
             microscope_type_item = g_dict.get("microscope_type")
             microscope_type = microscope_type_item.strvalue if microscope_type_item else "squid"
-        
+
         if microscope_type == "mock":
-            logger.info("Creating mock microscope adapter") 
+            logger.info("Creating mock microscope adapter")
             self.microscope: Microscope = MockMicroscope.make()
         else:
             logger.info("Creating SQUID microscope adapter")
@@ -352,14 +366,14 @@ class Core:
 
         self.acquisition_map: dict[str, AcquisitionStatus] = {}
         """ map containing information on past and current acquisitions """
-        
+
         self._hardware_limits_cache: HardwareLimits | None = None
         """ cached hardware limits to serve when microscope is busy """
-        
+
         # Progressive channel snap state
         self._progressive_snap_callbacks: dict[str, tp.Callable[[ChannelSnapProgressiveStatus], None]] = {}
         """ callback functions for progressive channel snap status updates """
-        
+
         # Acquisition error buffer
         self._last_acquisition_error: str | None = None
         """ stores the last acquisition error message for display in GUI """
@@ -590,7 +604,7 @@ class Core:
             CustomRoute(handler=self.get_current_state),
             methods=["POST"],
         )
-        
+
         # Register hardware capabilities route
         route_wrapper(
             "/api/get_features/hardware_capabilities",
@@ -639,7 +653,7 @@ class Core:
                         }
                         await _safe_send_json(ws, error_msg)
                         # Don't close the connection - let client decide
-                        
+
             except WebSocketDisconnect:
                 pass
 
@@ -757,12 +771,12 @@ class Core:
             """
             await ws.accept()
             callback_id = make_unique_acquisition_id()  # Define outside try block
-            
+
             try:
                 # Receive the configuration
                 config_data = await ws.receive_json()
                 config_file = sc.AcquisitionConfig(**config_data)
-                
+
                 # Register callback to send updates via WebSocket
                 def send_status_update(status: ChannelSnapProgressiveStatus):
                     try:
@@ -770,9 +784,9 @@ class Core:
                         asyncio.create_task(_safe_send_json(ws, status.model_dump()))
                     except Exception as e:
                         logger.warning(f"Failed to send progressive snap status: {e}")
-                
+
                 self._progressive_snap_callbacks[callback_id] = send_status_update
-                
+
                 # Start progressive snapping
                 try:
                     await self.start_progressive_channel_snap(config_file, callback_id)
@@ -787,7 +801,7 @@ class Core:
                         message="Failed to start progressive snap",
                         error_detail=str(e)
                     ))
-                    
+
             except WebSocketDisconnect:
                 pass  # Client disconnected
             except Exception as e:
@@ -1307,30 +1321,30 @@ class Core:
         """
         # Access global configuration
         g_dict = GlobalConfigHandler.get_dict()
-        
+
         # Get channels JSON string and parse it
         channels_json = g_dict["imaging.channels"].strvalue
         channels_data = json5.loads(channels_json)
-        
+
         if channels_data is None:
             raise ValueError("Parsed channels configuration is None - invalid JSON structure")
-        
+
         if not isinstance(channels_data, list):
             raise ValueError("Parsed channels configuration must be a list")
-        
+
         # Convert to ChannelConfig objects
         channel_configs = []
         for ch in channels_data:
             if not isinstance(ch, dict):
                 raise ValueError("Each channel configuration must be a dictionary")
             channel_configs.append(ChannelConfig(**ch))
-        
+
         # Convert ChannelConfig to AcquisitionChannelConfig with sensible defaults
         acquisition_channels = []
         for ch in channel_configs:
             # Use different default illumination based on channel type
             default_illum_perc = 20.0 if ch.handle.startswith('bfled') else 100.0
-            
+
             acquisition_channels.append(sc.AcquisitionChannelConfig(
                 name=ch.name,
                 handle=ch.handle,
@@ -1370,11 +1384,11 @@ class Core:
 
         the acquisition is run in the background, i.e. this command returns after acquisition bas begun. see /api/acquisition/status for ongoing status of the acquisition.
         """
-        
+
         # Clear any previous acquisition error
         self._last_acquisition_error = None
         self._last_acquisition_error_timestamp = None
-        
+
         # Note: Protocol compatibility is validated in config_fetch, but we could add additional
         # validation here if protocols are submitted directly via API without going through config_fetch
 
@@ -1563,7 +1577,7 @@ class Core:
                             AcquisitionStatusStage.CRASHED
                         )
                         acquisition_status.last_status.message = str(e.detail)
-                        
+
                         # Store error in buffer for GUI to display
                         self._last_acquisition_error = str(e.detail)
                         self._last_acquisition_error_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1646,18 +1660,18 @@ class Core:
         as soon as each channel completes. This allows the UI to show results immediately
         instead of waiting for all channels to complete.
         """
-        
+
         if callback_id not in self._progressive_snap_callbacks:
             error_internal(detail="no callback registered for progressive snap")
-        
+
         callback = self._progressive_snap_callbacks[callback_id]
-        
+
         # Get enabled channels
         enabled_channels = [c for c in config_file.channels if c.enabled]
-        
+
         if len(enabled_channels) == 0:
             error_internal(detail="no channels selected")
-            
+
         # Get imaging order from machine config and sort channels
         g_config = GlobalConfigHandler.get_dict()
         imaging_order = g_config.get(ImagingConfig.ORDER.value, "protocol_order")
@@ -1665,19 +1679,19 @@ class Core:
             imaging_order_value = imaging_order
         else:
             imaging_order_value = imaging_order.strvalue if hasattr(imaging_order, 'strvalue') else "protocol_order"
-        
+
         # Use microscope's sorting function to maintain consistent ordering logic
         with self.microscope.lock() as microscope:
             if microscope is None:
                 error_internal(detail="microscope is busy")
             enabled_channels = microscope._sort_channels_by_imaging_order(enabled_channels, tp.cast(ImagingOrder, imaging_order_value))
-        
+
         total_channels = len(enabled_channels)
-        
+
         # Start background task for progressive snapping
         async def progressive_snap_task():
             completed_channels = 0
-            
+
             try:
                 for channel in enabled_channels:
                     # Send starting status
@@ -1689,29 +1703,29 @@ class Core:
                         completed_channels=completed_channels,
                         message=f"Starting acquisition for {channel.name}"
                     ))
-                    
+
                     try:
                         # Execute channel snapshot
                         with self.microscope.lock() as microscope:
                             if microscope is None:
                                 error_internal(detail="microscope is busy")
-                            
+
                             result = await microscope.execute(ChannelSnapshot(
                                 channel=channel,
                                 machine_config=config_file.machine_config or []
                             ))
-                        
+
                         # Store the image
                         g_dict = GlobalConfigHandler.get_dict()
                         pixel_format = g_dict["camera.main.pixel_format"].strvalue
                         await self._store_new_image(
-                            img=result._img, 
-                            pixel_format=pixel_format, 
+                            img=result._img,
+                            pixel_format=pixel_format,
                             channel_config=channel
                         )
-                        
+
                         completed_channels += 1
-                        
+
                         # Send completed status
                         callback(ChannelSnapProgressiveStatus(
                             channel_handle=channel.handle,
@@ -1721,7 +1735,7 @@ class Core:
                             completed_channels=completed_channels,
                             message=f"Completed {channel.name} ({completed_channels}/{total_channels})"
                         ))
-                        
+
                     except Exception as e:
                         # Send error status
                         callback(ChannelSnapProgressiveStatus(
@@ -1734,7 +1748,7 @@ class Core:
                             error_detail=str(e)
                         ))
                         break
-                
+
                 # Send finished status
                 callback(ChannelSnapProgressiveStatus(
                     channel_handle="",
@@ -1744,13 +1758,13 @@ class Core:
                     completed_channels=completed_channels,
                     message=f"All channels complete ({completed_channels}/{total_channels})"
                 ))
-                
+
             except Exception as e:
                 # Send error status for unexpected errors
                 callback(ChannelSnapProgressiveStatus(
                     channel_handle="",
                     channel_name="",
-                    status="error", 
+                    status="error",
                     total_channels=total_channels,
                     completed_channels=completed_channels,
                     message="Unexpected error during progressive snap",
@@ -1760,10 +1774,10 @@ class Core:
                 # Clean up callback
                 if callback_id in self._progressive_snap_callbacks:
                     del self._progressive_snap_callbacks[callback_id]
-        
+
         # Start the task in background
         asyncio.create_task(progressive_snap_task())
-        
+
         return BasicSuccessResponse()
 
     def close(self):
@@ -2085,7 +2099,7 @@ def main():
 
     # Check for default protocol file
     default_protocol_file = GlobalConfigHandler.home_acquisition_config_dir() / "default.json"
-    
+
     if not default_protocol_file.exists():
         logger.critical(f"Default protocol file not found: {default_protocol_file}")
         logger.critical(f"Please run: uv run python scripts/generate_default_protocol.py --microscope \"{selected_microscope.microscope_name}\"")
@@ -2095,15 +2109,14 @@ def main():
 
     core = Core(selected_microscope)
 
-    # Schedule hardware connection establishment via HTTP request
+    # Define hardware connection function (but don't start it yet)
     def establish_hardware_connection():
         try:
-            import urllib.request
             import urllib.error
-            import socket
+            import urllib.request
 
             server_base_url=f"http://127.0.0.1:{server_config.port}"
-            
+
             # Wait for server to be ready by polling a simple endpoint
             server_ready = False
             max_attempts = 30  # 30 seconds max wait
@@ -2113,14 +2126,14 @@ def main():
                         if response.status == 200:
                             server_ready = True
                             break
-                except (urllib.error.URLError, socket.timeout):
+                except (TimeoutError, urllib.error.URLError):
                     pass
                 time.sleep(0.5)
-            
+
             if not server_ready:
                 logger.warning("server did not become ready within 30 seconds, skipping hardware connection")
                 return
-            
+
             logger.info("establishing hardware connection at startup")
             req = urllib.request.Request(
                 server_base_url + "/api/action/establish_hardware_connection",
@@ -2132,7 +2145,7 @@ def main():
             with urllib.request.urlopen(req, timeout=30) as response:
                 if response.status == 200:
                     logger.info("hardware connection established")
-                    
+
                     # Initialize hardware limits cache
                     try:
                         logger.info("initializing hardware limits cache")
@@ -2142,7 +2155,7 @@ def main():
                             headers={'Content-Type': 'application/json'},
                             method='POST'
                         )
-                        
+
                         with urllib.request.urlopen(req_limits, timeout=30) as limits_response:
                             if limits_response.status == 200:
                                 logger.info("hardware limits cache initialized")

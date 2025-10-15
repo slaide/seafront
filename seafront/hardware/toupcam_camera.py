@@ -3,22 +3,22 @@ import typing as tp
 
 import numpy as np
 import toupcam.toupcam as tc
+from pydantic import BaseModel, ConfigDict
 from seaconfig import AcquisitionChannelConfig
 
-from seafront.config.basics import GlobalConfigHandler
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
-from pydantic import BaseModel, ConfigDict 
 
-class toupcam_ctx():
+
+class toupcam_ctx:
     def __init__(self,msg:str="",ignore_error:bool=False):
         self.msg=msg
         self.ignore_error=ignore_error
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_value, traceback):
         if exc_type is not None:
             if isinstance(exc_value.args[0],int):
@@ -27,16 +27,16 @@ class toupcam_ctx():
 
         # raise exception ?
         return self.ignore_error
-    
-class measuretime():
+
+class measuretime:
     def __init__(self,msg:str,ignore_error:bool=False):
         self.msg=msg
         self.ignore_error=ignore_error
-    
+
     def __enter__(self):
         self.time=time.time()
         return self
-    
+
     def __exit__(self, exc_type, exc_value, traceback):
         logger.debug(f"{self.msg} took {time.time()-self.time}ms")
 
@@ -66,13 +66,13 @@ def pullmode_callback(event_type: int, ctx: ImageContext) -> None:
 
     if not ctx.cam.handle:
         return
-    
+
     if ctx.mode=="until_stop":
         if ctx.stop_acquisition:
             ctx.cam._acquisition_until_stop_cleanup()
 
             return
-        
+
     try:
         buf = bytes(ctx.cam.width * ctx.cam.height * ctx.bytes_per_pixel)
 
@@ -80,7 +80,7 @@ def pullmode_callback(event_type: int, ctx: ImageContext) -> None:
         frame_info=tc.ToupcamFrameInfoV4()
         with toupcam_ctx("pullimagev4"):
             ctx.cam.handle.PullImageV4(buf, 0, ctx.pullimage_pix_format, 0, frame_info)
-    
+
         ctx.captured_image = np.frombuffer(buf, dtype=ctx.dtype).reshape(
             (ctx.cam.height, ctx.cam.width)
         )
@@ -145,7 +145,7 @@ class ToupCamCamera(Camera):
                 self.handle = tc.Toupcam.Open(self.device_info.id)
                 if self.handle is None:
                     raise RuntimeError("Failed to open ToupCam camera")
-                
+
             except Exception as e:
                 logger.debug(f"toupcam - opening failed {i} times {e=}")
 
@@ -237,7 +237,7 @@ class ToupCamCamera(Camera):
         assert self.handle is not None
         if self.pullmode_active:
             return False
-        
+
         self.handle.StartPullModeWithCallback(pullmode_callback,self.ctx)
         self.pullmode_active=True
 
@@ -271,9 +271,9 @@ class ToupCamCamera(Camera):
             case AcquisitionMode.ON_TRIGGER:
                 if with_cb is not None:
                     raise RuntimeError("callback is not allowed for on trigger mode")
-                
+
                 self.ctx.mode="once"
-                
+
                 # ToupCam doesn't have explicit trigger modes like Galaxy
                 # We'll use single-shot acquisition
 
@@ -324,47 +324,47 @@ class ToupCamCamera(Camera):
         """Get camera's exposure time limits in milliseconds."""
         if not self.handle:
             raise RuntimeError("Camera not opened")
-        
+
         valmin, valmax, valdef = self.handle.get_ExpTimeRange()
         # ToupCam returns exposure time in microseconds, convert to milliseconds
         return HardwareLimitValue(
             min=valmin * 1e-3,  # Convert µs to ms
-            max=valmax * 1e-3,  # Convert µs to ms 
+            max=valmax * 1e-3,  # Convert µs to ms
             step=0.1  # Step size in ms - reasonable default for ToupCam
         )
 
     def get_analog_gain_limits(self) -> HardwareLimitValue:
-        """Get camera's analog gain limits in decibels.""" 
+        """Get camera's analog gain limits in decibels."""
         if not self.handle:
             raise RuntimeError("Camera not opened")
-            
+
         valmin, valmax, valdef = self.handle.get_ExpoAGainRange()
         logger.debug(f"ToupCam analog gain range: min={valmin}%, max={valmax}%, default={valdef}%")
         # ToupCam returns gain as percentage (100-10000%)
         # Convert to decibels: dB = 10 * log10(percentage / 100)
-        
+
         # Handle edge cases that could cause NaN or invalid values
         # ToupCam typically returns 100-10000% range (0dB to 20dB)
         if valmin > 0:
             min_db = 10 * np.log10(valmin / 100)
         else:
             min_db = 0.0  # Default to 0dB if invalid min percentage
-            
+
         if valmax > 0:
             max_db = 10 * np.log10(valmax / 100)
         else:
             # If max is invalid, we don't know the safe range - default both to 0
             min_db = 0.0
             max_db = 0.0
-        
+
         # If calculated values are NaN (shouldn't happen with above logic, but safety check)
         if np.isnan(min_db):
             min_db = 0.0
         if np.isnan(max_db):
-            # If max is NaN, we don't know the safe range - set both to 0  
+            # If max is NaN, we don't know the safe range - set both to 0
             min_db = 0.0
             max_db = 0.0
-        
+
         return HardwareLimitValue(
             min=min_db,
             max=max_db,
@@ -407,7 +407,7 @@ class ToupCamCamera(Camera):
         toupcam_format = None
         if not isinstance(pixel_format, str):
             raise RuntimeError(f"unsupported pixel format {pixel_format}")
-        
+
         pixel_format=pixel_format.lower()
 
         match pixel_format:
@@ -418,20 +418,20 @@ class ToupCamCamera(Camera):
             case "mono10":
                 toupcam_format = tc.TOUPCAM_PIXELFORMAT_RAW10
                 if self._original_device.model.flag&tc.TOUPCAM_FLAG_RAW10 == 0:
-                    raise RuntimeError(f"camera does not support 10bit depth")
+                    raise RuntimeError("camera does not support 10bit depth")
             case "mono12":
                 toupcam_format = tc.TOUPCAM_PIXELFORMAT_RAW12
                 if self._original_device.model.flag&tc.TOUPCAM_FLAG_RAW12 == 0:
-                    raise RuntimeError(f"camera does not support 12bit depth")
+                    raise RuntimeError("camera does not support 12bit depth")
             case "mono14":
                 toupcam_format = tc.TOUPCAM_PIXELFORMAT_RAW14
                 if self._original_device.model.flag&tc.TOUPCAM_FLAG_RAW14 == 0:
-                    raise RuntimeError(f"camera does not support 14bit depth")
+                    raise RuntimeError("camera does not support 14bit depth")
             case "mono16":
                 toupcam_format = tc.TOUPCAM_PIXELFORMAT_RAW16
                 if self._original_device.model.flag&tc.TOUPCAM_FLAG_RAW16 == 0:
-                    raise RuntimeError(f"camera does not support 16bit depth")
-                
+                    raise RuntimeError("camera does not support 16bit depth")
+
             case _:
                 raise RuntimeError(f"unsupported pixel format {pixel_format}")
 
@@ -475,7 +475,7 @@ class ToupCamCamera(Camera):
 
             else:
                 raise ValueError(f"camera does not support format {toupcam_format}")
-            
+
 
             with toupcam_ctx("put option TOUPCAM_OPTION_PIXEL_FORMAT"):
                 self._set_toupcam_option(tc.TOUPCAM_OPTION_PIXEL_FORMAT,toupcam_format)
@@ -542,7 +542,7 @@ class ToupCamCamera(Camera):
 
                     except Exception as e:
                         raise e
-                    
+
                     finally:
                         self.acquisition_ongoing = False
                         self.handle.Trigger(0)

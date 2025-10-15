@@ -6,27 +6,28 @@ throughout the codebase with organized, type-safe enum values.
 """
 
 from enum import Enum
-from typing import Dict, Any, Union
+from typing import Any
 
 from seafront.config.basics import GlobalConfigHandler
 
+
 class ConfigHandle(Enum):
     """Base class for config handle enums with utility methods."""
-    
+
     def __str__(self) -> str:
         """Return the handle string value."""
         return self.value
-    
+
     @classmethod
-    def get_dict(cls) -> Dict[str, Any]:
+    def get_dict(cls) -> dict[str, Any]:
         """Get the global config dict for convenient access."""
         return GlobalConfigHandler.get_dict()
-    
+
     def get_item(self) -> Any:
         """Get the config item for this handle."""
         g_config = self.get_dict()
         return g_config[self.value]
-    
+
     @property
     def value_item(self) -> Any:
         """Convenient property to get the config item."""
@@ -35,14 +36,14 @@ class ConfigHandle(Enum):
 
 class CameraConfig(ConfigHandle):
     """Camera-related configuration handles."""
-    
+
     # Main camera configuration
     MAIN_MODEL = "camera.main.model"
     MAIN_DRIVER = "camera.main.driver"
     MAIN_OBJECTIVE = "camera.main.objective"
     MAIN_TRIGGER = "camera.main.trigger"
     MAIN_PIXEL_FORMAT = "camera.main.pixel_format"
-    
+
     # Main camera image settings
     MAIN_IMAGE_WIDTH_PX = "camera.main.image.width_px"
     MAIN_IMAGE_HEIGHT_PX = "camera.main.image.height_px"
@@ -52,19 +53,19 @@ class CameraConfig(ConfigHandle):
 
 class LaserAutofocusConfig(ConfigHandle):
     """Laser autofocus system configuration handles."""
-    
+
     # System availability and basic settings
     AVAILABLE = "laser.autofocus.available"
     EXPOSURE_TIME_MS = "laser.autofocus.exposure_time_ms"
     USE_GLASS_TOP = "laser.autofocus.use_glass_top"
     WARM_UP_LASER = "laser.autofocus.warm_up_laser"
-    
+
     # Camera configuration
     CAMERA_MODEL = "laser.autofocus.camera.model"
     CAMERA_DRIVER = "laser.autofocus.camera.driver"
     CAMERA_ANALOG_GAIN = "laser.autofocus.camera.analog_gain"
     CAMERA_PIXEL_FORMAT = "laser.autofocus.camera.pixel_format"
-    
+
     # Calibration settings
     CALIBRATION_IS_CALIBRATED = "laser.autofocus.calibration.is_calibrated"
     CALIBRATION_X_PEAK_POS = "laser.autofocus.calibration.x_peak_pos"
@@ -74,7 +75,7 @@ class LaserAutofocusConfig(ConfigHandle):
 
 class CalibrationConfig(ConfigHandle):
     """System calibration configuration handles."""
-    
+
     CALIBRATE_B2_HERE = "calibration.calibrate_B2_here"
     OFFSET_X_MM = "calibration.offset.x_mm"
     OFFSET_Y_MM = "calibration.offset.y_mm"
@@ -83,14 +84,14 @@ class CalibrationConfig(ConfigHandle):
 
 class ImagingConfig(ConfigHandle):
     """Imaging and acquisition configuration handles."""
-    
+
     CHANNELS = "imaging.channels"
     ORDER = "imaging.order"
 
 
 class ImageConfig(ConfigHandle):
     """Image processing and storage configuration handles."""
-    
+
     FILE_PAD_LOW = "image.file.pad_low"
     FILENAME_USE_CHANNEL_NAME = "image.filename.use_channel_name"
     FILENAME_XY_INDEX_START = "image.filename.xy_index_start"
@@ -101,13 +102,13 @@ class ImageConfig(ConfigHandle):
 
 class StorageConfig(ConfigHandle):
     """Storage and output configuration handles."""
-    
+
     BASE_IMAGE_OUTPUT_DIR = "storage.base_image_output_dir"
 
 
 class FilterWheelConfig(ConfigHandle):
     """Filter wheel system configuration handles."""
-    
+
     AVAILABLE = "filter.wheel.available"
     CONFIGURATION = "filter.wheel.configuration"
 
@@ -121,18 +122,18 @@ class ProtocolConfig(ConfigHandle):
 
 class SystemConfig(ConfigHandle):
     """System-level configuration handles."""
-    
+
     MICROSCOPE_NAME = "system.microscope_name"
 
 
 class IlluminationConfig(ConfigHandle):
     """Illumination control configuration handles."""
-    
+
     TURN_OFF_ALL = "illumination.turn_off_all"
 
 
 # Convenience function to get config item by enum
-def get_config_item(handle: Union[ConfigHandle, str]) -> Any:
+def get_config_item(handle: ConfigHandle | str) -> Any:
     """
     Get a config item by handle enum or string.
     
@@ -143,7 +144,7 @@ def get_config_item(handle: Union[ConfigHandle, str]) -> Any:
         The config item
     """
     g_config = GlobalConfigHandler.get_dict()
-    
+
     if isinstance(handle, ConfigHandle):
         return g_config[handle.value]
 

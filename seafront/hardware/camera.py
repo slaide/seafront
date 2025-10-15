@@ -15,11 +15,11 @@ class HardwareLimitValue:
     Represents a hardware limit with min/max/step values.
     Mirrors the TypeScript HardwareLimitValue type.
     """
-    min: tp.Union[float, int]
-    max: tp.Union[float, int]
-    step: tp.Union[float, int]
-    
-    def to_dict(self) -> dict[str, tp.Union[float, int]]:
+    min: float | int
+    max: float | int
+    step: float | int
+
+    def to_dict(self) -> dict[str, float | int]:
         """Convert to dictionary format for API responses."""
         return {"min": self.min, "max": self.max, "step": self.step}
 
@@ -122,7 +122,7 @@ class Camera(ABC):
         """
         pass
 
-    @abstractmethod  
+    @abstractmethod
     def get_analog_gain_limits(self) -> HardwareLimitValue:
         """
         Get camera's analog gain limits.
@@ -145,7 +145,7 @@ class Camera(ABC):
     def stop_acquisition(self) -> None:
         """
         Force stop any ongoing acquisition.
-        
+
         This method should interrupt continuous acquisition mode safely.
         """
         pass

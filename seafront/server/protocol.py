@@ -1,3 +1,4 @@
+import asyncio
 import asyncio as aio
 import datetime as dt
 import math
@@ -8,7 +9,6 @@ import time
 import typing as tp
 from concurrent.futures import Future as ConcurrentFuture
 from threading import Thread
-import asyncio
 
 import seaconfig as sc
 import tifffile
@@ -155,7 +155,7 @@ def _format_well_name_with_padding(well_name: str) -> str:
     # Well name format: single letter + number (e.g., F8, A10)
     row_letter = well_name[0]
     col_number = well_name[1:]
-    
+
     # Zero-pad column to 2 digits
     return f"{row_letter}{col_number.zfill(2)}"
 
@@ -298,7 +298,7 @@ class ProtocolGenerator(BaseModel):
         if imaging_order == "protocol_order":
             # Keep original order from config file
             return channels
-                
+
         elif imaging_order == "wavelength_order":
             # Sort by emission wavelength (high to low), then brightfield last
             def wavelength_key(channel):
@@ -308,14 +308,14 @@ class ProtocolGenerator(BaseModel):
                 # Sort by emission wavelength descending (highest first)
                 emission_nm = getattr(channel, 'emission_wavelength_nm', 500)  # Default 500nm
                 return (emission_nm, channel.name)  # Positive for descending order when reversed
-                    
+
             return sorted(channels, key=wavelength_key, reverse=True)
-                
+
         elif imaging_order == "z_order":
             # This case is handled in the z-stacking logic below
             # For channel ordering, use protocol order as fallback
             return channels
-        
+
         else:
             # Default fallback
             return channels
@@ -328,22 +328,22 @@ class ProtocolGenerator(BaseModel):
         wells = self.plate_wells.copy()
         if len(wells) <= 1:
             return wells
-        
+
         def distance(w1: sc.PlateWellConfig, w2: sc.PlateWellConfig) -> float:
             return math.sqrt((w1.col - w2.col)**2 + (w1.row - w2.row)**2)
-        
+
         # Start with the first well (top-left-most)
         wells.sort(key=lambda w: (w.row, w.col))
         current_well = wells.pop(0)
         optimized_wells = [current_well]
-        
+
         # Greedily pick the nearest remaining well
         while wells:
             nearest_well = min(wells, key=lambda w: distance(current_well, w))
             wells.remove(nearest_well)
             optimized_wells.append(nearest_well)
             current_well = nearest_well
-        
+
         logger.info(f"protocol - greedy well traversal: {len(optimized_wells)} wells")
         return optimized_wells
 
@@ -818,23 +818,23 @@ class ProtocolGenerator(BaseModel):
                         else:
                             # Use channel handle when explicitly set to "no"
                             channel_identifier = channel.handle
-                        
+
                         # Get index starting values from configuration (with defaults if not present)
                         xy_start = g_config.get("image_filename_xy_index_start")
                         xy_start_value = xy_start.intvalue if xy_start else 0
-                        
-                        z_start = g_config.get("image_filename_z_index_start") 
+
+                        z_start = g_config.get("image_filename_z_index_start")
                         z_start_value = z_start.intvalue if z_start else 0
-                        
+
                         site_start = g_config.get("image_filename_site_index_start")
                         site_start_value = site_start.intvalue if site_start else 1
-                        
+
                         # Generate filename with configurable index starting values
                         site_num = site_index + site_start_value
                         x_num = site.col + xy_start_value
-                        y_num = site.row + xy_start_value  
+                        y_num = site.row + xy_start_value
                         z_num = plane_index + z_start_value
-                        
+
                         # Apply zero-padding to well name if configured
                         zero_pad_column = g_config.get("image_filename_zero_pad_column")
                         if zero_pad_column is None or zero_pad_column.boolvalue:
@@ -843,7 +843,7 @@ class ProtocolGenerator(BaseModel):
                         else:
                             # Use well name as-is without zero-padding
                             formatted_well_name = well.well_name
-                        
+
                         image_filename=f"{formatted_well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.tiff"
                         if is_timeseries_acquisition:
                             #timepoints start at 1, but we use 0 for the first one in dir
@@ -973,7 +973,7 @@ class ProtocolGenerator(BaseModel):
 
                     await asyncio.sleep(min(time_remaining,timeslice_s))
                     time_remaining-=timeslice_s
-                    
+
 
         logger.debug("protocol - finished protocol steps")
 

@@ -5,9 +5,8 @@ import numpy as np
 from gxipy import gxiapi
 from seaconfig import AcquisitionChannelConfig
 
-from seafront.config.basics import GlobalConfigHandler
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
-from seafront.hardware.camera import Camera, AcquisitionMode, HardwareLimitValue
+from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
 
 gxiapi.gx_init_lib()
@@ -15,14 +14,14 @@ gxiapi.gx_init_lib()
 
 class GalaxyCamera(Camera):
     """Galaxy Camera implementation using the gxiapi library."""
-    
+
     device_manager = gxiapi.DeviceManager()
 
     @staticmethod
     def get_all() -> list["Camera"]:
         dev_num, dev_info_list = GalaxyCamera.device_manager.update_all_device_list()
 
-        ret:tp.List["Camera"] = []
+        ret:list[Camera] = []
 
         if dev_num > 0:
             assert dev_info_list is not None
@@ -215,7 +214,7 @@ class GalaxyCamera(Camera):
                     with_cb(img)
 
                 self.handle.data_stream[0].register_capture_callback(galaxy_fwd_image)
-                
+
                 # Force stream restart when switching from trigger mode to ensure continuous acquisition works
                 if self.acq_mode == AcquisitionMode.ON_TRIGGER:
                     was_streaming = True
@@ -361,7 +360,7 @@ class GalaxyCamera(Camera):
         match mode:
             case "once":
                 assert self.handle is not None
-                
+
                 # Ensure camera is in trigger mode before sending software trigger
                 self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
@@ -435,10 +434,10 @@ class GalaxyCamera(Camera):
         """
         if not self.handle:
             raise RuntimeError("Camera not opened")
-            
+
         # Get exposure time range from camera hardware
         exposure_range = self.handle.ExposureTime.get_range()
-        
+
         # Convert from microseconds to milliseconds and return
         # Type: ignore needed because gxiapi TypedDict doesn't expose these keys to type checker
         return HardwareLimitValue(
@@ -456,10 +455,10 @@ class GalaxyCamera(Camera):
         """
         if not self.handle:
             raise RuntimeError("Camera not opened")
-            
-        # Get analog gain range from camera hardware  
+
+        # Get analog gain range from camera hardware
         gain_range = self.handle.Gain.get_range()
-        
+
         # Galaxy cameras typically report gain in dB already
         # Type: ignore needed because gxiapi TypedDict doesn't expose these keys to type checker
         return HardwareLimitValue(

@@ -1,37 +1,51 @@
 import asyncio
-import json
-import json5
 import math
 import threading
 import typing as tp
 from contextlib import contextmanager
-from functools import wraps
 
 import cv2
+import json5
 import numpy as np
 import scipy  # to find peaks in a signal
+
 # import scipy.ndimage  # for guassian blur
 import seaconfig as sc
+
 # from gxipy import gxiapi
 from gxipy.gxiapi import OffLine as GalaxyCameraOffline
 from matplotlib import pyplot as plt
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel
 from scipy import stats  # for linear regression
 
-from seafront.config.basics import GlobalConfigHandler, CameraDriver, ChannelConfig, FilterConfig, ImagingOrder
+from seafront.config.basics import (
+    CameraDriver,
+    ChannelConfig,
+    FilterConfig,
+    GlobalConfigHandler,
+    ImagingOrder,
+)
 from seafront.config.handles import (
-    CameraConfig,
     CalibrationConfig,
+    CameraConfig,
     FilterWheelConfig,
+    ImageConfig,
     ImagingConfig,
     LaserAutofocusConfig,
-    ImageConfig,
 )
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, CoreState
-from seafront.hardware.camera import AcquisitionMode, Camera, get_all_cameras, camera_open, CameraOpenRequest, GalaxyCameraIdentifier, ToupCamIdentifier, HardwareLimitValue
+from seafront.hardware.camera import (
+    Camera,
+    CameraOpenRequest,
+    GalaxyCameraIdentifier,
+    HardwareLimitValue,
+    ToupCamIdentifier,
+    camera_open,
+    get_all_cameras,
+)
 from seafront.hardware.illumination import IlluminationController
-from seafront.hardware.microscope import Microscope, microscope_exclusive, HardwareLimits
+from seafront.hardware.microscope import HardwareLimits, Microscope, microscope_exclusive
 from seafront.logger import logger
 from seafront.server import commands as cmd
 from seafront.server.commands import (
@@ -204,7 +218,7 @@ class SquidAdapter(Microscope):
             error_msg = f"invalid main camera driver '{main_camera_driver}'. Valid drivers: {valid_drivers}"
             logger.critical(f"startup - {error_msg}")
             cmd.error_internal(detail=error_msg)
-            
+
         if focus_camera_driver not in valid_drivers:
             error_msg = f"invalid focus camera driver '{focus_camera_driver}'. Valid drivers: {valid_drivers}"
             logger.critical(f"startup - {error_msg}")
@@ -235,7 +249,7 @@ class SquidAdapter(Microscope):
                 id=_main_cameras[0].sn  # Use SN as ID for now
             ) if main_camera_driver == "toupcam" else None
         )
-        
+
         focus_camera_request = CameraOpenRequest(
             driver=focus_camera_driver, # type: ignore
             galaxy=GalaxyCameraIdentifier(
@@ -257,28 +271,28 @@ class SquidAdapter(Microscope):
         # Extract and parse channel and filter configurations (JSON-encoded strings)
         channels_json = g_dict["imaging.channels"].strvalue
         channels_data = json5.loads(channels_json)
-        
+
         if channels_data is None:
             raise ValueError("Parsed channels configuration is None - invalid JSON structure")
-        
+
         channel_configs = [ChannelConfig(**ch) for ch in channels_data] #type: ignore
-        
+
         # Only process filters if filter wheel is available
         filter_wheel_available = g_dict.get(FilterWheelConfig.AVAILABLE.value)
         if filter_wheel_available and filter_wheel_available.boolvalue:
             filters_json = g_dict["filter.wheel.configuration"].strvalue
             filters_data = json5.loads(filters_json)
-            
+
             if filters_data is None:
                 raise ValueError("Parsed filters configuration is None - invalid JSON structure")
-            
+
             filter_configs = [FilterConfig(**f) for f in filters_data] #type: ignore
         else:
             filter_configs = []
 
         # Initialize illumination controller with channel configurations
         illumination_controller = IlluminationController(channel_configs)
-        
+
         squid = cls(
             main_camera=Locked(main_camera),
             focus_camera=Locked(focus_camera),
@@ -492,7 +506,7 @@ class SquidAdapter(Microscope):
         if imaging_order == "z_order":
             # Sort by z_offset_um (lowest to highest z coordinate)
             return sorted(channels, key=lambda ch: ch.z_offset_um)
-        
+
         elif imaging_order == "wavelength_order":
             # Sort by wavelength (highest to lowest), then brightfield last
             def wavelength_sort_key(ch):
@@ -509,13 +523,13 @@ class SquidAdapter(Microscope):
                 else:
                     # Unknown wavelength, put in middle
                     return (0, -500)  # Assume ~500nm for unknown
-            
+
             return sorted(channels, key=wavelength_sort_key)
-        
+
         elif imaging_order == "protocol_order":
             # Keep original order from config file
             return channels
-        
+
         else:
             # Default to protocol order for unknown values
             logger.warning(f"Unknown imaging order '{imaging_order}', using protocol_order")
@@ -551,14 +565,14 @@ class SquidAdapter(Microscope):
 
             # get channels from that, filter for selected/enabled channels
             channels = [c for c in config_file.channels if c.enabled]
-            
+
             # get imaging order from machine config, default to protocol_order
             imaging_order = g_config.get(ImagingConfig.ORDER.value, "protocol_order")
             if isinstance(imaging_order, str):
                 imaging_order_value = imaging_order
             else:
                 imaging_order_value = imaging_order.strvalue if hasattr(imaging_order, 'strvalue') else "protocol_order"
-            
+
             # sort channels according to configured imaging order
             channels = self._sort_channels_by_imaging_order(channels, tp.cast(ImagingOrder, imaging_order_value))
 
@@ -1041,7 +1055,7 @@ class SquidAdapter(Microscope):
             last_stage_position = await self.microcontroller.get_last_position()
         except IOError as e:
             self.close()
-            logger.debug(f"microcontroller disconnected (IOError)")
+            logger.debug("microcontroller disconnected (IOError)")
             raise DisconnectError() from e
 
         # supposed=real-calib
@@ -1069,13 +1083,13 @@ class SquidAdapter(Microscope):
         with self.main_camera() as main_camera:
             if main_camera is None:
                 raise RuntimeError("Main camera not available for hardware limits query")
-                
+
             # Get exposure time limits from camera hardware
             exposure_limits = main_camera.get_exposure_time_limits()
-            
-            # Get analog gain limits from camera hardware  
+
+            # Get analog gain limits from camera hardware
             gain_limits = main_camera.get_analog_gain_limits()
-        
+
         # Create SQUID-specific mechanical and power limits as HardwareLimitValue objects
         focus_offset_limits = HardwareLimitValue(min=-200, max=200, step=0.1)
         fluorescence_power_limits = HardwareLimitValue(min=5, max=100, step=0.1)
@@ -1083,7 +1097,7 @@ class SquidAdapter(Microscope):
         generic_power_limits = HardwareLimitValue(min=5, max=100, step=0.1)  # Use fluorescence as default
         z_planes_limits = HardwareLimitValue(min=1, max=999, step=1)
         z_spacing_limits = HardwareLimitValue(min=0.1, max=1000, step=0.1)
-        
+
         # Return properly typed HardwareLimits object
         return HardwareLimits(
             imaging_exposure_time_ms=exposure_limits.to_dict(),
@@ -1119,7 +1133,7 @@ class SquidAdapter(Microscope):
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         # Validate command against hardware limits first
         self.validate_command(command)
-        
+
         # Handle ChannelStreamEnd without locking to avoid deadlock
         if isinstance(command, cmd.ChannelStreamEnd):
             if self.stream_callback is None:
@@ -1127,25 +1141,25 @@ class SquidAdapter(Microscope):
 
             self._stop_streaming_flag = True
             logger.debug("squid - requested stream stop")
-            
+
             # Wait up to 1 second for the camera streaming thread to naturally clean up
             # This gives the forward_image callback a chance to run and do proper cleanup
             cleanup_timeout_s = 1.0
             poll_interval_s = 0.1
             max_polls = int(cleanup_timeout_s / poll_interval_s)
-            
+
             for _ in range(max_polls):
                 if self.stream_callback is None:
                     # Natural cleanup completed
                     logger.debug("squid - streaming cleaned up naturally")
                     break
                 await asyncio.sleep(poll_interval_s)
-            
-            # If natural cleanup didn't happen, force cleanup to prevent desync
+
+            # If natural cleanup didn't happen, force comprehensive cleanup to prevent desync
             if self.stream_callback is not None:
-                logger.warning("squid - streaming thread didn't clean up naturally, forcing cleanup")
-                
-                # Stop camera streaming first
+                logger.warning("squid - streaming thread didn't clean up naturally, forcing comprehensive cleanup")
+
+                # Comprehensive camera state reset
                 try:
                     with self.main_camera() as cam:
                         if cam is not None:
@@ -1160,7 +1174,7 @@ class SquidAdapter(Microscope):
                     if ch.handle == command.channel.handle:
                         channel_config = ch
                         break
-                
+
                 if channel_config is not None:
                     try:
                         illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
@@ -1170,12 +1184,12 @@ class SquidAdapter(Microscope):
                                 logger.debug(f"squid - forced illumination cleanup for channel {command.channel.handle}")
                     except Exception as e:
                         logger.warning(f"squid - failed to force illumination cleanup: {e}")
-                
-                # Force state cleanup
+
+                # Force microscope state cleanup
                 self.stream_callback = None
                 self.state = CoreState.Idle
-                logger.debug("squid - forced stream state cleanup")
-            
+                logger.debug("squid - completed forced comprehensive cleanup")
+
             result = cmd.BasicSuccessResponse()
             return result  # type: ignore[no-any-return]
 
@@ -1404,7 +1418,7 @@ class SquidAdapter(Microscope):
                         GlobalConfigHandler.override(command.config_file.machine_config)
 
                     g_config = LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.get_dict()
-                    
+
                     conf_af_if_calibrated = g_config.get(str(LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED))
                     conf_af_calib_x = g_config.get(str(LaserAutofocusConfig.CALIBRATION_X_PEAK_POS))
                     conf_af_calib_umpx = g_config.get(str(LaserAutofocusConfig.CALIBRATION_UM_PER_PX))
@@ -1531,7 +1545,7 @@ class SquidAdapter(Microscope):
                         cmd.error_internal(
                             detail=f"Channel handle '{command.channel.handle}' not found in channel configuration"
                         )
-                    
+
                     try:
                         illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
                     except Exception as e:
@@ -1557,12 +1571,12 @@ class SquidAdapter(Microscope):
                             if f.handle == command.channel.filter_handle:
                                 filter_config = f
                                 break
-                        
+
                         if filter_config is None:
                             cmd.error_internal(
                                 detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
                             )
-                        
+
                         try:
                             logger.debug(f"channel snap - using filter '{filter_config.name}' (handle: {filter_config.handle}, wheel position: {filter_config.slot})")
                             await qmc.filter_wheel_set_position(filter_config.slot)
@@ -1578,17 +1592,17 @@ class SquidAdapter(Microscope):
                     calibrated_intensity = self.illumination_controller.get_calibrated_intensity(
                         command.channel.handle, command.channel.illum_perc
                     )
-                    
+
                     # For LED matrix sources (brightfield), intensity is controlled via RGB values
                     if illum_code.is_led_matrix:
                         # Convert calibrated intensity to RGB brightness (0-1 range)
                         rgb_brightness = calibrated_intensity / 100.0
                         await qmc.send_cmd(
                             mc.Command.illumination_begin(
-                                illum_code, 
+                                illum_code,
                                 100.0,  # intensity_percent is ignored for LED matrix
                                 rgb_brightness,  # R
-                                rgb_brightness,  # G  
+                                rgb_brightness,  # G
                                 rgb_brightness   # B
                             )
                         )
@@ -1662,12 +1676,12 @@ class SquidAdapter(Microscope):
                         if ch.handle == command.channel.handle:
                             channel_config = ch
                             break
-                    
+
                     if channel_config is None:
                         cmd.error_internal(
                             detail=f"Channel handle '{command.channel.handle}' not found in channel configuration"
                         )
-                    
+
                     try:
                         illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
                     except Exception as e:
@@ -1692,7 +1706,7 @@ class SquidAdapter(Microscope):
                             cmd.error_internal(
                                 detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
                             )
-                        
+
                         try:
                             logger.debug(f"channel stream - setting filter wheel to position {filter_config.slot} ({filter_config.name})")
                             await qmc.filter_wheel_set_position(filter_config.slot)
@@ -1705,17 +1719,17 @@ class SquidAdapter(Microscope):
                     calibrated_intensity = self.illumination_controller.get_calibrated_intensity(
                         command.channel.handle, command.channel.illum_perc
                     )
-                    
+
                     # For LED matrix sources (brightfield), intensity is controlled via RGB values
                     if illum_code.is_led_matrix:
                         # Convert calibrated intensity to RGB brightness (0-1 range)
                         rgb_brightness = calibrated_intensity / 100.0
                         await qmc.send_cmd(
                             mc.Command.illumination_begin(
-                                illum_code, 
+                                illum_code,
                                 100.0,  # intensity_percent is ignored for LED matrix
                                 rgb_brightness,  # R
-                                rgb_brightness,  # G  
+                                rgb_brightness,  # G
                                 rgb_brightness   # B
                             )
                         )
@@ -1741,17 +1755,17 @@ class SquidAdapter(Microscope):
                                 asyncio.run(qmc.send_cmd(mc.Command.illumination_end(illum_code)))
                             except Exception:
                                 pass  # Best effort cleanup
-                            
+
                             self.state = CoreState.Idle
                             self.stream_callback = None
                             logger.debug("squid - channel stream end")
-                            
+
                             # Notify callback that streaming stopped
                             if forward_image_callback["callback"] is not None:
                                 forward_image_callback["callback"](True)
-                            
+
                             return True  # Stop streaming
-                        
+
                         if self.stream_callback is not None:
                             forward_image_callback["callback"] = self.stream_callback
 
@@ -1937,7 +1951,7 @@ class SquidAdapter(Microscope):
     def _validate_parameter_range(self, value: float, limit_dict: dict, param_name: str) -> None:
         """Validate a parameter is within specified range and step."""
         min_val = limit_dict.get("min")
-        max_val = limit_dict.get("max") 
+        max_val = limit_dict.get("max")
         step = limit_dict.get("step")
 
         if min_val is not None and value < min_val:
@@ -1957,7 +1971,7 @@ class SquidAdapter(Microscope):
     def _validate_imaging_parameters(self, **params) -> None:
         """Validate imaging parameters against hardware limits."""
         limits = self.get_hardware_limits()
-        
+
         # Validate each parameter if provided
         if 'exposure_time_ms' in params:
             self._validate_parameter_range(params['exposure_time_ms'], limits.imaging_exposure_time_ms, "exposure_time_ms")
@@ -1997,7 +2011,7 @@ class SquidAdapter(Microscope):
                 num_z_planes=command.channel.num_z_planes,
                 delta_z_um=command.channel.delta_z_um
             )
-            
+
         elif isinstance(command, cmd.ChannelStreamBegin):
             self._validate_imaging_parameters(
                 exposure_time_ms=command.channel.exposure_time_ms,
@@ -2007,8 +2021,8 @@ class SquidAdapter(Microscope):
                 num_z_planes=command.channel.num_z_planes,
                 delta_z_um=command.channel.delta_z_um
             )
-        
+
         elif isinstance(command, (cmd.ChannelSnapSelection, cmd.AutofocusMeasureDisplacement)):
             self._validate_acquisition_config(command.config_file)
-        
+
         # Other commands don't require validation (movement, connection, etc.)
