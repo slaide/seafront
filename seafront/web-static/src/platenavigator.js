@@ -666,8 +666,6 @@ export class PlateNavigator {
         try {
             const forbiddenAreas = await this.fetchForbiddenAreas();
             if (forbiddenAreas.length > 0) {
-                console.log(`🔴 FOUND ${forbiddenAreas.length} forbidden areas:`, forbiddenAreas);
-
                 for (let i = 0; i < forbiddenAreas.length; i++) {
                     const area = forbiddenAreas[i];
 
@@ -692,7 +690,6 @@ export class PlateNavigator {
                     const forbiddenMesh = makeQuad(area_aabb, this.matForbiddenArea);
                     forbiddenMesh.position.z = forbidden_area_z;
                     forbiddenMesh.name = `${objectNameForbiddenAreas}_${i}`;
-                    console.log(`🔴 Adding forbidden area mesh: ${area.name}`, { mesh: forbiddenMesh, aabb: area_aabb });
                     this.scene.add(forbiddenMesh);
                 }
             }
@@ -1113,7 +1110,6 @@ export class PlateNavigator {
      * @returns {Promise<Array>} Array of forbidden area objects
      */
     async fetchForbiddenAreas() {
-        console.log('🔍 fetchForbiddenAreas() called');
         try {
             const response = await fetch('/api/get_features/machine_defaults', {
                 method: 'POST',
