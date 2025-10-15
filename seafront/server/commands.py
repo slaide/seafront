@@ -258,6 +258,8 @@ class CoreCurrentState(BaseModel):
     "Last acquisition error message for display in GUI"
     last_acquisition_error_timestamp: str | None = None
     "ISO timestamp of the last acquisition error"
+    microscope_name: str
+    "Name of the currently connected microscope configuration"
 
 
 class BasicSuccessResponse(BaseModel):

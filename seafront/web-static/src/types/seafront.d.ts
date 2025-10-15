@@ -63,6 +63,7 @@ declare global {
         current_acquisition_id: string | undefined;
         is_streaming: boolean;
         is_busy: boolean;
+        microscope_name: string;
     };
     type Version = {
         major: int;

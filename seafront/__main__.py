@@ -333,7 +333,7 @@ def filename_check(name: str) -> str | None:
 class Core:
     """application core, contains server capabilities and microcontroller interaction"""
 
-    def __init__(self, selected_microscope: CriticalMachineConfig | None = None):
+    def __init__(self, selected_microscope: CriticalMachineConfig):
         # self.lock=CoreLock()
 
         def make_acquisition_event_loop():
@@ -347,15 +347,11 @@ class Core:
 
         self.acqusition_eventloop = make_acquisition_event_loop()
 
-        # Create microscope based on configuration
-        if selected_microscope is not None:
-            # Use the passed microscope configuration
-            microscope_type = getattr(selected_microscope, 'microscope_type', 'squid')
-        else:
-            # Fallback to global config (for backward compatibility)
-            g_dict = GlobalConfigHandler.get_dict()
-            microscope_type_item = g_dict.get("microscope_type")
-            microscope_type = microscope_type_item.strvalue if microscope_type_item else "squid"
+        # Store microscope name for status reporting
+        self.microscope_name = selected_microscope.microscope_name
+
+        # Use the passed microscope configuration
+        microscope_type = selected_microscope.microscope_type
 
         if microscope_type == "mock":
             logger.info("Creating mock microscope adapter")
@@ -1274,6 +1270,7 @@ class Core:
             is_busy=is_busy,
             last_acquisition_error=self._last_acquisition_error,
             last_acquisition_error_timestamp=self._last_acquisition_error_timestamp,
+            microscope_name=self.microscope_name,
         )
 
     async def cancel_acquisition(self, acquisition_id: str) -> BasicSuccessResponse:
@@ -2168,33 +2165,55 @@ def main():
         except Exception as e:
             logger.warning(f"failed to establish hardware connection at startup: {e}")
 
-    connection_thread = threading.Thread(target=establish_hardware_connection, daemon=True)
-    connection_thread.start()
+    logger.info("starting http server")
+    logger.info("Starting Uvicorn server")
+    logger.info("🧵 Request handlers run via asyncio.to_thread for real threading!")
+
+    # Test if port is available before starting uvicorn
+    try:
+        import socket
+        test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        test_socket.bind(('127.0.0.1', server_config.port))
+        test_socket.close()
+    except OSError as e:
+        if e.errno == 98:  # Address already in use
+            logger.critical(f"Failed to bind to port {server_config.port}. Port is already in use by another process.")
+            logger.critical("Please ensure no other instance of Seafront is running, or change the port in your configuration.")
+            logger.critical("Exiting...")
+            return
+        else:
+            logger.critical(f"Failed to test port {server_config.port}: {e}")
+            logger.critical("Exiting...")
+            return
 
     try:
-        logger.info("starting http server")
-        # Use standard Uvicorn but keep the asyncio.to_thread approach
-        # This ensures each request handler runs in its own system thread
-        logger.info("Starting Uvicorn server")
-        logger.info("🧵 Request handlers run via asyncio.to_thread for real threading!")
-        
+        # Start hardware connection thread only after we know the port is available
+        connection_thread = threading.Thread(target=establish_hardware_connection, daemon=True)
+        connection_thread.start()
+
+        # Start uvicorn server
         uvicorn.run(
-            app, 
-            host="127.0.0.1", 
-            port=server_config.port, 
+            app,
+            host="127.0.0.1",
+            port=server_config.port,
             ws_per_message_deflate=False
         )
         logger.info("http server initialised")
 
     except Exception as e:
-        logger.critical(f"error running uvicorn: {e=}")
-        pass
+        # This should now rarely be reached due to pre-flight port check
+        logger.critical(f"Unexpected server error: {e}")
+        logger.critical("Exiting...")
+        return
+        
+    finally:
 
-    logger.info("shutting down")
+        logger.info("shutting down")
 
-    core.close()
+        core.close()
 
-    logger.info("shutdown complete")
+        logger.info("shutdown complete")
 
 
 if __name__ == "__main__":
