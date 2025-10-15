@@ -201,14 +201,6 @@ export function registerNumberInput(el) {
         const maxValue = limits.maxvalue;
         const stepValue = limits.stepvalue;
 
-        // Debug logging
-        console.log('Validating input:', {
-            value: el.value,
-            currentValue,
-            resolvedLimits: limits,
-            forceValid
-        });
-
         // Remove previous error styling
         el.classList.remove("number-input-error");
         // Remove any existing tooltips for this element
@@ -256,27 +248,21 @@ export function registerNumberInput(el) {
             // Special case: preserve "-0" during typing (user might be typing "-0.5")
             if (!forceValid && el.value === '-0') {
                 isValid = true;
-                console.log('Preserving "-0" during typing');
             } else {
                 // Check range constraints
                 if (minValue != null && currentValue < minValue) {
                     isValid = false;
                     errorMessage = `Value too small - minimum is ${minValue}`;
-                    console.log('Invalid: below min', currentValue, '<', minValue);
                 } else if (maxValue != null && currentValue > maxValue) {
                     isValid = false;
                     errorMessage = `Value too big - maximum is ${maxValue}`;
-                    console.log('Invalid: above max', currentValue, '>', maxValue);
                 } else if (stepValue != null && getnumberofdecimaldigits(currentValue) > getnumberofdecimaldigits(stepValue)) {
                     const maxDecimals = getnumberofdecimaldigits(stepValue);
                     isValid = false;
                     errorMessage = `Too many decimal places - maximum ${maxDecimals} allowed`;
-                    console.log('Invalid: too many decimals');
                 }
             }
         }
-
-        console.log('Validation result:', { isValid, errorMessage });
 
         if (!isValid) {
             // Add error styling regardless of forceValid
@@ -347,11 +333,8 @@ export function registerNumberInput(el) {
             tooltip.style.top = top + 'px';
             tooltip.classList.add(isAbove ? 'tooltip-above' : 'tooltip-below');
             tooltip.style.setProperty('--arrow-left', arrowLeft + 'px');
-            
-            console.log('Positioned tooltip at', { left, top, isAbove, arrowLeft, inputRect: rect, tooltipRect });
         } else if (isValid && forceValid) {
             // Only format if the value is valid
-            console.log('Formatting valid number');
             el.value = formatNumberInput(currentValue, { minvalue: minValue, maxvalue: maxValue, stepvalue: stepValue });
         }
         // Note: If value is invalid, we preserve the invalid value and keep the error styling visible
