@@ -807,6 +807,22 @@ class Microcontroller(BaseModel):
     # Filter wheel state
     filter_wheel_position: int = Field(default=firmware_config.FILTERWHEEL_MIN_INDEX)
 
+    # Reconnection grace period state
+    _last_disconnect_time: float | None = PrivateAttr(default=None)
+    """ timestamp of when the last disconnect was detected """
+    _needs_homing_after_reconnect: bool = PrivateAttr(default=False)
+    """ whether we need to perform homing after reconnecting """
+
+    # USB identifier storage for device re-identification after path changes
+    _usb_serial_number: str | None = PrivateAttr(default=None)
+    """ USB serial number for re-identifying device after path change """
+    _usb_vid: int | None = PrivateAttr(default=None)
+    """ USB vendor ID for re-identifying device after path change """
+    _usb_pid: int | None = PrivateAttr(default=None)
+    """ USB product ID for re-identifying device after path change """
+    _usb_manufacturer: str | None = PrivateAttr(default=None)
+    """ USB manufacturer string for re-identifying device after path change """
+
     baudrate: int = 2_000_000
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -1065,14 +1081,89 @@ class Microcontroller(BaseModel):
                             )
 
                         break
+            except IOError as e:
+                # Quick reconnect attempt
+                if self._try_quick_reconnect_with_grace_period():
+                    logger.info("Microcontroller reconnected within grace period - retrying command")
+                    # Recursively retry the command with new command ID
+                    return await self.send_cmd(cmd_in)
+                else:
+                    logger.warning("Quick reconnect failed - propagating IOError")
+                    raise
             finally:
                 if acquired_illum_lock:
                     self.illum.release()
 
+    def _find_device_by_usb_ids(self) -> SerialDeviceInfo | None:
+        """
+        Find a device matching stored USB identifiers.
+
+        If the device got a new path after reconnect, this method searches all
+        available serial ports for a device with matching USB identifiers
+        (serial number, VID, PID, manufacturer).
+
+        Returns:
+            The ListPortInfo object if found, None otherwise
+        """
+        if self._usb_serial_number is None:
+            return None
+
+        for port_info in serial.tools.list_ports.comports():
+            # Match on serial number, VID, and PID (most reliable)
+            if (
+                port_info.serial_number == self._usb_serial_number
+                and port_info.vid == self._usb_vid
+                and port_info.pid == self._usb_pid
+            ):
+                logger.info(
+                    f"Found microcontroller at new path: {port_info.device} "
+                    f"(was {self.device_info.device})"
+                )
+                return port_info
+
+        logger.warning(
+            f"Could not find microcontroller with USB IDs: "
+            f"sn={self._usb_serial_number}, vid={self._usb_vid}, pid={self._usb_pid}"
+        )
+        return None
+
     @microcontroller_exclusive
     def open(self):
         "open connection to device"
-        self.handle = serial.Serial(self.device_info.device, self.baudrate)
+        try:
+            # Try to open at the stored device path first
+            self.handle = serial.Serial(self.device_info.device, self.baudrate)
+        except IOError as e:
+            logger.warning(f"Failed to open device at {self.device_info.device}: {e}")
+
+            # Try to find device by USB identifiers in case path changed
+            new_device_info = self._find_device_by_usb_ids()
+            if new_device_info is not None:
+                # Update device_info to new path
+                self.device_info = new_device_info
+                logger.info(
+                    f"Updating device path from {self.device_info.device} to "
+                    f"{new_device_info.device}"
+                )
+                self.handle = serial.Serial(new_device_info.device, self.baudrate)
+            else:
+                # No matching device found, re-raise the original error
+                raise
+
+        # Store USB identifiers for future reconnections
+        if (
+            self._usb_serial_number is None
+            and self.device_info.serial_number is not None
+        ):
+            self._usb_serial_number = self.device_info.serial_number
+            self._usb_vid = self.device_info.vid
+            self._usb_pid = self.device_info.pid
+            self._usb_manufacturer = self.device_info.manufacturer
+            logger.debug(
+                f"Stored USB identifiers: sn={self._usb_serial_number}, "
+                f"vid={self._usb_vid}, pid={self._usb_pid}, "
+                f"mfg={self._usb_manufacturer}"
+            )
 
     @microcontroller_exclusive
     def close(self):
@@ -1085,6 +1176,84 @@ class Microcontroller(BaseModel):
             self.handle = None
 
         logger.debug("microcontroller - closed")
+
+    @microcontroller_exclusive
+    def try_quick_reconnect(self, grace_period_s: float) -> bool:
+        """
+        Attempt to reconnect microcontroller within grace period.
+
+        This method tries to re-establish a serial connection if it was lost,
+        without closing the connection first. If successful, the connection is
+        restored and we can continue without needing to re-home.
+
+        Args:
+            grace_period_s: Maximum time to spend attempting reconnection in seconds
+
+        Returns:
+            True if reconnection succeeds within grace period, False otherwise
+        """
+        start_time = time.time()
+
+        # Record disconnect time if not already set
+        if self._last_disconnect_time is None:
+            self._last_disconnect_time = start_time
+
+        # If we're already connected, no need to reconnect
+        if self.handle is not None:
+            # Check if connection is still valid
+            try:
+                # Try a quick non-blocking read to verify connection
+                if self.handle.in_waiting >= 0:
+                    logger.debug("microcontroller - quick reconnect: still connected")
+                    return True
+            except Exception:
+                pass
+
+        # Try to re-establish connection within grace period
+        while (time.time() - start_time) < grace_period_s:
+            try:
+                if self.handle is None:
+                    logger.debug("microcontroller - quick reconnect: attempting to open connection")
+                    # Use the enhanced open() method which handles device path changes
+                    self.open()
+
+                # Verify connection by checking if we can read
+                if self.handle is not None and self.handle.in_waiting >= 0:
+                    logger.info("microcontroller - quick reconnect: successfully re-established connection")
+                    self._last_disconnect_time = None  # Reset disconnect time on success
+                    return True
+            except Exception as e:
+                logger.debug(f"microcontroller - quick reconnect attempt failed: {e}")
+                if self.handle is not None:
+                    try:
+                        self.handle.close()
+                    except Exception:
+                        pass
+                    self.handle = None
+
+            # Brief sleep before retry
+            time.sleep(0.001)
+
+        # Grace period expired
+        logger.warning(f"microcontroller - quick reconnect failed within {grace_period_s}s grace period")
+        return False
+
+    def _try_quick_reconnect_with_grace_period(self) -> bool:
+        """
+        Try reconnect using grace period from global config.
+
+        Reads the configured grace period and attempts quick reconnection.
+        """
+        from seafront.config.basics import GlobalConfigHandler
+
+        g_config = GlobalConfigHandler.get_dict()
+        grace_period_ms = g_config.get("microcontroller.reconnection_grace_period_ms")
+        if grace_period_ms is None:
+            grace_period_s = 0.2  # Default 200ms
+        else:
+            grace_period_s = grace_period_ms.floatvalue / 1000.0
+
+        return self.try_quick_reconnect(grace_period_s)
 
     @microcontroller_exclusive
     async def filter_wheel_set_position(self, position: int):

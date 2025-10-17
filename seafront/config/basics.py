@@ -832,6 +832,12 @@ class GlobalConfigHandler:
                     ),
                 ],
             ),
+            ConfigItem(
+                name="microcontroller reconnection grace period [ms]",
+                handle="microcontroller.reconnection_grace_period_ms",
+                value_kind="float",
+                value=200.0,
+            ),
             *laser_autofocus_system_attributes,
             *filter_wheel_system_attributes,
             *main_camera_attributes,

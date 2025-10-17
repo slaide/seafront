@@ -2616,7 +2616,6 @@ document.addEventListener("alpine:init", () => {
                     return check(v);
                 })
                 .then((v) => {
-                    console.log("started streaming",v);
                     this.isStreaming = true;
                     return v;
                 })
@@ -2658,7 +2657,6 @@ document.addEventListener("alpine:init", () => {
                     return check(v);
                 })
                 .then((v) => {
-                    console.log("stopped streaming", v);
                     this.isStreaming = false;
                     return v;
                 });

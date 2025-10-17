@@ -1983,6 +1983,7 @@ class SquidAdapter(Microscope):
                 raise DisconnectError() from e
             except IOError as e:
                 logger.critical("squid - lost connection to microcontroller")
+                self.close()
                 raise DisconnectError() from e
 
     def _validate_parameter_range(self, value: float, limit_dict: dict, param_name: str) -> None:
