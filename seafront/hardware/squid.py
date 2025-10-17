@@ -1540,7 +1540,7 @@ class SquidAdapter(Microscope):
                         if ch.handle == command.channel.handle:
                             channel_config = ch
                             break
-                    
+
                     if channel_config is None:
                         cmd.error_internal(
                             detail=f"Channel handle '{command.channel.handle}' not found in channel configuration"

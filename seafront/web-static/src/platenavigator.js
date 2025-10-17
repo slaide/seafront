@@ -525,6 +525,7 @@ export class PlateNavigator {
 
         /** @type {{fovx:number,fovy:number}} */
         this.objective = {
+            // valid for 20x objective on original squid
             fovx: 0.9,
             fovy: 0.9,
         };
@@ -697,7 +698,8 @@ export class PlateNavigator {
             console.warn('Failed to render forbidden areas:', error);
         }
 
-        //this.cameraFit(plate_aabb)
+        // Fit camera to show the entire plate properly
+        this.cameraFit(plate_aabb);
 
         // display wells with different colors for selected vs unselected
         let well_geometry = makeRoundedQuad({
@@ -1207,8 +1209,33 @@ export class PlateNavigator {
     }
 
     /**
+     * Update the objective position indicator based on current stage position
+     * @param {number} x_mm - X coordinate in mm (backend coordinates)
+     * @param {number} y_mm - Y coordinate in mm (backend coordinates)
+     */
+    updateObjectivePosition(x_mm, y_mm) {
+        if (!this.plate || !this.objectiveFov) {
+            console.warn('Position update skipped - no plate or objectiveFov');
+            return; // No plate loaded or objective FOV not initialized
+        }
+
+        // Transform backend coordinates to display coordinates
+        const displayCoords = transformBackendToDisplayCoordinates(x_mm, y_mm, this.plate);
+
+        // Update objective FOV position (center the FOV rectangle on the position)
+        const newX = displayCoords.x - this.objective.fovx / 2;
+        const newY = displayCoords.y - this.objective.fovy / 2;
+
+        this.objectiveFov.position.x = newX;
+        this.objectiveFov.position.y = newY;
+
+        // Keep the Z position as set during initialization (above other elements)
+        // this.objectiveFov.position.z is already set to 0.6 during creation
+    }
+
+    /**
      * Refresh well colors and sites after selection changes without full plate reload
-     * @param {AcquisitionConfig} microscope_config 
+     * @param {AcquisitionConfig} microscope_config
      */
     refreshWellColors(microscope_config) {
         if (!this.plate) return;

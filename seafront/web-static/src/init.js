@@ -26,74 +26,32 @@ Object.assign(window, { registerNumberInput });
 
 import { ChannelImageView } from "channelview";
 
-import { tooltipConfig, enabletooltip } from "tooltip";
-
 import {
     parseConfigNamespaces,
     flattenNamespaceTree,
     toggleNamespaceExpansion,
     expandAllNamespaces,
-    collapseAllNamespaces
+    collapseAllNamespaces,
 } from "./namespace-parser.js";
+
+Object.assign(window,{toggleNamespaceExpansion});
+
+const placeholder_microscope_name="<undefined>";
+
+import { tooltipConfig, enabletooltip } from "tooltip";
 
 // Interface settings with defaults
 const defaultInterfaceSettings = {
     tooltip: {
         enabled: true,
         delayMs: 400
-    },
-    busyIndicator: {
-        lingerMs: 700
     }
 };
 
 // Current interface settings (will be merged with saved settings)
 const interfaceSettings = structuredClone(defaultInterfaceSettings);
 
-// Load interface settings from localStorage and apply them
-function loadInterfaceSettings() {
-    try {
-        const saved = localStorage.getItem("seafront-interface-settings");
-        if (saved) {
-            const parsed = JSON.parse(saved);
-            // Merge each section separately to handle nested objects
-            if (parsed.tooltip) Object.assign(interfaceSettings.tooltip, parsed.tooltip);
-            if (parsed.busyIndicator) Object.assign(interfaceSettings.busyIndicator, parsed.busyIndicator);
-        }
-
-        // Apply to tooltipConfig
-        Object.assign(tooltipConfig, interfaceSettings.tooltip);
-    } catch (error) {
-        console.warn("Failed to load interface settings from localStorage:", error);
-    }
-}
-
-// Save interface settings to localStorage
-function saveInterfaceSettings() {
-    try {
-        // Update from current tooltip config
-        Object.assign(interfaceSettings.tooltip, tooltipConfig);
-
-        const toSave = {
-            ...interfaceSettings,
-            savedAt: new Date().toISOString()
-        };
-
-        localStorage.setItem("seafront-interface-settings", JSON.stringify(toSave));
-    } catch (error) {
-        console.warn("Failed to save interface settings to localStorage:", error);
-    }
-}
-
-// Wrapper for tooltip settings
-function saveTooltipSettings() {
-    saveInterfaceSettings();
-}
-
-// Load saved interface settings on startup
-loadInterfaceSettings();
-
-Object.assign(window, { enabletooltip, tooltipConfig, saveTooltipSettings, saveInterfaceSettings });
+Object.assign(window, { enabletooltip, tooltipConfig });
 
 import { initTabs } from "tabs";
 Object.assign(window, { initTabs });
@@ -138,53 +96,6 @@ function cloneObject(o) {
     }
 }
 
-/**
- * @template T
- * @template {object & {detail?:string,message?:string}} E
- * @type {CheckMapSquidRequestFn<T,E>}
- */
-async function checkMapSquidRequest(v, context = 'API request', showError = true, microscope_state = null) {
-    if (!v.ok) {
-        if (v.status == 500) {
-            /** @type {E} */
-            const error_body = await v.json();
-
-            const error = `${context} failed with ${v.statusText} ${v.status} because: ${JSON.stringify(error_body)}`;
-            console.error(error);
-            
-            // Show error in central modal by default, but allow disabling for specific cases
-            if (showError && microscope_state) {
-                // Try to extract user-friendly message from error_body
-                let userMessage = error_body.detail || error_body.message || error;
-                microscope_state.showError(context + ' Error', userMessage);
-            } else if (showError) {
-                // Fallback to alert if microscope_state not available
-                alert(error);
-            }
-            throw new Error(error);
-        } else {
-            const responseblob=await v.blob();
-            const responsetext=await responseblob.text();
-            try{
-                const repsonsejson=JSON.parse(responsetext);
-                console.warn(repsonsejson);
-            }catch(e){}
-            const error = `${context} failed: ${v.status} ${responsetext}`;
-            if (showError && microscope_state) {
-                microscope_state.showError(context + ' Error', `HTTP ${v.status}: ${responsetext}`);
-            } else if (showError) {
-                alert(error);
-            }
-            throw new Error(error);
-        }
-    }
-    /** @type {Promise<T>} */
-    const ret = await v.json();
-
-    return ret;
-}
-Object.assign(window, { checkMapSquidRequest });
-
 document.addEventListener("alpine:init", () => {
     Alpine.data("microscope_state", () => ({
         /** url to microscope (hardware) server (default to same origin as gui) */
@@ -208,7 +119,7 @@ document.addEventListener("alpine:init", () => {
 
         /** @type {{x: number, y: number}|null} */
         plateCursorPosition: null,
-        theme: localStorage.getItem("seafront-theme") || "light",
+        theme: "light", // Will be loaded from microscope-specific cache after init
         
         /** Selection mode for plate navigator: 'wells' or 'sites' */
         plateSelectionMode: "wells",
@@ -218,7 +129,7 @@ document.addEventListener("alpine:init", () => {
         busyIndicatorHiding: false,
         /** @type {number|null} */
         busyIndicatorTimeout: null,
-        busyLingerMs: interfaceSettings.busyIndicator.lingerMs, // Load from saved settings
+        busyLingerMs: 500, // Default value, will be updated by loadInterfaceSettings()
 
         get busyIndicatorClass() {
             return {
@@ -242,7 +153,7 @@ document.addEventListener("alpine:init", () => {
 
         /**
          * Handle busy indicator with 1.5s delay after becoming not busy
-         * @param {boolean} isBusy 
+         * @param {boolean} isBusy
          */
         handleBusyIndicator(isBusy) {
             if (isBusy) {
@@ -269,24 +180,208 @@ document.addEventListener("alpine:init", () => {
             }
         },
 
-        // Save busy settings to localStorage
-        saveBusySettings() {
-            // Update the unified settings
-            interfaceSettings.busyIndicator.lingerMs = this.busyLingerMs;
-            // Save using the unified interface settings system
-            saveInterfaceSettings();
-        },
-
         // Computed property for formatted timestamp in 24-hour format
         get formattedErrorTimestamp() {
             if (!this.centralError.timestamp) return '';
             return this.centralError.timestamp.toLocaleString('en-US', { hour12: false });
         },
 
-        // Helper to call checkMapSquidRequest with this context
+        /**
+         * @template T
+         * @template {object & {detail?:string,message?:string}} E
+         * @param {Response} v
+         * @param {string} context
+         * @param {boolean} showError
+         * @returns {Promise<T>}
+         */
+        async checkMapSquidRequest(v, context = 'API request', showError = true) {
+            if (!v.ok) {
+                if (v.status == 500) {
+                    /** @type {E} */
+                    const error_body = await v.json();
+
+                    const error = `${context} failed with ${v.statusText} ${v.status} because: ${JSON.stringify(error_body)}`;
+                    console.error(error);
+
+                    // Show error in central modal by default, but allow disabling for specific cases
+                    if (showError) {
+                        // Try to extract user-friendly message from error_body
+                        let userMessage = error_body.detail || error_body.message || error;
+                        this.showError(context + ' Error', userMessage);
+                    }
+                    throw new Error(error);
+                } else {
+                    const responseblob=await v.blob();
+                    const responsetext=await responseblob.text();
+                    try{
+                        const repsonsejson=JSON.parse(responsetext);
+                        console.warn(repsonsejson);
+                    }catch(e){}
+                    const error = `${context} failed: ${v.status} ${responsetext}`;
+                    if (showError) {
+                        this.showError(context + ' Error', `HTTP ${v.status}: ${responsetext}`);
+                    }
+                    throw new Error(error);
+                }
+            }
+            /** @type {Promise<T>} */
+            const ret = await v.json();
+
+            return ret;
+        },
+
+        /**
+         * Helper to call checkMapSquidRequest with this context (legacy method name)
+         * @param {*} response
+         * @param {*} context
+         * @returns
+         */
         checkRequest(response, context) {
             console.log(`checkRequest called: ${context}`);
-            return checkMapSquidRequest(response, context, true, this);
+            return this.checkMapSquidRequest(response, context, true);
+        },
+
+        /**
+         * Helper method to extract microscope name from machine config
+         * @returns {string|null} The microscope name or null if not available
+         */
+        getMicroscopeName() {
+            try {
+                const microscopeNameItem = this._microscope_config?.machine_config?.find(item => item.handle === "system.microscope_name");
+                if (!microscopeNameItem || !microscopeNameItem.value) {
+                    return null;
+                }
+                if (typeof microscopeNameItem.value !== "string") {
+                    console.warn("Microscope name value is not a string:", microscopeNameItem.value);
+                    return null;
+                }
+                return microscopeNameItem.value;
+            } catch (error) {
+                console.warn("Failed to extract microscope name:", error);
+                return null;
+            }
+        },
+
+        /**
+         * Load interface settings for the current microscope
+         * @returns {string} The loaded theme or "light" as default
+         */
+        loadInterfaceSettings() {
+            const microscopeName = this.getMicroscopeName();
+            if (!microscopeName) {
+                console.warn("Cannot load interface settings - microscope name not available");
+                return "light";
+            }
+
+            try {
+                const saved = this.getMicroscopeCache().interface_settings;
+                if (saved) {
+                    // Merge each section separately to handle nested objects
+                    if (saved.tooltip) Object.assign(interfaceSettings.tooltip, saved.tooltip);
+                    if (saved.busyLingerMs !== undefined) this.busyLingerMs = saved.busyLingerMs;
+
+                    // Apply to tooltipConfig
+                    Object.assign(tooltipConfig, interfaceSettings.tooltip);
+
+                    // Return theme if it exists
+                    return saved.theme || "light";
+                }
+            } catch (error) {
+                console.warn(`Failed to load interface settings for microscope ${microscopeName}:`, error);
+            }
+            return "light"; // default theme
+        },
+
+        /**
+         * Save interface settings for the current microscope
+         */
+        saveInterfaceSettings() {
+            const microscopeName = this.getMicroscopeName();
+            if (!microscopeName) {
+                console.warn("Cannot save interface settings - microscope name not available");
+                return;
+            }
+
+            try {
+                // Update from current tooltip config
+                Object.assign(interfaceSettings.tooltip, tooltipConfig);
+
+                const toSave = {
+                    ...interfaceSettings,
+                    busyLingerMs: this.busyLingerMs,
+                    theme: this.theme,
+                    savedAt: new Date().toISOString()
+                };
+
+                const cache = this.getMicroscopeCache();
+                cache.interface_settings = toSave;
+                this.setMicroscopeCache(cache);
+            } catch (error) {
+                console.warn("Failed to save interface settings to localStorage:", error);
+            }
+        },
+
+        /**
+         * Get the complete cache data object for the current microscope
+         * @returns {MicroscopeCacheData} The cache data object with interface_settings and microscope_config
+         */
+        getMicroscopeCache() {
+            const microscopeName = this.getMicroscopeName();
+            if (!microscopeName) {
+                console.warn("Cannot get cache - microscope name not available");
+                return {};
+            }
+
+            try {
+                const seafrontData = localStorage.getItem("seafrontdata");
+                if (!seafrontData) return {};
+
+                const parsed = JSON.parse(seafrontData);
+                const cacheData = parsed[microscopeName] || {};
+
+                return {
+                    interface_settings: cacheData.interface_settings || null,
+                    microscope_config: cacheData.microscope_config || null
+                };
+            } catch (error) {
+                console.warn(`Failed to load cache for microscope ${microscopeName}:`, error);
+                return {};
+            }
+        },
+
+        /**
+         * Set the complete cache data object for the current microscope
+         * @param {MicroscopeCacheData} cache The cache data object to store
+         */
+        setMicroscopeCache(cache) {
+            const microscopeName = this.getMicroscopeName();
+            if (!microscopeName) {
+                console.warn("Cannot set cache - microscope name not available");
+                return;
+            }
+
+            try {
+                // Get existing data or create new structure
+                const existingData = localStorage.getItem("seafrontdata");
+                const seafrontData = existingData ? JSON.parse(existingData) : {};
+
+                // Ensure microscope entry exists
+                if (!seafrontData[microscopeName]) {
+                    seafrontData[microscopeName] = {};
+                }
+
+                if (cache.interface_settings !== undefined) {
+                    seafrontData[microscopeName].interface_settings = cache.interface_settings;
+                }
+                if (cache.microscope_config !== undefined) {
+                    seafrontData[microscopeName].microscope_config = cache.microscope_config;
+                }
+
+                // Save back to localStorage
+                localStorage.setItem("seafrontdata", JSON.stringify(seafrontData));
+            } catch (error) {
+                console.error(`Failed to save cache for microscope ${microscopeName}:`, error);
+            }
         },
 
         changeTheme() {
@@ -309,37 +404,58 @@ document.addEventListener("alpine:init", () => {
                 this.view.updateTheme();
             }
             
-            // save theme to localStorage
-            localStorage.setItem("seafront-theme", this.theme);
+            // save theme to microscope-specific interface settings
+            this.saveInterfaceSettings();
         },
 
+        /**
+         * 
+         * @returns 
+         */
         saveMicroscopeConfigToStorage() {
             if (this._microscope_config) {
                 try {
+                    const microscopeName = this.getMicroscopeName();
+                    if (!microscopeName) {
+                        console.warn("Cannot save config - microscope name not available");
+                        return;
+                    }
+
+                    /** @type {CachedMicroscopeConfig} */
                     const configToSave = {
-                        microscope_config: this._microscope_config,
+                        microscope_config: this.microscope_config,
                         configIsStored: this.configIsStored,
                         savedAt: new Date().toISOString()
                     };
-                    
-                    localStorage.setItem("seafront-microscope-config", JSON.stringify(configToSave));
+
+                    const cache = this.getMicroscopeCache();
+                    cache.microscope_config = configToSave;
+                    this.setMicroscopeCache(cache);
                 } catch (error) {
                     console.error("Failed to save microscope config to localStorage:", error);
                 }
             }
         },
 
+        /**
+         * Load microscope config from storage for the current microscope
+         * @returns {CachedMicroscopeConfig|null}
+         */
         loadMicroscopeConfigFromStorage() {
+            const microscopeName = this.getMicroscopeName();
+            if (!microscopeName) {
+                console.warn("Cannot load config - microscope name not available");
+                return null;
+            }
+
             try {
-                const saved = localStorage.getItem("seafront-microscope-config");
-                if (saved) {
-                    const parsed = JSON.parse(saved);
-                    if (parsed.microscope_config) {
-                        return { 
-                            config: parsed.microscope_config, 
-                            configIsStored: parsed.configIsStored !== undefined ? parsed.configIsStored : false 
-                        };
-                    }
+                const saved = this.getMicroscopeCache().microscope_config;
+                if (saved && saved.microscope_config) {
+                    return {
+                        microscope_config: saved.microscope_config,
+                        configIsStored: saved.configIsStored !== undefined ? saved.configIsStored : false,
+                        savedAt:"",
+                    };
                 }
             } catch (error) {
                 console.error("Failed to load microscope config from localStorage:", error);
@@ -364,44 +480,30 @@ document.addEventListener("alpine:init", () => {
             }, 50);
         },
 
-        // Debug method to clear localStorage
+        // Debug method to clear localStorage for current microscope
         clearSavedConfig() {
-            localStorage.removeItem("seafront-microscope-config");
-            console.log("🧹 Cleared saved microscope config from localStorage");
-        },
-
-        // Debug method to inspect current state
-        debugConfig() {
-            console.log("🔍 DEBUG: Current microscope config state:");
-            console.log("📊 Current config stats:", {
-                channels: this._microscope_config?.channels?.length || 0,
-                selectedWells: this._microscope_config?.plate_wells?.filter(w => w.selected).length || 0,
-                totalWells: this._microscope_config?.plate_wells?.length || 0,
-                projectName: this._microscope_config?.project_name || 'empty',
-                plateType: this._microscope_config?.wellplate_type?.Model_id || 'unknown'
-            });
-            
-            const saved = localStorage.getItem("seafront-microscope-config");
-            if (saved) {
-                console.log("💾 LocalStorage content preview:");
-                try {
-                    const parsed = JSON.parse(saved);
-                    console.log("📊 Saved config stats:", {
-                        channels: parsed.microscope_config?.channels?.length || 0,
-                        selectedWells: parsed.microscope_config?.plate_wells?.filter(/** @type {function(PlateWellConfig):boolean}*/(w) => w.selected).length || 0,
-                        totalWells: parsed.microscope_config?.plate_wells?.length || 0,
-                        projectName: parsed.microscope_config?.project_name || 'empty',
-                        plateType: parsed.microscope_config?.wellplate_type?.Model_id || 'unknown',
-                        savedAt: parsed.savedAt
-                    });
-                } catch (e) {
-                    console.error("❌ Failed to parse saved config:", e);
+            try {
+                const microscopeName = this.getMicroscopeName();
+                if (!microscopeName) {
+                    console.warn("Cannot clear config - microscope name not available");
+                    return;
                 }
-            } else {
-                console.log("📭 No saved config in localStorage");
+                const seafrontData = localStorage.getItem("seafrontdata");
+                if (seafrontData) {
+                    const parsed = JSON.parse(seafrontData);
+                    if (parsed[microscopeName]) {
+                        delete parsed[microscopeName];
+                        localStorage.setItem("seafrontdata", JSON.stringify(parsed));
+                        console.log(`Cleared saved config for microscope: ${microscopeName}`);
+                    } else {
+                        console.log(`No saved config found for microscope: ${microscopeName}`);
+                    }
+                } else {
+                    console.log("No seafrontdata found in localStorage");
+                }
+            } catch (error) {
+                console.error("Failed to clear saved config:", error);
             }
-            
-            return { current: this._microscope_config, localStorage: saved };
         },
 
         // Debug method to force an immediate save
@@ -422,12 +524,9 @@ document.addEventListener("alpine:init", () => {
                 if (!this.configIsStored) {
                     // Modern browsers ignore the custom message and show their own
                     const message = 'Your current protocol has not been saved. Are you sure you want to leave?';
-                    event.returnValue = message; // For older browsers
                     return message; // For modern browsers
                 }
             });
-            
-            console.log("🛡️ Unsaved protocol warning set up");
         },
 
         /**
@@ -443,7 +542,7 @@ document.addEventListener("alpine:init", () => {
                 },
             ).then((v) => {
                 /** @ts-ignore @type {CheckMapSquidRequestFn<HardwareCapabilities,InternalErrorModel>} */
-                const check = checkMapSquidRequest;
+                const check = this.checkMapSquidRequest.bind(this);
                 return check(v);
             });
 
@@ -462,7 +561,7 @@ document.addEventListener("alpine:init", () => {
                 },
             ).then((v) => {
                 /** @ts-ignore @type {CheckMapSquidRequestFn<MachineDefaults,InternalErrorModel>} */
-                const check = checkMapSquidRequest;
+                const check = this.checkMapSquidRequest.bind(this);
                 return check(v);
             });
 
@@ -482,7 +581,7 @@ document.addEventListener("alpine:init", () => {
                 },
             ).then((v) => {
                 /** @ts-ignore @type {CheckMapSquidRequestFn<ConfigListResponse,InternalErrorModel>} */
-                const check = checkMapSquidRequest;
+                const check = this.checkMapSquidRequest.bind(this);
                 return check(v);
             });
 
@@ -824,7 +923,7 @@ document.addEventListener("alpine:init", () => {
                 headers: [["Content-Type", "application/json"]],
             }).then((v) => {
                 /** @ts-ignore @type {CheckMapSquidRequestFn<BasicSuccessResponse,InternalErrorModel>} */
-                const check = checkMapSquidRequest;
+                const check = this.checkMapSquidRequest.bind(this);
                 return check(v);
             });
         },
@@ -835,7 +934,8 @@ document.addEventListener("alpine:init", () => {
         // Persistent image WebSocket
         /** @type {WebSocket|null} */
         image_ws: null,
-        /** @type {Map<string, {resolve: Function, reject: Function}>} */
+        /** @typedef {{resolve: Function, reject: Function, channel_info:ChannelInfo}} PendingImageRequest */
+        /** @type {Map<string, PendingImageRequest>} */
         pending_image_requests: new Map(),
         
         initImageWebSocket() {
@@ -851,9 +951,12 @@ document.addEventListener("alpine:init", () => {
                     console.log('Image WebSocket connected');
                 };
                 
+                /** @type {{channel_handle:string,request:PendingImageRequest,metadata:any}|null} */
                 let currentRequest = null;
                 
                 this.image_ws.onmessage = (ev) => {
+                    if(!this.image_ws)throw new Error();
+
                     // The protocol sends metadata first (string), then image data (ArrayBuffer)
                     if (typeof ev.data === 'string') {
                         // Metadata message
@@ -920,13 +1023,16 @@ document.addEventListener("alpine:init", () => {
         async fetch_image(channel_info, downsample_factor = 1) {
             // Initialize persistent WebSocket if needed
             this.initImageWebSocket();
+            if(!this.image_ws)throw new Error();
             
             // Wait for WebSocket to be ready
             if (this.image_ws.readyState === WebSocket.CONNECTING) {
                 await new Promise((resolve) => {
                     const checkReady = () => {
+                        if(!this.image_ws)throw new Error();
+
                         if (this.image_ws.readyState === WebSocket.OPEN) {
-                            resolve();
+                            resolve(true);
                         } else {
                             setTimeout(checkReady, 10);
                         }
@@ -943,11 +1049,13 @@ document.addEventListener("alpine:init", () => {
 
             /**@type {Promise<CachedChannelImage>}*/
             const finished = new Promise((resolve, reject) => {
+                if(!this.image_ws)throw new Error();
+
                 // Store the request
                 this.pending_image_requests.set(channel_handle, {
                     resolve,
                     reject,
-                    channel_info
+                    channel_info,
                 });
                 
                 // Send the request through persistent WebSocket
@@ -974,6 +1082,18 @@ document.addEventListener("alpine:init", () => {
                 }
             }
             // console.log(`updateMicroscopeStatus with`, timestamps)
+
+            // Check for microscope name changes during reconnection
+            if (data.microscope_name && this.state && this.state.microscope_name) {
+                const previousMicroscopeName = this.state.microscope_name;
+                const currentMicroscopeName = data.microscope_name;
+
+                if (previousMicroscopeName !== currentMicroscopeName && previousMicroscopeName!==placeholder_microscope_name) {
+                    console.warn(`Microscope name changed from '${previousMicroscopeName}' to '${currentMicroscopeName}'`);
+                    this.showMicroscopeNameChangeWarning(previousMicroscopeName, currentMicroscopeName);
+                }
+            }
+
             // update state with data from 'data' object
             this.state = data;
 
@@ -1037,20 +1157,10 @@ document.addEventListener("alpine:init", () => {
                 }
             }
 
-            if (
-                this.plateNavigator &&
-                this.plateNavigator.objectiveFov &&
-                this.state.adapter_state != null
-            ) {
-                this.plateNavigator.objectiveFov.position.x =
-                    this.state.adapter_state.stage_position.x_pos_mm -
-                    this.plateNavigator.objective.fovx / 2;
-                    
-                // Flip Y coordinate to match the plate view coordinate system
-                // where A1 is at the top-left corner instead of bottom-left
-                const plateHeight = this.microscope_config.wellplate_type.Width_mm;
-                const flippedY = plateHeight - this.state.adapter_state.stage_position.y_pos_mm;
-                this.plateNavigator.objectiveFov.position.y = flippedY - this.plateNavigator.objective.fovy / 2;
+            // Update objective position if PlateNavigator is available and position data exists
+            if (this.plateNavigator && this.state.adapter_state && this.state.adapter_state.stage_position) {
+                const position = this.state.adapter_state.stage_position;
+                this.plateNavigator.updateObjectivePosition(position.x_pos_mm, position.y_pos_mm);
             }
         },
 
@@ -1060,8 +1170,8 @@ document.addEventListener("alpine:init", () => {
          *
          * @param {HTMLElement} el
          */
-        initPlateNavigator(el, alpineComponent) {
-            this.plateNavigator = new PlateNavigator(el, alpineComponent || this);
+        initPlateNavigator(el) {
+            this.plateNavigator = new PlateNavigator(el, this);
 
             this.plateNavigator.cameraFit({
                 ax: 0,
@@ -1076,7 +1186,13 @@ document.addEventListener("alpine:init", () => {
             });
 
             // Set up shift+drag callback to select wells or sites
-            this.plateNavigator.setWellSelectionCallback(async (wellNames, mode, selectionBounds) => {
+            this.plateNavigator.setWellSelectionCallback(
+                /**
+                 * @type {function(string[],string,{
+                 *          minX: number,maxX: number,minY: number,maxY: number
+                 * }):Promise<void>}
+                 * */
+                async (wellNames, mode, selectionBounds) => {
                 if (this.plateSelectionMode === "wells") {
                     await this.selectWellsByNames(wellNames, mode);
                 } else if (this.plateSelectionMode === "sites") {
@@ -1164,7 +1280,27 @@ document.addEventListener("alpine:init", () => {
         get state() {
             if (Object.keys(this._state).length == 0) {
                 // Return a default state during initialization instead of throwing
-                return { is_busy: false, adapter_state: null };
+                console.warn("no state available")
+                
+                return {
+                    microscope_name:placeholder_microscope_name,
+                    is_busy: false,
+                    adapter_state: {
+                        is_in_loading_position: false,
+                        state:"idle",
+                        stage_position:{
+                            x_pos_mm:0,
+                            y_pos_mm:0,
+                            z_pos_mm:0,
+                        }
+                    },
+
+                    latest_imgs:{},
+                    is_streaming:false,
+                    current_acquisition_id:undefined,
+                    last_acquisition_error:null,
+                    last_acquisition_error_timestamp:null,
+                };
             }
             //@ts-ignore
             return this._state;
@@ -1184,7 +1320,7 @@ document.addEventListener("alpine:init", () => {
             }
             return this._plateinfo;
         },
-        /** @type {AcquisitionConfigFrontend|null} */
+        /** @type {AcquisitionConfig|null} */
         _microscope_config: null,
         get microscope_config() {
             if (!this._microscope_config) {
@@ -1243,7 +1379,7 @@ document.addEventListener("alpine:init", () => {
          */
         get filterOptions() {
             /** @type {{name:string,handle:string,isGroup:boolean,groupLabel?:string}[]} */
-            const options = [{ name: 'Unspecified', handle: '__none__', isGroup: false }];
+            const options = [{ name: 'Unspecified', handle: '__UI_NONE__', isGroup: false }];
             
             // Add each filter as a group with slot label
             this.availableFilters.forEach(f => {
@@ -1258,58 +1394,13 @@ document.addEventListener("alpine:init", () => {
             return options;
         },
 
-        /**
-         * Convert frontend channel to backend channel format
-         * @param {AcquisitionChannelConfigFrontend} frontendChannel
-         * @returns {AcquisitionChannelConfig}
-         */
-        convertChannelToBackend(frontendChannel) {
-            return {
-                ...frontendChannel,
-                filter_handle: frontendChannel.filter_handle === '__none__' ? null : frontendChannel.filter_handle
-            };
-        },
-
-        /**
-         * Convert frontend acquisition config to backend format
-         * @param {AcquisitionConfigFrontend} frontendConfig
-         * @returns {AcquisitionConfig}
-         */
-        convertAcquisitionConfigToBackend(frontendConfig) {
-            return {
-                ...frontendConfig,
-                channels: frontendConfig.channels.map(channel => this.convertChannelToBackend(channel))
-            };
-        },
-
-        /**
-         * Convert frontend channel snapshot request to backend format
-         * @param {ChannelSnapshotRequestFrontend} frontendRequest
-         * @returns {ChannelSnapshotRequest}
-         */
-        convertChannelSnapshotRequestToBackend(frontendRequest) {
-            return {
-                ...frontendRequest,
-                channel: this.convertChannelToBackend(frontendRequest.channel)
-            };
-        },
-
-        /**
-         * Convert frontend stream request to backend format
-         * @param {StreamBeginRequestFrontend | StreamEndRequestFrontend} frontendRequest
-         * @returns {StreamBeginRequest | StreamEndRequest}
-         */
-        convertStreamRequestToBackend(frontendRequest) {
-            return {
-                ...frontendRequest,
-                channel: this.convertChannelToBackend(frontendRequest.channel)
-            };
-        },
-
-        /** used to filter the machine config list */
+/** used to filter the machine config list */
         machineConfigHandleFilter: "",
         
-        /** namespace tree for machine config */
+        /**
+         * namespace tree for machine config
+         * @type {import('./namespace-parser.js').NamespaceNode[]}
+         * */
         machineConfigNamespaces: [],
         
         /** whether to use hierarchical view */
@@ -1474,6 +1565,11 @@ document.addEventListener("alpine:init", () => {
             }
         },
 
+        /**
+         * 
+         * @param {string} acquisitionId 
+         * @returns 
+         */
         acquisitionStatusLoop(acquisitionId) {
             try {
                 if (!this.acquisition_status_ws || this.acquisition_status_ws.readyState !== WebSocket.OPEN) {
@@ -1490,6 +1586,24 @@ document.addEventListener("alpine:init", () => {
             }
         },
 
+        /**
+         * Show warning popup when microscope name changes
+         * @param {string} previousName - Previous microscope name
+         * @param {string} currentName - Current microscope name
+         */
+        showMicroscopeNameChangeWarning(previousName, currentName) {
+            const message = `The microscope has changed from '${previousName}' to '${currentName}'. The cached configuration may not work correctly with the new microscope. Please reload the page to load the correct configuration.`;
+
+            // Show error using existing error display system
+            this.showError('Microscope Configuration Mismatch', message);
+
+            console.error('Microscope name change detected:', {
+                previous: previousName,
+                current: currentName,
+                recommendation: 'Reload page to load correct configuration'
+            });
+        },
+
         // this is an annoying workaround (in combination with initManual) because
         // alpine does not actually await an async init before mounting the element.
         // which leads to a whole bunch of errors in the console and breaks
@@ -1498,6 +1612,10 @@ document.addEventListener("alpine:init", () => {
             this._plateinfo = await this.getPlateTypes();
             this._microscope_config = await this.defaultConfig();
 
+            // Get machine config data to extract microscope name
+            const machineConfigData = await this.getMachineDefaults();
+            this._microscope_config.machine_config = machineConfigData;
+
             // Load channels and hardware limits from hardware capabilities
             const hardwareCapabilities = await this.getHardwareCapabilities();
             if (hardwareCapabilities.main_camera_imaging_channels) {
@@ -1505,7 +1623,7 @@ document.addEventListener("alpine:init", () => {
             } else {
                 console.warn("No channels found in hardware capabilities");
             }
-            
+
             // Update limits with hardware capabilities if available
             if (hardwareCapabilities.hardware_limits) {
                 // Replace hardcoded limits with server-provided hardware limits
@@ -1514,10 +1632,10 @@ document.addEventListener("alpine:init", () => {
                 console.warn("No hardware limits found in capabilities, using defaults");
             }
 
-            // Try to load saved config from localStorage, falling back to server default
+            // Now that microscope name is available, try to load saved config from localStorage
             const savedData = this.loadMicroscopeConfigFromStorage();
             if (savedData) {
-                const savedConfig = savedData.config;
+                const savedConfig = savedData.microscope_config;
                 // Smart merge: preserve essential arrays from server if they're empty in savedConfig
                 const mergedConfig = { ...this._microscope_config, ...savedConfig };
                 
@@ -1544,6 +1662,17 @@ document.addEventListener("alpine:init", () => {
 
             // Initialize namespace tree for machine config
             this.refreshMachineConfigNamespaces();
+
+            // Load microscope-specific interface settings and theme
+            try {
+                const loadedTheme = this.loadInterfaceSettings();
+                this.theme = loadedTheme;
+                // Apply the theme immediately
+                this.changeTheme();
+            } catch (error) {
+                console.warn("Could not load microscope-specific settings during init:", error);
+                // Continue with default theme
+            }
 
             // init data
             const currentStateData = await fetch(
@@ -1832,7 +1961,7 @@ document.addEventListener("alpine:init", () => {
             
             // Update the plate view to show new well colors  
             if (this.plateNavigator) {
-                this.plateNavigator.refreshWellColors(this._microscope_config);
+                this.plateNavigator.refreshWellColors(this.microscope_config);
             }
         },
 
@@ -1870,7 +1999,10 @@ document.addEventListener("alpine:init", () => {
         /** @type {Map<string,CachedChannelImage>} */
         cached_channel_image: new Map(),
         
-        // Track last displayed acquisition error timestamp to avoid showing duplicates
+        /**
+         * Track last displayed acquisition error timestamp to avoid showing duplicates
+         * @type {string|null}
+         */
         _last_displayed_acquisition_error_timestamp: null,
 
         makeHistogram,
@@ -1949,7 +2081,6 @@ document.addEventListener("alpine:init", () => {
          * rpc to api/acquisition/start
          *
          * internally clones the body.
-         * @param {AcquisitionStartRequestFrontend} body
          * @returns  {Promise<AcquisitionStartResponse>}
          */
         async acquisition_start() {
@@ -1957,9 +2088,9 @@ document.addEventListener("alpine:init", () => {
                 
                 await this.machineConfigFlush();
 
-                // Convert frontend format to backend format
-                const backend_config = this.convertAcquisitionConfigToBackend(this.microscope_config);
-                
+                // Model is always in backend format
+                const backend_config = this.microscope_config;
+
                 // mutate copy (to fix some errors we introduce in the interface)
                 // 1) remove wells that are unselected or invalid
                 backend_config.plate_wells = backend_config.plate_wells.filter(
@@ -1980,7 +2111,7 @@ document.addEventListener("alpine:init", () => {
                     headers: [["Content-Type", "application/json"]],
                 }).then((v) => {
                     /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStartResponse,AcquisitionStartError>} */
-                    const check = checkMapSquidRequest;
+                    const check = this.checkMapSquidRequest.bind(this);
                     return check(v, 'Acquisition start', false); // Don't show alert - we handle it in UI
                 }).catch((error) => {
                     // Show error in central modal
@@ -1989,13 +2120,13 @@ document.addEventListener("alpine:init", () => {
                 });
             } catch (error) {
                 // Handle any errors from machineConfigFlush or config conversion
+                //@ts-ignore
                 this.showError('Acquisition Start Failed', error.message || error.toString());
                 throw error;
             }
         },
         /**
          * rpc to api/acquisition/cancel
-         * @param {AcquisitionStopRequest} body
          * @returns {Promise<AcquisitionStopResponse>}
          */
         async acquisition_stop() {
@@ -2011,7 +2142,7 @@ document.addEventListener("alpine:init", () => {
                     headers: [["Content-Type", "application/json"]],
                 }).then((v) => {
                     /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStopResponse,AcquisitionStopError>} */
-                    const check = checkMapSquidRequest;
+                    const check = this.checkMapSquidRequest.bind(this);
                     return check(v, 'Acquisition cancel', false); // Don't show alert for acquisition requests
                 }).catch((error) => {
                     // Show error in central modal
@@ -2056,10 +2187,20 @@ document.addEventListener("alpine:init", () => {
             
             return `${hours}h ${minutes}m ${seconds}s`;
         },
+        /**
+         * 
+         * @param {number|null} value 
+         * @returns 
+         */
         formatStageCoordXY(value) {
             if (value == null) return '&nbsp;&nbsp;&nbsp;---';
             return value.toFixed(2).padStart(6, '\u00A0'); // Use non-breaking space
         },
+        /**
+         * 
+         * @param {number|null} value 
+         * @returns 
+         */
         formatStageCoordZ(value) {
             if (value == null) return '&nbsp;&nbsp;&nbsp;---';
             const zInUm = value * 1000;
@@ -2077,7 +2218,7 @@ document.addEventListener("alpine:init", () => {
                 headers: [["Content-Type", "application/json"]],
             }).then((v) => {
                 /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStatusResponse,InternalErrorModel>} */
-                const check = checkMapSquidRequest;
+                const check = this.checkMapSquidRequest.bind(this);
                 return check(v);
             });
         },
@@ -2100,6 +2241,7 @@ document.addEventListener("alpine:init", () => {
                         return this.checkRequest(v, 'Save Configuration');
                     });
 
+                    //@ts-ignore
                     return response;
                 },
 
@@ -2116,9 +2258,11 @@ document.addEventListener("alpine:init", () => {
                             headers: [["Content-Type", "application/json"]],
                         },
                     ).then((v) => {
-                        return this.checkRequest(v, 'Load Configuration');
+                        const ret=this.checkRequest(v, 'Load Configuration');
+                        return ret;
                     });
 
+                    //@ts-ignore
                     return response;
                 },
                 /**
@@ -2127,13 +2271,16 @@ document.addEventListener("alpine:init", () => {
                  * @returns {Promise<MoveByResult>}
                  */
                 moveBy: (body) => {
-                    return fetch(`${this.server_url}/api/action/move_by`, {
+                    const response=fetch(`${this.server_url}/api/action/move_by`, {
                         method: "POST",
                         body: JSON.stringify(body),
                         headers: [["Content-Type", "application/json"]],
                     }).then((v) => {
                         return this.checkRequest(v, 'Move Stage');
                     });
+
+                    //@ts-ignore
+                    return response;
                 },
 
                 /**
@@ -2148,7 +2295,7 @@ document.addEventListener("alpine:init", () => {
                         headers: [["Content-Type", "application/json"]],
                     }).then((v) => {
                         /** @ts-ignore @type {CheckMapSquidRequestFn<MoveToResult,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
+                        const check = this.checkMapSquidRequest.bind(this);
                         return check(v);
                     });
                 },
@@ -2165,21 +2312,22 @@ document.addEventListener("alpine:init", () => {
                         headers: [["Content-Type", "application/json"]],
                     }).then((v) => {
                         /** @ts-ignore @type {CheckMapSquidRequestFn<MoveToWellResponse,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
+                        const check = this.checkMapSquidRequest.bind(this);
                         return check(v);
                     });
                 },
 
                 /**
                  *
-                 * @param {ChannelSnapshotRequestFrontend} body
+                 * @param {ChannelSnapshotRequest} body
                  * @returns {Promise<ChannelSnapshotResponse>}
                  */
                 snapChannel: (body) => {
+                    //@ts-ignore
                     return this.machineConfigFlush().then(()=>{
-                        // Convert frontend format to backend format
-                        const backend_body = this.convertChannelSnapshotRequestToBackend(body);
-                        
+                        // Model is always in backend format
+                        const backend_body = body;
+
                         return fetch(`${this.server_url}/api/action/snap_channel`, {
                             method: "POST",
                             body: JSON.stringify(backend_body),
@@ -2207,7 +2355,7 @@ document.addEventListener("alpine:init", () => {
                             headers: [["Content-Type", "application/json"]],
                         }).then((v) => {
                             /** @ts-ignore @type {CheckMapSquidRequestFn<ChannelSnapSelectionResponse,InternalErrorModel>} */
-                            const check = checkMapSquidRequest;
+                            const check = this.checkMapSquidRequest.bind(this);
                             return check(v);
                         });
                     });
@@ -2227,7 +2375,7 @@ document.addEventListener("alpine:init", () => {
                         },
                     ).then((v) => {
                         /** @ts-ignore @type {CheckMapSquidRequestFn<EnterLoadingPositionResponse,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
+                        const check = this.checkMapSquidRequest.bind(this);
                         return check(v);
                     });
                 },
@@ -2245,19 +2393,19 @@ document.addEventListener("alpine:init", () => {
                         },
                     ).then((v) => {
                         /** @ts-ignore @type {CheckMapSquidRequestFn<LeaveLoadingPositionResponse,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
+                        const check = this.checkMapSquidRequest.bind(this);
                         return check(v);
                     });
                 },
                 /**
-                 * @param {StreamBeginRequestFrontend} body
+                 * @param {StreamBeginRequest} body
                  * @returns {Promise<StreamingStartedResponse>}
                  */
                 streamBegin: async (body) => {
                     await this.machineConfigFlush();
 
-                    // Convert frontend format to backend format
-                    const backend_body = this.convertStreamRequestToBackend(body);
+                    // Model is always in backend format
+                    const backend_body = body;
 
                     return fetch(
                         `${this.server_url}/api/action/stream_channel_begin`,
@@ -2268,17 +2416,17 @@ document.addEventListener("alpine:init", () => {
                         },
                     ).then((v) => {
                         /** @ts-ignore @type {CheckMapSquidRequestFn<StreamingStartedResponse,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
+                        const check = this.checkMapSquidRequest.bind(this);
                         return check(v);
                     });
                 },
                 /**
-                 * @param {StreamEndRequestFrontend} body
+                 * @param {StreamEndRequest} body
                  * @returns {Promise<StreamEndResponse>}
                  */
                 streamEnd: (body) => {
-                    // Convert frontend format to backend format
-                    const backend_body = this.convertStreamRequestToBackend(body);
+                    // Model is always in backend format
+                    const backend_body = body;
 
                     return fetch(
                         `${this.server_url}/api/action/stream_channel_end`,
@@ -2289,7 +2437,7 @@ document.addEventListener("alpine:init", () => {
                         },
                     ).then((v) => {
                         /** @ts-ignore @type {CheckMapSquidRequestFn<StreamEndResponse,InternalErrorModel>} */
-                        const check = checkMapSquidRequest;
+                        const check = this.checkMapSquidRequest.bind(this);
                         return check(v);
                     });
                 },
@@ -2311,7 +2459,7 @@ document.addEventListener("alpine:init", () => {
                     )
                         .then((v) => {
                             /** @ts-ignore @type {CheckMapSquidRequestFn<LaserAutofocusCalibrateResponse,InternalErrorModel>} */
-                            const check = checkMapSquidRequest;
+                            const check = this.checkMapSquidRequest.bind(this);
                             return check(v);
                         })
                         .then((v) => {
@@ -2337,7 +2485,7 @@ document.addEventListener("alpine:init", () => {
                     )
                         .then((v) => {
                             /** @ts-ignore @type {CheckMapSquidRequestFn<LaserAutofocusMoveToTargetOffsetResponse,InternalErrorModel>} */
-                            const check = checkMapSquidRequest;
+                            const check = this.checkMapSquidRequest.bind(this);
                             return check(v);
                         })
                         .then((v) => {
@@ -2363,7 +2511,7 @@ document.addEventListener("alpine:init", () => {
                     )
                         .then((v) => {
                             /** @ts-ignore @type {CheckMapSquidRequestFn<LaserAutofocusMeasureDisplacementResponse,InternalErrorModel>} */
-                            const check = checkMapSquidRequest;
+                            const check = this.checkMapSquidRequest.bind(this);
                             return check(v);
                         })
                         .then((v) => {
@@ -2388,7 +2536,7 @@ document.addEventListener("alpine:init", () => {
                     )
                         .then((v) => {
                             /** @ts-ignore @type {CheckMapSquidRequestFn<LaserAutofocusSnapResponse,InternalErrorModel>} */
-                            const check = checkMapSquidRequest;
+                            const check = this.checkMapSquidRequest.bind(this);
                             return check(v);
                         })
                         .then((v) => {
@@ -2464,7 +2612,7 @@ document.addEventListener("alpine:init", () => {
             })
                 .then((v) => {
                     /** @ts-ignore @type {CheckMapSquidRequestFn<StreamBeginResponse,InternalErrorModel>} */
-                    const check = checkMapSquidRequest;
+                    const check = this.checkMapSquidRequest.bind(this);
                     return check(v);
                 })
                 .then((v) => {
@@ -2506,7 +2654,7 @@ document.addEventListener("alpine:init", () => {
             })
                 .then((v) => {
                     /** @ts-ignore @type {CheckMapSquidRequestFn<StreamEndResponse,InternalErrorModel>} */
-                    const check = checkMapSquidRequest;
+                    const check = this.checkMapSquidRequest.bind(this);
                     return check(v);
                 })
                 .then((v) => {
@@ -2541,7 +2689,7 @@ document.addEventListener("alpine:init", () => {
             })
                 .then((v) => {
                     /** @ts-ignore @type {CheckMapSquidRequestFn<MachineConfigFlushResponse,InternalErrorModel>} */
-                    const check = checkMapSquidRequest;
+                    const check = this.checkMapSquidRequest.bind(this);
                     return check(v);
                 })
                 .then((v) => {
@@ -2551,13 +2699,10 @@ document.addEventListener("alpine:init", () => {
 
         // Namespace-related methods
         refreshMachineConfigNamespaces() {
-            if (this.microscope_config?.machine_config) {
-                this.machineConfigNamespaces = parseConfigNamespaces(this.microscope_config.machine_config);
+            const machine_config=this.microscope_config?.machine_config;
+            if (machine_config) {
+                this.machineConfigNamespaces = parseConfigNamespaces(machine_config);
             }
-        },
-
-        toggleNamespaceExpansion(node) {
-            toggleNamespaceExpansion(node);
         },
 
         expandAllNamespaces() {
@@ -3185,7 +3330,15 @@ document.addEventListener("alpine:init", () => {
         // Channel drag-and-drop functionality
         draggedChannelIndex: null,
 
+        /**
+         * 
+         * @param {DragEvent} event 
+         * @param {*} index 
+         */
         startChannelDrag(event, index) {
+            if(!(event.target instanceof HTMLElement))throw new Error();
+            if(!event.dataTransfer)throw new Error();
+
             this.draggedChannelIndex = index;
             // Find the parent row container and add dragging class to it
             const rowContainer = event.target.closest('.channel-config-row-container');
@@ -3196,28 +3349,58 @@ document.addEventListener("alpine:init", () => {
             event.dataTransfer.setData('text/html', event.target.outerHTML);
         },
 
+        /**
+         * 
+         * @param {DragEvent} event 
+         */
         handleChannelDragOver(event) {
+            if(!event.dataTransfer)throw new Error();
+
             if (this.draggedChannelIndex !== null) {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
             }
         },
 
+        /**
+         * 
+         * @param {DragEvent} event 
+         */
         handleChannelDragEnter(event) {
+            if(!(event.target instanceof HTMLElement))throw new Error();
+            if(!event.dataTransfer)throw new Error();
+
             if (this.draggedChannelIndex !== null) {
                 event.preventDefault();
                 event.target.closest('.channel-config-row-container')?.classList.add('drag-over');
             }
         },
 
+        /**
+         * 
+         * @param {DragEvent} event 
+         */
         handleChannelDragLeave(event) {
+            if(!(event.target instanceof HTMLElement))throw new Error();
+            if(!(event.currentTarget instanceof HTMLElement))throw new Error();
+            if(!(event.relatedTarget instanceof HTMLElement))throw new Error();
+            if(!event.dataTransfer)throw new Error();
+
+
             // Only remove drag-over class if we're actually leaving the element
             if (!event.currentTarget.contains(event.relatedTarget)) {
                 event.target.closest('.channel-config-row-container')?.classList.remove('drag-over');
             }
         },
 
+        /**
+         * 
+         * @param {DragEvent} event 
+         * @param {number} dropIndex 
+         */
         handleChannelDrop(event, dropIndex) {
+            if(!(event.target instanceof HTMLElement))throw new Error();
+
             if (this.draggedChannelIndex === null) return;
             
             event.preventDefault();
@@ -3239,7 +3422,13 @@ document.addEventListener("alpine:init", () => {
             }
         },
 
+        /**
+         * 
+         * @param {DragEvent} event 
+         */
         endChannelDrag(event) {
+            if(!(event.target instanceof HTMLElement))throw new Error();
+
             // Remove dragging class from the parent row container
             const rowContainer = event.target.closest('.channel-config-row-container');
             if (rowContainer) {

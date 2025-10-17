@@ -1,16 +1,6 @@
 "use strict";
 
 /**
- * @typedef {Object} ConfigItem
- * @property {string} handle - The config handle (e.g., "camera.main.model")
- * @property {string} name - Display name
- * @property {any} value - Current value
- * @property {string} value_kind - Type of value (int, float, text, action, option)
- * @property {boolean} frozen - Whether the config is frozen
- * @property {Array} [options] - Available options for option type
- */
-
-/**
  * @typedef {Object} NamespaceNode
  * @property {string} name - Node name (e.g., "camera")
  * @property {string} path - Full path (e.g., "camera.main")
@@ -99,8 +89,13 @@ export function parseConfigNamespaces(configItems) {
  * @returns {ConfigItem[]} - Filtered flat list
  */
 export function flattenNamespaceTree(tree, filter = '') {
+    /** @type {ConfigItem[]} */
     const items = [];
     
+    /**
+     * 
+     * @param {NamespaceNode[]} nodes 
+     */
     function traverse(nodes) {
         for (const node of nodes) {
             // Add items from this node
@@ -132,6 +127,10 @@ export function toggleNamespaceExpansion(node) {
  * @param {NamespaceNode[]} tree - Namespace tree
  */
 export function expandAllNamespaces(tree) {
+    /**
+     * 
+     * @param {NamespaceNode[]} nodes 
+     */
     function traverse(nodes) {
         for (const node of nodes) {
             node.isExpanded = true;
@@ -146,6 +145,10 @@ export function expandAllNamespaces(tree) {
  * @param {NamespaceNode[]} tree - Namespace tree
  */
 export function collapseAllNamespaces(tree) {
+    /**
+     * 
+     * @param {NamespaceNode[]} nodes 
+     */
     function traverse(nodes) {
         for (const node of nodes) {
             node.isExpanded = false;

@@ -232,7 +232,6 @@
                     $watch('_microscope_config', () => {
                         saveCurrentConfig();
                     }, { deep: true });
-                    console.log('Config localStorage watcher initialized - watching _microscope_config with deep:true');
                 }"
     >
         <link rel="stylesheet" href="/css/theme.css" />
@@ -964,7 +963,7 @@
                                         id="tooltips-enabled-checkbox"
                                         type="checkbox"
                                         x-model.boolean="tooltipConfig.enabled"
-                                        @change="saveTooltipSettings()"
+                                        @change="saveInterfaceSettings()"
                                     />
                                     
                                     <label 
@@ -984,7 +983,7 @@
                                         x-init="registerNumberInput($el),enabletooltip($el)"
                                         x-bind:tooltip="`How long to wait before showing tooltips when hovering. Range: 0-2000ms (0 = instant, 400 = default)`"
                                         x-bind:disabled="!tooltipConfig.enabled"
-                                        @input="saveTooltipSettings()"
+                                        @input="saveInterfaceSettings()"
                                     />
 
                                     <label for="busy-linger-input">Busy indicator linger (ms):</label>
@@ -997,19 +996,13 @@
                                         x-model.number="busyLingerMs"
                                         is="number-input"
                                         x-init="registerNumberInput($el),enabletooltip($el)"
-                                        x-bind:tooltip="`How long the busy indicator stays visible after microscope becomes available. Range: 0-5000ms (0 = disappear immediately, 700 = default)`"
-                                        @input="saveBusySettings()"
+                                        x-bind:tooltip="`How long the busy indicator stays visible after microscope becomes available.`"
+                                        @input="saveInterfaceSettings()"
                                     />
 
                                     <label>Theme:</label>
                                     <select
                                         x-model="theme"
-                                        x-init="$nextTick(()=>{
-                                            $nextTick(()=>{
-                                                console.log(`current theme is ${theme}`)
-                                                changeTheme()
-                                            })
-                                        })"
                                         @change="changeTheme($el,$event)"
                                     >
                                         <template
@@ -1717,7 +1710,8 @@
                                                 />
 
                                                 <select
-                                                    x-model="channel.filter_handle"
+                                                    :value="channel.filter_handle ?? '__UI_NONE__'"
+                                                    @change="channel.filter_handle = ($event.target.value === '__UI_NONE__' ? null : $event.target.value)"
                                                     x-effect="disableElement($el,()=>!channel.enabled || !isFilterWheelAvailable)"
                                                     x-init="enabletooltip($el)"
                                                     x-bind:tooltip="!isFilterWheelAvailable ? 'This microscope does not support custom channel filters.' : ''"
