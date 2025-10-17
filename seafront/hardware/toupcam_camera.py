@@ -580,4 +580,5 @@ class ToupCamCamera(Camera):
         # Stop capture
         self.handle.Trigger(0)
         self.acquisition_ongoing = False
+        self.acq_mode = None
         self.ctx.stop_acquisition=False

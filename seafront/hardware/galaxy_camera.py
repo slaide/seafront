@@ -399,6 +399,7 @@ class GalaxyCamera(Camera):
                     if stop_acquisition or img is None:  # type: ignore
                         if self.acquisition_ongoing:
                             self.acquisition_ongoing = False
+                            self.acq_mode = None
 
                         return
 
@@ -417,6 +418,7 @@ class GalaxyCamera(Camera):
                     if stop_acquisition:
                         if self.acquisition_ongoing:
                             self.acquisition_ongoing = False
+                            self.acq_mode = None
 
                         return
 
