@@ -1082,13 +1082,28 @@ class Microcontroller(BaseModel):
 
                         break
             except IOError as e:
+                # Detailed logging for IOError diagnosis
+                logger.error(
+                    f"IOError in send_cmd: type={type(e).__name__}, "
+                    f"message='{e}', "
+                    f"command_name={CommandName(cmd[1]).name if cmd[1] < len(CommandName.__members__) else f'UNKNOWN({cmd[1]})' }, "
+                    f"command_id={cmd[0]}, "
+                    f"handle_state={'OPEN' if self.handle is not None else 'CLOSED'}"
+                )
                 # Quick reconnect attempt
+                logger.debug("Attempting quick reconnect within grace period...")
                 if self._try_quick_reconnect_with_grace_period():
-                    logger.info("Microcontroller reconnected within grace period - retrying command")
+                    logger.info(
+                        f"Microcontroller reconnected within grace period - "
+                        f"retrying command {CommandName(cmd[1]).name} (ID {cmd[0]})"
+                    )
                     # Recursively retry the command with new command ID
                     return await self.send_cmd(cmd_in)
                 else:
-                    logger.warning("Quick reconnect failed - propagating IOError")
+                    logger.error(
+                        f"Quick reconnect failed for command {CommandName(cmd[1]).name} (ID {cmd[0]}) - "
+                        f"propagating IOError"
+                    )
                     raise
             finally:
                 if acquired_illum_lock:
@@ -1106,48 +1121,98 @@ class Microcontroller(BaseModel):
             The ListPortInfo object if found, None otherwise
         """
         if self._usb_serial_number is None:
+            logger.debug("_find_device_by_usb_ids: no stored USB serial number, cannot search")
             return None
 
-        for port_info in serial.tools.list_ports.comports():
+        logger.debug(
+            f"_find_device_by_usb_ids: searching for device with "
+            f"sn={self._usb_serial_number}, vid=0x{self._usb_vid:04x}, pid=0x{self._usb_pid:04x}"
+        )
+
+        available_ports = list(serial.tools.list_ports.comports())
+        logger.debug(f"_find_device_by_usb_ids: found {len(available_ports)} available serial ports:")
+        for port_info in available_ports:
+            logger.debug(
+                f"  - {port_info.device}: desc={port_info.description}, "
+                f"mfg={port_info.manufacturer}, sn={port_info.serial_number}, "
+                f"vid=0x{port_info.vid:04x if port_info.vid else 'None':s}, "
+                f"pid=0x{port_info.pid:04x if port_info.pid else 'None':s}"
+            )
+
+        for port_info in available_ports:
             # Match on serial number, VID, and PID (most reliable)
-            if (
-                port_info.serial_number == self._usb_serial_number
-                and port_info.vid == self._usb_vid
-                and port_info.pid == self._usb_pid
-            ):
+            sn_match = port_info.serial_number == self._usb_serial_number
+            vid_match = port_info.vid == self._usb_vid
+            pid_match = port_info.pid == self._usb_pid
+
+            logger.debug(
+                f"_find_device_by_usb_ids: checking {port_info.device}: "
+                f"sn_match={sn_match}, vid_match={vid_match}, pid_match={pid_match}"
+            )
+
+            if sn_match and vid_match and pid_match:
                 logger.info(
                     f"Found microcontroller at new path: {port_info.device} "
-                    f"(was {self.device_info.device})"
+                    f"(was {self.device_info.device}, "
+                    f"sn={self._usb_serial_number}, vid=0x{self._usb_vid:04x}, pid=0x{self._usb_pid:04x})"
                 )
                 return port_info
 
         logger.warning(
             f"Could not find microcontroller with USB IDs: "
-            f"sn={self._usb_serial_number}, vid={self._usb_vid}, pid={self._usb_pid}"
+            f"sn={self._usb_serial_number}, vid=0x{self._usb_vid:04x}, pid=0x{self._usb_pid:04x} "
+            f"(last known path was {self.device_info.device})"
         )
         return None
 
     @microcontroller_exclusive
     def open(self):
         "open connection to device"
+        logger.debug(f"open(): attempting to open device at {self.device_info.device}")
         try:
             # Try to open at the stored device path first
+            logger.debug(
+                f"open(): opening serial port {self.device_info.device} "
+                f"at {self.baudrate} baud"
+            )
             self.handle = serial.Serial(self.device_info.device, self.baudrate)
+            logger.debug(f"open(): successfully opened {self.device_info.device}")
         except IOError as e:
-            logger.warning(f"Failed to open device at {self.device_info.device}: {e}")
+            logger.error(
+                f"open(): IOError when opening {self.device_info.device}: "
+                f"type={type(e).__name__}, message='{e}'"
+            )
 
             # Try to find device by USB identifiers in case path changed
+            logger.debug(
+                f"open(): device path failed, searching by USB identifiers "
+                f"(sn={self._usb_serial_number})"
+            )
             new_device_info = self._find_device_by_usb_ids()
             if new_device_info is not None:
                 # Update device_info to new path
+                old_path = self.device_info.device
                 self.device_info = new_device_info
-                logger.info(
-                    f"Updating device path from {self.device_info.device} to "
-                    f"{new_device_info.device}"
+                logger.warning(
+                    f"open(): device path changed from {old_path} to {new_device_info.device} "
+                    f"- attempting to open at new path"
                 )
-                self.handle = serial.Serial(new_device_info.device, self.baudrate)
+                try:
+                    self.handle = serial.Serial(new_device_info.device, self.baudrate)
+                    logger.info(
+                        f"open(): successfully opened at new device path {new_device_info.device}"
+                    )
+                except IOError as e2:
+                    logger.error(
+                        f"open(): IOError when opening device at new path {new_device_info.device}: "
+                        f"type={type(e2).__name__}, message='{e2}' - re-raising"
+                    )
+                    raise
             else:
                 # No matching device found, re-raise the original error
+                logger.error(
+                    f"open(): could not find device by USB identifiers - re-raising original IOError"
+                )
                 raise
 
         # Store USB identifiers for future reconnections
@@ -1160,9 +1225,13 @@ class Microcontroller(BaseModel):
             self._usb_pid = self.device_info.pid
             self._usb_manufacturer = self.device_info.manufacturer
             logger.debug(
-                f"Stored USB identifiers: sn={self._usb_serial_number}, "
-                f"vid={self._usb_vid}, pid={self._usb_pid}, "
-                f"mfg={self._usb_manufacturer}"
+                f"open(): stored USB identifiers for future reconnections: "
+                f"sn={self._usb_serial_number}, vid=0x{self._usb_vid:04x}, "
+                f"pid=0x{self._usb_pid:04x}, mfg={self._usb_manufacturer}"
+            )
+        else:
+            logger.debug(
+                f"open(): USB identifiers already stored or device has no serial number"
             )
 
     @microcontroller_exclusive
@@ -1193,10 +1262,20 @@ class Microcontroller(BaseModel):
             True if reconnection succeeds within grace period, False otherwise
         """
         start_time = time.time()
+        logger.debug(
+            f"try_quick_reconnect(): starting reconnection attempt with "
+            f"grace_period={grace_period_s:.3f}s, current_handle_state={'OPEN' if self.handle else 'CLOSED'}"
+        )
 
         # Record disconnect time if not already set
         if self._last_disconnect_time is None:
             self._last_disconnect_time = start_time
+            logger.debug(f"try_quick_reconnect(): recorded disconnect time {self._last_disconnect_time}")
+        else:
+            logger.debug(
+                f"try_quick_reconnect(): disconnect already recorded at {self._last_disconnect_time} "
+                f"({start_time - self._last_disconnect_time:.3f}s ago)"
+            )
 
         # If we're already connected, no need to reconnect
         if self.handle is not None:
@@ -1204,38 +1283,72 @@ class Microcontroller(BaseModel):
             try:
                 # Try a quick non-blocking read to verify connection
                 if self.handle.in_waiting >= 0:
-                    logger.debug("microcontroller - quick reconnect: still connected")
-                    return True
-            except Exception:
-                pass
-
-        # Try to re-establish connection within grace period
-        while (time.time() - start_time) < grace_period_s:
-            try:
-                if self.handle is None:
-                    logger.debug("microcontroller - quick reconnect: attempting to open connection")
-                    # Use the enhanced open() method which handles device path changes
-                    self.open()
-
-                # Verify connection by checking if we can read
-                if self.handle is not None and self.handle.in_waiting >= 0:
-                    logger.info("microcontroller - quick reconnect: successfully re-established connection")
-                    self._last_disconnect_time = None  # Reset disconnect time on success
+                    logger.info(
+                        f"try_quick_reconnect(): handle still valid, connection appears intact, "
+                        f"returning success immediately"
+                    )
                     return True
             except Exception as e:
-                logger.debug(f"microcontroller - quick reconnect attempt failed: {e}")
+                logger.warning(
+                    f"try_quick_reconnect(): handle exists but validation check failed: {type(e).__name__}: {e}"
+                )
+
+        # Try to re-establish connection within grace period
+        attempt_count = 0
+        while (elapsed_time := (time.time() - start_time)) < grace_period_s:
+            attempt_count += 1
+            remaining_time = grace_period_s - elapsed_time
+            logger.debug(
+                f"try_quick_reconnect(): attempt {attempt_count}, "
+                f"elapsed={elapsed_time:.3f}s, remaining={remaining_time:.3f}s"
+            )
+            try:
+                if self.handle is None:
+                    logger.debug(
+                        f"try_quick_reconnect(): handle is None, calling open() to re-establish connection"
+                    )
+                    # Use the enhanced open() method which handles device path changes
+                    self.open()
+                    logger.debug(f"try_quick_reconnect(): open() completed successfully")
+
+                # Verify connection by checking if we can read
+                if self.handle is not None:
+                    in_waiting = self.handle.in_waiting
+                    logger.debug(
+                        f"try_quick_reconnect(): handle valid, bytes_in_waiting={in_waiting}"
+                    )
+                    if in_waiting >= 0:
+                        logger.info(
+                            f"try_quick_reconnect(): successfully re-established connection "
+                            f"after {elapsed_time:.3f}s and {attempt_count} attempts"
+                        )
+                        self._last_disconnect_time = None  # Reset disconnect time on success
+                        return True
+            except Exception as e:
+                logger.warning(
+                    f"try_quick_reconnect(): attempt {attempt_count} failed: "
+                    f"type={type(e).__name__}, message='{e}'"
+                )
                 if self.handle is not None:
                     try:
+                        logger.debug(f"try_quick_reconnect(): closing handle after failed attempt")
                         self.handle.close()
-                    except Exception:
-                        pass
+                    except Exception as close_err:
+                        logger.debug(
+                            f"try_quick_reconnect(): error closing handle: {type(close_err).__name__}: {close_err}"
+                        )
                     self.handle = None
 
             # Brief sleep before retry
             time.sleep(0.001)
 
         # Grace period expired
-        logger.warning(f"microcontroller - quick reconnect failed within {grace_period_s}s grace period")
+        elapsed_time = time.time() - start_time
+        logger.error(
+            f"try_quick_reconnect(): failed to re-establish connection within grace period: "
+            f"grace_period={grace_period_s:.3f}s, total_elapsed={elapsed_time:.3f}s, "
+            f"attempts_made={attempt_count}"
+        )
         return False
 
     def _try_quick_reconnect_with_grace_period(self) -> bool:
@@ -1244,15 +1357,37 @@ class Microcontroller(BaseModel):
 
         Reads the configured grace period and attempts quick reconnection.
         """
-        from seafront.config.basics import GlobalConfigHandler
+        logger.debug("_try_quick_reconnect_with_grace_period(): retrieving grace period from config")
+        try:
+            from seafront.config.basics import GlobalConfigHandler
 
-        g_config = GlobalConfigHandler.get_dict()
-        grace_period_ms = g_config.get("microcontroller.reconnection_grace_period_ms")
-        if grace_period_ms is None:
-            grace_period_s = 0.2  # Default 200ms
-        else:
-            grace_period_s = grace_period_ms.floatvalue / 1000.0
+            g_config = GlobalConfigHandler.get_dict()
+            grace_period_ms = g_config.get("microcontroller.reconnection_grace_period_ms")
 
+            if grace_period_ms is None:
+                grace_period_s = 0.2  # Default 200ms
+                logger.debug(
+                    f"_try_quick_reconnect_with_grace_period(): "
+                    f"config entry not found, using default 0.2s (200ms)"
+                )
+            else:
+                grace_period_s = grace_period_ms.floatvalue / 1000.0
+                logger.debug(
+                    f"_try_quick_reconnect_with_grace_period(): "
+                    f"grace_period_ms={grace_period_ms.floatvalue}, "
+                    f"converted to {grace_period_s:.3f}s"
+                )
+        except Exception as e:
+            logger.error(
+                f"_try_quick_reconnect_with_grace_period(): error retrieving config: "
+                f"type={type(e).__name__}, message='{e}', using default 0.2s"
+            )
+            grace_period_s = 0.2  # Fallback to default
+
+        logger.info(
+            f"_try_quick_reconnect_with_grace_period(): "
+            f"calling try_quick_reconnect() with grace_period={grace_period_s:.3f}s"
+        )
         return self.try_quick_reconnect(grace_period_s)
 
     @microcontroller_exclusive
