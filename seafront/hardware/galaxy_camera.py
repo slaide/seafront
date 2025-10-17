@@ -162,13 +162,22 @@ class GalaxyCamera(Camera):
     def set_acquisition_mode_trigger(self):
         self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
+    def _clear_acquisition_state(self) -> None:
+        """
+        Reset acquisition state flags unconditionally.
+
+        Clears both acquisition_ongoing and acq_mode to prepare for the next
+        acquisition cycle or mode switch.
+        """
+        self.acquisition_ongoing = False
+        self.acq_mode = None
+
     def stop_acquisition(self) -> None:
         """
         Force stop any ongoing acquisition.
         """
-        if self.acquisition_ongoing:
-            self.acquisition_ongoing = False
-            logger.debug("galaxy camera - acquisition stopped")
+        self._clear_acquisition_state()
+        logger.debug("galaxy camera - acquisition stopped")
 
     def _set_acquisition_mode(
         self,
@@ -397,10 +406,7 @@ class GalaxyCamera(Camera):
                     nonlocal stop_acquisition
 
                     if stop_acquisition or img is None:  # type: ignore
-                        if self.acquisition_ongoing:
-                            self.acquisition_ongoing = False
-                            self.acq_mode = None
-
+                        self._clear_acquisition_state()
                         return
 
                     img_status = img.get_status()
@@ -416,10 +422,7 @@ class GalaxyCamera(Camera):
                     stop_acquisition = callback(img_np)
 
                     if stop_acquisition:
-                        if self.acquisition_ongoing:
-                            self.acquisition_ongoing = False
-                            self.acq_mode = None
-
+                        self._clear_acquisition_state()
                         return
 
                 self._set_acquisition_mode(

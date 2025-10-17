@@ -1173,6 +1173,7 @@ class SquidAdapter(Microscope):
                 try:
                     with self.main_camera() as cam:
                         if cam is not None:
+                            logger.debug("squid - stopping camera acquisition")
                             cam.stop_acquisition()
                             logger.debug("squid - forced camera streaming stop")
                 except Exception as e:
