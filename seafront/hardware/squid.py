@@ -1110,7 +1110,7 @@ class SquidAdapter(Microscope):
             imaging_delta_z_um=z_spacing_limits.to_dict(),
         )
 
-    def is_position_forbidden(self, x_mm: float, y_mm: float, safety_radius_mm: float = 0.0) -> tuple[bool, str]:
+    def is_position_forbidden(self, x_mm: float, y_mm: float) -> tuple[bool, str]:
         """Check if a position is forbidden for movement."""
         from seafront.config.handles import ProtocolConfig
         from seafront.hardware.forbidden_areas import ForbiddenAreaList
@@ -1122,9 +1122,19 @@ class SquidAdapter(Microscope):
             # No forbidden areas configured - position is allowed
             return False, ""
 
+        forbidden_areas_str = forbidden_areas_entry.strvalue
+
         try:
-            forbidden_areas = ForbiddenAreaList.from_json_string(forbidden_areas_entry.strvalue)
-            return forbidden_areas.is_position_forbidden(x_mm, y_mm, safety_radius_mm)
+            forbidden_areas = ForbiddenAreaList.from_json_string(forbidden_areas_str)
+            # Check if position is forbidden
+            is_forbidden, conflicting_area = forbidden_areas.is_position_forbidden(x_mm, y_mm)
+
+            if is_forbidden and conflicting_area is not None:
+                reason_text = f" ({conflicting_area.reason})" if conflicting_area.reason else ""
+                error_msg = f"Movement to ({x_mm:.1f}, {y_mm:.1f}) mm is forbidden - conflicts with area '{conflicting_area.name}'{reason_text}"
+                return True, error_msg
+
+            return False, ""
         except Exception as e:
             logger.warning(f"Failed to parse forbidden areas configuration: {e}")
             # If we can't parse the forbidden areas, default to allowing the position
@@ -1278,6 +1288,33 @@ class SquidAdapter(Microscope):
                     if self.is_in_loading_position:
                         cmd.error_internal(detail="now allowed while in loading position")
 
+                    # Calculate target position after relative movement
+                    try:
+                        current_stage_position = await qmc.get_last_position()
+                    except IOError as e:
+                        self.close()
+                        raise DisconnectError() from e
+
+                    current_x = self._pos_x_measured_to_real(current_stage_position.x_pos_mm)
+                    current_y = self._pos_y_measured_to_real(current_stage_position.y_pos_mm)
+
+                    if command.axis == "x":
+                        target_x = current_x + command.distance_mm
+                        target_y = current_y
+                    elif command.axis == "y":
+                        target_x = current_x
+                        target_y = current_y + command.distance_mm
+                    else:  # z or other axis
+                        target_x = current_x
+                        target_y = current_y
+
+                    # Check forbidden areas for X,Y movement
+                    is_forbidden, error_message = self.is_position_forbidden(
+                        target_x, target_y
+                    )
+                    if is_forbidden:
+                        cmd.error_internal(detail=error_message)
+
                     self.state = CoreState.Moving
 
                     await qmc.send_cmd(mc.Command.move_by_mm(command.axis, command.distance_mm))
@@ -1303,7 +1340,7 @@ class SquidAdapter(Microscope):
                     # Check forbidden areas if we have complete X,Y coordinates
                     if command.x_mm is not None and command.y_mm is not None:
                         is_forbidden, error_message = self.is_position_forbidden(
-                            command.x_mm, command.y_mm, safety_radius_mm=1.0
+                            command.x_mm, command.y_mm
                         )
                         if is_forbidden:
                             cmd.error_internal(detail=error_message)
@@ -1399,7 +1436,7 @@ class SquidAdapter(Microscope):
 
                     # Check forbidden areas for the target well center position
                     is_forbidden, error_message = self.is_position_forbidden(
-                        x_mm, y_mm, safety_radius_mm=1.0
+                        x_mm, y_mm
                     )
                     if is_forbidden:
                         cmd.error_internal(detail=f"Well {command.well_name} center position is in forbidden area - {error_message}")

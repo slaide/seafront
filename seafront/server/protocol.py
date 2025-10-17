@@ -617,6 +617,30 @@ class ProtocolGenerator(BaseModel):
 
         logger.info("protocol - established hardware connection")
 
+        # Pre-flight validation: check all planned positions against forbidden areas
+        logger.info("protocol - performing pre-flight forbidden area validation")
+        forbidden_positions = []
+        for pos_info in self.iter_positions():
+            is_forbidden, error_message = cmds.positionIsForbidden(
+                pos_info.physical_position[0], pos_info.physical_position[1]
+            )
+            if is_forbidden:
+                forbidden_positions.append({
+                    "well": pos_info.well.well_name,
+                    "site": f"({pos_info.site.col}, {pos_info.site.row})",
+                    "position": f"({pos_info.physical_position[0]:.1f}, {pos_info.physical_position[1]:.1f}) mm",
+                    "error": error_message
+                })
+
+        if forbidden_positions:
+            error_detail = "Acquisition contains positions in forbidden areas:\n"
+            for pos in forbidden_positions:
+                error_detail += f"  - Well {pos['well']}, Site {pos['site']} at {pos['position']}: {pos['error']}\n"
+            logger.error(f"protocol - {error_detail}")
+            cmds.error_internal(detail=error_detail)
+
+        logger.info("protocol - pre-flight validation passed, no forbidden areas detected")
+
         # counters on acquisition progress
         start_time = time.time()
         start_time_iso_str = sc.datetime2str(dt.datetime.now(dt.UTC))

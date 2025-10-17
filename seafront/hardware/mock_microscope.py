@@ -110,14 +110,13 @@ class MockMicroscope(Microscope):
         """Check if realistic delays should be simulated (default: True, disable with MOCK_NO_DELAYS=1)"""
         return os.environ.get("MOCK_NO_DELAYS", "0").lower() not in ("1", "true", "yes")
 
-    def is_position_forbidden(self, x_mm: float, y_mm: float, safety_radius_mm: float = 0.0) -> tuple[bool, str]:
+    def is_position_forbidden(self, x_mm: float, y_mm: float) -> tuple[bool, str]:
         """
         Check if a position is forbidden for movement.
 
         Args:
             x_mm: X coordinate in mm
             y_mm: Y coordinate in mm
-            safety_radius_mm: Safety margin radius around the position (default: 0.0)
 
         Returns:
             Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
@@ -143,10 +142,10 @@ class MockMicroscope(Microscope):
             logger.warning(f"Invalid forbidden areas configuration: {e}, allowing movement")
             return False, ""
 
-        # Check if movement is safe considering safety radius
-        is_safe, conflicting_area = forbidden_areas.is_movement_safe(x_mm, y_mm, safety_radius_mm)
+        # Check if position is forbidden
+        is_forbidden, conflicting_area = forbidden_areas.is_position_forbidden(x_mm, y_mm)
 
-        if not is_safe and conflicting_area is not None:
+        if is_forbidden and conflicting_area is not None:
             reason_text = f" ({conflicting_area.reason})" if conflicting_area.reason else ""
             error_msg = f"Movement to ({x_mm:.1f}, {y_mm:.1f}) mm is forbidden - conflicts with area '{conflicting_area.name}'{reason_text}"
             return True, error_msg
@@ -901,7 +900,7 @@ class MockMicroscope(Microscope):
             # Check forbidden areas if we have complete X,Y coordinates
             if command.x_mm is not None and command.y_mm is not None:
                 is_forbidden, error_message = cmd.positionIsForbidden(
-                    command.x_mm, command.y_mm, safety_radius_mm=1.0
+                    command.x_mm, command.y_mm
                 )
                 if is_forbidden:
                     cmd.error_internal(detail=error_message)
@@ -944,6 +943,13 @@ class MockMicroscope(Microscope):
                 target_y = current_y
                 target_z = current_z
 
+            # Check forbidden areas for X,Y movement
+            is_forbidden, error_message = cmd.positionIsForbidden(
+                target_x, target_y
+            )
+            if is_forbidden:
+                cmd.error_internal(detail=error_message)
+
             # Simulate gradual movement with real-time position updates
             await self._simulate_gradual_movement(target_x_mm=target_x, target_y_mm=target_y, target_z_mm=target_z)
             return cmd.MoveByResult(axis=command.axis, moved_by_mm=command.distance_mm)  # type: ignore
@@ -966,7 +972,7 @@ class MockMicroscope(Microscope):
 
             # Check if well center position is in forbidden area
             is_forbidden, error_message = cmd.positionIsForbidden(
-                well_x, well_y, safety_radius_mm=1.0
+                well_x, well_y
             )
             if is_forbidden:
                 cmd.error_internal(detail=f"Well {command.well_name} center position is in forbidden area - {error_message}")

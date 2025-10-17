@@ -223,7 +223,7 @@ class Microscope(BaseModel, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def is_position_forbidden(self, x_mm: float, y_mm: float, safety_radius_mm: float = 0.0) -> tuple[bool, str]:
+    def is_position_forbidden(self, x_mm: float, y_mm: float) -> tuple[bool, str]:
         """
         Check if a position is forbidden for movement.
 
@@ -233,7 +233,6 @@ class Microscope(BaseModel, abc.ABC):
         Args:
             x_mm: X coordinate in mm
             y_mm: Y coordinate in mm
-            safety_radius_mm: Safety margin radius around the position (default: 0.0)
 
         Returns:
             Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
