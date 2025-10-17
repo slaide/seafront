@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(timeout 5 uv run:*)"
-    ],
-    "deny": []
-  }
-}
