@@ -1601,6 +1601,9 @@ class SquidAdapter(Microscope):
 
                     self.state = CoreState.ChannelSnap
 
+                    # Validate channel configuration for acquisition
+                    self.validate_channel_for_acquisition(command.channel)
+
                     # Handle filter wheel positioning if filter is specified
                     if command.channel.filter_handle is not None:
                         # Find filter config by handle
@@ -1683,6 +1686,11 @@ class SquidAdapter(Microscope):
                     return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.ChannelSnapSelection):
+                    # Validate all enabled channels BEFORE starting to image any of them
+                    for channel in command.config_file.channels:
+                        if channel.enabled:
+                            self.validate_channel_for_acquisition(channel)
+
                     channel_handles: list[str] = []
                     channel_images: dict[str, np.ndarray] = {}
                     for channel in command.config_file.channels:
@@ -1730,6 +1738,9 @@ class SquidAdapter(Microscope):
                     GlobalConfigHandler.override(command.machine_config)
 
                     self.state = CoreState.ChannelStream
+
+                    # Validate channel configuration for acquisition
+                    self.validate_channel_for_acquisition(command.channel)
 
                     # Handle filter wheel positioning if filter is specified
                     if command.channel.filter_handle is not None:
@@ -2065,3 +2076,23 @@ class SquidAdapter(Microscope):
             self._validate_acquisition_config(command.config_file)
 
         # Other commands don't require validation (movement, connection, etc.)
+
+    def validate_channel_for_acquisition(self, channel: ChannelConfig) -> None:
+        """
+        Validate that a channel can be acquired with current microscope configuration.
+
+        For SquidAdapter, validates that if filters are configured, the channel
+        has a filter selected.
+
+        Args:
+            channel: The channel configuration to validate
+
+        Raises:
+            Calls error_internal() if validation fails
+        """
+        if self.filters and channel.enabled:
+            if channel.filter_handle is None or channel.filter_handle == '':
+                cmd.error_internal(
+                    detail=f"Channel '{channel.name}' has no filter selected, but filter wheel is available. "
+                    "Please select a filter for all enabled channels."
+                )

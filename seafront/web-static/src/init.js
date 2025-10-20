@@ -24,6 +24,9 @@ Object.assign(window, { matWellColor, matSiteColor, matFovColor });
 import { registerNumberInput } from "numberinput";
 Object.assign(window, { registerNumberInput });
 
+import { registerFilterSelect } from "filterselect";
+Object.assign(window, { registerFilterSelect });
+
 import { ChannelImageView } from "channelview";
 
 import {
@@ -3437,6 +3440,92 @@ document.addEventListener("alpine:init", () => {
                 el.classList.remove('drag-over');
             });
             this.draggedChannelIndex = null;
+        },
+
+        /**
+         * Validate filter selection and show/hide error state
+         * Called via x-effect to update validation when channel or filter wheel availability changes
+         * @param {HTMLSelectElement} selectEl - The filter select element
+         * @param {object} channel - The channel object
+         * @param {boolean} isFilterWheelAvailable - Whether filter wheel is available
+         */
+        setupFilterValidation(selectEl, channel, isFilterWheelAvailable) {
+            if (!(selectEl instanceof HTMLSelectElement)) {
+                return;
+            }
+
+            let hasError = false;
+            const errorMessage = "Filter selection is required when filter wheel is available";
+
+            // Only validate if filter wheel is available and channel is enabled
+            if (isFilterWheelAvailable && channel && channel.enabled) {
+                if (!channel.filter_handle || channel.filter_handle === '__UI_NONE__') {
+                    hasError = true;
+                }
+            }
+
+            // Update error styling
+            if (hasError) {
+                selectEl.classList.add("filter-select-error");
+
+                // Remove any existing tooltips for this element
+                const existingTooltips = Array.from(document.querySelectorAll('.number-input-tooltip')).filter(
+                    tooltip => tooltip._associatedElement === selectEl
+                );
+                existingTooltips.forEach(tooltip => tooltip.remove());
+
+                // Create error tooltip
+                const tooltip = document.createElement('div');
+                tooltip.className = 'number-input-tooltip';
+                tooltip.textContent = errorMessage; // Explicitly set the text content
+                tooltip._associatedElement = selectEl;
+
+                // Position tooltip
+                const rect = selectEl.getBoundingClientRect();
+                document.body.appendChild(tooltip);
+                const tooltipRect = tooltip.getBoundingClientRect();
+
+                let left = rect.left;
+                let top = rect.top - tooltipRect.height - 8;
+                let isAbove = true;
+
+                if (top < 10) {
+                    top = rect.bottom + 8;
+                    isAbove = false;
+                }
+
+                const maxTop = window.innerHeight - tooltipRect.height - 10;
+                if (top > maxTop && !isAbove) {
+                    top = maxTop;
+                }
+
+                const maxLeft = window.innerWidth - tooltipRect.width - 10;
+                if (left > maxLeft) {
+                    left = maxLeft;
+                }
+                if (left < 10) {
+                    left = 10;
+                }
+
+                const elementCenter = rect.left + rect.width / 2;
+                let arrowLeft = elementCenter - left;
+                const minArrowLeft = 10;
+                const maxArrowLeft = tooltipRect.width - 20;
+                if (arrowLeft < minArrowLeft) arrowLeft = minArrowLeft;
+                if (arrowLeft > maxArrowLeft) arrowLeft = maxArrowLeft;
+
+                tooltip.style.left = left + 'px';
+                tooltip.style.top = top + 'px';
+                tooltip.classList.add(isAbove ? 'tooltip-above' : 'tooltip-below');
+                tooltip.style.setProperty('--arrow-left', arrowLeft + 'px');
+            } else {
+                selectEl.classList.remove("filter-select-error");
+                // Remove any existing tooltips for this element
+                const existingTooltips = Array.from(document.querySelectorAll('.number-input-tooltip')).filter(
+                    tooltip => tooltip._associatedElement === selectEl
+                );
+                existingTooltips.forEach(tooltip => tooltip.remove());
+            }
         },
     }));
 });

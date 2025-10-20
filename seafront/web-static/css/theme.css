@@ -89,6 +89,15 @@ body{
         border-top-color: transparent !important;
     }
 
+    /* Filter select error styling - high specificity */
+    select.filter-select-error {
+        border-color: #ff4444 !important;
+        border-width: 2px !important;
+        border-style: solid !important;
+        box-shadow: 0 0 6px rgba(255, 68, 68, 0.6) !important;
+        background-color: rgba(255, 68, 68, 0.1) !important;
+    }
+
     .tabs{
         --tabs-header-border-color:var(--text-color);
         /*--tabs-header-bg-color:lightgrey;*/

@@ -1492,6 +1492,11 @@ class Core:
             if is_forbidden:
                 error_internal(detail=f"Site position in well {position_info.well.well_name} (site {position_info.site.col},{position_info.site.row}) is forbidden: {error_message}")
 
+        # Validate that all enabled channels have valid configurations
+        # This catches channel configuration issues during preparation instead of during execution
+        for channel_info in protocol.iter_channels():
+            self.microscope.validate_channel_for_acquisition(channel_info.channel)
+
         # this function internally locks the microscope
         async def run_acquisition(
             q_in: asyncio.Queue[AcquisitionCommand],

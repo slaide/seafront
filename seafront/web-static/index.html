@@ -24,6 +24,7 @@
 
                     "platenavigator": "/src/platenavigator.js",
                     "numberinput": "/src/numberinput.js",
+                    "filterselect": "/src/filterselect.js",
                     "microscope_setup": "/src/microscope_setup.js",
                     "channelview": "/src/channelview.js",
                     "tooltip": "/src/tooltip.js",
@@ -1710,9 +1711,8 @@
                                                 />
 
                                                 <select
-                                                    :value="channel.filter_handle ?? '__UI_NONE__'"
                                                     @change="channel.filter_handle = ($event.target.value === '__UI_NONE__' ? null : $event.target.value)"
-                                                    x-effect="disableElement($el,()=>!channel.enabled || !isFilterWheelAvailable)"
+                                                    x-effect="disableElement($el,()=>!channel.enabled || !isFilterWheelAvailable); setupFilterValidation($el, channel, isFilterWheelAvailable)"
                                                     x-init="enabletooltip($el)"
                                                     x-bind:tooltip="!isFilterWheelAvailable ? 'This microscope does not support custom channel filters.' : ''"
                                                 >
@@ -1722,6 +1722,7 @@
                                                     >
                                                         <option
                                                             x-bind:value="filterOption.handle"
+                                                            x-bind:selected="filterOption.handle === (channel.filter_handle ?? '__UI_NONE__')"
                                                             x-text="filterOption.name"
                                                         ></option>
                                                     </template>
@@ -1732,6 +1733,7 @@
                                                         <optgroup x-bind:label="filterOption.groupLabel">
                                                             <option
                                                                 x-bind:value="filterOption.handle"
+                                                                x-bind:selected="filterOption.handle === (channel.filter_handle ?? '__UI_NONE__')"
                                                                 x-text="filterOption.name"
                                                             ></option>
                                                         </optgroup>

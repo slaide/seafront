@@ -851,6 +851,26 @@ class MockMicroscope(Microscope):
 
         # Other commands don't require validation (movement, connection, etc.)
 
+    def validate_channel_for_acquisition(self, channel: ChannelConfig) -> None:
+        """
+        Validate that a channel can be acquired with current microscope configuration.
+
+        For MockMicroscope, validates that if filters are configured, the channel
+        has a filter selected.
+
+        Args:
+            channel: The channel configuration to validate
+
+        Raises:
+            Calls error_internal() if validation fails
+        """
+        if self.filters and channel.enabled:
+            if channel.filter_handle is None or channel.filter_handle == '':
+                cmd.error_internal(
+                    detail=f"Channel '{channel.name}' has no filter selected, but filter wheel is available. "
+                    "Please select a filter for all enabled channels."
+                )
+
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         """Execute mock commands."""
 
@@ -991,6 +1011,9 @@ class MockMicroscope(Microscope):
             if self.stream_callback is not None:
                 cmd.error_internal(detail="already streaming")
 
+            # Validate channel configuration for acquisition
+            self.validate_channel_for_acquisition(command.channel)
+
             # Simulate imaging delay based on exposure time
             await self._delay_for_imaging(command.channel.exposure_time_ms)
 
@@ -1065,6 +1088,11 @@ class MockMicroscope(Microscope):
             if self.stream_callback is not None:
                 cmd.error_internal(detail="already streaming")
 
+            # Validate all enabled channels BEFORE starting to image any of them
+            for channel in command.config_file.channels:
+                if channel.enabled:
+                    self.validate_channel_for_acquisition(channel)
+
             channel_handles: list[str] = []
             channel_images: dict[str, np.ndarray] = {}
 
@@ -1098,6 +1126,9 @@ class MockMicroscope(Microscope):
             # Check if already streaming
             if self.stream_callback is not None and self._streaming_thread is not None:
                 cmd.error_internal("already streaming")
+
+            # Validate channel configuration for acquisition
+            self.validate_channel_for_acquisition(command.channel)
 
             # Find matching channel config
             matching_configs = [ch for ch in self.channels if ch.handle == command.channel.handle]

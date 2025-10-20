@@ -253,6 +253,23 @@ class Microscope(BaseModel, abc.ABC):
         """
         pass
 
+    @abc.abstractmethod
+    def validate_channel_for_acquisition(self, channel: ChannelConfig) -> None:
+        """
+        Validate that a channel can be acquired with current microscope configuration.
+
+        Different microscope implementations may have different validation requirements.
+        For example, microscopes with filter wheels may require filter selection,
+        or some microscopes may disallow certain lightsource+filter combinations.
+
+        Args:
+            channel: The channel configuration to validate
+
+        Raises:
+            Calls error_internal() if validation fails
+        """
+        pass
+
 
 def microscope_exclusive(f):
     """
