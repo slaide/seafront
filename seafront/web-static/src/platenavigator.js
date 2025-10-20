@@ -678,6 +678,18 @@ export class PlateNavigator {
     async loadPlate(microscope_config, plate) {
         // clear previous state
         this.clearState(plate);
+        // reset camera zoom AND bounds together to maintain synchronization
+        // (drag function uses this.cam.zoom to scale movement, but if bounds don't match the zoom level, drag will be wrong)
+        const frame = {
+            width: this.renderer.domElement.clientWidth,
+            height: this.renderer.domElement.clientHeight,
+        };
+        this.camera.left = frame.width / -2;
+        this.camera.right = frame.width / 2;
+        this.camera.top = frame.height / 2;
+        this.camera.bottom = frame.height / -2;
+        this.camera.updateProjectionMatrix();
+        this.cam.zoom = 1;
         // register plate as new state
         this.plate = plate;
 
@@ -1118,6 +1130,8 @@ export class PlateNavigator {
                 objectNameWells,
                 objectNameWellsSelected,
                 objectNameText,
+                objectNameOuterOutline,
+                objectNameInnerOutline,
             ]);
         }
 
