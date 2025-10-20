@@ -1207,20 +1207,17 @@ document.addEventListener("alpine:init", () => {
         /**
          * Move objective to specified plate coordinates
          * @param {number} x_mm - X coordinate in mm
-         * @param {number} y_mm - Y coordinate in mm  
+         * @param {number} y_mm - Y coordinate in mm (backend/physical coordinates, origin top-left at A1)
          */
         async moveObjectiveTo(x_mm, y_mm) {
             try {
-                // PlateNavigator returns display coordinates (A1 at top-left)
-                // Convert back to physical coordinates (A1 at bottom-left)  
-                const plateHeight = this.microscope_config.wellplate_type.Width_mm;
-                const physicalY = plateHeight - y_mm;
-                
+                // PlateNavigator returns backend/physical coordinates (origin top-left, A1 at top-left)
+                // Pass them directly to the backend API which expects physical coordinates
                 const moveRequest = {
                     x_mm: x_mm,
-                    y_mm: physicalY
+                    y_mm: y_mm
                 };
-                
+
                 await this.Actions.moveTo(moveRequest);
             } catch (error) {
                 console.error("Failed to move objective:", error);

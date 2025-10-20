@@ -1042,31 +1042,35 @@ export class PlateNavigator {
 
     /**
      * Convert mouse coordinates to plate coordinates (in mm)
+     * Returns backend/physical coordinates with origin at top-left (A1 position)
      * @param {MouseCoordinates} event - Object with offsetX and offsetY properties
-     * @returns {{x: number, y: number} | null}
+     * @returns {{x: number, y: number} | null} Backend/physical plate coordinates in mm
      */
     mouseToPlateCoordinates(event) {
         if (!this.plate) return null;
 
         // Get canvas dimensions
         const canvasRect = this.renderer.domElement.getBoundingClientRect();
-        
+
         // Convert mouse position to normalized coordinates (0 to 1)
         const normalizedX = event.offsetX / canvasRect.width;
         const normalizedY = event.offsetY / canvasRect.height;
-        
+
         // Convert to camera space coordinates
         const cameraWidth = this.camera.right - this.camera.left;
         const cameraHeight = this.camera.top - this.camera.bottom;
-        
+
         const cameraX = this.camera.left + normalizedX * cameraWidth;
         const cameraY = this.camera.bottom + (1 - normalizedY) * cameraHeight; // Flip Y axis
-        
-        // Clamp coordinates to plate boundaries
-        const plateX = Math.max(0, Math.min(this.plate.Length_mm, cameraX));
-        const plateY = Math.max(0, Math.min(this.plate.Width_mm, cameraY));
-        
-        return { x: plateX, y: plateY };
+
+        // Clamp coordinates to plate boundaries (in display/camera space)
+        const displayX = Math.max(0, Math.min(this.plate.Length_mm, cameraX));
+        const displayY = Math.max(0, Math.min(this.plate.Width_mm, cameraY));
+
+        // Transform from display coordinates (origin bottom) to backend/physical coordinates (origin top)
+        const backendY = this.plate.Width_mm - displayY;
+
+        return { x: displayX, y: backendY };
     }
 
     /**
