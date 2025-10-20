@@ -339,16 +339,22 @@
                             <div style="margin-top: 10px; margin-bottom: 10px;">
                                 <span>Legend:</span>
                                 <span
-                                    x-bind:style="`background:#${matWellColor.toString(16).padStart(6,'0')}A0;`"
+                                    x-bind:style="`background:#${matWellColor.toString(16).padStart(6,'0')}A0; padding: 0.25em 0.375em; font-weight: bold;`"
                                     >Well</span
                                 >
                                 <span
-                                    x-bind:style="`background:#${matSiteColor.toString(16).padStart(6,'0')}A0;`"
+                                    x-bind:style="`background:#${matSiteColor.toString(16).padStart(6,'0')}A0; padding: 0.25em 0.375em; font-weight: bold;`"
                                     >Site</span
                                 >
                                 <span
-                                    x-bind:style="`background:#${matFovColor.toString(16).padStart(6,'0')}D0;`"
-                                    >Current FOV</span
+                                    @click="pulseObjectiveFov()"
+                                    x-bind:style="`background:#${matFovColor.toString(16).padStart(6,'0')}D0; padding: 0.25em 0.375em; font-weight: bold; cursor: pointer;`"
+                                    title="Click to pulse the objective marker"
+                                    >Objective</span
+                                >
+                                <span
+                                    x-bind:style="`background:#${matForbiddenAreaColor.toString(16).padStart(6,'0')}D0; padding: 0.25em 0.375em; font-weight: bold;`"
+                                    >Forbidden Area</span
                                 >
                             </div>
 

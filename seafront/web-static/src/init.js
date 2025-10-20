@@ -15,11 +15,12 @@ import {
     matWellColor,
     matSiteColor,
     matFovColor,
+    matForbiddenAreaColor,
     calculateSitePosition,
     calculateSitePositionPython,
 } from "platenavigator";
 // these colors are used to create a legend in html
-Object.assign(window, { matWellColor, matSiteColor, matFovColor });
+Object.assign(window, { matWellColor, matSiteColor, matFovColor, matForbiddenAreaColor });
 
 import { registerNumberInput } from "numberinput";
 Object.assign(window, { registerNumberInput });
@@ -1221,6 +1222,16 @@ document.addEventListener("alpine:init", () => {
                 await this.Actions.moveTo(moveRequest);
             } catch (error) {
                 console.error("Failed to move objective:", error);
+            }
+        },
+
+        /**
+         * Trigger pulse animation on the objective FOV marker
+         * Scales from 15x to normal size over 10 seconds for easy visibility
+         */
+        pulseObjectiveFov() {
+            if (this.plateNavigator) {
+                this.plateNavigator.pulseObjectiveFov();
             }
         },
 

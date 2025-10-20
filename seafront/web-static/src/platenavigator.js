@@ -258,8 +258,8 @@ export let matWellColor = 0x006699;
 let matWellSelectedColor = 0x0099FF; // Brighter blue for selected wells
 export let matSiteColor = 0xFF8800;
 export let matPlateColor = 0x222222;
-export let matFovColor = 0xAA1111;
-export let matForbiddenAreaColor = 0x8B0000; // Dark red for forbidden areas
+export let matFovColor = 0x00CC00; // Strong green for objective/FOV
+export let matForbiddenAreaColor = 0xFF0000; // Bright red for forbidden areas
 
 /**
  * @typedef {Object} SelectionState
@@ -529,13 +529,25 @@ export class PlateNavigator {
             fovx: 0.9,
             fovy: 0.9,
         };
+
+        // Create group to wrap FOV mesh for centered scaling during pulse animation
+        this.objectiveFovGroup = new THREE.Group();
+        this.objectiveFovGroup.position.z = 0.6;
+        this.scene.add(this.objectiveFovGroup);
+
         /** @type {THREE.Mesh} */
         this.objectiveFov = makeQuad({
             ax: 0, ay: 0,
             bx: this.objective.fovx, by: this.objective.fovy,
         }, this.matFov);
-        this.objectiveFov.position.z += 0.6;
-        this.scene.add(this.objectiveFov);
+        // Position mesh within group so it's centered around group origin
+        this.objectiveFov.position.x = -this.objective.fovx / 2;
+        this.objectiveFov.position.y = -this.objective.fovy / 2;
+        this.objectiveFovGroup.add(this.objectiveFov);
+
+        // Animation state for objective FOV pulse
+        this.fovPulseActive = false;
+        this.fovPulseStartTime = 0;
 
         // setup render loop
         /** @type {number} */
@@ -921,6 +933,26 @@ export class PlateNavigator {
     animate() {
         this.framenum++;
 
+        // Handle FOV pulse animation
+        if (this.fovPulseActive && this.objectiveFovGroup) {
+            const elapsed = performance.now() - this.fovPulseStartTime;
+            const duration = 2500; // 2.5 seconds in milliseconds
+
+            if (elapsed >= duration) {
+                // Animation complete, reset scale to normal
+                this.objectiveFovGroup.scale.set(1, 1, 1);
+                this.fovPulseActive = false;
+            } else {
+                // Calculate progress (0 to 1)
+                const progress = elapsed / duration;
+                // Ease-out cubic: starts fast, ends slow for smooth deceleration
+                const eased = 1 - Math.pow(1 - progress, 3);
+                // Interpolate scale from 15 to 1
+                const scale = 15 - (14 * eased);
+                this.objectiveFovGroup.scale.set(scale, scale, 1);
+            }
+        }
+
         this.renderer.render(this.scene, this.camera);
 
         let delta = performance.now() - this.last_frame;
@@ -1222,23 +1254,29 @@ export class PlateNavigator {
      * @param {number} y_mm - Y coordinate in mm (backend coordinates)
      */
     updateObjectivePosition(x_mm, y_mm) {
-        if (!this.plate || !this.objectiveFov) {
-            console.warn('Position update skipped - no plate or objectiveFov');
+        if (!this.plate || !this.objectiveFovGroup) {
+            console.warn('Position update skipped - no plate or objectiveFovGroup');
             return; // No plate loaded or objective FOV not initialized
         }
 
         // Transform backend coordinates to display coordinates
         const displayCoords = transformBackendToDisplayCoordinates(x_mm, y_mm, this.plate);
 
-        // Update objective FOV position (center the FOV rectangle on the position)
-        const newX = displayCoords.x - this.objective.fovx / 2;
-        const newY = displayCoords.y - this.objective.fovy / 2;
-
-        this.objectiveFov.position.x = newX;
-        this.objectiveFov.position.y = newY;
+        // Position group at center of FOV (mesh within group is offset by -fov/2 to be centered)
+        this.objectiveFovGroup.position.x = displayCoords.x;
+        this.objectiveFovGroup.position.y = displayCoords.y;
 
         // Keep the Z position as set during initialization (above other elements)
-        // this.objectiveFov.position.z is already set to 0.6 during creation
+        // this.objectiveFovGroup.position.z is already set to 0.6 during creation
+    }
+
+    /**
+     * Trigger a pulse animation for the objective FOV to highlight it
+     * Scales from 15x to normal size over 2.5 seconds around the center of the FOV
+     */
+    pulseObjectiveFov() {
+        this.fovPulseActive = true;
+        this.fovPulseStartTime = performance.now();
     }
 
     /**
