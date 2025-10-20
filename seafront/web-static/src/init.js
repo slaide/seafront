@@ -3277,20 +3277,16 @@ document.addEventListener("alpine:init", () => {
                         const fovX = this.plateNavigator.objective.fovx;
                         const fovY = this.plateNavigator.objective.fovy;
                         
-                        const sitePosRaw = calculateSitePositionPython(
+                        const sitePos = calculateSitePositionPython(
                             wellX_mm, wellY_mm, wellSizeX_mm, wellSizeY_mm,
                             site.col, site.row,
                             gridConfig.num_x, gridConfig.num_y,
                             gridConfig.delta_x_mm, gridConfig.delta_y_mm
                         );
-                        
-                        // Transform Y coordinate to match selection coordinate system
-                        const plateWidth = plateConfig.Width_mm;
-                        const sitePos = {
-                            x: sitePosRaw.x,
-                            y: plateWidth - sitePosRaw.y
-                        };
-                        
+
+                        // calculateSitePositionPython returns backend/physical coordinates,
+                        // which match the coordinate system of selectionBounds (from mouseToPlateCoordinates)
+
                         // Calculate site AABB using FOV size
                         const siteMinX = sitePos.x - fovX / 2;
                         const siteMaxX = sitePos.x + fovX / 2;

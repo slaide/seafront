@@ -1178,18 +1178,22 @@ export class PlateNavigator {
     updateSelectionBox(selection) {
         if (!selection.box) return;
 
-        // Convert screen coordinates to plate coordinates
-        const start = this.mouseToPlateCoordinates({offsetX: selection.start.x, offsetY: selection.start.y});
-        const current = this.mouseToPlateCoordinates({offsetX: selection.current.x, offsetY: selection.current.y});
-        
-        if (!start || !current) return;
+        // Convert screen coordinates to plate coordinates (backend coordinate system)
+        const startBackend = this.mouseToPlateCoordinates({offsetX: selection.start.x, offsetY: selection.start.y});
+        const currentBackend = this.mouseToPlateCoordinates({offsetX: selection.current.x, offsetY: selection.current.y});
 
-        // Calculate box dimensions and position
-        const minX = Math.min(start.x, current.x);
-        const maxX = Math.max(start.x, current.x);
-        const minY = Math.min(start.y, current.y);
-        const maxY = Math.max(start.y, current.y);
-        
+        if (!startBackend || !currentBackend) return;
+
+        // Transform from backend to display coordinates for Three.js rendering
+        const startDisplay = transformBackendToDisplayCoordinates(startBackend.x, startBackend.y, this.plate);
+        const currentDisplay = transformBackendToDisplayCoordinates(currentBackend.x, currentBackend.y, this.plate);
+
+        // Calculate box dimensions and position in display coordinate system
+        const minX = Math.min(startDisplay.x, currentDisplay.x);
+        const maxX = Math.max(startDisplay.x, currentDisplay.x);
+        const minY = Math.min(startDisplay.y, currentDisplay.y);
+        const maxY = Math.max(startDisplay.y, currentDisplay.y);
+
         const width = Math.max(maxX - minX, 0.1);
         const height = Math.max(maxY - minY, 0.1);
         const centerX = minX + (maxX - minX) / 2;
@@ -1448,44 +1452,57 @@ export class PlateNavigator {
     performWellSelection(selection) {
         if (!this.plate || !this.onWellSelection) return;
 
-        // Convert screen coordinates to plate coordinates
-        const start = this.mouseToPlateCoordinates({offsetX: selection.start.x, offsetY: selection.start.y});
-        const current = this.mouseToPlateCoordinates({offsetX: selection.current.x, offsetY: selection.current.y});
-        
-        if (!start || !current) return;
+        // Convert screen coordinates to plate coordinates (backend coordinate system)
+        const startBackend = this.mouseToPlateCoordinates({offsetX: selection.start.x, offsetY: selection.start.y});
+        const currentBackend = this.mouseToPlateCoordinates({offsetX: selection.current.x, offsetY: selection.current.y});
 
-        // Calculate selection bounding box
-        const selectionBox = {
-            minX: Math.min(start.x, current.x),
-            maxX: Math.max(start.x, current.x),
-            minY: Math.min(start.y, current.y),
-            maxY: Math.max(start.y, current.y)
+        if (!startBackend || !currentBackend) return;
+
+        // Calculate selection bounding box in backend coordinates
+        const selectionBoxBackend = {
+            minX: Math.min(startBackend.x, currentBackend.x),
+            maxX: Math.max(startBackend.x, currentBackend.x),
+            minY: Math.min(startBackend.y, currentBackend.y),
+            maxY: Math.max(startBackend.y, currentBackend.y)
+        };
+
+        // Transform selection bounds from backend to display coordinates for well intersection testing
+        const minDisplay = transformBackendToDisplayCoordinates(selectionBoxBackend.minX, selectionBoxBackend.minY, this.plate);
+        const maxDisplay = transformBackendToDisplayCoordinates(selectionBoxBackend.maxX, selectionBoxBackend.maxY, this.plate);
+
+        // Build selection bounds in display coordinates (accounting for potential Y-flip)
+        const selectionBoxDisplay = {
+            minX: Math.min(minDisplay.x, maxDisplay.x),
+            maxX: Math.max(minDisplay.x, maxDisplay.x),
+            minY: Math.min(minDisplay.y, maxDisplay.y),
+            maxY: Math.max(minDisplay.y, maxDisplay.y)
         };
 
         // Find wells that intersect with selection box
         const selectedWells = [];
-        
+
         for (let y = 0; y < this.plate.Num_wells_y; y++) {
             for (let x = 0; x < this.plate.Num_wells_x; x++) {
-                // Calculate well position and bounds
+                // Calculate well position and bounds in display coordinates
                 const wellPos = calculateWellPosition(this.plate, x, y);
                 const wellX = wellPos.x;
                 const wellY = wellPos.y;
-                
+
                 const wellBounds = {
                     minX: wellX,
                     maxX: wellX + this.plate.Well_size_x_mm,
-                    minY: wellY, 
+                    minY: wellY,
                     maxY: wellY + this.plate.Well_size_y_mm
                 };
-                
+
+                // AABB intersection test in display coordinate system
                 const intersects = !(
-                    wellBounds.maxX < selectionBox.minX ||
-                    wellBounds.minX > selectionBox.maxX ||
-                    wellBounds.maxY < selectionBox.minY ||
-                    wellBounds.minY > selectionBox.maxY
+                    wellBounds.maxX < selectionBoxDisplay.minX ||
+                    wellBounds.minX > selectionBoxDisplay.maxX ||
+                    wellBounds.maxY < selectionBoxDisplay.minY ||
+                    wellBounds.minY > selectionBoxDisplay.maxY
                 );
-                
+
                 if (intersects) {
                     const wellName = makeWellName(x, y);
                     selectedWells.push(wellName);
@@ -1493,14 +1510,15 @@ export class PlateNavigator {
             }
         }
 
-        // Pass selection bounds along with well names for site selection mode
+        // Pass selection bounds in backend coordinates for site selection
+        // (selectSitesByWellArea expects backend coordinates)
         const selectionBounds = {
-            minX: selectionBox.minX,
-            maxX: selectionBox.maxX,
-            minY: selectionBox.minY,
-            maxY: selectionBox.maxY
+            minX: selectionBoxBackend.minX,
+            maxX: selectionBoxBackend.maxX,
+            minY: selectionBoxBackend.minY,
+            maxY: selectionBoxBackend.maxY
         };
-        
+
         this.onWellSelection(selectedWells, selection.mode, selectionBounds);
     }
 
