@@ -148,6 +148,23 @@ function makeQuad(aabb, mat) {
 }
 
 /**
+ * Create a closed line loop from an array of 2D points
+ * @param {Array<{x: number, y: number}>} points - Array of points that form the closed loop
+ * @param {THREE.LineBasicMaterial} mat - Material for the line
+ * @returns {THREE.Line} Line loop object
+ */
+function makeLineLoop(points, mat) {
+    let geometry = new THREE.BufferGeometry();
+    let positions = [];
+    for (let point of points) {
+        positions.push(point.x, point.y, 0);
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    let line = new THREE.LineLoop(geometry, mat);
+    return line;
+}
+
+/**
  * 
  * @param {AABB} aabb 
  * @param {THREE.Material} mat
@@ -253,13 +270,15 @@ let objectNameWellsSelected = "wellsSelected";
 let objectNameSites = "sites";
 let objectNameText = "wellLabels";
 let objectNameForbiddenAreas = "forbiddenAreas";
+let objectNameOuterOutline = "outerOutline";
+let objectNameInnerOutline = "innerOutline";
 export let matTextColor = 0xFFFFFF;
 export let matWellColor = 0x006699;
 let matWellSelectedColor = 0x0099FF; // Brighter blue for selected wells
 export let matSiteColor = 0xFF8800;
 export let matPlateColor = 0x222222;
 export let matFovColor = 0x00CC00; // Strong green for objective/FOV
-export let matForbiddenAreaColor = 0xFF0000; // Bright red for forbidden areas
+export let matForbiddenAreaColor = 0xCC4444; // Muted red for forbidden areas
 
 /**
  * @typedef {Object} SelectionState
@@ -480,14 +499,14 @@ export class PlateNavigator {
             color: matWellColor,
             side: THREE.DoubleSide,
             transparent: true,
-            opacity: 0.8,
+            opacity: 0.55,
         });
         /** @type {THREE.LineBasicMaterial} */
         this.matWellSelected = new THREE.LineBasicMaterial({
             color: matWellSelectedColor,
             side: THREE.DoubleSide,
             transparent: true,
-            opacity: 0.9,
+            opacity: 0.6,
         });
         /** @type {THREE.LineBasicMaterial} */
         this.matSite = new THREE.LineBasicMaterial({
@@ -518,9 +537,13 @@ export class PlateNavigator {
         /** @type {THREE.MeshBasicMaterial} */
         this.matForbiddenArea = new THREE.MeshBasicMaterial({
             color: matForbiddenAreaColor,
-            transparent: true,
-            opacity: 0.7,
             side: THREE.DoubleSide,
+        });
+
+        /** @type {THREE.LineBasicMaterial} */
+        this.matOutlineBlack = new THREE.LineBasicMaterial({
+            color: 0xCCCCCC,
+            linewidth: 6,
         });
 
         /** @type {{fovx:number,fovy:number}} */
@@ -679,6 +702,8 @@ export class PlateNavigator {
         try {
             const forbiddenAreas = await this.fetchForbiddenAreas();
             if (forbiddenAreas.length > 0) {
+                const forbiddenGeometries = [];
+
                 for (let i = 0; i < forbiddenAreas.length; i++) {
                     const area = forbiddenAreas[i];
 
@@ -701,14 +726,118 @@ export class PlateNavigator {
                     };
 
                     const forbiddenMesh = makeQuad(area_aabb, this.matForbiddenArea);
-                    forbiddenMesh.position.z = forbidden_area_z;
-                    forbiddenMesh.name = `${objectNameForbiddenAreas}_${i}`;
-                    this.scene.add(forbiddenMesh);
+                    forbiddenGeometries.push(forbiddenMesh.geometry);
+                }
+
+                // Merge all forbidden area geometries into a single mesh to avoid transparency overlap issues
+                if (forbiddenGeometries.length > 0) {
+                    const mergedGeometry = BufferGeometryUtils.mergeGeometries(forbiddenGeometries);
+                    const mergedMesh = new THREE.Mesh(mergedGeometry, this.matForbiddenArea);
+                    mergedMesh.position.z = forbidden_area_z;
+                    mergedMesh.name = objectNameForbiddenAreas;
+                    this.scene.add(mergedMesh);
                 }
             }
         } catch (error) {
             console.warn('Failed to render forbidden areas:', error);
         }
+
+        // Remove old outlines before creating new ones
+        const oldOuterOutline = this.scene.getObjectByName(objectNameOuterOutline);
+        if (oldOuterOutline) this.scene.remove(oldOuterOutline);
+        const oldInnerOutline = this.scene.getObjectByName(objectNameInnerOutline);
+        if (oldInnerOutline) this.scene.remove(oldInnerOutline);
+
+        // Draw plate outlines as thin rectangles so they scale with zoom
+        const outline_z = 0.1;
+        const stroke_width = 0.3; // mm - thickness of outline strokes
+
+        // Outer plate boundary - draw as 4 thin rectangles
+        const outerStrokeGeometries = [];
+
+        // Top edge
+        outerStrokeGeometries.push(makeQuad({
+            ax: 0, ay: plate.Width_mm - stroke_width,
+            bx: plate.Length_mm, by: plate.Width_mm
+        }, this.matOutlineBlack).geometry);
+
+        // Bottom edge
+        outerStrokeGeometries.push(makeQuad({
+            ax: 0, ay: 0,
+            bx: plate.Length_mm, by: stroke_width
+        }, this.matOutlineBlack).geometry);
+
+        // Left edge
+        outerStrokeGeometries.push(makeQuad({
+            ax: 0, ay: 0,
+            bx: stroke_width, by: plate.Width_mm
+        }, this.matOutlineBlack).geometry);
+
+        // Right edge
+        outerStrokeGeometries.push(makeQuad({
+            ax: plate.Length_mm - stroke_width, ay: 0,
+            bx: plate.Length_mm, by: plate.Width_mm
+        }, this.matOutlineBlack).geometry);
+
+        const outerOutlineMerged = BufferGeometryUtils.mergeGeometries(outerStrokeGeometries);
+        const outerOutline = new THREE.Mesh(outerOutlineMerged, this.matOutlineBlack);
+        outerOutline.position.z = outline_z;
+        outerOutline.name = objectNameOuterOutline;
+        this.scene.add(outerOutline);
+
+        // Inner well boundary with 45-degree chamfer at A1 corner (top-left)
+        const inset_left = 2;
+        const inset_right = 2;
+        const inset_top = 2;
+        const inset_bottom = 2;
+        const chamfer_size = 4; // 4mm chamfer at A1 corner
+
+        const innerX1 = inset_left;
+        const innerX2 = plate.Length_mm - inset_right;
+        const innerY1 = inset_bottom;
+        const innerY2 = plate.Width_mm - inset_top;
+
+        const innerStrokeGeometries = [];
+
+        // Bottom edge
+        innerStrokeGeometries.push(makeQuad({
+            ax: innerX1, ay: innerY1,
+            bx: innerX2, by: innerY1 + stroke_width
+        }, this.matOutlineBlack).geometry);
+
+        // Right edge
+        innerStrokeGeometries.push(makeQuad({
+            ax: innerX2 - stroke_width, ay: innerY1,
+            bx: innerX2, by: innerY2
+        }, this.matOutlineBlack).geometry);
+
+        // Top-right to chamfer start
+        innerStrokeGeometries.push(makeQuad({
+            ax: innerX1 + chamfer_size, ay: innerY2 - stroke_width,
+            bx: innerX2, by: innerY2
+        }, this.matOutlineBlack).geometry);
+
+        // Left edge (below chamfer)
+        innerStrokeGeometries.push(makeQuad({
+            ax: innerX1, ay: innerY1 + stroke_width,
+            bx: innerX1 + stroke_width, by: innerY2 - chamfer_size
+        }, this.matOutlineBlack).geometry);
+
+        // Diagonal chamfer at A1 corner (45-degree cut)
+        const chamferShape = new THREE.Shape();
+        chamferShape.moveTo(innerX1, innerY2 - chamfer_size);
+        chamferShape.lineTo(innerX1 + chamfer_size, innerY2);
+        chamferShape.lineTo(innerX1 + chamfer_size + stroke_width * 0.7, innerY2 - stroke_width * 0.7);
+        chamferShape.lineTo(innerX1 + stroke_width * 0.7, innerY2 - chamfer_size - stroke_width * 0.7);
+        chamferShape.lineTo(innerX1, innerY2 - chamfer_size);
+        const chamferGeo = new THREE.ShapeGeometry(chamferShape);
+        innerStrokeGeometries.push(chamferGeo);
+
+        const innerOutlineMerged = BufferGeometryUtils.mergeGeometries(innerStrokeGeometries);
+        const innerOutline = new THREE.Mesh(innerOutlineMerged, this.matOutlineBlack);
+        innerOutline.position.z = outline_z;
+        innerOutline.name = objectNameInnerOutline;
+        this.scene.add(innerOutline);
 
         // Fit camera to show the entire plate properly
         this.cameraFit(plate_aabb);
