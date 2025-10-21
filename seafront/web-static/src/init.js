@@ -776,12 +776,24 @@ document.addEventListener("alpine:init", () => {
             const newconfig = await this.Actions.loadConfig({
                 config_file: protocol.filename,
             });
-            
+
             // Save the current complete plate_wells grid before replacing
             const currentPlateWells = this.microscope_config.plate_wells;
-            
+
+            // Save server-provided fields that shouldn't be overwritten by the protocol
+            const serverProvidedMachineConfig = this.microscope_config.machine_config;
+            const serverProvidedChannels = this.microscope_config.channels;
+
             // Load the new configuration
             Object.assign(this.microscope_config, newconfig.file);
+
+            // Restore server-provided fields (machine_config contains microscope name)
+            this.microscope_config.machine_config = serverProvidedMachineConfig;
+
+            // Restore hardware capabilities if the protocol doesn't provide channels
+            if (!newconfig.file.channels || newconfig.file.channels.length === 0) {
+                this.microscope_config.channels = serverProvidedChannels;
+            }
             
             // Merge well selection state from loaded protocol into complete grid
             if (newconfig.file.plate_wells && currentPlateWells) {
