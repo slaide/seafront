@@ -2100,7 +2100,7 @@ document.addEventListener("alpine:init", () => {
                 await this.machineConfigFlush();
 
                 // Model is always in backend format
-                const backend_config = this.microscope_config;
+                const backend_config = this.microscope_config_copy;
 
                 // mutate copy (to fix some errors we introduce in the interface)
                 // 1) remove wells that are unselected or invalid
