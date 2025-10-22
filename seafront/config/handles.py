@@ -59,6 +59,7 @@ class LaserAutofocusConfig(ConfigHandle):
     EXPOSURE_TIME_MS = "laser.autofocus.exposure_time_ms"
     USE_GLASS_TOP = "laser.autofocus.use_glass_top"
     WARM_UP_LASER = "laser.autofocus.warm_up_laser"
+    OFFSET_UM = "laser.autofocus.offset_um"
 
     # Camera configuration
     CAMERA_MODEL = "laser.autofocus.camera.model"

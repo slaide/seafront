@@ -1492,6 +1492,12 @@ class SquidAdapter(Microscope):
 
                     logger.debug("squid - used autofocus to measure displacement")
 
+                    # Apply configured offset to the measured displacement
+                    conf_af_offset_um = g_config.get(str(LaserAutofocusConfig.OFFSET_UM))
+                    if conf_af_offset_um is not None:
+                        logger.debug(f"adding {conf_af_offset_um.floatvalue} to measured offset {displacement_um} for result {displacement_um+conf_af_offset_um.floatvalue}")
+                        displacement_um += conf_af_offset_um.floatvalue
+
                     result = cmd.AutofocusMeasureDisplacementResult(displacement_um=displacement_um)
                     return result  # type: ignore[no-any-return]
 

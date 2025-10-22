@@ -657,6 +657,13 @@ class GlobalConfigHandler:
                     value_kind="action",
                     value="/api/action/laser_autofocus_warm_up_laser",
                 ),
+                # offset added to measured z displacement
+                ConfigItem(
+                    name="laser autofocus offset [um]",
+                    handle="laser.autofocus.offset_um",
+                    value_kind="float",
+                    value=0.0,
+                ),
                 # is calibrated flag
                 ConfigItem(
                     name="laser autofocus is calibrated",
