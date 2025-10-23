@@ -473,20 +473,6 @@ class ChannelSnapSelectionResult(BaseModel):
     _images: dict[str, np.ndarray] = PrivateAttr(default_factory=dict)
 
 
-class ChannelSnapSelection(BaseModel, BaseCommand[ChannelSnapSelectionResult]):
-    """
-    take a snapshot of all selected channels
-
-    these images will be stored into the local buffer for immediate retrieval, i.e. NOT stored to disk.
-
-    if autofocus is calibrated, this will automatically run the autofocus and take channel z offsets into account
-    """
-
-    config_file: sc.AcquisitionConfig
-
-    _ReturnValue: type = PrivateAttr(default=ChannelSnapSelectionResult)
-
-
 class ChannelSnapProgressiveStatus(BaseModel):
     """Progressive channel snap status update"""
 
@@ -497,19 +483,6 @@ class ChannelSnapProgressiveStatus(BaseModel):
     completed_channels: int
     message: str = ""
     error_detail: str | None = None
-
-
-class ChannelSnapProgressiveStart(BaseModel, BaseCommand[BasicSuccessResponse]):
-    """
-    Start progressive channel snapping with real-time status updates
-    
-    Unlike ChannelSnapSelection, this returns immediately and sends status updates
-    via callback mechanism. Each channel result is available as soon as acquired.
-    """
-
-    config_file: sc.AcquisitionConfig
-
-    _ReturnValue: type = PrivateAttr(default=BasicSuccessResponse)
 
 
 class MoveByResult(BaseModel):

@@ -846,9 +846,6 @@ class MockMicroscope(Microscope):
                 channel_handle=command.channel.handle
             )
 
-        elif isinstance(command, cmd.ChannelSnapSelection):
-            self._validate_acquisition_config(command.config_file)
-
         # Other commands don't require validation (movement, connection, etc.)
 
     def validate_channel_for_acquisition(self, channel: ChannelConfig) -> None:
@@ -1079,45 +1076,6 @@ class MockMicroscope(Microscope):
             synthetic_img = np.random.randint(0, 65536, (256, 256), dtype=np.uint16)
             result = cmd.AutofocusSnapResult(width_px=256, height_px=256)
             result._img = synthetic_img
-            return result  # type: ignore
-
-        elif isinstance(command, cmd.ChannelSnapSelection):
-            logger.info("Mock microscope: snapping selected channels")
-
-            # Check if streaming is active
-            if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
-
-            # Validate all enabled channels BEFORE starting to image any of them
-            for channel in command.config_file.channels:
-                if channel.enabled:
-                    self.validate_channel_for_acquisition(channel)
-
-            channel_handles: list[str] = []
-            channel_images: dict[str, np.ndarray] = {}
-
-            for channel in command.config_file.channels:
-                if not channel.enabled:
-                    continue
-
-                # Create individual ChannelSnapshot command for each enabled channel
-                cmd_snap = cmd.ChannelSnapshot(
-                    channel=channel,
-                    machine_config=command.config_file.machine_config or [],
-                )
-
-                # Execute the individual channel snapshot (reuses existing logic)
-                res = await self.execute(cmd_snap)
-
-                # Store the generated image
-                channel_images[channel.handle] = res._img
-                channel_handles.append(channel.handle)
-
-            logger.info(f"Mock microscope: snapped {len(channel_handles)} channels")
-
-            # Create result with generated images
-            result = cmd.ChannelSnapSelectionResult(channel_handles=channel_handles)
-            result._images = channel_images
             return result  # type: ignore
 
         elif isinstance(command, cmd.ChannelStreamBegin):

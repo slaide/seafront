@@ -1691,33 +1691,6 @@ class SquidAdapter(Microscope):
                     result._cambits = cambits
                     return result  # type: ignore[no-any-return]
 
-                elif isinstance(command, cmd.ChannelSnapSelection):
-                    # Validate all enabled channels BEFORE starting to image any of them
-                    for channel in command.config_file.channels:
-                        if channel.enabled:
-                            self.validate_channel_for_acquisition(channel)
-
-                    channel_handles: list[str] = []
-                    channel_images: dict[str, np.ndarray] = {}
-                    for channel in command.config_file.channels:
-                        if not channel.enabled:
-                            continue
-
-                        cmd_snap = cmd.ChannelSnapshot(
-                            channel=channel,
-                            machine_config=command.config_file.machine_config or [],
-                        )
-                        res = await self.execute(cmd_snap)
-
-                        channel_images[channel.handle] = res._img
-                        channel_handles.append(channel.handle)
-
-                    logger.debug("squid - took snapshot in multiple channels")
-
-                    result = cmd.ChannelSnapSelectionResult(channel_handles=channel_handles)
-                    result._images = channel_images
-                    return result  # type: ignore[no-any-return]
-
                 elif isinstance(command, cmd.ChannelStreamBegin):
                     if self.stream_callback is not None:
                         cmd.error_internal(detail="already streaming")
@@ -2078,7 +2051,7 @@ class SquidAdapter(Microscope):
                 delta_z_um=command.channel.delta_z_um
             )
 
-        elif isinstance(command, (cmd.ChannelSnapSelection, cmd.AutofocusMeasureDisplacement)):
+        elif isinstance(command, cmd.AutofocusMeasureDisplacement):
             self._validate_acquisition_config(command.config_file)
 
         # Other commands don't require validation (movement, connection, etc.)

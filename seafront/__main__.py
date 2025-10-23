@@ -75,7 +75,6 @@ from seafront.server.commands import (
     BaseCommand,
     BasicSuccessResponse,
     ChannelSnapProgressiveStatus,
-    ChannelSnapSelection,
     ChannelSnapSelectionResult,
     ChannelSnapshot,
     ChannelStreamBegin,
@@ -878,24 +877,12 @@ class Core:
             methods=["POST"],
         )
 
-        async def write_images(cmd: ChannelSnapSelection, res: ChannelSnapSelectionResult):
-            pixel_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue
-
-            for channel_handle, img in res._images.items():
-                channel = [c for c in cmd.config_file.channels if c.handle == channel_handle]
-                if len(channel) != 1:
-                    error_internal(f"{len(channel)=} != 1")
-
-                await self._store_new_image(
-                    img=img, pixel_format=pixel_format, channel_config=channel[0]
-                )
-
+        # Snap selected channels (server orchestrates individual channel snaps)
         route_wrapper(
             "/api/action/snap_selected_channels",
             CustomRoute(
-                handler=ChannelSnapSelection,
+                handler=self.snap_selected_channels,
                 tags=[RouteTag.ACTIONS.value],
-                callback=write_images,
             ),
             methods=["POST"],
         )
@@ -1226,6 +1213,63 @@ class Core:
         self.latest_images[channel_config.handle] = new_image_store_entry
 
         return channel_config.name
+
+    async def snap_selected_channels(self, config_file: sc.AcquisitionConfig) -> ChannelSnapSelectionResult:
+        """
+        Take snapshots of all selected channels with real-time image updates.
+
+        The server orchestrates individual channel snapshots, allowing each image
+        to be stored and displayed as soon as it's acquired, rather than waiting
+        for all channels to complete.
+        """
+        pixel_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue
+
+        try:
+            with self.microscope.lock(blocking=False) as microscope:
+                if microscope is None:
+                    error_internal("microscope is busy")
+
+                # Establish hardware connection
+                await microscope.execute(EstablishHardwareConnection())
+
+                # Validate all enabled channels BEFORE starting to image any of them
+                for channel in config_file.channels:
+                    if channel.enabled:
+                        microscope.validate_channel_for_acquisition(channel)
+
+                channel_handles: list[str] = []
+                channel_images: dict[str, np.ndarray] = {}
+
+                # Execute individual channel snapshots
+                for channel in config_file.channels:
+                    if not channel.enabled:
+                        continue
+
+                    # Create and execute individual snapshot command
+                    cmd_snap = ChannelSnapshot(
+                        channel=channel,
+                        machine_config=config_file.machine_config or [],
+                    )
+                    res_snap = await microscope.execute(cmd_snap)
+
+                    # Store image immediately (allows incremental UI updates)
+                    await self._store_new_image(
+                        img=res_snap._img,
+                        pixel_format=pixel_format,
+                        channel_config=channel
+                    )
+
+                    # Accumulate results
+                    channel_images[channel.handle] = res_snap._img
+                    channel_handles.append(channel.handle)
+
+                logger.debug(f"server - took snapshot in {len(channel_handles)} channels")
+
+                result = ChannelSnapSelectionResult(channel_handles=channel_handles)
+                result._images = channel_images
+                return result
+        except DisconnectError:
+            error_internal("hardware disconnected")
 
     async def get_current_state(self) -> CoreCurrentState:
         """
