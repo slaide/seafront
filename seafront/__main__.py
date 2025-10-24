@@ -161,6 +161,7 @@ async def index():
 app.mount("/css", StaticFiles(directory="web-static/css"), name="web-css")
 app.mount("/src", StaticFiles(directory="web-static/src"), name="web-src")
 app.mount("/resources", StaticFiles(directory="web-static/resources"), name="web-resources")
+app.mount("/vendor", StaticFiles(directory="web-static/vendor"), name="web-vendor")
 
 # Register handler so that, if you send SIGUSR1 to this process,
 # it will print all thread backtraces to stderr.

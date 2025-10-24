@@ -9,18 +9,18 @@
 
         <link rel="stylesheet" href="/css/reset.css" />
         <!-- importing plotly as module fails, so we do this instead -->
-        <script src="https://cdn.jsdelivr.net/npm/plotly.js@3.0/dist/plotly.min.js"></script>
+        <script src="/vendor/plotly.min.js"></script>
         <script type="importmap">
             {
                 "imports": {
-                    "alpine": "https://esm.run/alpinejs@3.14",
+                    "alpine": "/vendor/alpine/alpinejs-3-14-9.js",
 
-                    "json5": "https://unpkg.com/json5@2/dist/index.min.mjs",
+                    "json5": "/vendor/json5/json5-2-2-3.js",
 
-                    "three": "https://esm.run/three@0.176",
-                    "three/addons/capabilities/WebGL": "https://cdn.jsdelivr.net/npm/three@0.176/examples/jsm/capabilities/WebGL.min.js",
-                    "three/addons/loaders/FontLoader": "https://cdn.jsdelivr.net/npm/three@0.176/examples/jsm/loaders/FontLoader.min.js",
-                    "three/addons/utils/BufferGeometryUtils": "https://cdn.jsdelivr.net/npm/three@0.176/examples/jsm/utils/BufferGeometryUtils.min.js",
+                    "three": "/vendor/three/three-0-176-0.js",
+                    "three/addons/capabilities/WebGL": "/vendor/three-addons/WebGL.min.js",
+                    "three/addons/loaders/FontLoader": "/vendor/three-addons/FontLoader.min.js",
+                    "three/addons/utils/BufferGeometryUtils": "/vendor/three-addons/BufferGeometryUtils.min.js",
 
                     "platenavigator": "/src/platenavigator.js",
                     "numberinput": "/src/numberinput.js",
