@@ -11,6 +11,17 @@ declare global {
         detail: string;
     };
 
+    /**
+     * has html status code 409 (Conflict)
+     * returned when microscope is busy
+     */
+    type MicroscopeBusyError = {
+        detail: {
+            message: string;
+            busy_reasons: string[];
+        };
+    };
+
     // Channel configuration
     type AcquisitionChannelConfig = {
         name: string;

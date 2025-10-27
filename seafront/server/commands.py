@@ -63,6 +63,19 @@ def error_internal(detail: str) -> tp.NoReturn:
     raise HTTPException(status_code=500, detail=detail)
 
 
+def error_microscope_busy(busy_reasons: list[str]) -> tp.NoReturn:
+    """raise an HTTPException for microscope busy with reasons"""
+    logger.debug(f"error_microscope_busy - {busy_reasons=}")
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": "microscope is busy",
+            "busy_reasons": busy_reasons,
+        }
+    )
+
+
 def wellIsForbidden(well_name: str, plate_type: sc.Wellplate) -> bool:
     """check if a well if forbidden, as indicated by global config"""
     g_config = GlobalConfigHandler.get_dict()
@@ -254,6 +267,8 @@ class CoreCurrentState(BaseModel):
     "True if live streaming/acquisition is currently active"
     is_busy: bool
     "True if the microscope is currently busy and cannot accept new commands"
+    busy_reasons: list[str] = Field(default_factory=list)
+    "Stack of reasons explaining why the microscope is busy (useful for debugging)"
     last_acquisition_error: str | None = None
     "Last acquisition error message for display in GUI"
     last_acquisition_error_timestamp: str | None = None

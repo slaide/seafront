@@ -273,12 +273,14 @@ class MockMicroscope(Microscope):
             await asyncio.sleep(total_time_s)
 
     @contextmanager
-    def lock(self, blocking: bool = True) -> tp.Iterator[tp.Self | None]:
+    def lock(self, blocking: bool = True, reason: str = "unknown") -> tp.Iterator[tp.Self | None]:
         """Mock lock - always succeeds immediately."""
         if self._lock.acquire(blocking=blocking):
+            self._lock_reasons.append(reason)
             try:
                 yield self
             finally:
+                self._lock_reasons.pop()
                 self._lock.release()
         else:
             yield None

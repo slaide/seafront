@@ -171,9 +171,10 @@ class SquidAdapter(Microscope):
     illumination_controller: IlluminationController
 
     @contextmanager
-    def lock(self, blocking: bool = True) -> tp.Iterator[tp.Self | None]:
+    def lock(self, blocking: bool = True, reason: str = "unknown") -> tp.Iterator[tp.Self | None]:
         "lock all hardware devices"
         if self._lock.acquire(blocking=blocking):
+            self._lock_reasons.append(reason)
             try:
                 with (
                     self.main_camera(blocking=blocking),
@@ -182,6 +183,7 @@ class SquidAdapter(Microscope):
                 ):
                     yield self
             finally:
+                self._lock_reasons.pop()
                 self._lock.release()
         else:
             yield None
@@ -405,9 +407,7 @@ class SquidAdapter(Microscope):
 
                 # reset the MCU
                 logger.debug("resetting mcu")
-                awaitme = qmc.send_cmd(mc.Command.reset())
-                logger.debug("?")
-                await awaitme
+                await qmc.send_cmd(mc.Command.reset())
                 logger.debug("done")
 
                 # reinitialize motor drivers and DAC

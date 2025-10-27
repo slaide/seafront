@@ -273,6 +273,9 @@
                     <div id="error-modal-timestamp" x-text="formattedErrorTimestamp"></div>
                 </div>
                 <div id="error-modal-footer">
+                    <template x-if="centralError.showReloadButton">
+                        <button @click="reloadPage()" id="error-modal-reload">Reload</button>
+                    </template>
                     <button @click="centralError.show = false" id="error-modal-ok">OK</button>
                 </div>
             </div>
@@ -1060,6 +1063,45 @@
                                         </template>
                                     </select>
                                 </div>
+                            </div>
+
+                            <div class="section">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5em;">
+                                    <div>Cached Microscope Settings</div>
+                                    <button
+                                        @click="loadCachedMicroscopes()"
+                                        x-bind:tooltip="`Reload the list of cached microscope configurations from localStorage`"
+                                        style="padding: 0.5em 1em;"
+                                    >
+                                        Refresh
+                                    </button>
+                                </div>
+                                <template x-if="cachedMicroscopes.length === 0">
+                                    <div style="color: var(--muted-text-color); font-style: italic;">
+                                        No cached microscope configurations found.
+                                    </div>
+                                </template>
+                                <template x-if="cachedMicroscopes.length > 0">
+                                    <div style="display: flex; flex-direction: column; gap: 0.4em;">
+                                        <template
+                                            x-for="microscopeName in cachedMicroscopes"
+                                            :key="microscopeName"
+                                        >
+                                            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4em; border: 1px solid var(--border-color); border-radius: 4px; background-color: var(--bg-color);">
+                                                <div style="word-break: break-word;">
+                                                    <strong x-text="microscopeName"></strong>
+                                                </div>
+                                                <button
+                                                    @click="deleteCachedMicroscope(microscopeName)"
+                                                    x-bind:tooltip="`Delete cached configuration for ${microscopeName}`"
+                                                    class="cached-microscope-delete-button"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
                             </div>
                         </div>
                     </div>
@@ -2262,6 +2304,35 @@
                             #error-modal-ok:hover {
                                 opacity: 0.8;
                             }
+
+                            #error-modal-reload {
+                                background: #4488ff;
+                                color: white;
+                                border: none;
+                                padding: 8px 20px;
+                                border-radius: 4px;
+                                cursor: pointer;
+                                font-weight: bold;
+                                margin-right: 8px;
+                            }
+
+                            #error-modal-reload:hover {
+                                opacity: 0.8;
+                            }
+
+                            .cached-microscope-delete-button {
+                                padding: 0.3em 0.8em;
+                                background: #ff4444;
+                                color: white;
+                                border: none;
+                                border-radius: 4px;
+                                cursor: pointer;
+                            }
+
+                            .cached-microscope-delete-button:hover {
+                                opacity: 0.8;
+                            }
+
                             .center-content {
                                 display: grid;
                                 position: relative;

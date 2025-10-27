@@ -73,20 +73,32 @@ class Microscope(BaseModel, abc.ABC):
     last_state: AdapterState | None = None
 
     _lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
+    _lock_reasons: list[str] = PrivateAttr(default_factory=list)
+    """Stack of reasons for why the lock is currently held"""
     _stop_streaming_flag: bool = PrivateAttr(default=False)
     "indicate that streaming should stop, without locking hardware"
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    def get_lock_reasons(self) -> list[str]:
+        """
+        Get the current stack of reasons why the lock is held.
+
+        Returns:
+            A copy of the lock reasons stack
+        """
+        return self._lock_reasons.copy()
+
     @contextmanager
     @abc.abstractmethod
-    def lock(self, blocking: bool = True) -> tp.Iterator[tp.Self | None]:
+    def lock(self, blocking: bool = True, reason: str = "unknown") -> tp.Iterator[tp.Self | None]:
         """
         Lock all hardware devices.
-        
+
         Args:
             blocking: Whether to block waiting for the lock
-            
+            reason: Description of why the lock is being acquired (for debugging)
+
         Yields:
             Self if lock acquired, None if blocking=False and lock unavailable
         """

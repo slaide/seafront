@@ -108,13 +108,18 @@ document.addEventListener("alpine:init", () => {
         tooltipConfig,
 
         // Central error modal state
-        /** @type {{ show: boolean, title: string, message: string, timestamp: Date | null }} */
+        /** @type {{ show: boolean, title: string, message: string, timestamp: Date | null, showReloadButton: boolean }} */
         centralError: {
             show: false,
             title: '',
             message: '',
-            timestamp: null
+            timestamp: null,
+            showReloadButton: false
         },
+
+        // Cached microscopes list for Settings panel
+        /** @type {string[]} */
+        cachedMicroscopes: [],
 
         /** @type {HardwareLimits|null} */
         limits: null,
@@ -153,6 +158,10 @@ document.addEventListener("alpine:init", () => {
             this.centralError.message = message;
             this.centralError.timestamp = new Date();
             this.centralError.show = true;
+            // Reset reload button flag for non-microscope warnings
+            if (title !== 'Microscope Configuration Mismatch') {
+                this.centralError.showReloadButton = false;
+            }
         },
 
         /**
@@ -201,16 +210,29 @@ document.addEventListener("alpine:init", () => {
         async checkMapSquidRequest(v, context = 'API request', showError = true) {
             if (!v.ok) {
                 if (v.status == 500) {
-                    /** @type {E} */
+                    // Handle internal server errors
+                    /** @type {InternalErrorModel} */
                     const error_body = await v.json();
 
                     const error = `${context} failed with ${v.statusText} ${v.status} because: ${JSON.stringify(error_body)}`;
                     console.error(error);
 
-                    // Show error in central modal by default, but allow disabling for specific cases
                     if (showError) {
-                        // Try to extract user-friendly message from error_body
-                        let userMessage = error_body.detail || error_body.message || error;
+                        this.showError(context + ' Error', error_body.detail);
+                    }
+                    throw new Error(error);
+                } else if (v.status == 409) {
+                    // Handle conflict errors (e.g., microscope busy)
+                    /** @type {MicroscopeBusyError} */
+                    const error_body = await v.json();
+
+                    const reasons = error_body.detail.busy_reasons.map(r => `  • ${r}`).join('\n');
+                    const userMessage = `${error_body.detail.message}:\n${reasons}`;
+
+                    const error = `${context} failed with ${v.statusText} ${v.status} because: ${userMessage}`;
+                    console.error(error);
+
+                    if (showError) {
                         this.showError(context + ' Error', userMessage);
                     }
                     throw new Error(error);
@@ -385,6 +407,48 @@ document.addEventListener("alpine:init", () => {
                 localStorage.setItem("seafrontdata", JSON.stringify(seafrontData));
             } catch (error) {
                 console.error(`Failed to save cache for microscope ${microscopeName}:`, error);
+            }
+        },
+
+        /**
+         * Load all cached microscope names from localStorage and populate the list
+         */
+        loadCachedMicroscopes() {
+            try {
+                const seafrontData = localStorage.getItem("seafrontdata");
+                if (!seafrontData) {
+                    this.cachedMicroscopes = [];
+                    return;
+                }
+
+                const parsed = JSON.parse(seafrontData);
+                this.cachedMicroscopes = Object.keys(parsed).sort();
+            } catch (error) {
+                console.warn("Failed to load cached microscopes:", error);
+                this.cachedMicroscopes = [];
+            }
+        },
+
+        /**
+         * Delete a cached microscope configuration from localStorage
+         * @param {string} microscopeName - The name of the microscope to delete
+         */
+        deleteCachedMicroscope(microscopeName) {
+            try {
+                const seafrontData = localStorage.getItem("seafrontdata");
+                if (!seafrontData) {
+                    return;
+                }
+
+                const parsed = JSON.parse(seafrontData);
+                delete parsed[microscopeName];
+                localStorage.setItem("seafrontdata", JSON.stringify(parsed));
+
+                // Refresh the list
+                this.loadCachedMicroscopes();
+                console.log(`Deleted cached configuration for microscope: ${microscopeName}`);
+            } catch (error) {
+                console.error(`Failed to delete cached microscope ${microscopeName}:`, error);
             }
         },
 
@@ -1620,11 +1684,21 @@ document.addEventListener("alpine:init", () => {
             // Show error using existing error display system
             this.showError('Microscope Configuration Mismatch', message);
 
+            // Enable reload button for this specific warning
+            this.centralError.showReloadButton = true;
+
             console.error('Microscope name change detected:', {
                 previous: previousName,
                 current: currentName,
                 recommendation: 'Reload page to load correct configuration'
             });
+        },
+
+        /**
+         * Reload the page when the reload button is clicked
+         */
+        reloadPage() {
+            location.reload();
         },
 
         // this is an annoying workaround (in combination with initManual) because
@@ -1695,6 +1769,13 @@ document.addEventListener("alpine:init", () => {
             } catch (error) {
                 console.warn("Could not load microscope-specific settings during init:", error);
                 // Continue with default theme
+            }
+
+            // Load cached microscopes list for Settings panel
+            try {
+                this.loadCachedMicroscopes();
+            } catch (error) {
+                console.warn("Could not load cached microscopes list during init:", error);
             }
 
             // init data

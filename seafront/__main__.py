@@ -99,6 +99,7 @@ from seafront.server.commands import (
     SitePosition,
     StreamingStartedResponse,
     error_internal,
+    error_microscope_busy,
     positionIsForbidden,
     wellIsForbidden,
 )
@@ -406,9 +407,10 @@ class Core:
                         if route.require_hardware_lock:
                             try:
                                 # ensure a connection is established, before running any other command
-                                with self.microscope.lock(blocking=False) as microscope:
+                                command_name = instance.__class__.__name__
+                                with self.microscope.lock(blocking=False, reason=f"executing command: {command_name}") as microscope:
                                     if microscope is None:
-                                        error_internal("microscope is busy")
+                                        error_microscope_busy(self.microscope.get_lock_reasons())
                                     _ = await microscope.execute(EstablishHardwareConnection())
                                     result = await microscope.execute(instance)
                             except DisconnectError:
@@ -911,9 +913,9 @@ class Core:
 
         def register_stream_begin(begin: ChannelStreamBegin, res: StreamingStartedResponse):
             # register callback on microscope
-            with self.microscope.lock() as microscope:
+            with self.microscope.lock(reason=f"starting stream: {begin.channel.name}") as microscope:
                 if microscope is None:
-                    error_internal(detail="microscope is busy")
+                    error_microscope_busy(self.microscope.get_lock_reasons())
 
                 microscope.stream_callback = handle_image
 
@@ -1129,9 +1131,9 @@ class Core:
         due to the delay between improper calibration and actual cause of the damage, this function should be treat with appropriate care.
         """
 
-        with self.microscope.lock() as microscope:
+        with self.microscope.lock(reason="calibrating stage XY position") as microscope:
             if microscope is None:
-                error_internal(detail="microscope is busy")
+                error_microscope_busy(self.microscope.get_lock_reasons())
 
             if microscope.is_in_loading_position:
                 error_internal(detail="now allowed while in loading position")
@@ -1226,9 +1228,9 @@ class Core:
         pixel_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue
 
         try:
-            with self.microscope.lock(blocking=False) as microscope:
+            with self.microscope.lock(blocking=False, reason="snapping all selected channels") as microscope:
                 if microscope is None:
-                    error_internal("microscope is busy")
+                    error_microscope_busy(self.microscope.get_lock_reasons())
 
                 # Establish hardware connection
                 await microscope.execute(EstablishHardwareConnection())
@@ -1300,12 +1302,16 @@ class Core:
 
         # Check if microscope is busy by attempting a non-blocking lock
         is_busy = False
+        busy_reasons: list[str] = []
         try:
-            with self.microscope.lock(blocking=False) as microscope:
+            with self.microscope.lock(blocking=False, reason="checking microscope status") as microscope:
                 if microscope is None:
                     is_busy = True
+                    # Get the reasons why the lock is held
+                    busy_reasons = self.microscope.get_lock_reasons()
         except Exception:
             is_busy = True
+            busy_reasons = self.microscope.get_lock_reasons()
 
         return CoreCurrentState(
             adapter_state=microscope_adapter_state,
@@ -1313,6 +1319,7 @@ class Core:
             current_acquisition_id=current_acquisition_id,
             is_streaming=is_streaming,
             is_busy=is_busy,
+            busy_reasons=busy_reasons,
             last_acquisition_error=self._last_acquisition_error,
             last_acquisition_error_timestamp=self._last_acquisition_error_timestamp,
             microscope_name=self.microscope_name,
@@ -1401,11 +1408,11 @@ class Core:
             ))
 
         # Get real hardware limits from the microscope
-        with self.microscope.lock(blocking=False) as microscope:
+        with self.microscope.lock(blocking=False, reason="querying hardware capabilities") as microscope:
             if microscope is None:
                 # Microscope is busy - use cached limits if available
                 if self._hardware_limits_cache is None:
-                    error_internal(detail="microscope is busy and hardware limits not cached yet")
+                    error_internal(f"Internal error: hardware limits cache not initialized and microscope is busy: {self.microscope.get_lock_reasons()}")
                 hardware_limits_obj = self._hardware_limits_cache
             else:
                 # Get actual hardware limits from microscope and cache them
@@ -1435,9 +1442,9 @@ class Core:
         # validation here if protocols are submitted directly via API without going through config_fetch
 
         # check if microscope is even is connected
-        with self.microscope.lock() as microscope:
+        with self.microscope.lock(reason=f"starting acquisition: {config_file.plate_name}") as microscope:
             if microscope is None:
-                error_internal(detail="microscope is busy")
+                error_microscope_busy(self.microscope.get_lock_reasons())
 
             try:
                 _ = await microscope.get_current_state()
@@ -1570,9 +1577,9 @@ class Core:
             ):
                 logger.debug("protocol - started. awaiting microscope lock.")
 
-                with self.microscope.lock() as microscope:
+                with self.microscope.lock(reason="running acquisition protocol") as microscope:
                     if microscope is None:
-                        error_internal(detail="microscope is busy (this should not be possible)")
+                        error_microscope_busy(self.microscope.get_lock_reasons())
 
                     logger.debug("protocol - acquired microscope lock")
 
@@ -1631,6 +1638,7 @@ class Core:
 
                     except DisconnectError:
                         await q_out.put("disconnected")
+                        logger.debug("microscope disconnected during acquisition - closing connections.")
                         microscope.close()
 
                         assert acquisition_status.last_status is not None
@@ -1728,9 +1736,9 @@ class Core:
             imaging_order_value = imaging_order.strvalue if hasattr(imaging_order, 'strvalue') else "protocol_order"
 
         # Use microscope's sorting function to maintain consistent ordering logic
-        with self.microscope.lock() as microscope:
+        with self.microscope.lock(reason="sorting channels for progressive snap") as microscope:
             if microscope is None:
-                error_internal(detail="microscope is busy")
+                error_microscope_busy(self.microscope.get_lock_reasons())
             enabled_channels = microscope._sort_channels_by_imaging_order(enabled_channels, tp.cast(ImagingOrder, imaging_order_value))
 
         total_channels = len(enabled_channels)
@@ -1753,9 +1761,9 @@ class Core:
 
                     try:
                         # Execute channel snapshot
-                        with self.microscope.lock() as microscope:
+                        with self.microscope.lock(reason=f"snapping channel: {channel.name}") as microscope:
                             if microscope is None:
-                                error_internal(detail="microscope is busy")
+                                error_microscope_busy(self.microscope.get_lock_reasons())
 
                             result = await microscope.execute(ChannelSnapshot(
                                 channel=channel,
@@ -1830,7 +1838,7 @@ class Core:
     def close(self):
         logger.debug("shutdown - closing microscope")
         try:
-            with self.microscope.lock(blocking=True) as microscope:
+            with self.microscope.lock(blocking=True, reason="shutting down microscope") as microscope:
                 assert microscope is not None
 
                 microscope.close()
