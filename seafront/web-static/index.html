@@ -2419,7 +2419,17 @@
                             </span>
                             
                             <div class="popup">
-                                <span x-text="`Acquisition Status: ${latest_acquisition_status?.acquisition_status??'not running'}`"></span>
+                                <div style="white-space: normal; font-family: monospace; font-size: 0.9em; line-height: 1.4;">
+                                    <div x-text="`Status: ${latest_acquisition_status?.acquisition_status??'not running'} (${current_acquisition_progress_percent.toFixed(2)}%)`"></div>
+                                    <div x-text="`Images: ${latest_acquisition_status?.acquisition_progress?.current_num_images??0} / ${latest_acquisition_status?.acquisition_meta_information?.total_num_images??0}`"></div>
+                                    <div x-text="`Storage: ${(latest_acquisition_status?.acquisition_progress?.current_storage_usage_GB??0).toFixed(2)} / ${(latest_acquisition_status?.acquisition_meta_information?.max_storage_size_images_GB??0).toFixed(2)} GB`"></div>
+                                    <div x-text="`Elapsed: ${acquisitionElapsedTimeString}`"></div>
+                                    <div x-text="`Remaining: ${acquisitionTimeLeftString}`"></div>
+                                    <div x-show="latest_acquisition_status?.acquisition_progress?.last_image" x-text="`Well: ${latest_acquisition_status?.acquisition_progress?.last_image?.position?.well_name??'--'}`"></div>
+                                    <div x-show="latest_acquisition_status?.acquisition_progress?.last_image" x-text="`Site in Well: (${latest_acquisition_status?.acquisition_progress?.last_image?.position?.site_x}, ${latest_acquisition_status?.acquisition_progress?.last_image?.position?.site_y}, ${latest_acquisition_status?.acquisition_progress?.last_image?.position?.site_z})`"></div>
+                                    <div x-show="latest_acquisition_status?.acquisition_progress?.last_image" x-text="`Channel: ${latest_acquisition_status?.acquisition_progress?.last_image?.channel?.name??'--'}`"></div>
+                                    <div x-text="`${latest_acquisition_status?.message??''}`" x-show="latest_acquisition_status?.message"></div>
+                                </div>
                             </div>
                         </div>
                         <button @click="await acquisition_start()" :disabled="isAcquisitionRunning">Start</button>

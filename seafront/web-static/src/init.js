@@ -1613,16 +1613,12 @@ document.addEventListener("alpine:init", () => {
                     const data = JSON.parse(ev.data);
                     if(typeof data != "object")throw new Error(`event data has wrong type ${typeof data}`);
                     
-                    console.log('Acquisition WebSocket message:', data);
-                    
                     // Store previous status to detect state changes
                     const previousStatus = this.latest_acquisition_status;
                     this.latest_acquisition_status = data;
                     
                     // Handle acquisition status changes
                     if (data && data.acquisition_status) {
-                        console.log(`Acquisition status change: ${data.acquisition_status}`, data);
-                        
                         // Show acquisition errors when status is CRASHED and there's a message
                         if (data.acquisition_status === 'crashed' && data.message) {
                             console.log(`Detected crashed acquisition with message: ${data.message}`);
@@ -2291,10 +2287,22 @@ document.addEventListener("alpine:init", () => {
             
             return `${hours}h ${minutes}m ${seconds}s`;
         },
+        get acquisitionElapsedTimeString() {
+            const elapsedSeconds = this.latest_acquisition_status?.acquisition_progress?.time_since_start_s;
+            if (elapsedSeconds == null || elapsedSeconds <= 0) {
+                return '0h 0m 0s';
+            }
+
+            const hours = Math.floor(elapsedSeconds / 3600);
+            const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+            const seconds = Math.floor(elapsedSeconds % 60);
+
+            return `${hours}h ${minutes}m ${seconds}s`;
+        },
         /**
-         * 
-         * @param {number|null} value 
-         * @returns 
+         *
+         * @param {number|null} value
+         * @returns
          */
         formatStageCoordXY(value) {
             if (value == null) return '&nbsp;&nbsp;&nbsp;---';
