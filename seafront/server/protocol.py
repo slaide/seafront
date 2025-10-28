@@ -267,6 +267,9 @@ class ProtocolGenerator(BaseModel):
     project_output_path: path.Path = Field(default_factory=path.Path)
 
     latest_channel_images: dict[str, cmds.ImageStoreEntry] = Field(default_factory=dict)
+    completed_timepoint_imaging_times: list[float] = Field(default_factory=list)
+    "Actual imaging times for completed timepoints (used to estimate remaining ones)"
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
@@ -507,6 +510,37 @@ class ProtocolGenerator(BaseModel):
             message="scheduled",
         )
 
+    def _update_acquisition_status(
+        self,
+        status: cmds.AcquisitionStatusStage,
+        current_num_images: int,
+        time_since_start_s: float,
+        start_time_iso_str: str,
+        storage_usage_bytes: int,
+        estimated_remaining_time_s: float | None,
+        last_image_information: cmds.ImageStoreInfo | None,
+        message: str,
+    ) -> None:
+        """Update acquisition status with current progress"""
+        self.acquisition_status.last_status = cmds.AcquisitionStatusOut(
+            acquisition_id=self.acquisition_id,
+            acquisition_status=status,
+            acquisition_progress=cmds.AcquisitionProgressStatus(
+                current_num_images=current_num_images,
+                time_since_start_s=time_since_start_s,
+                start_time_iso=start_time_iso_str,
+                current_storage_usage_GB=storage_usage_bytes / (1024**3),
+                estimated_remaining_time_s=estimated_remaining_time_s,
+                last_image=last_image_information,
+            ),
+            acquisition_meta_information=cmds.AcquisitionMetaInformation(
+                total_num_images=self.num_images_total,
+                max_storage_size_images_GB=self.max_storage_size_images_GB,
+            ),
+            acquisition_config=self.config_file,
+            message=message,
+        )
+
     # Iterator methods for protocol traversal
     def iter_wells(self) -> tp.Iterator[WellInfo]:
         """Iterator over selected wells with metadata"""
@@ -677,8 +711,8 @@ class ProtocolGenerator(BaseModel):
         for timepoint in range(1, self.config_file.grid.num_t + 1):
             logger.info(f"protocol - started timepoint {timepoint}/{self.config_file.grid.num_t}")
 
-            # keep track of time
-            start_time=time.time()
+            # keep track of time for this timepoint
+            timepoint_start_time=time.time()
 
             self.handle_q_in()
 
@@ -937,13 +971,42 @@ class ProtocolGenerator(BaseModel):
                         # status items
                         last_image_information = image_store_entry.info
 
+                        # Time since overall acquisition started (for progress display)
                         time_since_start_s = time.time() - start_time
+
+                        # Estimate remaining time from imaging progress
                         if num_images_acquired > 0:
-                            estimated_remaining_time_s = (
-                                time_since_start_s
-                                * (self.num_images_total - num_images_acquired)
-                                / num_images_acquired
-                            )
+                            images_remaining = self.num_images_total - num_images_acquired
+
+                            # For time series: use completed timepoint times for accurate estimates
+                            if self.num_timepoints > 1:
+                                delta_t_s = self.config_file.grid.delta_t.h*3600 + self.config_file.grid.delta_t.m*60 + self.config_file.grid.delta_t.s
+                                images_per_tp = self.num_images_total / self.num_timepoints
+
+                                if self.completed_timepoint_imaging_times:
+                                    # Use average of completed timepoint times for all remaining imaging
+                                    est_imaging_per_tp = sum(self.completed_timepoint_imaging_times) / len(self.completed_timepoint_imaging_times)
+                                    tps_remaining = images_remaining / images_per_tp
+                                    estimated_remaining_time_s = est_imaging_per_tp * tps_remaining
+
+                                    # Add wait periods
+                                    waits_remaining = self.num_timepoints - timepoint
+                                    wait_per_cycle = max(0, delta_t_s - est_imaging_per_tp)
+                                    estimated_remaining_time_s += waits_remaining * wait_per_cycle
+                                else:
+                                    # No completed TPs yet: estimate from current progress
+                                    time_per_image = time_since_start_s / num_images_acquired
+                                    est_imaging_per_tp = time_per_image * images_per_tp
+                                    estimated_remaining_time_s = time_per_image * images_remaining
+
+                                    # Add wait periods
+                                    waits_remaining = self.num_timepoints - timepoint
+                                    wait_per_cycle = max(0, delta_t_s - est_imaging_per_tp)
+                                    estimated_remaining_time_s += waits_remaining * wait_per_cycle
+                            else:
+                                # Single timepoint: simple linear interpolation
+                                time_per_image = time_since_start_s / num_images_acquired
+                                estimated_remaining_time_s = time_per_image * images_remaining
                         else:
                             estimated_remaining_time_s = None
 
@@ -951,35 +1014,23 @@ class ProtocolGenerator(BaseModel):
                             f"protocol - {num_images_acquired}/{self.num_images_total} images acquired"
                         )
 
-                        self.acquisition_status.last_status = cmds.AcquisitionStatusOut(
-                            acquisition_id=self.acquisition_id,
-                            acquisition_status=cmds.AcquisitionStatusStage.RUNNING,
-                            acquisition_progress=cmds.AcquisitionProgressStatus(
-                                # measureable progress
-                                current_num_images=num_images_acquired,
-                                time_since_start_s=time_since_start_s,
-                                start_time_iso=start_time_iso_str,
-                                current_storage_usage_GB=storage_usage_bytes / (1024**3),
-                                # estimated completion time information
-                                # estimation may be more complex than linear interpolation, hence done on server side
-                                estimated_remaining_time_s=estimated_remaining_time_s,
-                                # last image that was acquired
-                                last_image=last_image_information,
-                            ),
-                            # some meta information about the acquisition, derived from configuration file
-                            # i.e. this is not updated during acquisition
-                            acquisition_meta_information=cmds.AcquisitionMetaInformation(
-                                total_num_images=self.num_images_total,
-                                max_storage_size_images_GB=self.max_storage_size_images_GB,
-                            ),
-                            acquisition_config=self.config_file,
+                        self._update_acquisition_status(
+                            status=cmds.AcquisitionStatusStage.RUNNING,
+                            current_num_images=num_images_acquired,
+                            time_since_start_s=time_since_start_s,
+                            start_time_iso_str=start_time_iso_str,
+                            storage_usage_bytes=storage_usage_bytes,
+                            estimated_remaining_time_s=estimated_remaining_time_s,
+                            last_image_information=last_image_information,
                             message=f"Acquisition is {(100 * num_images_acquired / self.num_images_total):.2f}% complete",
                         )
 
             # sleep for additional time, maybe
             end_time=time.time()
             if self.config_file.grid.num_t>timepoint:
-                time_elapsed_s=end_time-start_time
+                time_elapsed_s=end_time-timepoint_start_time
+                # Record imaging time for this completed timepoint (for estimates of remaining ones)
+                self.completed_timepoint_imaging_times.append(time_elapsed_s)
 
                 delta_t_s=self.config_file.grid.delta_t.h*3600+self.config_file.grid.delta_t.m*60+self.config_file.grid.delta_t.s
 
@@ -991,9 +1042,27 @@ class ProtocolGenerator(BaseModel):
                 if time_remaining<0:
                     logger.warning(f"protocol - took longer to acquire one time point than the specified delta time between acquisitions (took {time_elapsed_s}s but delta time is {delta_t_s}s )")
 
+                # Calculate how long each timepoint takes (imaging + waiting)
+                time_per_timepoint = max(delta_t_s, time_elapsed_s)
+
                 timeslice_s=0.5
                 while time_remaining>0:
                     self.handle_q_in()
+
+                    # Update status with live countdown during wait
+                    # Current wait + remaining timepoints
+                    remaining_full_cycles = self.num_timepoints - timepoint - 1
+                    estimated_remaining_during_wait = time_remaining + (remaining_full_cycles * time_per_timepoint) + time_elapsed_s
+                    self._update_acquisition_status(
+                        status=cmds.AcquisitionStatusStage.RUNNING,
+                        current_num_images=num_images_acquired,
+                        time_since_start_s=time.time() - start_time,
+                        start_time_iso_str=start_time_iso_str,
+                        storage_usage_bytes=storage_usage_bytes,
+                        estimated_remaining_time_s=estimated_remaining_during_wait,
+                        last_image_information=last_image_information,
+                        message=f"Waiting for next timepoint ({time_remaining:.1f}s remaining)...",
+                    )
 
                     await asyncio.sleep(min(time_remaining,timeslice_s))
                     time_remaining-=timeslice_s
@@ -1006,7 +1075,8 @@ class ProtocolGenerator(BaseModel):
 
         logger.debug("protocol - finished image storage stasks")
 
-        logger.info("protocol - done")
+        total_time_s = time.time() - start_time
+        logger.info(f"protocol - done (total time: {total_time_s:.1f}s)")
 
         # done -> yield None and return
         yield None
