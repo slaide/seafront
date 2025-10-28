@@ -62,6 +62,16 @@ class ZPositionInfo(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+class StorageTracker:
+    """Tracks accumulated storage usage as async image store tasks complete"""
+    def __init__(self):
+        self.accumulated_bytes: int = 0
+
+    def add_file_size(self, size_bytes: int) -> None:
+        """Record file size from a completed image storage task"""
+        self.accumulated_bytes += size_bytes
+
+
 class AsyncThreadPool(BaseModel):
     """
     Thread pool for running async future/coroutines
@@ -190,6 +200,7 @@ async def store_image(
     image_entry: cmds.ImageStoreEntry,
     img_compression_algorithm: tp.Literal["LZW", "zlib"],
     metadata: dict[str, str],
+    storage_tracker: StorageTracker | None = None,
 ):
     """
     store img as .tiff file, with compression and some metadata
@@ -231,6 +242,11 @@ async def store_image(
         metadata=metadata,
         photometric="minisblack",  # zero means black
     )
+
+    # Track storage usage from the compressed file
+    if storage_tracker is not None:
+        file_size = storage_path.stat().st_size
+        storage_tracker.add_file_size(file_size)
 
     logger.debug(f"stored image to {image_storage_path}")
 
@@ -682,6 +698,7 @@ class ProtocolGenerator(BaseModel):
 
         num_images_acquired = 0
         storage_usage_bytes = 0
+        storage_tracker = StorageTracker()
 
         # get current z coordinate as z reference
         last_position = yield cmds.MC_getLastPosition()
@@ -952,6 +969,7 @@ class ProtocolGenerator(BaseModel):
                                 "Position_z_mm": f"{image_store_entry.info.position.position.z_pos_mm:.3f}",
                                 "autofocus_succeeded": f"{autofocus_succeeded}",
                             },
+                            storage_tracker=storage_tracker,
                         )
                         self.image_store_pool.run(image_store_task)
 
@@ -960,13 +978,6 @@ class ProtocolGenerator(BaseModel):
                         )
 
                         num_images_acquired += 1
-                        # get storage size from filesystem because tiff compression may reduce size below size in memory
-                        try:
-                            file_size_on_disk = path.Path(image_storage_path).stat().st_size
-                            storage_usage_bytes += file_size_on_disk
-                        except:
-                            # ignore any errors here, because this is not an essential feature
-                            pass
 
                         # status items
                         last_image_information = image_store_entry.info
@@ -1019,7 +1030,7 @@ class ProtocolGenerator(BaseModel):
                             current_num_images=num_images_acquired,
                             time_since_start_s=time_since_start_s,
                             start_time_iso_str=start_time_iso_str,
-                            storage_usage_bytes=storage_usage_bytes,
+                            storage_usage_bytes=storage_tracker.accumulated_bytes,
                             estimated_remaining_time_s=estimated_remaining_time_s,
                             last_image_information=last_image_information,
                             message=f"Acquisition is {(100 * num_images_acquired / self.num_images_total):.2f}% complete",
@@ -1058,7 +1069,7 @@ class ProtocolGenerator(BaseModel):
                         current_num_images=num_images_acquired,
                         time_since_start_s=time.time() - start_time,
                         start_time_iso_str=start_time_iso_str,
-                        storage_usage_bytes=storage_usage_bytes,
+                        storage_usage_bytes=storage_tracker.accumulated_bytes,
                         estimated_remaining_time_s=estimated_remaining_during_wait,
                         last_image_information=last_image_information,
                         message=f"Waiting for next timepoint ({time_remaining:.1f}s remaining)...",
@@ -1076,7 +1087,8 @@ class ProtocolGenerator(BaseModel):
         logger.debug("protocol - finished image storage stasks")
 
         total_time_s = time.time() - start_time
-        logger.info(f"protocol - done (total time: {total_time_s:.1f}s)")
+        total_storage_gb = storage_tracker.accumulated_bytes / (1024**3)
+        logger.info(f"protocol - done (total time: {total_time_s:.1f}s, total storage: {total_storage_gb:.2f} GB)")
 
         # done -> yield None and return
         yield None
