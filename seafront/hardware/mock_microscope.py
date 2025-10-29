@@ -29,7 +29,7 @@ import seaconfig as sc
 from pydantic import PrivateAttr
 
 from seafront.config.basics import ChannelConfig, FilterConfig, GlobalConfigHandler, ImagingOrder
-from seafront.config.handles import ImagingConfig
+from seafront.config.handles import ImagingConfig, LaserAutofocusConfig
 from seafront.hardware.adapter import AdapterState, CoreState, Position
 from seafront.hardware.camera import HardwareLimitValue
 from seafront.hardware.firmware_config import (
@@ -40,6 +40,8 @@ from seafront.hardware.microscope import HardwareLimits, Microscope, microscope_
 from seafront.logger import logger
 from seafront.server import commands as cmd
 
+from seafront.config.handles import ProtocolConfig
+from seafront.hardware.forbidden_areas import ForbiddenAreaList
 
 class MockMicroscope(Microscope):
     """
@@ -121,8 +123,6 @@ class MockMicroscope(Microscope):
         Returns:
             Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
         """
-        from seafront.config.handles import ProtocolConfig
-        from seafront.hardware.forbidden_areas import ForbiddenAreaList
 
         g_config = GlobalConfigHandler.get_dict()
         forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
@@ -136,11 +136,8 @@ class MockMicroscope(Microscope):
             logger.warning("forbidden_areas entry is not a string, allowing movement")
             return False, ""
 
-        try:
-            forbidden_areas = ForbiddenAreaList.from_json_string(forbidden_areas_str)
-        except ValueError as e:
-            logger.warning(f"Invalid forbidden areas configuration: {e}, allowing movement")
-            return False, ""
+        data = json5.loads(forbidden_areas_str)
+        forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
 
         # Check if position is forbidden
         is_forbidden, conflicting_area = forbidden_areas.is_position_forbidden(x_mm, y_mm)
@@ -850,7 +847,7 @@ class MockMicroscope(Microscope):
 
         # Other commands don't require validation (movement, connection, etc.)
 
-    def validate_channel_for_acquisition(self, channel: ChannelConfig) -> None:
+    def validate_channel_for_acquisition(self, channel: sc.AcquisitionChannelConfig) -> None:
         """
         Validate that a channel can be acquired with current microscope configuration.
 
@@ -1123,6 +1120,11 @@ class MockMicroscope(Microscope):
 
         elif isinstance(command, cmd.LaserAutofocusCalibrate):
             logger.info("Mock microscope: calibrating laser autofocus")
+            # Read z_span from machine config
+            conf_z_span_item = LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM.value_item
+            assert conf_z_span_item is not None
+            z_span = conf_z_span_item.floatvalue
+            logger.debug(f"Using z_span_mm={z_span} for autofocus calibration")
             await asyncio.sleep(0.2)  # Simulate calibration time
             # Mock calibration result using current position
             current_state = await self.get_current_state()

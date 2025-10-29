@@ -122,11 +122,8 @@ def positionIsForbidden(x_mm: float, y_mm: float, safety_radius_mm: float = 0.0)
         logger.warning("forbidden_areas entry is not a string, allowing movement")
         return False, ""
 
-    try:
-        forbidden_areas = ForbiddenAreaList.from_json_string(forbidden_areas_str)
-    except ValueError as e:
-        logger.warning(f"Invalid forbidden areas configuration: {e}, allowing movement")
-        return False, ""
+    data = json5.loads(forbidden_areas_str)
+    forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
 
     # Check if movement is safe considering safety radius
     is_safe, conflicting_area = forbidden_areas.is_movement_safe(x_mm, y_mm, safety_radius_mm)

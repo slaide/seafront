@@ -1,5 +1,6 @@
 import asyncio
 import math
+import os
 import threading
 import typing as tp
 from contextlib import contextmanager
@@ -53,6 +54,9 @@ from seafront.server.commands import (
     IlluminationEndAll,
     error_internal,
 )
+
+from seafront.config.handles import ProtocolConfig
+from seafront.hardware.forbidden_areas import ForbiddenAreaList
 
 # utility functions
 
@@ -763,18 +767,20 @@ class SquidAdapter(Microscope):
 
         return find_x_for_y(leftmost_x, regression_params)
 
-    async def _laser_af_calibrate_here(
-        self,
-        Z_MM_MOVEMENT_RANGE_MM: float = 0.3,
-        Z_MM_BACKLASH_COUNTER: float = 40e-3,
-        NUM_Z_STEPS_CALIBRATE: int = 7,
-        DEBUG_LASER_AF_CALIBRATION=bool(0),
-        DEBUG_LASER_AF_SHOW_REGRESSION_FIT=bool(0),
-        DEBUG_LASER_AF_SHOW_EVAL_FIT=True,
-    ) -> cmd.LaserAutofocusCalibrationResponse:
+    async def _laser_af_calibrate_here(self) -> cmd.LaserAutofocusCalibrationResponse:
         """
         see cmd.LaserAutofocusCalibrate
         """
+        # Hardcoded calibration parameters
+        Z_MM_BACKLASH_COUNTER = 40e-3
+        DEBUG_LASER_AF_CALIBRATION = os.getenv("DEBUG_LASER_AF_CALIBRATION", "").lower() == "true"
+        DEBUG_LASER_AF_SHOW_REGRESSION_FIT = os.getenv("DEBUG_LASER_AF_SHOW_REGRESSION_FIT", "").lower() == "true"
+        DEBUG_LASER_AF_SHOW_EVAL_FIT = os.getenv("DEBUG_LASER_AF_SHOW_EVAL_FIT", "true").lower() == "true"
+
+        # Read number of z steps from machine config
+        conf_num_steps_item = LaserAutofocusConfig.CALIBRATION_NUM_Z_STEPS.value_item
+        assert conf_num_steps_item is not None
+        num_z_steps_calibrate = conf_num_steps_item.intvalue
 
         if self.is_in_loading_position:
             cmd.error_internal(detail="now allowed while in loading position")
@@ -782,6 +788,12 @@ class SquidAdapter(Microscope):
         with self.microcontroller.locked() as qmc:
             if qmc is None:
                 error_internal("microcontroller is busy")
+
+            # Read z_span from machine config
+            conf_z_span_item = LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM.value_item
+            assert conf_z_span_item is not None
+            z_mm_movement_range = conf_z_span_item.floatvalue
+            logger.debug(f"laser autofocus calibration: z_span={z_mm_movement_range}mm, num_steps={num_z_steps_calibrate}")
 
             conf_af_exp_ms_item = LaserAutofocusConfig.EXPOSURE_TIME_MS.value_item
             assert conf_af_exp_ms_item is not None
@@ -791,8 +803,8 @@ class SquidAdapter(Microscope):
             assert conf_af_exp_ag_item is not None
             conf_af_exp_ag = conf_af_exp_ag_item.floatvalue
 
-            z_step_mm = Z_MM_MOVEMENT_RANGE_MM / (NUM_Z_STEPS_CALIBRATE - 1)
-            half_z_mm = Z_MM_MOVEMENT_RANGE_MM / 2
+            z_step_mm = z_mm_movement_range / (num_z_steps_calibrate - 1)
+            half_z_mm = z_mm_movement_range / 2
 
             try:
                 current_pos = await qmc.get_last_position()
@@ -826,7 +838,7 @@ class SquidAdapter(Microscope):
 
             peak_info: list[CalibrationData] = []
 
-            for i in range(NUM_Z_STEPS_CALIBRATE):
+            for i in range(num_z_steps_calibrate):
                 if i > 0:
                     # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
                     try:
@@ -968,9 +980,9 @@ class SquidAdapter(Microscope):
                 current_pos = await qmc.get_last_position()
                 start_z = current_pos.z_pos_mm
 
-                half_z_mm = Z_MM_MOVEMENT_RANGE_MM / 2
+                half_z_mm = z_mm_movement_range / 2
                 num_z_steps_eval = 51
-                z_step_mm = Z_MM_MOVEMENT_RANGE_MM / (num_z_steps_eval - 1)
+                z_step_mm = z_mm_movement_range / (num_z_steps_eval - 1)
 
                 if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
                     await qmc.send_cmd(
@@ -1048,6 +1060,7 @@ class SquidAdapter(Microscope):
                 calibration_position=calibration_position.pos,
             )
 
+            logger.debug(f"laser autofocus calibration result: um_per_px={um_per_px:.4f}, x_reference={x_reference:.1f}")
             return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)
 
     async def get_current_state(self) -> AdapterState:
@@ -1111,9 +1124,11 @@ class SquidAdapter(Microscope):
         )
 
     def is_position_forbidden(self, x_mm: float, y_mm: float) -> tuple[bool, str]:
-        """Check if a position is forbidden for movement."""
-        from seafront.config.handles import ProtocolConfig
-        from seafront.hardware.forbidden_areas import ForbiddenAreaList
+        """
+        Check if a position is forbidden for movement.
+        
+        returns (<position is forbidden?>, <forbidden reason>)
+        """
 
         g_config = GlobalConfigHandler.get_dict()
         forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
@@ -1124,23 +1139,19 @@ class SquidAdapter(Microscope):
 
         forbidden_areas_str = forbidden_areas_entry.strvalue
 
-        try:
-            forbidden_areas = ForbiddenAreaList.from_json_string(forbidden_areas_str)
-            # Check if position is forbidden
-            is_forbidden, conflicting_area = forbidden_areas.is_position_forbidden(x_mm, y_mm)
+        data = json5.loads(forbidden_areas_str)
+        forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
+        # Check if position is forbidden
+        is_forbidden, conflicting_area = forbidden_areas.is_position_forbidden(x_mm, y_mm)
 
-            if is_forbidden and conflicting_area is not None:
-                reason_text = f" ({conflicting_area.reason})" if conflicting_area.reason else ""
-                error_msg = f"Movement to ({x_mm:.1f}, {y_mm:.1f}) mm is forbidden - conflicts with area '{conflicting_area.name}'{reason_text}"
-                return True, error_msg
+        if is_forbidden and conflicting_area is not None:
+            reason_text = f" ({conflicting_area.reason})" if conflicting_area.reason else ""
+            error_msg = f"Movement to ({x_mm:.1f}, {y_mm:.1f}) mm is forbidden - conflicts with area '{conflicting_area.name}'{reason_text}"
+            return True, error_msg
 
-            return False, ""
-        except Exception as e:
-            logger.warning(f"Failed to parse forbidden areas configuration: {e}")
-            # If we can't parse the forbidden areas, default to allowing the position
-            return False, ""
+        return False, ""
 
-    async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
+    async def execute[T](self, command: cmd.BaseCommand[T]) -> T:  # type: ignore[misc]
         # Validate command against hardware limits first
         self.validate_command(command)
 
@@ -1829,21 +1840,25 @@ class SquidAdapter(Microscope):
                     return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.LaserAutofocusCalibrate):
-                    result = await self._laser_af_calibrate_here(**command.dict())
+                    result = await self._laser_af_calibrate_here()
                     logger.debug("squid - calibrated laser autofocus")
                     return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusApproachTargetDisplacement):
 
+                    # Extract values from command for use in nested function
+                    config_file = command.config_file
+                    target_offset_um = command.target_offset_um
+
                     async def _estimate_offset_mm():
                         res = await self.execute(
-                            cmd.AutofocusMeasureDisplacement(config_file=command.config_file)
+                            cmd.AutofocusMeasureDisplacement(config_file=config_file)
                         )
 
                         current_displacement_um = res.displacement_um
                         assert current_displacement_um is not None
 
-                        return (command.target_offset_um - current_displacement_um) * 1e-3
+                        return (target_offset_um - current_displacement_um) * 1e-3
 
                     if self.is_in_loading_position:
                         cmd.error_internal(detail="now allowed while in loading position")
@@ -2056,7 +2071,7 @@ class SquidAdapter(Microscope):
 
         # Other commands don't require validation (movement, connection, etc.)
 
-    def validate_channel_for_acquisition(self, channel: ChannelConfig) -> None:
+    def validate_channel_for_acquisition(self, channel: sc.AcquisitionChannelConfig) -> None:
         """
         Validate that a channel can be acquired with current microscope configuration.
 

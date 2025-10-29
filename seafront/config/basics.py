@@ -664,6 +664,20 @@ class GlobalConfigHandler:
                     value_kind="float",
                     value=0.0,
                 ),
+                # calibration z span
+                ConfigItem(
+                    name="laser autofocus calibration z span [mm]",
+                    handle="laser.autofocus.calibration.z_span_mm",
+                    value_kind="float",
+                    value=0.3,
+                ),
+                # calibration number of z steps
+                ConfigItem(
+                    name="laser autofocus calibration number of z steps",
+                    handle="laser.autofocus.calibration.num_z_steps",
+                    value_kind="int",
+                    value=7,
+                ),
                 # is calibrated flag
                 ConfigItem(
                     name="laser autofocus is calibrated",

@@ -266,7 +266,7 @@ class Microscope(BaseModel, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def validate_channel_for_acquisition(self, channel: ChannelConfig) -> None:
+    def validate_channel_for_acquisition(self, channel: sc.AcquisitionChannelConfig) -> None:
         """
         Validate that a channel can be acquired with current microscope configuration.
 

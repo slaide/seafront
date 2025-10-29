@@ -68,6 +68,8 @@ class LaserAutofocusConfig(ConfigHandle):
     CAMERA_PIXEL_FORMAT = "laser.autofocus.camera.pixel_format"
 
     # Calibration settings
+    CALIBRATION_Z_SPAN_MM = "laser.autofocus.calibration.z_span_mm"
+    CALIBRATION_NUM_Z_STEPS = "laser.autofocus.calibration.num_z_steps"
     CALIBRATION_IS_CALIBRATED = "laser.autofocus.calibration.is_calibrated"
     CALIBRATION_X_PEAK_POS = "laser.autofocus.calibration.x_peak_pos"
     CALIBRATION_UM_PER_PX = "laser.autofocus.calibration.um_per_px"
