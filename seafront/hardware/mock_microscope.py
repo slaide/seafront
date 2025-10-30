@@ -882,7 +882,7 @@ class MockMicroscope(Microscope):
 
             # Check if streaming is active
             if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
+                cmd.error_internal(detail="Cannot enter loading position while camera is streaming - stop streaming first")
 
             # Simulate gradual movement to loading position (0, 0, 0)
             await self._simulate_gradual_movement(target_x_mm=0.0, target_y_mm=0.0, target_z_mm=0.0)
@@ -895,7 +895,7 @@ class MockMicroscope(Microscope):
 
             # Check if streaming is active
             if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
+                cmd.error_internal(detail="Cannot leave loading position while camera is streaming - stop streaming first")
 
             # Move to center of plate (127.8mm width, ~80mm height)
             plate_center_x = 127.8 / 2.0  # 63.9mm
@@ -908,10 +908,6 @@ class MockMicroscope(Microscope):
 
         elif isinstance(command, cmd.MoveTo):
             logger.info(f"Mock microscope: moving to ({command.x_mm}, {command.y_mm}, {command.z_mm})")
-
-            # Check if streaming is active
-            if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
 
             # Check forbidden areas if we have complete X,Y coordinates
             if command.x_mm is not None and command.y_mm is not None:
@@ -932,10 +928,6 @@ class MockMicroscope(Microscope):
 
         elif isinstance(command, cmd.MoveBy):
             logger.info(f"Mock microscope: moving {command.axis} by {command.distance_mm}mm")
-
-            # Check if streaming is active
-            if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
 
             # Calculate target position after relative movement
             current_x = self._pos_x_measured_to_real(self._current_position.x_pos_mm)
@@ -973,10 +965,6 @@ class MockMicroscope(Microscope):
         elif isinstance(command, cmd.MoveToWell):
             logger.info(f"Mock microscope: moving to well {command.well_name}")
 
-            # Check if streaming is active
-            if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
-
             # Check if well is forbidden
             plate = command.plate_type
             if cmd.wellIsForbidden(command.well_name, plate):
@@ -1005,7 +993,7 @@ class MockMicroscope(Microscope):
 
             # Check if streaming is active
             if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
+                cmd.error_internal(detail="Cannot take snapshot while camera is streaming")
 
             # Validate channel configuration for acquisition
             self.validate_channel_for_acquisition(command.channel)
@@ -1066,7 +1054,7 @@ class MockMicroscope(Microscope):
 
             # Check if streaming is active
             if self.stream_callback is not None:
-                cmd.error_internal(detail="already streaming")
+                cmd.error_internal(detail="Cannot capture autofocus image while main camera is streaming")
 
             # Simulate imaging delay (autofocus typically uses shorter exposure ~5ms)
             await self._delay_for_imaging(5.0)
@@ -1082,7 +1070,7 @@ class MockMicroscope(Microscope):
 
             # Check if already streaming
             if self.stream_callback is not None and self._streaming_thread is not None:
-                cmd.error_internal("already streaming")
+                cmd.error_internal("Streaming already active - stop current stream before starting a new one")
 
             # Validate channel configuration for acquisition
             self.validate_channel_for_acquisition(command.channel)

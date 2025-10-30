@@ -1614,7 +1614,7 @@ class SquidAdapter(Microscope):
                     GlobalConfigHandler.override(command.machine_config)
 
                     if self.stream_callback is not None:
-                        cmd.error_internal(detail="already streaming")
+                        cmd.error_internal(detail="Cannot take snapshot while camera is streaming")
 
                     self.state = CoreState.ChannelSnap
 
@@ -1704,7 +1704,7 @@ class SquidAdapter(Microscope):
 
                 elif isinstance(command, cmd.ChannelStreamBegin):
                     if self.stream_callback is not None:
-                        cmd.error_internal(detail="already streaming")
+                        cmd.error_internal(detail="Streaming already active - stop current stream before starting a new one")
 
                     # Find channel config by handle and get illumination code from source slot
                     channel_config = None

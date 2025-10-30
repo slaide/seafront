@@ -382,12 +382,39 @@ class Core:
         # store request_models for re-use (works around issues with fastapi)
         request_models = {}
 
+        # Check if command is allowed to run given current acquisition/streaming state
+        def check_operation_allowed(allow_while_acquisition_is_running: bool, allow_while_streaming: bool) -> JSONResponse | None:
+            """
+            Verify that the operation is allowed given current microscope state.
+            Returns a JSONResponse error if not allowed, None if allowed.
+            """
+            if (not allow_while_acquisition_is_running) and self.acquisition_is_running:
+                return JSONResponse(
+                    content={
+                        "status": "error",
+                        "message": "cannot run this command while acquisition is running",
+                    },
+                    status_code=400,
+                )
+
+            if (not allow_while_streaming) and (self.microscope.stream_callback is not None):
+                return JSONResponse(
+                    content={
+                        "status": "error",
+                        "message": "cannot run this command while live streaming is active",
+                    },
+                    status_code=400,
+                )
+
+            return None
+
         # Utility function to wrap the shared logic by including handlers for GET requests
         def route_wrapper(
             path: str,
             route: CustomRoute,
             methods: list[str] | None = None,
             allow_while_acquisition_is_running: bool = True,
+            allow_while_streaming: bool = True,
             summary: str | None = None,
             **kwargs_static,
         ):
@@ -473,14 +500,9 @@ class Core:
             @wraps(target_func)
             async def handler_logic_get(**kwargs: tp.Any | None) -> return_type:  # type: ignore
                 # Perform verification
-                if (not allow_while_acquisition_is_running) and self.acquisition_is_running:
-                    return JSONResponse(
-                        content={
-                            "status": "error",
-                            "message": "cannot run this command while acquisition is running",
-                        },
-                        status_code=400,
-                    )
+                error_response = check_operation_allowed(allow_while_acquisition_is_running, allow_while_streaming)
+                if error_response is not None:
+                    return error_response
 
                 request_data = kwargs.copy()
                 request_data.update(kwargs_static)
@@ -514,14 +536,9 @@ class Core:
 
                 async def handler_logic_post(request_body: RequestModel):  # type:ignore
                     # Perform verification
-                    if (not allow_while_acquisition_is_running) and self.acquisition_is_running:
-                        return JSONResponse(
-                            content={
-                                "status": "error",
-                                "message": "cannot run this command while acquisition is running",
-                            },
-                            status_code=400,
-                        )
+                    error_response = check_operation_allowed(allow_while_acquisition_is_running, allow_while_streaming)
+                    if error_response is not None:
+                        return error_response
 
                     request_data = kwargs_static.copy()
                     if RequestModel and request_body:
@@ -541,14 +558,9 @@ class Core:
 
                 async def handler_logic_post():  # type:ignore
                     # Perform verification
-                    if (not allow_while_acquisition_is_running) and self.acquisition_is_running:
-                        return JSONResponse(
-                            content={
-                                "status": "error",
-                                "message": "cannot run this command while acquisition is running",
-                            },
-                            status_code=400,
-                        )
+                    error_response = check_operation_allowed(allow_while_acquisition_is_running, allow_while_streaming)
+                    if error_response is not None:
+                        return error_response
 
                     request_data = kwargs_static.copy()
 
@@ -702,11 +714,13 @@ class Core:
             "/api/action/move_by",
             CustomRoute(handler=MoveBy, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+            allow_while_streaming=True,
         )
         route_wrapper(
             "/api/action/move_to",
             CustomRoute(handler=MoveTo, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+            allow_while_streaming=True,
         )
 
         route_wrapper(
@@ -835,6 +849,7 @@ class Core:
             "/api/action/move_to_well",
             CustomRoute(handler=MoveToWell, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+            allow_while_streaming=True,
         )
 
         # Loading position enter/leave
@@ -842,11 +857,13 @@ class Core:
             "/api/action/enter_loading_position",
             CustomRoute(handler=LoadingPositionEnter, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+            allow_while_acquisition_is_running=False,
         )
         route_wrapper(
             "/api/action/leave_loading_position",
             CustomRoute(handler=LoadingPositionLeave, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+            allow_while_acquisition_is_running=False,
         )
 
         async def write_image_laseraf(cmd: AutofocusSnap, res: AutofocusSnapResult):
@@ -878,6 +895,7 @@ class Core:
                 callback=write_image,
             ),
             methods=["POST"],
+            allow_while_streaming=False,
         )
 
         # Snap selected channels (server orchestrates individual channel snaps)
@@ -888,6 +906,7 @@ class Core:
                 tags=[RouteTag.ACTIONS.value],
             ),
             methods=["POST"],
+            allow_while_streaming=False,
         )
 
         # Start streaming (i.e., acquire x images per sec, until stopped)
@@ -930,6 +949,8 @@ class Core:
                 callback=register_stream_begin,
             ),
             methods=["POST"],
+            allow_while_acquisition_is_running=False,
+            allow_while_streaming=False,
         )
         route_wrapper(
             "/api/action/stream_channel_end",
@@ -950,11 +971,13 @@ class Core:
                 callback=write_image_laseraf,
             ),
             methods=["POST"],
+            allow_while_streaming=False,
         )
         route_wrapper(
             "/api/action/laser_autofocus_measure_displacement",
             CustomRoute(handler=AutofocusMeasureDisplacement, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+            allow_while_streaming=False,
         )
         route_wrapper(
             "/api/action/laser_autofocus_move_to_target_offset",
@@ -963,16 +986,19 @@ class Core:
                 tags=[RouteTag.ACTIONS.value],
             ),
             methods=["POST"],
+            allow_while_streaming=False,
         )
         route_wrapper(
             "/api/action/laser_autofocus_calibrate",
             CustomRoute(handler=LaserAutofocusCalibrate, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+            allow_while_streaming=False,
         )
         route_wrapper(
             "/api/action/laser_autofocus_warm_up_laser",
             CustomRoute(handler=AutofocusLaserWarmup, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+            allow_while_streaming=False,
         )
 
         # Calibrate stage position
@@ -980,6 +1006,7 @@ class Core:
             "/api/action/calibrate_stage_xy_here",
             CustomRoute(handler=self.calibrate_stage_xy_here, tags=[RouteTag.ACTIONS.value]),
             methods=["POST"],
+            allow_while_acquisition_is_running=False,
         )
 
         # Turn off all illumination
