@@ -56,11 +56,13 @@ from seafront.config.handles import (
     CameraConfig,
     ImagingConfig,
     LaserAutofocusConfig,
+    ProtocolConfig,
 )
 from seafront.hardware.microscope import HardwareLimits, Microscope
 from seafront.hardware.mock_microscope import MockMicroscope
 from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.logger import logger
+from seafront.hardware.forbidden_areas import ForbiddenAreaList
 from seafront.server.commands import (
     AcquisitionCommand,
     AcquisitionStartResponse,
@@ -1565,11 +1567,19 @@ class Core:
 
         # Validate that no site positions fall within forbidden areas
         # This catches forbidden positions during preparation instead of during execution
+        # Parse forbidden areas once and reuse for all positions to avoid repeated parsing
+        g_config = GlobalConfigHandler.get_dict()
+        forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
+        forbidden_areas = None
+        if forbidden_areas_entry is not None and isinstance(forbidden_areas_entry.value, str):
+            data = json5.loads(forbidden_areas_entry.value)
+            forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
+
         for position_info in protocol.iter_positions():
             site_x_mm, site_y_mm = position_info.physical_position
 
             # Check if this position is forbidden
-            is_forbidden, error_message = positionIsForbidden(site_x_mm, site_y_mm)
+            is_forbidden, error_message = positionIsForbidden(site_x_mm, site_y_mm, forbidden_areas=forbidden_areas)
             if is_forbidden:
                 error_internal(detail=f"Site position in well {position_info.well.well_name} (site {position_info.site.col},{position_info.site.row}) is forbidden: {error_message}")
 

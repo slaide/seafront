@@ -109,25 +109,18 @@ class ForbiddenAreaList(BaseModel):
                 return True, area
         return False, None
 
-    def is_movement_safe(self, x_mm: float, y_mm: float, safety_radius_mm: float = 0.0) -> tuple[bool, ForbiddenArea | None]:
+    def is_movement_safe(self, x_mm: float, y_mm: float) -> tuple[bool, ForbiddenArea | None]:
         """
-        Check if movement to a position is safe, considering safety margins.
+        Check if movement to a position is safe.
 
         Args:
             x_mm: Target X coordinate in mm
             y_mm: Target Y coordinate in mm
-            safety_radius_mm: Safety margin radius around the target position
 
         Returns:
             Tuple of (is_safe, conflicting_area). conflicting_area is None if movement is safe.
         """
-        if safety_radius_mm <= 0.0:
-            return not self.is_position_forbidden(x_mm, y_mm)[0], self.is_position_forbidden(x_mm, y_mm)[1]
-
-        for area in self.areas:
-            if area.intersects_circle(x_mm, y_mm, safety_radius_mm):
-                return False, area
-        return True, None
+        return not self.is_position_forbidden(x_mm, y_mm)[0], self.is_position_forbidden(x_mm, y_mm)[1]
 
     def get_conflicting_areas(self, x_mm: float, y_mm: float, safety_radius_mm: float = 0.0) -> list[ForbiddenArea]:
         """

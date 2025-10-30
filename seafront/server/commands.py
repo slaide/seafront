@@ -98,35 +98,41 @@ def wellIsForbidden(well_name: str, plate_type: sc.Wellplate) -> bool:
     return False
 
 
-def positionIsForbidden(x_mm: float, y_mm: float, safety_radius_mm: float = 0.0) -> tuple[bool, str]:
+def positionIsForbidden(
+    x_mm: float,
+    y_mm: float,
+    forbidden_areas: ForbiddenAreaList | None = None,
+) -> tuple[bool, str]:
     """
     Check if a position is in a forbidden area, as indicated by global config.
 
     Args:
         x_mm: X coordinate in mm
         y_mm: Y coordinate in mm
-        safety_radius_mm: Safety margin radius around the position (default: 0.0)
+        forbidden_areas: Pre-parsed ForbiddenAreaList to avoid repeated parsing. If None, will be parsed from config.
 
     Returns:
         Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
     """
-    g_config = GlobalConfigHandler.get_dict()
-    forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
+    # Use provided forbidden areas or parse from config
+    if forbidden_areas is None:
+        g_config = GlobalConfigHandler.get_dict()
+        forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
 
-    # If no forbidden areas config is found, allow the movement
-    if forbidden_areas_entry is None:
-        return False, ""
+        # If no forbidden areas config is found, allow the movement
+        if forbidden_areas_entry is None:
+            return False, ""
 
-    forbidden_areas_str = forbidden_areas_entry.value
-    if not isinstance(forbidden_areas_str, str):
-        logger.warning("forbidden_areas entry is not a string, allowing movement")
-        return False, ""
+        forbidden_areas_str = forbidden_areas_entry.value
+        if not isinstance(forbidden_areas_str, str):
+            logger.warning("forbidden_areas entry is not a string, allowing movement")
+            return False, ""
 
-    data = json5.loads(forbidden_areas_str)
-    forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
+        data = json5.loads(forbidden_areas_str)
+        forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
 
-    # Check if movement is safe considering safety radius
-    is_safe, conflicting_area = forbidden_areas.is_movement_safe(x_mm, y_mm, safety_radius_mm)
+    # Check if movement is safe
+    is_safe, conflicting_area = forbidden_areas.is_movement_safe(x_mm, y_mm)
 
     if not is_safe and conflicting_area is not None:
         reason_text = f" ({conflicting_area.reason})" if conflicting_area.reason else ""

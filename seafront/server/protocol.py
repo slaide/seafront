@@ -10,6 +10,7 @@ import typing as tp
 from concurrent.futures import Future as ConcurrentFuture
 from threading import Thread
 
+import json5
 import seaconfig as sc
 import tifffile
 from pydantic import BaseModel, ConfigDict, Field
@@ -669,10 +670,19 @@ class ProtocolGenerator(BaseModel):
 
         # Pre-flight validation: check all planned positions against forbidden areas
         logger.info("protocol - performing pre-flight forbidden area validation")
+        # Parse forbidden areas once and pass to positionIsForbidden to avoid repeated parsing
+        g_config = cmds.GlobalConfigHandler.get_dict()
+        forbidden_areas_entry = g_config.get(cmds.ProtocolConfig.FORBIDDEN_AREAS.value)
+        forbidden_areas = None
+        if forbidden_areas_entry is not None and isinstance(forbidden_areas_entry.value, str):
+            data = json5.loads(forbidden_areas_entry.value)
+            forbidden_areas = cmds.ForbiddenAreaList.model_validate({"areas": data})
+
         forbidden_positions = []
         for pos_info in self.iter_positions():
             is_forbidden, error_message = cmds.positionIsForbidden(
-                pos_info.physical_position[0], pos_info.physical_position[1]
+                pos_info.physical_position[0], pos_info.physical_position[1],
+                forbidden_areas=forbidden_areas
             )
             if is_forbidden:
                 forbidden_positions.append({
