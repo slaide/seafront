@@ -737,6 +737,7 @@ class Core:
                 tags=[RouteTag.ACQUISITION_CONTROLS.value],
             ),
             methods=["POST"],
+            allow_while_streaming=False,
         )
 
         # Register URL for cancel_acquisition
@@ -747,6 +748,7 @@ class Core:
                 tags=[RouteTag.ACQUISITION_CONTROLS.value],
             ),
             allow_while_acquisition_is_running=True,
+            allow_while_streaming=False,
             methods=["POST"],
         )
 
