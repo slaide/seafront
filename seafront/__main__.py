@@ -103,7 +103,6 @@ from seafront.server.commands import (
     error_internal,
     error_microscope_busy,
     positionIsForbidden,
-    wellIsForbidden,
 )
 from seafront.server.protocol import (
     AsyncThreadPool,
@@ -1500,10 +1499,6 @@ class Core:
         acquisition_id = make_unique_acquisition_id()
 
         plate = config_file.wellplate_type
-
-        for well in config_file.plate_wells:
-            if well.selected and wellIsForbidden(well.well_name, plate):
-                error_internal(detail=f"well {well.well_name} is not allowed on this plate")
 
         if config_file.autofocus_enabled:
             laser_autofocus_is_calibrated_item = g_config.get(

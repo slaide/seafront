@@ -76,28 +76,6 @@ def error_microscope_busy(busy_reasons: list[str]) -> tp.NoReturn:
     )
 
 
-def wellIsForbidden(well_name: str, plate_type: sc.Wellplate) -> bool:
-    """check if a well if forbidden, as indicated by global config"""
-    g_config = GlobalConfigHandler.get_dict()
-    forbidden_wells_entry = g_config.get(ProtocolConfig.FORBIDDEN_WELLS.value)
-    if forbidden_wells_entry is None:
-        error_internal(detail="forbidden_wells entry not found in global config")
-
-    forbidden_wells_str = forbidden_wells_entry.value
-    if not isinstance(forbidden_wells_str, str):
-        error_internal(detail="forbidden_wells entry is not a string")
-
-    forbidden_wells_dict: dict[str, list[str]] = json5.loads(forbidden_wells_str) #type: ignore
-    for num_wells_str, well_names in forbidden_wells_dict.items():
-        num_wells = int(num_wells_str)
-        if plate_type.Num_total_wells == num_wells:
-            for well in well_names:
-                if well == well_name:
-                    return True
-
-    return False
-
-
 def positionIsForbidden(
     x_mm: float,
     y_mm: float,

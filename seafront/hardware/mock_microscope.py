@@ -965,11 +965,6 @@ class MockMicroscope(Microscope):
         elif isinstance(command, cmd.MoveToWell):
             logger.info(f"Mock microscope: moving to well {command.well_name}")
 
-            # Check if well is forbidden
-            plate = command.plate_type
-            if cmd.wellIsForbidden(command.well_name, plate):
-                cmd.error_internal(detail="well is forbidden")
-
             # Calculate well center position (offset + half well size)
             well_x = command.plate_type.get_well_offset_x(command.well_name) + command.plate_type.Well_size_x_mm / 2
             well_y = command.plate_type.get_well_offset_y(command.well_name) + command.plate_type.Well_size_y_mm / 2

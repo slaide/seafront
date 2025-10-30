@@ -76,9 +76,6 @@ class CriticalMachineConfig(BaseModel):
     calibration_offset_y_mm: float
     calibration_offset_z_mm: float
 
-    forbidden_wells: str | None = None
-    "must be json-like string"
-
     forbidden_areas: str | None = None
     "JSON string defining forbidden areas as AABBs in physical coordinates (mm)"
 
@@ -95,7 +92,6 @@ class CriticalMachineConfig(BaseModel):
     filters: str = Field(default="[]")
     "Available filters with their wheel positions (JSON-encoded string)"
 
-    # needs some post-init hook to check forbidden_wells for json-like-ness
 
 class ServerConfig(BaseModel):
     port: int = 5000
@@ -208,7 +204,6 @@ class GlobalConfigHandler:
             "filter_wheel_available": FilterWheelConfig.AVAILABLE.value,
             "filters": FilterWheelConfig.CONFIGURATION.value,
             "channels": ImagingConfig.CHANNELS.value,
-            "forbidden_wells": ProtocolConfig.FORBIDDEN_WELLS.value,
             "forbidden_areas": ProtocolConfig.FORBIDDEN_AREAS.value,
         }
 
@@ -414,7 +409,6 @@ class GlobalConfigHandler:
             calibration_offset_x_mm=0.0,
             calibration_offset_y_mm=0.0,
             calibration_offset_z_mm=0.0,
-            forbidden_wells="""{"1":[],"4":[],"96":[],"384":["A01","A24","P01","P24"],"1536":[]}""",
             forbidden_areas=forbidden_areas_json,
             channels=channels_json,
             filters=filters_json,
@@ -811,12 +805,6 @@ class GlobalConfigHandler:
                 value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
-            ),
-            ConfigItem(
-                name="forbidden wells",
-                handle="protocol.forbidden_wells",
-                value_kind="text",
-                value=critical_machine_config.forbidden_wells or "{}",
             ),
             ConfigItem(
                 name="forbidden areas",
