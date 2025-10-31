@@ -80,6 +80,11 @@ ignore = [
     "N815",  # variable name should not be mixed case
     "E722",  # do not use bare except
     "UP024", # replace aliased errors
+    "W293",  # blank line contains whitespace
+    "W291",  # trailing whitespace
+    "I001",  # import block is unsorted
+    "F541",  # f-string without any placeholders
+    "RUF022",# <x> is not sorted (??)
 ]
 
 [tool.ruff.lint.isort]

@@ -5,10 +5,6 @@ This module provides AABB (Axis-Aligned Bounding Box) based forbidden area check
 to prevent the microscope stage from moving to physically dangerous locations.
 """
 
-import json
-import typing as tp
-
-import json5
 from pydantic import BaseModel, Field, validator
 
 

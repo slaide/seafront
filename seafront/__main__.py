@@ -2209,7 +2209,7 @@ def main():
             # Wait for server to be ready by polling a simple endpoint
             server_ready = False
             max_attempts = 30  # 30 seconds max wait
-            for attempt in range(max_attempts):
+            for _ in range(max_attempts):
                 try:
                     with urllib.request.urlopen(server_base_url+"/", timeout=0.5) as response:
                         if response.status == 200:
