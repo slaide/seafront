@@ -26,10 +26,10 @@ def scan_cameras_by_driver(driver_name: str) -> tuple[list, str | None]:
     """
     try:
         if driver_name.lower() == "galaxy":
-            from seafront.hardware.galaxy_camera import GalaxyCamera
+            from seafront.hardware.camera.galaxy_camera import GalaxyCamera
             return GalaxyCamera.get_all(), None
         elif driver_name.lower() == "toupcam":
-            from seafront.hardware.toupcam_camera import ToupCamCamera
+            from seafront.hardware.camera.toupcam_camera import ToupCamCamera
             return ToupCamCamera.get_all(), None
         else:
             return [], f"Unknown driver: {driver_name}"

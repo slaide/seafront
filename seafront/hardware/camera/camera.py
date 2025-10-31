@@ -161,7 +161,7 @@ def get_all_cameras() -> list[Camera]:
 
     # Get Galaxy cameras
     try:
-        from seafront.hardware.galaxy_camera import GalaxyCamera
+        from .galaxy_camera import GalaxyCamera
 
         galaxy_cameras = GalaxyCamera.get_all()
         all_cameras.extend(galaxy_cameras)
@@ -170,7 +170,7 @@ def get_all_cameras() -> list[Camera]:
 
     # Get ToupCam cameras
     try:
-        from seafront.hardware.toupcam_camera import ToupCamCamera
+        from .toupcam_camera import ToupCamCamera
 
         toupcam_cameras = ToupCamCamera.get_all()
         all_cameras.extend(toupcam_cameras)
@@ -213,7 +213,7 @@ def camera_open(request: CameraOpenRequest) -> Camera:
 
 def _get_galaxy_camera(identifier: GalaxyCameraIdentifier) -> Camera:
     """Get a Galaxy camera instance with the specified identifier (unopened)."""
-    from seafront.hardware.galaxy_camera import GalaxyCamera
+    from .galaxy_camera import GalaxyCamera
 
     available_cameras = GalaxyCamera.get_all()
 
@@ -244,7 +244,7 @@ def _get_galaxy_camera(identifier: GalaxyCameraIdentifier) -> Camera:
 
 def _get_toupcam_camera(identifier: ToupCamIdentifier) -> Camera:
     """Get a ToupCam camera instance with the specified identifier (unopened)."""
-    from seafront.hardware.toupcam_camera import ToupCamCamera
+    from .toupcam_camera import ToupCamCamera
 
     available_cameras = ToupCamCamera.get_all()
 
