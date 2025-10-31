@@ -34,10 +34,14 @@ note: issues encountered during operation or installation should be reported in 
 
 # install
 
-lines with `# instruction:` need to be followed manually.
-lines with `# note:` contain information that may be acted upon.
+The installation process is automated using the `install/all.sh` script. This script handles downloading dependencies, installing camera drivers, and setting up the Python environment automatically.
 
-the computer needs to be connected to the internet during setup.
+**Prerequisites:**
+- Computer with internet connection (required during setup)
+- USB hub recommended (for connecting multiple microscope devices simultaneously)
+- Administrator/sudo access (for driver and USB memory configuration)
+
+**Installation Steps:**
 
 ```sh
 # instruction: unplug microscope
@@ -45,47 +49,43 @@ the computer needs to be connected to the internet during setup.
 # download seafront
 cd ~
 git clone https://github.com/slaide/seafront
-
-# clone daheng imaging sdk repo (required for camera support)
-cd ~
-git clone https://github.com/slaide/daheng-imaging-gxipy
-
-# install daheng imaging sdk (architecture will be detected automatically)
-cd ~/daheng-imaging-gxipy/install_sdk
-
-ARCH=$(uname -m)
-if [ "$ARCH" = "x86_64" ]; then
-    cd linux-x86
-    bash install.run
-elif [ "$ARCH" = "aarch64" ]; then
-    cd linux-arm64
-    bash install.run
-else
-    echo "Unsupported architecture: $ARCH"
-    echo "Please check the available install scripts in install_sdk/"
-    exit 1
-fi
-
-cd ~
-
-# set up python environment, install dependencies and seafront software
 cd ~/seafront
-bash install/all.sh
 
 # instruction: plug microscope power in, wait for motors to engage (makes a 'clonk' sound)
-# instruction: plug in microscope via usb (all cameras + microcontroller. i recommend using an external usb hub to simplify this.)
+
+# Install dependencies, drivers, and seafront software
+bash install/all.sh
+
+# instruction: plug in microscope via usb (all cameras + microcontroller. use an external usb hub if possible.)
 
 # installation complete - continue with hardware listing and configuration (see setup workflow above)
 ```
+
+The `install/all.sh` script automatically:
+- Detects your system architecture
+- Downloads and installs Galaxy camera SDK (if needed)
+- Configures USB memory for camera connections
+- Sets up the Python environment using uv package manager
+- Installs all required dependencies
+
+**Note:** The installation script uses `uv` to manage dependencies, which automatically handles Python version requirements. No manual Python installation is needed.
 
 ## configuration
 
 **Note:** Follow the [setup workflow](#setup-workflow) for the complete configuration process including hardware detection.
 
+### example configurations
+
 See `examples/` directory for complete configuration examples:
-- **`examples/squid_config.json`**: Standard SQUID microscope with Galaxy cameras and power calibration
-- **`examples/squid+_config.json`**: SQUID+ microscope with ToupCam main camera and filter wheel
-- **`examples/mock_config.json`**: Mock microscope for development and testing
+- **`examples/squid_config.json`**: Standard SQUID microscope with Daheng Galaxy cameras for both main and autofocus imaging. Use this as a starting point for most SQUID setups.
+- **`examples/squid+_config.json`**: SQUID+ microscope with ToupCam main camera and filter wheel. Use this if your microscope has a ToupTek ToupCam main camera.
+- **`examples/mock_config.json`**: Mock microscope for development and testing without physical hardware. Use this for testing the software or learning the interface.
+
+Copy the appropriate example to `~/seafront/config.json` and customize it for your hardware:
+```bash
+cp examples/squid_config.json ~/seafront/config.json
+# Edit ~/seafront/config.json with your specific settings
+```
 
 Place your configuration file at `~/seafront/config.json` (JSON5 format supported).
 
@@ -108,7 +108,6 @@ Place your configuration file at `~/seafront/config.json` (JSON5 format supporte
             "calibration_offset_x_mm": 0.0,
             "calibration_offset_y_mm": 0.0, 
             "calibration_offset_z_mm": 0.0,
-            "forbidden_wells": "{\"384\":[\"A01\",\"A24\",\"P01\",\"P24\"]}",
             
             "channels": "[{\"name\": \"BF LED matrix full\", \"handle\": \"bfledfull\", \"source_slot\": 0}]",
             "filters": "[]"
@@ -118,13 +117,16 @@ Place your configuration file at `~/seafront/config.json` (JSON5 format supporte
 ```
 ### configuration parameters
 
-- **`"<x>_camera_model"`**: Camera model names passed to the camera API - must be specific! Use `scripts/list_squid_hardware.py` to find exact model names.
+- **`"<x>_camera_model"`**: Camera model identifier - **must be exact!** Use `scripts/list_squid_hardware.py` to find correct model names:
+  - For **Galaxy cameras** (Daheng): Use the `Model` field from hardware listing output (e.g., `"MER2-1220-32U3M"`)
+  - For **ToupCam cameras** (ToupTek): Use the `Display Name` field from hardware listing output (e.g., `"ITR3CMOS26000KMA"`)
+  - See [development scripts](#development-scripts) section for more details
 - **`"<x>_camera_driver"`**: Camera API to use (`"galaxy"` for Daheng cameras, `"toupcam"` for ToupTek cameras).
 - **`"microscope_name"`**: Any string, used as metadata.
 - **`"microscope_type"`**: Hardware implementation (`"squid"` for real hardware, `"mock"` for simulation). Defaults to `"squid"`.
 - **`"base_image_output_dir"`**: Parent directory for image storage.
 - **`"channels"`**: JSON string defining available imaging channels (see [Channel Configuration](#channel-configuration)).
-- **`"filters"`**: JSON string defining filter wheel configuration (empty array `"[]"` if no filter wheel).
+- **`"filters"`**: JSON string defining filter wheel configuration. Use empty array `"[]"` when `filter_wheel_available` is `"no"`.
 
 Image storage path format: `<base_image_output_dir>/<project name>/<plate name>/<unique acquisition id>_<acquisition start timestamp>`
 
@@ -135,7 +137,7 @@ Channels define the available imaging modalities and their illumination sources.
 ```json
 {
     "name": "BF LED matrix full",              // Display name in interface
-    "handle": "bfledfull",              // Internal identifier (must be unique)
+    "handle": "bfledfull",              // Internal identifier (must be unique, alphanumeric + underscore)
     "source_slot": 0,                   // Illumination source slot (0-6: LED matrix, 11-15: lasers)
     "use_power_calibration": true,      // Enable power calibration
     "power_calibration": {              // Optional: calibration data
@@ -144,6 +146,11 @@ Channels define the available imaging modalities and their illumination sources.
     }
 }
 ```
+
+**Channel Handle Requirements:**
+- **Unique**: Each channel must have a distinct handle (no duplicates)
+- **Identifier**: Used internally as the channel identifier throughout the system
+- **Naming convention**: Use lowercase alphanumeric characters and underscores (e.g., `bfledfull`, `fluo405`, `fluo488`)
 
 **Hardware mapping**:
 - **Slots 0-6**: LED matrix sources (brightfield)
@@ -189,22 +196,25 @@ Camera and microcontroller fields are ignored in mock mode.
 
 #### timing control
 
-Environment variable `MOCK_NO_DELAYS`:
-- `MOCK_NO_DELAYS=1`: Instant operations
+The mock microscope can simulate realistic timing or run with instant operations:
+
+**Environment variable `MOCK_NO_DELAYS`:**
+- `MOCK_NO_DELAYS=1`: Instant operations (skip all delays)
 - Default: Realistic delays (4cm/s movement, exposure time delays)
 
+**Usage examples:**
+
 ```bash
-# Instant operations
+# Instant operations - useful for rapid testing
 MOCK_NO_DELAYS=1 uv run python -m seafront --microscope "Mock SQUID for Testing"
 
-# Realistic timing (default)
+# Realistic timing (default) - simulates actual hardware behavior
 uv run python -m seafront --microscope "Mock SQUID for Testing"
 ```
 
 ### additional parameters
 
 - **`"calibration_offset_<x|y|z>"`**: Should be _mostly_ correct. Minor deviations between microscope restarts can be fine-tuned in the web interface during acquisition.
-- **`"forbidden_wells"`**: Hardware conflict prevention. JSON string listing wells where the objective might crash into the XY-stage. Format: `{"<num_wells>": ["<well_name>", ...]}`. Wells not listed are allowed. This depends on the objective's working distance.
 
 ## power calibration for illumination sources
 
@@ -284,21 +294,23 @@ Seafront requires a default protocol configuration file at startup. This file pr
 
 ### generating default configuration
 
-A default protocol must be present before starting the software. Protocols are stored in microscope-specific directories to prevent compatibility issues when multiple microscopes share the same server.
+A default protocol must be present before starting the software. Protocols are stored in microscope-specific directories (like `~/seafront/acquisition_configs/squid-5c27d4/`) to prevent compatibility issues when multiple microscopes share the same server.
+
+**The `--microscope` argument is REQUIRED.** It determines which microscope configuration to use and where to store the protocol file.
 
 **Protocol Generation:**
 ```bash
-# Generate with default 384-well plate for specific microscope
+# Generate with default 384-well plate for your microscope (REQUIRED)
 uv run python scripts/generate_default_protocol.py --microscope "your-microscope-name"
 
 # List available wellplate types
 uv run python scripts/generate_default_protocol.py --list
 
-# Generate with specific wellplate and microscope
+# Generate with specific wellplate type and microscope
 uv run python scripts/generate_default_protocol.py --plate revvity-384-6057800 --microscope "your-microscope-name"
 ```
 
-**Note:** The `--microscope` argument is now required for protocol generation to ensure proper isolation between different microscope configurations.
+The script automatically creates a microscope-specific subdirectory in `~/seafront/acquisition_configs/` based on your microscope name and stores the default protocol there. This approach ensures that if you switch microscopes or reconfigure your setup, each microscope maintains its own default protocol configuration.
 
 The script automatically uses wellplate specifications from the seaconfig library, ensuring accurate dimensions and well layouts for supported plate types.
 
@@ -308,23 +320,22 @@ The default protocol provides initial settings for channel configurations includ
 
 ### propagating new default settings
 
-When you update the microscope configuration with new channel names or other defaults (like the recent change from "BF LED Full" to "BF LED matrix full"), follow these steps to propagate the changes to existing installations:
+When you update the microscope configuration with new channel names or other defaults, follow these steps to propagate the changes to existing installations:
 
-1. **Update machine config**: Modify the default channel configurations in `seafront/config/basics.py` or update your local `~/seafront/config.json`
+1. **Update machine config**: Modify the configuration in your `~/seafront/config.json`
 
-2. **Delete existing default protocol**: Remove the old protocol file to force regeneration with new settings
+2. **Delete existing microscope-specific protocol**: Remove the old protocol file to force regeneration with new settings
    ```bash
-   rm ~/seafront/acquisition_configs/default.json
-   # OR remove microscope-specific protocol
-   rm ~/seafront/acquisition_configs/your-microscope-name/default.json
+   # Remove the microscope-specific protocol directory
+   rm -rf ~/seafront/acquisition_configs/your-microscope-name/
    ```
 
-3. **Generate new default protocol**: Use the script to create a fresh protocol with updated channel names
+3. **Generate new default protocol**: Use the script to create a fresh protocol with updated settings
    ```bash
    uv run python scripts/generate_default_protocol.py --microscope "your-microscope-name"
    ```
 
-4. **Load protocol in GUI**: Start seafront and verify the new channel names appear correctly in the interface
+4. **Restart seafront**: Start the server which will load the new protocol
    ```bash
    uv run python -m seafront --microscope "your-microscope-name"
    ```
@@ -333,7 +344,7 @@ When you update the microscope configuration with new channel names or other def
 
 6. **Reload interface**: Refresh (not hard reload) the browser page to apply all changes
 
-7. **Done**: The interface now uses the updated channel names (e.g., "BF LED matrix full" instead of "BF LED Full") and any other configuration changes
+7. **Done**: The interface now uses the updated configuration
 
 # run
 
@@ -386,10 +397,10 @@ the missing details on the exact functionality (there is no tooltip pop up on th
 self explanatory, and for an end user, these should remain unchanged.
 
 some values not present in the Cephla SQUID software are those related to "streaming preview" and "full image display format".
-sine this software uses a web frontend, the images may be sent over a network, so bandwidth and browser display performance can be
-an issue. the "streaming preview resolution scaling" reduced the resolution on each axis of an image by that factor before sending
+since this software uses a web frontend, the images may be sent over a network, so bandwidth and browser display performance can be
+an issue. the "streaming preview resolution scaling" reduces the resolution on each axis of an image by that factor before sending
 it to the browser for display during an ongoing acquisition. "full image display" describes the image format for cases where no new
-images are currently being acquired, e.g. after using "snap", or when an acquisiton or streaming (formerly called "Live") has finished.
+images are currently being acquired, e.g. after using "snap", or when an acquisition or streaming has finished.
 
 the grayed out values in this list are for informational purposes only, and are inherent to the hardware, so they cannot be changed
 in this interface at all, like the microscope name (should be set during installation in the config file, then remain unchanged), 
@@ -405,7 +416,14 @@ the microscope server.
 
 # documentation
 
-this server uses the fastapi framework, which is able to automatically generate openapi specs, which in turn can be used to generate client side code for a variety of languages (see [swagger editor](https://editor.swagger.io/)). This documentation (which is auto-generated upon server start) contains the doc strings from the python code, as well as type annotations, so it serves as automatic but also human-readable documentation. When the server is running, check `/docs` (uses the swagger UI, based on openapi.json), `/redoc` (uses redoc UI, based on openapi.json) and `/openapi.json` for the relevant pages.
+This server uses the FastAPI framework, which automatically generates OpenAPI specifications that can be used to generate client-side code for a variety of languages (see [swagger editor](https://editor.swagger.io/)). The documentation is auto-generated upon server start and contains docstrings from the Python code as well as type annotations, providing both automatic and human-readable documentation.
+
+**API Documentation Pages** (when the server is running):
+- **`/docs`**: Interactive API documentation using Swagger UI (based on openapi.json)
+- **`/redoc`**: Alternative API documentation using ReDoc UI (based on openapi.json)
+- **`/openapi.json`**: Raw OpenAPI specification in JSON format
+
+**WebSocket Endpoints**: Real-time data updates (image streaming, status updates, etc.) are provided via WebSocket endpoints. Check `/docs` for the complete list of available WebSocket endpoints and their functionality.
 
 # what even is a bug?
 
@@ -470,13 +488,125 @@ the script provides detailed logging of each step including movement calculation
 
 # notes
 
-This software establishes a usb connection to two cameras simultaneously, which may require more usb stack memory than
-allowed by the operating system by default. on linux, this memory limit can be queried with
-```bash cat /sys/module/usbcore/parameters/usbfs_memory_mb```. The camera manufacturers recommend setting this to 1000. 
-This can be done, effective until next reboot, with (```bash echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb```), 
-or effectively forever, by adding that line to ``` /etc/rc.local```. If this number is too low, connection to a camera may 
-fail with an error like the following (crashing the software):
-``` 
+## Hardware Requirements
+
+**SQUID Microscope Hardware:**
+- Microcontroller (Teensy) for hardware control - required for real hardware operation
+- Connected via USB to the control computer
+- Camera drivers: Galaxy SDK (for Daheng cameras) or ToupCam driver (for ToupTek cameras)
+
+## USB Memory Configuration
+
+This software establishes USB connections to cameras simultaneously, which may require more USB stack memory than allowed by the operating system by default.
+
+**Automatic Configuration:**
+The `install/all.sh` script automatically configures USB memory to 1000 MB, which is the recommended value by camera manufacturers.
+
+**Manual Configuration** (if needed):
+On Linux, check the current USB memory limit:
+```bash
+cat /sys/module/usbcore/parameters/usbfs_memory_mb
+```
+
+To adjust it temporarily (until next reboot):
+```bash
+echo 1000 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
+```
+
+To adjust it permanently, add this line to `/etc/rc.local`:
+```bash
+echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb
+```
+
+If this value is too low, camera connection may fail with an error like:
+```
 Exception: Device.stream_on:{-1010}{CDSStartAcquisitionAgency:line[860]}{{-1010}{StartAcquisition:line[537]}{TL Error:
 Unable to start acquisition.}}
 ```
+
+# troubleshooting
+
+## Port Already in Use
+
+**Error:** `Address already in use` or port binding error when starting seafront
+
+**Solution:**
+- Check which process is using the port:
+  ```bash
+  lsof -i :5002  # Check port 5002 (or your configured port)
+  ```
+- Kill the process:
+  ```bash
+  kill -9 <PID>
+  ```
+- Or change the port in your config file and restart
+
+## Missing Default Protocol
+
+**Error:** `FileNotFoundError: [Errno 2] No such file or directory: '.../acquisition_configs/...default.json'`
+
+**Solution:**
+Generate the default protocol for your microscope:
+```bash
+uv run python scripts/generate_default_protocol.py --microscope "your-microscope-name"
+```
+
+Make sure to use the exact microscope name from your configuration file.
+
+## Camera Not Detected
+
+**Error:** Camera connection fails or hardware listing shows no cameras
+
+**Steps to diagnose:**
+1. List all available hardware:
+   ```bash
+   uv run python scripts/list_squid_hardware.py
+   ```
+2. Check USB connections - ensure cameras and microcontroller are properly connected
+3. Verify camera model names in your config match the exact model strings from the hardware listing
+4. Check camera drivers are installed:
+   - For Galaxy cameras: ensure Galaxy SDK is installed
+   - For ToupCam cameras: ensure ToupCam driver is installed
+5. Check user permissions for USB device access
+
+## Microscope Name Mismatch
+
+**Error:** Protocol loading fails or configuration doesn't match after changing microscope names
+
+**Solution:**
+If you change the `microscope_name` in your configuration:
+1. Delete the old microscope-specific protocol directory:
+   ```bash
+   rm -rf ~/seafront/acquisition_configs/old-microscope-name/
+   ```
+2. Generate a new default protocol with the new name:
+   ```bash
+   uv run python scripts/generate_default_protocol.py --microscope "new-microscope-name"
+   ```
+3. Restart seafront:
+   ```bash
+   uv run python -m seafront --microscope "new-microscope-name"
+   ```
+
+## Web Interface Not Responsive
+
+**Error:** Browser shows blank page or slow response
+
+**Steps to check:**
+1. Verify the server is running and check the console for errors
+2. Check the server URL is correct (default: `http://localhost:5002`)
+3. Try opening `/docs` or `/redoc` to verify API is responding
+4. Clear browser cache and reload the page (F5)
+5. Check browser console (F12) for JavaScript errors
+6. Ensure WebSocket connections are not blocked by firewall/proxy
+
+## Configuration Not Updating in Interface
+
+**Issue:** Changes to config file don't appear in the web interface
+
+**Solution:**
+1. Reset the machine config in the interface if it was already loaded: go to "Machine Config" → "reset all values"
+2. Refresh the browser page (F5, not Ctrl+Shift+R for hard reload)
+3. [as a last resort, delete the local microscope cache for the current microscope via the "advanced" tab, then reload.]
+
+**Note:** Browser configuration is stored in localStorage. Changes to the server-side config won't automatically sync with previously saved browser settings. Use the "reset all values" button to synchronize server-to-browser, or "flush to server" to sync browser-to-server.
