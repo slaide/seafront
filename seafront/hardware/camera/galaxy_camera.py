@@ -153,14 +153,12 @@ class GalaxyCamera(Camera):
 
         self.is_streaming = False
         self.acq_mode = None
-        self.set_acquisition_mode_trigger()
+        self._streaming_active = False
+        self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
         # turning stream on takes 25ms for continuous mode, 20ms for single frame mode
         self.is_streaming = True
         self.handle.stream_on()
-
-    def set_acquisition_mode_trigger(self):
-        self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
     def _clear_acquisition_state(self) -> None:
         """
@@ -171,13 +169,6 @@ class GalaxyCamera(Camera):
         """
         self.acquisition_ongoing = False
         self.acq_mode = None
-
-    def stop_acquisition(self) -> None:
-        """
-        Force stop any ongoing acquisition.
-        """
-        self._clear_acquisition_state()
-        logger.debug("galaxy camera - acquisition stopped")
 
     def _set_acquisition_mode(
         self,
@@ -283,44 +274,176 @@ class GalaxyCamera(Camera):
 
         return exposure_time_native_unit
 
-    def acquire_with_config(
-        self,
-        config: AcquisitionChannelConfig,
-        mode: tp.Literal["once", "until_stop"] = "once",
-        callback: tp.Callable[[np.ndarray], bool] | None = None,
-    ) -> np.ndarray | None:
+    def _set_exposure_time(self, exposure_time_ms: float) -> None:
         """
-        acquire image with given configuration
+        Set camera exposure time.
 
-        mode:
-            - once: acquire a single image. see AcquisitionMode.ON_TRIGGER
-            - until_stop: acquire images until callback returns True. see AcquisitionMode.CONTINUOUS
+        Args:
+            exposure_time_ms: Exposure time in milliseconds
 
-        returns:
-            - np.ndarray of image data if mode is "once"
-            - None if mode is "until_stop"
+        Takes ~10ms.
         """
+        assert self.handle is not None
+        exposure_time_native_unit = self._exposure_time_ms_to_native(exposure_time_ms)
+        self.handle.ExposureTime.set(exposure_time_native_unit)
 
+    def _set_analog_gain(self, gain_db: float) -> None:
+        """
+        Set camera analog gain.
+
+        Args:
+            gain_db: Analog gain in decibels
+
+        Takes ~8ms.
+        """
+        assert self.handle is not None
+        self.handle.Gain.set(gain_db)
+
+    def snap(self, config: AcquisitionChannelConfig) -> np.ndarray:
+        """
+        Acquire a single image in trigger mode.
+
+        Args:
+            config: Acquisition configuration (exposure time, gain, pixel format, etc.)
+
+        Returns:
+            np.ndarray: Image data as numpy array
+        """
         assert self.handle is not None
 
         if self.acquisition_ongoing:
             logger.warning(
                 "camera - requested acquisition while one was already ongoing. returning None."
             )
-            return None
+            raise RuntimeError("acquisition already in progress")
 
-        # set pixel format
-        match self.device_type:
-            case "main":
-                pixel_format_item = CameraConfig.MAIN_PIXEL_FORMAT.value_item
-            case "autofocus":
-                pixel_format_item = LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value_item
-            case _:
-                raise RuntimeError(f"unsupported device type {self.device_type}")
+        # set pixel format (determined from device_type config)
+        self._set_pixel_format()
 
-        assert pixel_format_item is not None
-        pixel_format = pixel_format_item.value
-        assert isinstance(pixel_format, str)
+        self._set_exposure_time(config.exposure_time_ms)
+        self._set_analog_gain(config.analog_gain)
+
+        self.acquisition_ongoing = True
+
+        try:
+            # Ensure camera is in trigger mode before sending software trigger
+            self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
+
+            # send command to trigger acquisition
+            self.handle.TriggerSoftware.send_command()
+
+            # wait for image to arrive
+            img: gxiapi.RawImage | None = self.handle.data_stream[0].get_image()
+
+            if img is None:
+                raise RuntimeError("failed to acquire image")
+
+            match img.get_status():
+                case gxiapi.GxFrameStatusList.INCOMPLETE:
+                    raise RuntimeError("incomplete frame")
+                case gxiapi.GxFrameStatusList.SUCCESS:
+                    pass
+
+            np_img = img.get_numpy_array()
+            assert np_img is not None
+            return np_img.copy()
+
+        finally:
+            self.acquisition_ongoing = False
+
+    def start_streaming(
+        self,
+        config: AcquisitionChannelConfig,
+        callback: tp.Callable[[np.ndarray], None],
+    ) -> None:
+        """
+        Start continuous image streaming in continuous mode.
+
+        Args:
+            config: Acquisition configuration (exposure time, gain, pixel format, etc.)
+            callback: Function to call with each image data (np.ndarray).
+        """
+        assert self.handle is not None
+
+        if self._streaming_active:
+            logger.warning("streaming already active")
+            return
+
+        self._streaming_active = True
+
+        # set pixel format (determined from device_type config)
+        self._set_pixel_format()
+
+        self._set_exposure_time(config.exposure_time_ms)
+        self._set_analog_gain(config.analog_gain)
+
+        def streaming_callback(img: gxiapi.RawImage):
+            """Internal callback that ignores return value and checks streaming flag."""
+            if not self._streaming_active or img is None:  # type: ignore
+                self._clear_acquisition_state()
+                return
+
+            img_status = img.get_status()
+            match img_status:
+                case gxiapi.GxFrameStatusList.INCOMPLETE:
+                    raise RuntimeError("incomplete frame")
+                case gxiapi.GxFrameStatusList.SUCCESS:
+                    pass
+
+            img_np = img.get_numpy_array()
+            assert img_np is not None
+
+            # Call user callback and ignore return value
+            callback(img_np)
+
+        self._set_acquisition_mode(
+            AcquisitionMode.CONTINUOUS,
+            with_cb=streaming_callback,
+        )
+
+    def stop_streaming(self) -> None:
+        """
+        Stop continuous image streaming and reset to trigger mode.
+        """
+        if not self._streaming_active:
+            return
+
+        self._streaming_active = False
+
+        # Reset to trigger mode
+        try:
+            self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
+        except Exception as e:
+            logger.warning(f"error resetting to trigger mode: {e}")
+
+        logger.debug("galaxy camera - streaming stopped")
+
+    def _set_pixel_format(self, pixel_format: str | None = None) -> None:
+        """
+        Set pixel format.
+
+        Args:
+            pixel_format: Pixel format string (e.g., "mono8", "mono10", "mono12").
+                         If None, determines format from device_type configuration.
+
+        Handles the pixel format change by stopping and restarting stream if needed.
+        """
+        assert self.handle is not None
+
+        # If no format provided, determine from device type
+        if pixel_format is None:
+            match self.device_type:
+                case "main":
+                    pixel_format_item = CameraConfig.MAIN_PIXEL_FORMAT.value_item
+                case "autofocus":
+                    pixel_format_item = LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value_item
+                case _:
+                    raise RuntimeError(f"unsupported device type {self.device_type}")
+
+            assert pixel_format_item is not None
+            pixel_format = pixel_format_item.value
+            assert isinstance(pixel_format, str)
+
         pixel_format_range: dict[str, tp.Any] | None = self.handle.PixelFormat.get_range()
         assert pixel_format_range is not None
         format_is_supported = any(
@@ -356,79 +479,6 @@ class GalaxyCamera(Camera):
                     self.handle.stream_on()
             case _:
                 raise RuntimeError(f"unsupported pixel format {pixel_format}")
-
-        # takes ca 10ms
-        exposure_time_native_unit = self._exposure_time_ms_to_native(config.exposure_time_ms)
-        self.handle.ExposureTime.set(exposure_time_native_unit)
-
-        # takes ca 8ms
-        self.handle.Gain.set(config.analog_gain)
-
-        self.acquisition_ongoing = True
-
-        match mode:
-            case "once":
-                assert self.handle is not None
-
-                # Ensure camera is in trigger mode before sending software trigger
-                self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
-
-                # send command to trigger acquisition
-                self.handle.TriggerSoftware.send_command()
-
-                # wait for image to arrive
-                img: gxiapi.RawImage | None = self.handle.data_stream[0].get_image()
-
-                if img is None:
-                    self.acquisition_ongoing = False
-                    return None
-
-                match img.get_status():
-                    case gxiapi.GxFrameStatusList.INCOMPLETE:
-                        self.acquisition_ongoing = False
-                        raise RuntimeError("incomplete frame")
-                    case gxiapi.GxFrameStatusList.SUCCESS:
-                        pass
-
-                np_img = img.get_numpy_array()
-                assert np_img is not None
-                np_img = np_img.copy()
-
-                self.acquisition_ongoing = False
-
-                return np_img
-
-            case "until_stop":
-                assert callback is not None
-                stop_acquisition = False
-
-                def run_callback(img: gxiapi.RawImage):
-                    nonlocal stop_acquisition
-
-                    if stop_acquisition or img is None:  # type: ignore
-                        self._clear_acquisition_state()
-                        return
-
-                    img_status = img.get_status()
-                    match img_status:
-                        case gxiapi.GxFrameStatusList.INCOMPLETE:
-                            raise RuntimeError("incomplete frame")
-                        case gxiapi.GxFrameStatusList.SUCCESS:
-                            pass
-
-                    img_np = img.get_numpy_array()
-                    assert img_np is not None
-
-                    stop_acquisition = callback(img_np)
-
-                    if stop_acquisition:
-                        self._clear_acquisition_state()
-                        return
-
-                self._set_acquisition_mode(
-                    AcquisitionMode.CONTINUOUS,
-                    with_cb=run_callback,
-                )
 
     def get_exposure_time_limits(self) -> HardwareLimitValue:
         """

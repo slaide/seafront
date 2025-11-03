@@ -155,7 +155,7 @@ class Locked[T]:
         self.t = t
 
     @contextmanager
-    def __call__(self, blocking: bool = True) -> tp.Iterator[T | None]:
+    def locked(self, blocking: bool = True) -> tp.Iterator[T | None]:
         if self.lock.acquire(blocking=blocking):
             try:
                 yield self.t
@@ -181,8 +181,8 @@ class SquidAdapter(Microscope):
             self._lock_reasons.append(reason)
             try:
                 with (
-                    self.main_camera(blocking=blocking),
-                    self.focus_camera(blocking=blocking),
+                    self.main_camera.locked(blocking=blocking),
+                    self.focus_camera.locked(blocking=blocking),
                     self.microcontroller.locked(blocking=blocking),
                 ):
                     yield self
@@ -320,8 +320,8 @@ class SquidAdapter(Microscope):
 
         with (
             self.microcontroller.locked() as mc,
-            self.main_camera() as main_camera,
-            self.focus_camera() as focus_camera,
+            self.main_camera.locked() as main_camera,
+            self.focus_camera.locked() as focus_camera,
         ):
             if mc is None:
                 error_internal("microcontroller is busy")
@@ -366,8 +366,8 @@ class SquidAdapter(Microscope):
 
         with (
             self.microcontroller.locked() as mc,
-            self.main_camera() as main_camera,
-            self.focus_camera() as focus_camera,
+            self.main_camera.locked() as main_camera,
+            self.focus_camera.locked() as focus_camera,
         ):
             if mc is None:
                 error_internal("microcontroller is busy")
@@ -767,10 +767,12 @@ class SquidAdapter(Microscope):
 
         return find_x_for_y(leftmost_x, regression_params)
 
-    async def _laser_af_calibrate_here(self) -> cmd.LaserAutofocusCalibrationResponse:
-        """
-        see cmd.LaserAutofocusCalibrate
-        """
+    async def _execute_LaserAutofocusCalibrate(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.LaserAutofocusCalibrate,
+    ) -> cmd.LaserAutofocusCalibrationResponse:
+    
         # Hardcoded calibration parameters
         Z_MM_BACKLASH_COUNTER = 40e-3
         DEBUG_LASER_AF_CALIBRATION = os.getenv("DEBUG_LASER_AF_CALIBRATION", "").lower() == "true"
@@ -785,283 +787,279 @@ class SquidAdapter(Microscope):
         if self.is_in_loading_position:
             cmd.error_internal(detail="now allowed while in loading position")
 
-        with self.microcontroller.locked() as qmc:
-            if qmc is None:
-                error_internal("microcontroller is busy")
+        # Read z_span from machine config
+        conf_z_span_item = LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM.value_item
+        assert conf_z_span_item is not None
+        z_mm_movement_range = conf_z_span_item.floatvalue
+        logger.debug(f"laser autofocus calibration: z_span={z_mm_movement_range}mm, num_steps={num_z_steps_calibrate}")
 
-            # Read z_span from machine config
-            conf_z_span_item = LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM.value_item
-            assert conf_z_span_item is not None
-            z_mm_movement_range = conf_z_span_item.floatvalue
-            logger.debug(f"laser autofocus calibration: z_span={z_mm_movement_range}mm, num_steps={num_z_steps_calibrate}")
+        conf_af_exp_ms_item = LaserAutofocusConfig.EXPOSURE_TIME_MS.value_item
+        assert conf_af_exp_ms_item is not None
+        conf_af_exp_ms = conf_af_exp_ms_item.floatvalue
 
-            conf_af_exp_ms_item = LaserAutofocusConfig.EXPOSURE_TIME_MS.value_item
-            assert conf_af_exp_ms_item is not None
-            conf_af_exp_ms = conf_af_exp_ms_item.floatvalue
+        conf_af_exp_ag_item = LaserAutofocusConfig.CAMERA_ANALOG_GAIN.value_item
+        assert conf_af_exp_ag_item is not None
+        conf_af_exp_ag = conf_af_exp_ag_item.floatvalue
 
-            conf_af_exp_ag_item = LaserAutofocusConfig.CAMERA_ANALOG_GAIN.value_item
-            assert conf_af_exp_ag_item is not None
-            conf_af_exp_ag = conf_af_exp_ag_item.floatvalue
+        z_step_mm = z_mm_movement_range / (num_z_steps_calibrate - 1)
+        half_z_mm = z_mm_movement_range / 2
 
-            z_step_mm = z_mm_movement_range / (num_z_steps_calibrate - 1)
-            half_z_mm = z_mm_movement_range / 2
+        try:
+            current_pos = await qmc.get_last_position()
+            _start_z_mm: float = current_pos.z_pos_mm
 
-            try:
-                current_pos = await qmc.get_last_position()
-                _start_z_mm: float = current_pos.z_pos_mm
-
-                # move down by half z range
-                if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
-                    await qmc.send_cmd(
-                        mc.Command.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
-                    )
-                    await qmc.send_cmd(mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER))
-                else:
-                    await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
-            except IOError as e:
-                self.close()
-                raise DisconnectError() from e
-
-            # Display each peak's height and width
-            class CalibrationData(BaseModel):
-                z_mm: float
-                p: tuple[float, list[float]]
-
-            async def measure_dot_params():
-                # measure pos
-                res = await self.execute(
-                    cmd.AutofocusSnap(exposure_time_ms=conf_af_exp_ms, analog_gain=conf_af_exp_ag)
+            # move down by half z range
+            if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
+                await qmc.send_cmd(
+                    mc.Command.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
                 )
-
-                params = self._get_peak_coords(res._img)
-                return params
-
-            peak_info: list[CalibrationData] = []
-
-            for i in range(num_z_steps_calibrate):
-                if i > 0:
-                    # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                    try:
-                        await qmc.send_cmd(mc.Command.move_by_mm("z", z_step_mm))
-                    except IOError as e:
-                        self.close()
-                        raise DisconnectError() from e
-
-                params = await measure_dot_params()
-
-                peak_info.append(CalibrationData(z_mm=-half_z_mm + i * z_step_mm, p=params))
-
-            # move to original position
-            try:
+                await qmc.send_cmd(mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER))
+            else:
                 await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
-            except IOError as e:
-                self.close()
-                raise DisconnectError() from e
+        except IOError as e:
+            self.close()
+            raise DisconnectError() from e
 
-            class DomainInfo(BaseModel):
-                lowest_x: float
-                highest_x: float
-                peak_xs: list[tuple[list[float], list[float]]]
+        # Display each peak's height and width
+        class CalibrationData(BaseModel):
+            z_mm: float
+            p: tuple[float, list[float]]
 
-            # in the two peak domain, both dots are visible
-            two_peak_domain = DomainInfo(lowest_x=3000, highest_x=0, peak_xs=[])
-            # in the one peak domain, only one dot is visible (the one with the lower x in the two dot domain)
-            one_peak_domain = DomainInfo(lowest_x=3000, highest_x=0, peak_xs=[])
-
-            distances = []
-            distance_x = []
-            for i in peak_info:
-                rightmost_x, p_distances = i.p
-
-                new_distances = [rightmost_x]
-                for p_d in p_distances:
-                    new_distances.append(new_distances[-1] - p_d)
-
-                new_z = [i.z_mm] * len(new_distances)
-
-                distances.extend(new_distances)
-                distance_x.extend(new_z)
-
-                if len(p_distances) == 0:
-                    target_domain = one_peak_domain
-                elif len(p_distances) == 1:
-                    target_domain = two_peak_domain
-                else:
-                    raise ValueError(f"expected 0 or 1 peaks, got {len(p_distances)}")
-
-                for x in new_distances:
-                    target_domain.lowest_x = min(target_domain.lowest_x, x)
-                    target_domain.highest_x = max(target_domain.highest_x, x)
-                    target_domain.peak_xs.append((new_distances, new_z))
-
-            if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_REGRESSION_FIT:
-                plt.figure(figsize=(8, 6))
-                plt.scatter(distance_x, distances, color="blue", label="all peaks")
-
-            # x is dot x
-            # y is z coordinate
-            left_dot_x: list[float] = []
-            left_dot_y: list[float] = []
-            right_dot_x: list[float] = []
-            right_dot_y: list[float] = []
-
-            for peak_y, peak_x in one_peak_domain.peak_xs:
-                left_dot_x.append(peak_x[0])
-                left_dot_y.append(peak_y[0])
-
-            for peak_y, peak_x in two_peak_domain.peak_xs:
-                right_dot_x.append(peak_x[0])
-                right_dot_y.append(peak_y[0])
-                left_dot_x.append(peak_x[1])
-                left_dot_y.append(peak_y[1])
-
-            left_dot_regression = linear_regression(left_dot_x, left_dot_y)
-            right_dot_regression = 0, 0
-            if len(right_dot_x) > 0:
-                # there are at least two possible issues here, that we ignore:
-                # 1) no values present (zero/low signal)
-                # 2) all values are identical (caused by only measuring noise)
-                try:
-                    right_dot_regression = linear_regression(right_dot_x, right_dot_y)
-                except Exception:
-                    pass
-
-            if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_REGRESSION_FIT:
-                # plot one peak domain
-                domain_x = []
-                domain_y = []
-                for py, pz in one_peak_domain.peak_xs:
-                    domain_x.extend(pz)
-                    domain_y.extend(py)
-
-                plt.scatter(
-                    domain_x,
-                    domain_y,
-                    color="green",
-                    marker="x",
-                    label="one peak domain",
-                )
-
-                # plot two peak domain
-                domain_x = []
-                domain_y = []
-                for py, pz in two_peak_domain.peak_xs:
-                    domain_x.extend(pz)
-                    domain_y.extend(py)
-
-                plt.scatter(domain_x, domain_y, color="red", marker="x", label="two peak domain")
-
-                # plot left dot regression
-                slope, intercept = left_dot_regression
-                plt.axline(
-                    (0, intercept),
-                    slope=slope,
-                    color="purple",
-                    label="left dot regression",
-                )
-
-                # plot right dot regression
-                slope, intercept = right_dot_regression
-                plt.axline(
-                    (0, intercept),
-                    slope=slope,
-                    color="black",
-                    label="right dot regression",
-                )
-
-                plt.xlabel("physical z coordinate")
-                plt.ylabel("sensor x coordinate")
-                plt.legend()
-                plt.grid(True)
-                plt.show()
-
-            # -- eval performance, display with pyplot
-            if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_EVAL_FIT:
-                current_pos = await qmc.get_last_position()
-                start_z = current_pos.z_pos_mm
-
-                half_z_mm = z_mm_movement_range / 2
-                num_z_steps_eval = 51
-                z_step_mm = z_mm_movement_range / (num_z_steps_eval - 1)
-
-                if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
-                    await qmc.send_cmd(
-                        mc.Command.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
-                    )
-                    await qmc.send_cmd(mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER))
-                else:
-                    await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
-
-                approximated_z: list[tuple[float, float]] = []
-                for i in range(num_z_steps_eval):
-                    if i > 0:
-                        # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                        await qmc.send_cmd(mc.Command.move_by_mm("z", z_step_mm))
-
-                    approx = await self._approximate_laser_af_z_offset_mm(
-                        cmd.LaserAutofocusCalibrationData(
-                            um_per_px=left_dot_regression[0],
-                            x_reference=left_dot_regression[1],
-                            calibration_position=cmd.Position.zero(),
-                        )
-                    )
-                    current_pos = await qmc.get_last_position()
-                    current_z_mm = current_pos.z_pos_mm
-                    approximated_z.append((current_z_mm - start_z, approx))
-
-                # move to original position
-                await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
-
-                plt.figure(figsize=(8, 6))
-                plt.scatter(
-                    [v[0] * 1e3 for v in approximated_z],
-                    [v[0] * 1e3 for v in approximated_z],
-                    color="green",
-                    label="real/expected",
-                    marker="o",
-                    linestyle="-",
-                )
-                plt.scatter(
-                    [v[0] * 1e3 for v in approximated_z],
-                    [v[1] * 1e3 for v in approximated_z],
-                    color="blue",
-                    label="estimated",
-                    marker="o",
-                    linestyle="-",
-                )
-                plt.scatter(
-                    [v[0] * 1e3 for v in approximated_z],
-                    [(v[1] - v[0]) * 1e3 for v in approximated_z],
-                    color="red",
-                    label="error",
-                    marker="o",
-                    linestyle="-",
-                )
-                plt.xlabel("real z [um]")
-                plt.ylabel("measured z [um]")
-                plt.legend()
-                plt.grid(True)
-                plt.show()
-
-            um_per_px, _x_reference = left_dot_regression
-            x_reference = (await measure_dot_params())[0]
-
-            try:
-                calibration_position = await qmc.get_last_position()
-            except IOError as e:
-                self.close()
-                raise DisconnectError() from e
-
-            calibration_data = cmd.LaserAutofocusCalibrationData(
-                # calculate the conversion factor, based on lowest and highest measured position
-                um_per_px=um_per_px,
-                # set reference position
-                x_reference=x_reference,
-                calibration_position=calibration_position.pos,
+        async def measure_dot_params():
+            # measure pos
+            res = await self.execute(
+                cmd.AutofocusSnap(exposure_time_ms=conf_af_exp_ms, analog_gain=conf_af_exp_ag)
             )
 
-            logger.debug(f"laser autofocus calibration result: um_per_px={um_per_px:.4f}, x_reference={x_reference:.1f}")
-            return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)
+            params = self._get_peak_coords(res._img)
+            return params
+
+        peak_info: list[CalibrationData] = []
+
+        for i in range(num_z_steps_calibrate):
+            if i > 0:
+                # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
+                try:
+                    await qmc.send_cmd(mc.Command.move_by_mm("z", z_step_mm))
+                except IOError as e:
+                    self.close()
+                    raise DisconnectError() from e
+
+            params = await measure_dot_params()
+
+            peak_info.append(CalibrationData(z_mm=-half_z_mm + i * z_step_mm, p=params))
+
+        # move to original position
+        try:
+            await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
+        except IOError as e:
+            self.close()
+            raise DisconnectError() from e
+
+        class DomainInfo(BaseModel):
+            lowest_x: float
+            highest_x: float
+            peak_xs: list[tuple[list[float], list[float]]]
+
+        # in the two peak domain, both dots are visible
+        two_peak_domain = DomainInfo(lowest_x=3000, highest_x=0, peak_xs=[])
+        # in the one peak domain, only one dot is visible (the one with the lower x in the two dot domain)
+        one_peak_domain = DomainInfo(lowest_x=3000, highest_x=0, peak_xs=[])
+
+        distances = []
+        distance_x = []
+        for i in peak_info:
+            rightmost_x, p_distances = i.p
+
+            new_distances = [rightmost_x]
+            for p_d in p_distances:
+                new_distances.append(new_distances[-1] - p_d)
+
+            new_z = [i.z_mm] * len(new_distances)
+
+            distances.extend(new_distances)
+            distance_x.extend(new_z)
+
+            if len(p_distances) == 0:
+                target_domain = one_peak_domain
+            elif len(p_distances) == 1:
+                target_domain = two_peak_domain
+            else:
+                raise ValueError(f"expected 0 or 1 peaks, got {len(p_distances)}")
+
+            for x in new_distances:
+                target_domain.lowest_x = min(target_domain.lowest_x, x)
+                target_domain.highest_x = max(target_domain.highest_x, x)
+                target_domain.peak_xs.append((new_distances, new_z))
+
+        if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_REGRESSION_FIT:
+            plt.figure(figsize=(8, 6))
+            plt.scatter(distance_x, distances, color="blue", label="all peaks")
+
+        # x is dot x
+        # y is z coordinate
+        left_dot_x: list[float] = []
+        left_dot_y: list[float] = []
+        right_dot_x: list[float] = []
+        right_dot_y: list[float] = []
+
+        for peak_y, peak_x in one_peak_domain.peak_xs:
+            left_dot_x.append(peak_x[0])
+            left_dot_y.append(peak_y[0])
+
+        for peak_y, peak_x in two_peak_domain.peak_xs:
+            right_dot_x.append(peak_x[0])
+            right_dot_y.append(peak_y[0])
+            left_dot_x.append(peak_x[1])
+            left_dot_y.append(peak_y[1])
+
+        left_dot_regression = linear_regression(left_dot_x, left_dot_y)
+        right_dot_regression = 0, 0
+        if len(right_dot_x) > 0:
+            # there are at least two possible issues here, that we ignore:
+            # 1) no values present (zero/low signal)
+            # 2) all values are identical (caused by only measuring noise)
+            try:
+                right_dot_regression = linear_regression(right_dot_x, right_dot_y)
+            except Exception:
+                pass
+
+        if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_REGRESSION_FIT:
+            # plot one peak domain
+            domain_x = []
+            domain_y = []
+            for py, pz in one_peak_domain.peak_xs:
+                domain_x.extend(pz)
+                domain_y.extend(py)
+
+            plt.scatter(
+                domain_x,
+                domain_y,
+                color="green",
+                marker="x",
+                label="one peak domain",
+            )
+
+            # plot two peak domain
+            domain_x = []
+            domain_y = []
+            for py, pz in two_peak_domain.peak_xs:
+                domain_x.extend(pz)
+                domain_y.extend(py)
+
+            plt.scatter(domain_x, domain_y, color="red", marker="x", label="two peak domain")
+
+            # plot left dot regression
+            slope, intercept = left_dot_regression
+            plt.axline(
+                (0, intercept),
+                slope=slope,
+                color="purple",
+                label="left dot regression",
+            )
+
+            # plot right dot regression
+            slope, intercept = right_dot_regression
+            plt.axline(
+                (0, intercept),
+                slope=slope,
+                color="black",
+                label="right dot regression",
+            )
+
+            plt.xlabel("physical z coordinate")
+            plt.ylabel("sensor x coordinate")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
+        # -- eval performance, display with pyplot
+        if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_EVAL_FIT:
+            current_pos = await qmc.get_last_position()
+            start_z = current_pos.z_pos_mm
+
+            half_z_mm = z_mm_movement_range / 2
+            num_z_steps_eval = 51
+            z_step_mm = z_mm_movement_range / (num_z_steps_eval - 1)
+
+            if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
+                await qmc.send_cmd(
+                    mc.Command.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
+                )
+                await qmc.send_cmd(mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER))
+            else:
+                await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
+
+            approximated_z: list[tuple[float, float]] = []
+            for i in range(num_z_steps_eval):
+                if i > 0:
+                    # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
+                    await qmc.send_cmd(mc.Command.move_by_mm("z", z_step_mm))
+
+                approx = await self._approximate_laser_af_z_offset_mm(
+                    cmd.LaserAutofocusCalibrationData(
+                        um_per_px=left_dot_regression[0],
+                        x_reference=left_dot_regression[1],
+                        calibration_position=cmd.Position.zero(),
+                    )
+                )
+                current_pos = await qmc.get_last_position()
+                current_z_mm = current_pos.z_pos_mm
+                approximated_z.append((current_z_mm - start_z, approx))
+
+            # move to original position
+            await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
+
+            plt.figure(figsize=(8, 6))
+            plt.scatter(
+                [v[0] * 1e3 for v in approximated_z],
+                [v[0] * 1e3 for v in approximated_z],
+                color="green",
+                label="real/expected",
+                marker="o",
+                linestyle="-",
+            )
+            plt.scatter(
+                [v[0] * 1e3 for v in approximated_z],
+                [v[1] * 1e3 for v in approximated_z],
+                color="blue",
+                label="estimated",
+                marker="o",
+                linestyle="-",
+            )
+            plt.scatter(
+                [v[0] * 1e3 for v in approximated_z],
+                [(v[1] - v[0]) * 1e3 for v in approximated_z],
+                color="red",
+                label="error",
+                marker="o",
+                linestyle="-",
+            )
+            plt.xlabel("real z [um]")
+            plt.ylabel("measured z [um]")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
+        um_per_px, _x_reference = left_dot_regression
+        x_reference = (await measure_dot_params())[0]
+
+        try:
+            calibration_position = await qmc.get_last_position()
+        except IOError as e:
+            self.close()
+            raise DisconnectError() from e
+
+        calibration_data = cmd.LaserAutofocusCalibrationData(
+            # calculate the conversion factor, based on lowest and highest measured position
+            um_per_px=um_per_px,
+            # set reference position
+            x_reference=x_reference,
+            calibration_position=calibration_position.pos,
+        )
+
+        logger.debug(f"laser autofocus calibration result: um_per_px={um_per_px:.4f}, x_reference={x_reference:.1f}")
+        return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)
 
     async def get_current_state(self) -> AdapterState:
         try:
@@ -1093,7 +1091,7 @@ class SquidAdapter(Microscope):
         Get hardware-specific limits by querying camera and combining with SQUID mechanical limits.
         """
         # Get camera-specific limits (exposure time and analog gain)
-        with self.main_camera() as main_camera:
+        with self.main_camera.locked() as main_camera:
             if main_camera is None:
                 raise RuntimeError("Main camera not available for hardware limits query")
 
@@ -1151,69 +1149,729 @@ class SquidAdapter(Microscope):
 
         return False, ""
 
-    async def execute[T](self, command: cmd.BaseCommand[T]) -> T:  # type: ignore[misc]
+    async def _execute_EstablishHardwareConnection(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.EstablishHardwareConnection,
+    ):
+        if not self.is_connected:
+            try:
+                # if no connection has yet been established, connecting will have the hardware in an undefined state
+                logger.debug("squid - connect - connecting to hardware")
+                self.open_connections()
+                # so after connecting:
+                # 1) turn off all illumination
+                logger.debug("squid - connect - turning off illumination")
+                await self.execute(IlluminationEndAll())
+                logger.debug("squid - connect - turned off illumination")
+                # 2) perform home maneuver to reset stage position to known values
+                logger.debug("squid - connect - calibrating stage position")
+
+                await self.home()
+
+                logger.info("squid - connect - calibrated stage")
+
+            except DisconnectError:
+                error_message = "hardware connection could not be established"
+                logger.critical(f"squid - connect - {error_message}")
+                error_internal(error_message)
+
+        logger.debug("squid - connected.")
+
+        result = BasicSuccessResponse()
+        return result  # type: ignore[no-any-return]
+
+    async def _execute_LoadingPositionEnter(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.LoadingPositionEnter
+    ):
+        if self.is_in_loading_position:
+            cmd.error_internal(detail="already in loading position")
+
+        self.state = CoreState.Moving
+
+        # home z
+        await qmc.send_cmd(mc.Command.home("z"))
+
+        # clear clamp in y first
+        await qmc.send_cmd(mc.Command.move_to_mm("y", 30))
+        # then clear clamp in x
+        await qmc.send_cmd(mc.Command.move_to_mm("x", 30))
+
+        # then home y, x
+        await qmc.send_cmd(mc.Command.home("y"))
+        await qmc.send_cmd(mc.Command.home("x"))
+
+        self.is_in_loading_position = True
+
+        self.state = CoreState.LoadingPosition
+
+        logger.debug("squid - entered loading position")
+
+        result = cmd.BasicSuccessResponse()
+        return result  # type: ignore[no-any-return]
+
+    async def _execute_LoadingPositionLeave(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.LoadingPositionLeave
+    ):
+        if not self.is_in_loading_position:
+            cmd.error_internal(detail="not in loading position")
+
+        self.state = CoreState.Moving
+
+        await qmc.send_cmd(mc.Command.move_to_mm("x", 30))
+        await qmc.send_cmd(mc.Command.move_to_mm("y", 30))
+        await qmc.send_cmd(mc.Command.move_to_mm("z", 1))
+
+        self.is_in_loading_position = False
+
+        self.state = CoreState.Idle
+
+        logger.debug("squid - left loading position")
+
+        result = cmd.BasicSuccessResponse()
+        return result
+
+    async def _execute_MoveBy(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.MoveBy
+    ):
+        if self.is_in_loading_position:
+            cmd.error_internal(detail="now allowed while in loading position")
+
+        # Calculate target position after relative movement
+        try:
+            current_stage_position = await qmc.get_last_position()
+        except IOError as e:
+            self.close()
+            raise DisconnectError() from e
+
+        current_x = self._pos_x_measured_to_real(current_stage_position.x_pos_mm)
+        current_y = self._pos_y_measured_to_real(current_stage_position.y_pos_mm)
+
+        if command.axis == "x":
+            target_x = current_x + command.distance_mm
+            target_y = current_y
+        elif command.axis == "y":
+            target_x = current_x
+            target_y = current_y + command.distance_mm
+        else:  # z or other axis
+            target_x = current_x
+            target_y = current_y
+
+        # Check forbidden areas for X,Y movement
+        is_forbidden, error_message = self.is_position_forbidden(
+            target_x, target_y
+        )
+        if is_forbidden:
+            cmd.error_internal(detail=error_message)
+
+        self.state = CoreState.Moving
+
+        await qmc.send_cmd(mc.Command.move_by_mm(command.axis, command.distance_mm))
+
+        self.state = CoreState.Idle
+
+        logger.debug("squid - moved by")
+
+        result = cmd.MoveByResult(moved_by_mm=command.distance_mm, axis=command.axis)
+        return result
+
+    async def _execute_MoveTo(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.MoveTo
+    ):
+        if self.is_in_loading_position:
+            cmd.error_internal(detail="now allowed while in loading position")
+
+        if command.x_mm is not None and command.x_mm < 0:
+            cmd.error_internal(detail=f"x coordinate out of bounds {command.x_mm = }")
+        if command.y_mm is not None and command.y_mm < 0:
+            cmd.error_internal(detail=f"y coordinate out of bounds {command.y_mm = }")
+        if command.z_mm is not None and command.z_mm < 0:
+            cmd.error_internal(detail=f"z coordinate out of bounds {command.z_mm = }")
+
+        # Check forbidden areas if we have complete X,Y coordinates
+        if command.x_mm is not None and command.y_mm is not None:
+            is_forbidden, error_message = self.is_position_forbidden(
+                command.x_mm, command.y_mm
+            )
+            if is_forbidden:
+                cmd.error_internal(detail=error_message)
+
+        prev_state = self.state
+        self.state = CoreState.Moving
+
+        approach_x_before_y = True
+
+        if command.x_mm is not None and command.y_mm is not None:
+            current_stage_position = await qmc.get_last_position()
+
+            # plate center is (very) rougly at x=61mm, y=40mm
+            # we have: start position, target position, and two possible edges to move across
+
+            center = 61.0, 40.0
+            _start = (
+                current_stage_position.x_pos_mm,
+                current_stage_position.y_pos_mm,
+            )
+            _target = command.x_mm, command.y_mm
+
+            # if edge1 is closer to center, then approach_x_before_y=True, else approach_x_before_y=False
+            edge1 = command.x_mm, current_stage_position.y_pos_mm
+            edge2 = current_stage_position.x_pos_mm, command.y_mm
+
+            def dist(p1: tuple[float, float], p2: tuple[float, float]) -> float:
+                return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
+
+            approach_x_before_y = dist(edge1, center) < dist(edge2, center)
+
+            # we want to choose the edge that is closest to the center, because this avoid moving through the forbidden plate corners
+
+        if approach_x_before_y:
+            if command.x_mm is not None:
+                x_mm = self._pos_x_real_to_measured(command.x_mm)
+                if x_mm < 0:
+                    cmd.error_internal(
+                        detail=f"calibrated x coordinate out of bounds {x_mm = }"
+                    )
+                await qmc.send_cmd(mc.Command.move_to_mm("x", x_mm))
+
+            if command.y_mm is not None:
+                y_mm = self._pos_y_real_to_measured(command.y_mm)
+                if y_mm < 0:
+                    cmd.error_internal(
+                        detail=f"calibrated y coordinate out of bounds {y_mm = }"
+                    )
+                await qmc.send_cmd(mc.Command.move_to_mm("y", y_mm))
+        else:
+            if command.y_mm is not None:
+                y_mm = self._pos_y_real_to_measured(command.y_mm)
+                if y_mm < 0:
+                    cmd.error_internal(
+                        detail=f"calibrated y coordinate out of bounds {y_mm = }"
+                    )
+                await qmc.send_cmd(mc.Command.move_to_mm("y", y_mm))
+
+            if command.x_mm is not None:
+                x_mm = self._pos_x_real_to_measured(command.x_mm)
+                if x_mm < 0:
+                    cmd.error_internal(
+                        detail=f"calibrated x coordinate out of bounds {x_mm = }"
+                    )
+                await qmc.send_cmd(mc.Command.move_to_mm("x", x_mm))
+
+        if command.z_mm is not None:
+            z_mm = self._pos_z_real_to_measured(command.z_mm)
+            if z_mm < 0:
+                cmd.error_internal(
+                    detail=f"calibrated z coordinate out of bounds {z_mm = }"
+                )
+            await qmc.send_cmd(mc.Command.move_to_mm("z", z_mm))
+
+        self.state = prev_state
+
+        logger.debug("squid - moved to")
+
+        result = cmd.BasicSuccessResponse()
+        return result
+
+    async def _execute_MoveToWell(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.MoveToWell
+    ):
+        if self.is_in_loading_position:
+            cmd.error_internal(detail="now allowed while in loading position")
+
+        plate = command.plate_type
+
+        x_mm = plate.get_well_offset_x(command.well_name) + plate.Well_size_x_mm / 2
+        y_mm = plate.get_well_offset_y(command.well_name) + plate.Well_size_y_mm / 2
+
+        # Check forbidden areas for the target well center position
+        is_forbidden, error_message = self.is_position_forbidden(
+            x_mm, y_mm
+        )
+        if is_forbidden:
+            cmd.error_internal(detail=f"Well {command.well_name} center position is in forbidden area - {error_message}")
+
+        # move in 2d grid, no diagonals (slower, but safer)
+        res = await self.execute(cmd.MoveTo(x_mm=x_mm, y_mm=None))
+        res = await self.execute(cmd.MoveTo(x_mm=None, y_mm=y_mm))
+
+        logger.debug("squid - moved to well")
+
+        result = cmd.BasicSuccessResponse()
+        return result
+
+    async def _execute_ChannelStreamEnd(
+        self,
+        command:cmd.ChannelStreamEnd
+    ):
+        if self.stream_callback is None:
+            cmd.error_internal(detail="not currently streaming")
+
+        logger.debug("squid - requested stream stop")
+
+        # If natural cleanup didn't happen, force comprehensive cleanup to prevent desync
+        if self.stream_callback is not None:
+            logger.warning("squid - streaming thread didn't clean up naturally, forcing comprehensive cleanup")
+
+            # Comprehensive camera state reset
+            try:
+                with self.main_camera.locked(blocking=False) as cam:
+                    if cam is None:
+                        raise RuntimeError("failed to acquire camera to stop streaming!")
+
+                    logger.debug("squid - stopping camera streaming")
+                    cam.stop_streaming()
+                    logger.debug("squid - forced camera streaming stop")
+            except Exception as e:
+                logger.warning(f"squid - failed to force camera streaming stop: {e}")
+            
+            # Find channel config to clean up illumination
+            channel_config = None
+            for ch in self.channels:
+                if ch.handle == command.channel.handle:
+                    channel_config = ch
+                    break
+
+            if channel_config is not None:
+                try:
+                    illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+                    with self.microcontroller.locked() as qmc:
+                        if qmc is None:
+                            logger.debug("failed to acquire microcontroller locl to turn off illumination!!")
+                        else:
+                            await qmc.send_cmd(mc.Command.illumination_end(illum_code))
+                            logger.debug(f"squid - forced illumination cleanup for channel {command.channel.handle}")
+                except Exception as e:
+                    logger.warning(f"squid - failed to force illumination cleanup: {e}")
+
+            # Force microscope state cleanup
+            self.stream_callback = None
+            self.state = CoreState.Idle
+            logger.debug("squid - completed forced comprehensive cleanup")
+
+        result = cmd.BasicSuccessResponse()
+        return result  # type: ignore[no-any-return]
+
+    async def _execute_ChannelSnapshot(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.ChannelSnapshot
+    ):
+        # Find channel config by handle and get illumination code from source slot
+        channel_config = None
+        for ch in self.channels:
+            if ch.handle == command.channel.handle:
+                channel_config = ch
+                break
+
+        if channel_config is None:
+            cmd.error_internal(
+                detail=f"Channel handle '{command.channel.handle}' not found in channel configuration"
+            )
+
+        try:
+            illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+        except Exception as e:
+            cmd.error_internal(
+                detail=f"Invalid illumination source slot {channel_config.source_slot} for channel {command.channel.handle}: {e}"
+            )
+
+        # Debug output for channel and filter selection
+        logger.debug(f"channel snap - using channel '{channel_config.name}' (handle: {channel_config.handle}, illumination slot: {channel_config.source_slot})")
+
+        GlobalConfigHandler.override(command.machine_config)
+
+        if self.stream_callback is not None:
+            cmd.error_internal(detail="Cannot take snapshot while camera is streaming")
+
+        self.state = CoreState.ChannelSnap
+
+        # Validate channel configuration for acquisition
+        self.validate_channel_for_acquisition(command.channel)
+
+        # Handle filter wheel positioning if filter is specified
+        if command.channel.filter_handle is not None:
+            # Find filter config by handle
+            filter_config = None
+            for f in self.filters:
+                if f.handle == command.channel.filter_handle:
+                    filter_config = f
+                    break
+
+            if filter_config is None:
+                cmd.error_internal(
+                    detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
+                )
+
+            try:
+                logger.debug(f"channel snap - using filter '{filter_config.name}' (handle: {filter_config.handle}, wheel position: {filter_config.slot})")
+                await qmc.filter_wheel_set_position(filter_config.slot)
+            except Exception as e:
+                cmd.error_internal(
+                    detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
+                )
+        else:
+            logger.debug("channel snap - no filter specified for this channel")
+
+        logger.debug("channel snap - before illum on")
+        # Get calibrated intensity for this channel
+        calibrated_intensity = self.illumination_controller.get_calibrated_intensity(
+            command.channel.handle, command.channel.illum_perc
+        )
+
+        # For LED matrix sources (brightfield), intensity is controlled via RGB values
+        if illum_code.is_led_matrix:
+            # Convert calibrated intensity to RGB brightness (0-1 range)
+            rgb_brightness = calibrated_intensity / 100.0
+            await qmc.send_cmd(
+                mc.Command.illumination_begin(
+                    illum_code,
+                    100.0,  # intensity_percent is ignored for LED matrix
+                    rgb_brightness,  # R
+                    rgb_brightness,  # G
+                    rgb_brightness   # B
+                )
+            )
+        else:
+            # For regular sources (lasers), use intensity directly
+            await qmc.send_cmd(
+                mc.Command.illumination_begin(illum_code, calibrated_intensity)
+            )
+
+        with self.main_camera.locked() as main_camera:
+            if main_camera is None:
+                error_internal("main camera is busy")
+
+            logger.debug("channel snap - before acq")
+
+            # even if acqusition fails, ensure light is turned off again!
+            try:
+                img = main_camera.snap(command.channel)
+            finally:
+                logger.debug("channel snap - after acq")
+
+                await qmc.send_cmd(mc.Command.illumination_end(illum_code))
+                logger.debug("channel snap - after illum off")
+
+            self.state = CoreState.Idle
+
+            img, cambits = _process_image(img, camera=main_camera)
+
+        logger.debug("squid - took channel snapshot")
+
+        result = cmd.ImageAcquiredResponse()
+        result._img = img
+        result._cambits = cambits
+        return result
+
+    async def _execute_ChannelStreamBegin(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.ChannelStreamBegin
+    ):
+        if self.stream_callback is not None:
+            cmd.error_internal(detail="Streaming already active - stop current stream before starting a new one")
+
+        # Find channel config by handle and get illumination code from source slot
+        channel_config = None
+        for ch in self.channels:
+            if ch.handle == command.channel.handle:
+                channel_config = ch
+                break
+
+        if channel_config is None:
+            cmd.error_internal(
+                detail=f"Channel handle '{command.channel.handle}' not found in channel configuration"
+            )
+
+        try:
+            illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+        except Exception as e:
+            cmd.error_internal(
+                detail=f"Invalid illumination source slot {channel_config.source_slot} for channel {command.channel.handle}: {e}"
+            )
+
+        GlobalConfigHandler.override(command.machine_config)
+
+        self.state = CoreState.ChannelStream
+
+        # Validate channel configuration for acquisition
+        self.validate_channel_for_acquisition(command.channel)
+
+        # Handle filter wheel positioning if filter is specified
+        if command.channel.filter_handle is not None:
+            # Find filter config by handle
+            filter_config = None
+            for f in self.filters:
+                if f.handle == command.channel.filter_handle:
+                    filter_config = f
+                    break
+
+            if filter_config is None:
+                cmd.error_internal(
+                    detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
+                )
+
+            try:
+                logger.debug(f"channel stream - setting filter wheel to position {filter_config.slot} ({filter_config.name})")
+                await qmc.filter_wheel_set_position(filter_config.slot)
+            except Exception as e:
+                cmd.error_internal(
+                    detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
+                )
+
+        # Get calibrated intensity for this channel
+        calibrated_intensity = self.illumination_controller.get_calibrated_intensity(
+            command.channel.handle, command.channel.illum_perc
+        )
+
+        # For LED matrix sources (brightfield), intensity is controlled via RGB values
+        if illum_code.is_led_matrix:
+            # Convert calibrated intensity to RGB brightness (0-1 range)
+            rgb_brightness = calibrated_intensity / 100.0
+            await qmc.send_cmd(
+                mc.Command.illumination_begin(
+                    illum_code,
+                    100.0,  # intensity_percent is ignored for LED matrix
+                    rgb_brightness,  # R
+                    rgb_brightness,  # G
+                    rgb_brightness   # B
+                )
+            )
+        else:
+            # For regular sources (lasers), use intensity directly
+            await qmc.send_cmd(
+                mc.Command.illumination_begin(illum_code, calibrated_intensity)
+            )
+
+        def forward_image(img: np.ndarray) -> None:
+            if self.stream_callback is None:
+                return
+
+            img_np = img.copy()
+
+            # camera must only be locked for specific image acquisition, not for the whole duration where an image may be acquired
+            # there is currently no way to solve this well.. (this current solution is quite brittle)
+            with self.main_camera.locked() as main_camera:
+                if main_camera is None:
+                    error_internal("main camera is busy")
+                img_np, cambits = _process_image(img_np, camera=main_camera)
+
+            self.stream_callback(img_np)
+
+        with self.main_camera.locked() as main_camera:
+            if main_camera is None:
+                error_internal("main camera is busy")
+
+            main_camera.start_streaming(
+                command.channel,
+                callback=forward_image,
+            )
+
+        logger.debug("squid - channel stream begin")
+
+        result = cmd.StreamingStartedResponse(channel=command.channel)
+        return result
+
+    async def _execute_AutofocusApproachTargetDisplacement(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.AutofocusApproachTargetDisplacement
+    ):
+        # Extract values from command for use in nested function
+        config_file = command.config_file
+        target_offset_um = command.target_offset_um
+
+        async def _estimate_offset_mm():
+            res = await self.execute(
+                cmd.AutofocusMeasureDisplacement(config_file=config_file)
+            )
+
+            current_displacement_um = res.displacement_um
+            assert current_displacement_um is not None
+
+            return (target_offset_um - current_displacement_um) * 1e-3
+
+        if self.is_in_loading_position:
+            cmd.error_internal(detail="now allowed while in loading position")
+
+        if self.state != CoreState.Idle:
+            cmd.error_internal(detail="cannot move while in non-idle state")
+
+        # get autofocus calibration data
+        conf_af_calib_x = LaserAutofocusConfig.CALIBRATION_X_PEAK_POS.value_item.floatvalue
+        conf_af_calib_umpx = LaserAutofocusConfig.CALIBRATION_UM_PER_PX.value_item.floatvalue
+        # autofocus_calib=LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx,x_reference=conf_af_calib_x,calibration_position=Position.zero())
+
+        # we are looking for a z coordinate where the measured dot_x is equal to this target_x.
+        # we can estimate the current z offset based on the currently measured dot_x.
+        # then we loop:
+        #   we move by the estimated offset to reduce the difference between target_x and dot_x.
+        #   then we check if we are at target_x.
+        #     if we have not reached it, we move further in that direction, based on another estimate.
+        #     if have overshot (moved past) it, we move back by some estimate.
+        #     terminate when dot_x is within a margin of target_x.
+
+        OFFSET_MOVEMENT_THRESHOLD_MM = 0.5e-3
+
+        current_state = await qmc.get_last_position()
+        current_z = current_state.z_pos_mm
+        initial_z = current_z
+
+        if command.pre_approach_refz:
+            refz_item = None
+            try:
+                refz_item = LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value_item
+            except KeyError:
+                cmd.error_internal(
+                    detail="laser.autofocus.calibration.ref_z_mm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set"
+                )
+
+            assert refz_item is not None
+
+            # move to reference z, only if it is far enough away to make a move worth it
+            if (
+                math.fabs(current_z - refz_item.floatvalue)
+                > OFFSET_MOVEMENT_THRESHOLD_MM
+            ):
+                res = await self.execute(
+                    cmd.MoveTo(
+                        x_mm=None,
+                        y_mm=None,
+                        z_mm=refz_item.floatvalue,
+                    )
+                )
+
+            logger.debug("autofocus - did pre approach refz")
+
+        old_state = self.state
+        self.state = CoreState.Moving
+
+        last_distance_estimate_mm = 0.0
+        num_compensating_moves = 0
+        reached_threshold = False
+        try:
+            last_distance_estimate_mm = await _estimate_offset_mm()
+            logger.debug("autofocus - estimated offset")
+            last_z_mm = (await qmc.get_last_position()).z_pos_mm
+            MAX_MOVEMENT_RANGE_MM = 0.3  # should be derived from the calibration data, but this value works fine in practice
+            if math.fabs(last_distance_estimate_mm) > MAX_MOVEMENT_RANGE_MM:
+                cmd.error_internal(
+                    detail="measured autofocus focal plane offset too large"
+                )
+
+            for rep_i in range(command.max_num_reps):
+                if rep_i == 0:
+                    distance_estimate_mm = last_distance_estimate_mm
+                else:
+                    distance_estimate_mm = await _estimate_offset_mm()
+                    logger.debug("autofocus - estimated offset")
+
+                # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
+                # (since this indicates that we have moved away from the focal plane, which should not happen)
+                if rep_i > 0 and math.fabs(last_distance_estimate_mm) < math.fabs(
+                    distance_estimate_mm
+                ):
+                    # move back to last z, since that seemed like the better position to be in
+                    await qmc.send_cmd(mc.Command.move_to_mm("z", last_z_mm))
+                    logger.debug("autofocus - reset z to known good position")
+                    # TODO unsure if this is the best approach. we cannot do better, but we also have not actually gotten close to the offset
+                    reached_threshold = True
+                    break
+
+                last_distance_estimate_mm = distance_estimate_mm
+                last_z_mm = (await qmc.get_last_position()).z_pos_mm
+
+                # if movement distance is not worth compensating, stop
+                if math.fabs(distance_estimate_mm) < OFFSET_MOVEMENT_THRESHOLD_MM:
+                    reached_threshold = True
+                    break
+
+                await qmc.send_cmd(mc.Command.move_by_mm("z", distance_estimate_mm))
+                num_compensating_moves += 1
+                logger.debug("autofocus - refined z")
+
+        except Exception:
+            # if any interaction failed, attempt to reset z position to known somewhat-good position
+            await qmc.send_cmd(mc.Command.move_to_mm("z", initial_z))
+            logger.debug("autofocus - reset z position")
+        finally:
+            self.state = old_state
+
+        logger.debug("squid - used autofocus to approach target displacement")
+
+        res = cmd.AutofocusApproachTargetDisplacementResult(
+            num_compensating_moves=num_compensating_moves,
+            uncompensated_offset_mm=last_distance_estimate_mm,
+            reached_threshold=reached_threshold,
+        )
+        return res
+
+    async def _execute_AutofocusSnap(
+        self,
+        qmc:mc.Microcontroller,
+        command:cmd.AutofocusSnap
+    ):
+        if command.turn_laser_on:
+            await qmc.send_cmd(mc.Command.af_laser_illum_begin())
+            logger.debug("squid - autofocus - turned laser on")
+
+        channel_config = sc.AcquisitionChannelConfig(
+            name="Laser Autofocus",  # unused
+            handle="laser_autofocus",  # unused
+            illum_perc=100,  # unused
+            exposure_time_ms=command.exposure_time_ms,
+            analog_gain=command.analog_gain,
+            z_offset_um=0,  # unused
+            num_z_planes=0,  # unused
+            delta_z_um=0,  # unused
+        )
+
+        with self.focus_camera.locked() as focus_camera:
+            if focus_camera is None:
+                error_internal("focus camera is busy")
+            img = focus_camera.snap(channel_config)
+
+        logger.debug("squid - autofocus - acquired image")
+
+        if command.turn_laser_off:
+            await qmc.send_cmd(mc.Command.af_laser_illum_end())
+            logger.debug("squid - autofocus - turned laser off")
+
+        result = cmd.AutofocusSnapResult(
+            width_px=img.shape[1],
+            height_px=img.shape[0],
+        )
+
+        # blur laser autofocus image to get rid of some noise
+        # img = scipy.ndimage.gaussian_filter(img, sigma=1.0) # this takes 5 times as long as cv2
+        img = cv2.GaussianBlur(img, (3, 3), sigmaX=1.0, borderType=cv2.BORDER_DEFAULT)
+        logger.debug("squid - autofocus - applied blur to image")
+
+        result._img = img
+        result._channel = channel_config
+        return result
+
+    #async def _execute_(self,command:cmd.)
+
+    async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         # Validate command against hardware limits first
         self.validate_command(command)
 
         # Handle ChannelStreamEnd without locking to avoid deadlock
         if isinstance(command, cmd.ChannelStreamEnd):
-            if self.stream_callback is None:
-                cmd.error_internal(detail="not currently streaming")
-
-            self._stop_streaming_flag = True
-            logger.debug("squid - requested stream stop")
-
-            # Wait up to 1 second for the camera streaming thread to naturally clean up
-            # This gives the forward_image callback a chance to run and do proper cleanup
-            cleanup_timeout_s = 1.0
-            poll_interval_s = 0.1
-            max_polls = int(cleanup_timeout_s / poll_interval_s)
-
-            for _ in range(max_polls):
-                if self.stream_callback is None:
-                    # Natural cleanup completed
-                    logger.debug("squid - streaming cleaned up naturally")
-                    break
-                await asyncio.sleep(poll_interval_s)
-
-            # If natural cleanup didn't happen, force comprehensive cleanup to prevent desync
-            if self.stream_callback is not None:
-                logger.warning("squid - streaming thread didn't clean up naturally, forcing comprehensive cleanup")
-
-                # Comprehensive camera state reset
-                try:
-                    with self.main_camera() as cam:
-                        if cam is not None:
-                            logger.debug("squid - stopping camera acquisition")
-                            cam.stop_acquisition()
-                            logger.debug("squid - forced camera streaming stop")
-                except Exception as e:
-                    logger.warning(f"squid - failed to force camera streaming stop: {e}")
-                
-                # Find channel config to clean up illumination
-                channel_config = None
-                for ch in self.channels:
-                    if ch.handle == command.channel.handle:
-                        channel_config = ch
-                        break
-
-                if channel_config is not None:
-                    try:
-                        illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
-                        with self.microcontroller.locked() as qmc:
-                            if qmc is not None:
-                                await qmc.send_cmd(mc.Command.illumination_end(illum_code))
-                                logger.debug(f"squid - forced illumination cleanup for channel {command.channel.handle}")
-                    except Exception as e:
-                        logger.warning(f"squid - failed to force illumination cleanup: {e}")
-
-                # Force microscope state cleanup
-                self.stream_callback = None
-                self.state = CoreState.Idle
-                logger.debug("squid - completed forced comprehensive cleanup")
-
-            result = cmd.BasicSuccessResponse()
-            return result  # type: ignore[no-any-return]
+            result = await self._execute_ChannelStreamEnd(command)
+            return result # type: ignore[no-any-return]
 
         with self.microcontroller.locked() as qmc:
             if qmc is None:
@@ -1223,244 +1881,28 @@ class SquidAdapter(Microscope):
                 logger.debug(f"squid - executing {type(command).__qualname__}")
 
                 if isinstance(command, cmd.EstablishHardwareConnection):
-                    if not self.is_connected:
-                        try:
-                            # if no connection has yet been established, connecting will have the hardware in an undefined state
-                            logger.debug("squid - connect - connecting to hardware")
-                            self.open_connections()
-                            # so after connecting:
-                            # 1) turn off all illumination
-                            logger.debug("squid - connect - turning off illumination")
-                            await self.execute(IlluminationEndAll())
-                            logger.debug("squid - connect - turned off illumination")
-                            # 2) perform home maneuver to reset stage position to known values
-                            logger.debug("squid - connect - calibrating stage position")
-
-                            await self.home()
-
-                            logger.info("squid - connect - calibrated stage")
-
-                        except DisconnectError:
-                            error_message = "hardware connection could not be established"
-                            logger.critical(f"squid - connect - {error_message}")
-                            error_internal(error_message)
-
-                    logger.debug("squid - connected.")
-
-                    result = BasicSuccessResponse()
-                    return result  # type: ignore[no-any-return]
+                    result = await self._execute_EstablishHardwareConnection(qmc,command)
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.LoadingPositionEnter):
-                    if self.is_in_loading_position:
-                        cmd.error_internal(detail="already in loading position")
-
-                    self.state = CoreState.Moving
-
-                    # home z
-                    await qmc.send_cmd(mc.Command.home("z"))
-
-                    # clear clamp in y first
-                    await qmc.send_cmd(mc.Command.move_to_mm("y", 30))
-                    # then clear clamp in x
-                    await qmc.send_cmd(mc.Command.move_to_mm("x", 30))
-
-                    # then home y, x
-                    await qmc.send_cmd(mc.Command.home("y"))
-                    await qmc.send_cmd(mc.Command.home("x"))
-
-                    self.is_in_loading_position = True
-
-                    self.state = CoreState.LoadingPosition
-
-                    logger.debug("squid - entered loading position")
-
-                    result = cmd.BasicSuccessResponse()
-                    return result  # type: ignore[no-any-return]
+                    result = await self._execute_LoadingPositionEnter(qmc,command)
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.LoadingPositionLeave):
-                    if not self.is_in_loading_position:
-                        cmd.error_internal(detail="not in loading position")
-
-                    self.state = CoreState.Moving
-
-                    await qmc.send_cmd(mc.Command.move_to_mm("x", 30))
-                    await qmc.send_cmd(mc.Command.move_to_mm("y", 30))
-                    await qmc.send_cmd(mc.Command.move_to_mm("z", 1))
-
-                    self.is_in_loading_position = False
-
-                    self.state = CoreState.Idle
-
-                    logger.debug("squid - left loading position")
-
-                    result = cmd.BasicSuccessResponse()
-                    return result  # type: ignore[no-any-return]
+                    result = await self._execute_LoadingPositionLeave(qmc,command)
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.MoveBy):
-                    if self.is_in_loading_position:
-                        cmd.error_internal(detail="now allowed while in loading position")
-
-                    # Calculate target position after relative movement
-                    try:
-                        current_stage_position = await qmc.get_last_position()
-                    except IOError as e:
-                        self.close()
-                        raise DisconnectError() from e
-
-                    current_x = self._pos_x_measured_to_real(current_stage_position.x_pos_mm)
-                    current_y = self._pos_y_measured_to_real(current_stage_position.y_pos_mm)
-
-                    if command.axis == "x":
-                        target_x = current_x + command.distance_mm
-                        target_y = current_y
-                    elif command.axis == "y":
-                        target_x = current_x
-                        target_y = current_y + command.distance_mm
-                    else:  # z or other axis
-                        target_x = current_x
-                        target_y = current_y
-
-                    # Check forbidden areas for X,Y movement
-                    is_forbidden, error_message = self.is_position_forbidden(
-                        target_x, target_y
-                    )
-                    if is_forbidden:
-                        cmd.error_internal(detail=error_message)
-
-                    self.state = CoreState.Moving
-
-                    await qmc.send_cmd(mc.Command.move_by_mm(command.axis, command.distance_mm))
-
-                    self.state = CoreState.Idle
-
-                    logger.debug("squid - moved by")
-
-                    result = cmd.MoveByResult(moved_by_mm=command.distance_mm, axis=command.axis)
-                    return result  # type: ignore[no-any-return]
+                    result = await self._execute_MoveBy(qmc,command)
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.MoveTo):
-                    if self.is_in_loading_position:
-                        cmd.error_internal(detail="now allowed while in loading position")
-
-                    if command.x_mm is not None and command.x_mm < 0:
-                        cmd.error_internal(detail=f"x coordinate out of bounds {command.x_mm = }")
-                    if command.y_mm is not None and command.y_mm < 0:
-                        cmd.error_internal(detail=f"y coordinate out of bounds {command.y_mm = }")
-                    if command.z_mm is not None and command.z_mm < 0:
-                        cmd.error_internal(detail=f"z coordinate out of bounds {command.z_mm = }")
-
-                    # Check forbidden areas if we have complete X,Y coordinates
-                    if command.x_mm is not None and command.y_mm is not None:
-                        is_forbidden, error_message = self.is_position_forbidden(
-                            command.x_mm, command.y_mm
-                        )
-                        if is_forbidden:
-                            cmd.error_internal(detail=error_message)
-
-                    prev_state = self.state
-                    self.state = CoreState.Moving
-
-                    approach_x_before_y = True
-
-                    if command.x_mm is not None and command.y_mm is not None:
-                        current_stage_position = await qmc.get_last_position()
-
-                        # plate center is (very) rougly at x=61mm, y=40mm
-                        # we have: start position, target position, and two possible edges to move across
-
-                        center = 61.0, 40.0
-                        _start = (
-                            current_stage_position.x_pos_mm,
-                            current_stage_position.y_pos_mm,
-                        )
-                        _target = command.x_mm, command.y_mm
-
-                        # if edge1 is closer to center, then approach_x_before_y=True, else approach_x_before_y=False
-                        edge1 = command.x_mm, current_stage_position.y_pos_mm
-                        edge2 = current_stage_position.x_pos_mm, command.y_mm
-
-                        def dist(p1: tuple[float, float], p2: tuple[float, float]) -> float:
-                            return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
-
-                        approach_x_before_y = dist(edge1, center) < dist(edge2, center)
-
-                        # we want to choose the edge that is closest to the center, because this avoid moving through the forbidden plate corners
-
-                    if approach_x_before_y:
-                        if command.x_mm is not None:
-                            x_mm = self._pos_x_real_to_measured(command.x_mm)
-                            if x_mm < 0:
-                                cmd.error_internal(
-                                    detail=f"calibrated x coordinate out of bounds {x_mm = }"
-                                )
-                            await qmc.send_cmd(mc.Command.move_to_mm("x", x_mm))
-
-                        if command.y_mm is not None:
-                            y_mm = self._pos_y_real_to_measured(command.y_mm)
-                            if y_mm < 0:
-                                cmd.error_internal(
-                                    detail=f"calibrated y coordinate out of bounds {y_mm = }"
-                                )
-                            await qmc.send_cmd(mc.Command.move_to_mm("y", y_mm))
-                    else:
-                        if command.y_mm is not None:
-                            y_mm = self._pos_y_real_to_measured(command.y_mm)
-                            if y_mm < 0:
-                                cmd.error_internal(
-                                    detail=f"calibrated y coordinate out of bounds {y_mm = }"
-                                )
-                            await qmc.send_cmd(mc.Command.move_to_mm("y", y_mm))
-
-                        if command.x_mm is not None:
-                            x_mm = self._pos_x_real_to_measured(command.x_mm)
-                            if x_mm < 0:
-                                cmd.error_internal(
-                                    detail=f"calibrated x coordinate out of bounds {x_mm = }"
-                                )
-                            await qmc.send_cmd(mc.Command.move_to_mm("x", x_mm))
-
-                    if command.z_mm is not None:
-                        z_mm = self._pos_z_real_to_measured(command.z_mm)
-                        if z_mm < 0:
-                            cmd.error_internal(
-                                detail=f"calibrated z coordinate out of bounds {z_mm = }"
-                            )
-                        await qmc.send_cmd(mc.Command.move_to_mm("z", z_mm))
-
-                    self.state = prev_state
-
-                    logger.debug("squid - moved to")
-
-                    result = cmd.BasicSuccessResponse()
-                    return result  # type: ignore[no-any-return]
+                    result = await self._execute_MoveTo(qmc,command)
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.MoveToWell):
-                    if self.is_in_loading_position:
-                        cmd.error_internal(detail="now allowed while in loading position")
-
-                    plate = command.plate_type
-
-                    if cmd.wellIsForbidden(command.well_name, plate):
-                        cmd.error_internal(detail="well is forbidden")
-
-                    x_mm = plate.get_well_offset_x(command.well_name) + plate.Well_size_x_mm / 2
-                    y_mm = plate.get_well_offset_y(command.well_name) + plate.Well_size_y_mm / 2
-
-                    # Check forbidden areas for the target well center position
-                    is_forbidden, error_message = self.is_position_forbidden(
-                        x_mm, y_mm
-                    )
-                    if is_forbidden:
-                        cmd.error_internal(detail=f"Well {command.well_name} center position is in forbidden area - {error_message}")
-
-                    # move in 2d grid, no diagonals (slower, but safer)
-                    res = await self.execute(cmd.MoveTo(x_mm=x_mm, y_mm=None))
-                    res = await self.execute(cmd.MoveTo(x_mm=None, y_mm=y_mm))
-
-                    logger.debug("squid - moved to well")
-
-                    result = cmd.BasicSuccessResponse()
-                    return result  # type: ignore[no-any-return]
+                    result = await self._execute_MoveToWell(qmc,command)
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusMeasureDisplacement):
                     if command.config_file.machine_config is not None:
@@ -1510,50 +1952,10 @@ class SquidAdapter(Microscope):
                         displacement_um += conf_af_offset_um.floatvalue
 
                     result = cmd.AutofocusMeasureDisplacementResult(displacement_um=displacement_um)
-                    return result  # type: ignore[no-any-return]
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusSnap):
-                    if command.turn_laser_on:
-                        await qmc.send_cmd(mc.Command.af_laser_illum_begin())
-                        logger.debug("squid - autofocus - turned laser on")
-
-                    channel_config = sc.AcquisitionChannelConfig(
-                        name="Laser Autofocus",  # unused
-                        handle="laser_autofocus",  # unused
-                        illum_perc=100,  # unused
-                        exposure_time_ms=command.exposure_time_ms,
-                        analog_gain=command.analog_gain,
-                        z_offset_um=0,  # unused
-                        num_z_planes=0,  # unused
-                        delta_z_um=0,  # unused
-                    )
-
-                    with self.focus_camera() as focus_camera:
-                        if focus_camera is None:
-                            error_internal("focus camera is busy")
-                        img = focus_camera.acquire_with_config(channel_config)
-
-                    logger.debug("squid - autofocus - acquired image")
-                    if img is None:
-                        self.state = CoreState.Idle
-                        cmd.error_internal(detail="laser autofocus camera acquisition returned no image data")
-
-                    if command.turn_laser_off:
-                        await qmc.send_cmd(mc.Command.af_laser_illum_end())
-                        logger.debug("squid - autofocus - turned laser off")
-
-                    result = cmd.AutofocusSnapResult(
-                        width_px=img.shape[1],
-                        height_px=img.shape[0],
-                    )
-
-                    # blur laser autofocus image to get rid of some noise
-                    # img = scipy.ndimage.gaussian_filter(img, sigma=1.0) # this takes 5 times as long as cv2
-                    img = cv2.GaussianBlur(img, (3, 3), sigmaX=1.0, borderType=cv2.BORDER_DEFAULT)
-                    logger.debug("squid - autofocus - applied blur to image")
-
-                    result._img = img
-                    result._channel = channel_config
+                    result = await self._execute_AutofocusSnap(qmc,command)
                     return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusLaserWarmup):
@@ -1567,7 +1969,7 @@ class SquidAdapter(Microscope):
                     logger.debug("squid - warmed up autofocus laser")
 
                     result = cmd.BasicSuccessResponse()
-                    return result  # type: ignore[no-any-return]
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.IlluminationEndAll):
                     # Turn off all configured illumination sources
@@ -1586,394 +1988,24 @@ class SquidAdapter(Microscope):
                     logger.debug("squid - turned off all illumination")
 
                     ret = cmd.BasicSuccessResponse()
-                    return ret  # type: ignore[no-any-return]
+                    return ret # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.ChannelSnapshot):
-                    # Find channel config by handle and get illumination code from source slot
-                    channel_config = None
-                    for ch in self.channels:
-                        if ch.handle == command.channel.handle:
-                            channel_config = ch
-                            break
-
-                    if channel_config is None:
-                        cmd.error_internal(
-                            detail=f"Channel handle '{command.channel.handle}' not found in channel configuration"
-                        )
-
-                    try:
-                        illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
-                    except Exception as e:
-                        cmd.error_internal(
-                            detail=f"Invalid illumination source slot {channel_config.source_slot} for channel {command.channel.handle}: {e}"
-                        )
-
-                    # Debug output for channel and filter selection
-                    logger.debug(f"channel snap - using channel '{channel_config.name}' (handle: {channel_config.handle}, illumination slot: {channel_config.source_slot})")
-
-                    GlobalConfigHandler.override(command.machine_config)
-
-                    if self.stream_callback is not None:
-                        cmd.error_internal(detail="Cannot take snapshot while camera is streaming")
-
-                    self.state = CoreState.ChannelSnap
-
-                    # Validate channel configuration for acquisition
-                    self.validate_channel_for_acquisition(command.channel)
-
-                    # Handle filter wheel positioning if filter is specified
-                    if command.channel.filter_handle is not None:
-                        # Find filter config by handle
-                        filter_config = None
-                        for f in self.filters:
-                            if f.handle == command.channel.filter_handle:
-                                filter_config = f
-                                break
-
-                        if filter_config is None:
-                            cmd.error_internal(
-                                detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
-                            )
-
-                        try:
-                            logger.debug(f"channel snap - using filter '{filter_config.name}' (handle: {filter_config.handle}, wheel position: {filter_config.slot})")
-                            await qmc.filter_wheel_set_position(filter_config.slot)
-                        except Exception as e:
-                            cmd.error_internal(
-                                detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
-                            )
-                    else:
-                        logger.debug("channel snap - no filter specified for this channel")
-
-                    logger.debug("channel snap - before illum on")
-                    # Get calibrated intensity for this channel
-                    calibrated_intensity = self.illumination_controller.get_calibrated_intensity(
-                        command.channel.handle, command.channel.illum_perc
-                    )
-
-                    # For LED matrix sources (brightfield), intensity is controlled via RGB values
-                    if illum_code.is_led_matrix:
-                        # Convert calibrated intensity to RGB brightness (0-1 range)
-                        rgb_brightness = calibrated_intensity / 100.0
-                        await qmc.send_cmd(
-                            mc.Command.illumination_begin(
-                                illum_code,
-                                100.0,  # intensity_percent is ignored for LED matrix
-                                rgb_brightness,  # R
-                                rgb_brightness,  # G
-                                rgb_brightness   # B
-                            )
-                        )
-                    else:
-                        # For regular sources (lasers), use intensity directly
-                        await qmc.send_cmd(
-                            mc.Command.illumination_begin(illum_code, calibrated_intensity)
-                        )
-
-                    with self.main_camera() as main_camera:
-                        if main_camera is None:
-                            error_internal("main camera is busy")
-
-                        logger.debug("channel snap - before acq")
-
-                        # even if acqusition fails, ensure light is turned off again!
-                        try:
-                            img = main_camera.acquire_with_config(command.channel)
-                        finally:
-                            logger.debug("channel snap - after acq")
-
-                            await qmc.send_cmd(mc.Command.illumination_end(illum_code))
-                            logger.debug("channel snap - after illum off")
-
-                        if img is None:
-                            errmsg="main imaging camera acquisition did not return image data"
-                            logger.critical(errmsg)
-                            self.state = CoreState.Idle
-                            cmd.error_internal(detail=errmsg)
-
-                        self.state = CoreState.Idle
-
-                        img, cambits = _process_image(img, camera=main_camera)
-
-                    logger.debug("squid - took channel snapshot")
-
-                    result = cmd.ImageAcquiredResponse()
-                    result._img = img
-                    result._cambits = cambits
-                    return result  # type: ignore[no-any-return]
+                    result = await self._execute_ChannelSnapshot(qmc,command)
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.ChannelStreamBegin):
-                    if self.stream_callback is not None:
-                        cmd.error_internal(detail="Streaming already active - stop current stream before starting a new one")
-
-                    # Find channel config by handle and get illumination code from source slot
-                    channel_config = None
-                    for ch in self.channels:
-                        if ch.handle == command.channel.handle:
-                            channel_config = ch
-                            break
-
-                    if channel_config is None:
-                        cmd.error_internal(
-                            detail=f"Channel handle '{command.channel.handle}' not found in channel configuration"
-                        )
-
-                    try:
-                        illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
-                    except Exception as e:
-                        cmd.error_internal(
-                            detail=f"Invalid illumination source slot {channel_config.source_slot} for channel {command.channel.handle}: {e}"
-                        )
-
-                    GlobalConfigHandler.override(command.machine_config)
-
-                    self.state = CoreState.ChannelStream
-
-                    # Validate channel configuration for acquisition
-                    self.validate_channel_for_acquisition(command.channel)
-
-                    # Handle filter wheel positioning if filter is specified
-                    if command.channel.filter_handle is not None:
-                        # Find filter config by handle
-                        filter_config = None
-                        for f in self.filters:
-                            if f.handle == command.channel.filter_handle:
-                                filter_config = f
-                                break
-
-                        if filter_config is None:
-                            cmd.error_internal(
-                                detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
-                            )
-
-                        try:
-                            logger.debug(f"channel stream - setting filter wheel to position {filter_config.slot} ({filter_config.name})")
-                            await qmc.filter_wheel_set_position(filter_config.slot)
-                        except Exception as e:
-                            cmd.error_internal(
-                                detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
-                            )
-
-                    # Get calibrated intensity for this channel
-                    calibrated_intensity = self.illumination_controller.get_calibrated_intensity(
-                        command.channel.handle, command.channel.illum_perc
-                    )
-
-                    # For LED matrix sources (brightfield), intensity is controlled via RGB values
-                    if illum_code.is_led_matrix:
-                        # Convert calibrated intensity to RGB brightness (0-1 range)
-                        rgb_brightness = calibrated_intensity / 100.0
-                        await qmc.send_cmd(
-                            mc.Command.illumination_begin(
-                                illum_code,
-                                100.0,  # intensity_percent is ignored for LED matrix
-                                rgb_brightness,  # R
-                                rgb_brightness,  # G
-                                rgb_brightness   # B
-                            )
-                        )
-                    else:
-                        # For regular sources (lasers), use intensity directly
-                        await qmc.send_cmd(
-                            mc.Command.illumination_begin(illum_code, calibrated_intensity)
-                        )
-
-                    # returns true if should stop
-                    class ForwardImageCallback(tp.TypedDict):
-                        callback:tp.Callable[[np.ndarray|bool],bool]|None
-
-                    forward_image_callback = ForwardImageCallback(callback=None)
-
-                    self._stop_streaming_flag = False  # Reset flag
-
-                    def forward_image(img: np.ndarray) -> bool:
-                        # Check for stop request first - do cleanup if needed
-                        if self._stop_streaming_flag:
-                            # Do cleanup: turn off illumination, reset camera state
-                            try:
-                                asyncio.run(qmc.send_cmd(mc.Command.illumination_end(illum_code)))
-                            except Exception:
-                                pass  # Best effort cleanup
-
-                            self.state = CoreState.Idle
-                            self.stream_callback = None
-                            logger.debug("squid - channel stream end")
-
-                            # Notify callback that streaming stopped
-                            if forward_image_callback["callback"] is not None:
-                                forward_image_callback["callback"](True)
-
-                            return True  # Stop streaming
-
-                        if self.stream_callback is not None:
-                            forward_image_callback["callback"] = self.stream_callback
-
-                            img_np = img.copy()
-
-                            # camera must only be locked for specific image acquisition, not for the whole duration where an image may be acquired
-                            # there is currently no way to solve this well.. (this current solution is quite brittle)
-                            with self.main_camera() as main_camera:
-                                if main_camera is None:
-                                    error_internal("main camera is busy")
-                                img_np, cambits = _process_image(img_np, camera=main_camera)
-
-                            return forward_image_callback["callback"](img_np)
-                        else:
-                            if forward_image_callback["callback"] is not None:
-                                forward_image_callback["callback"](True)
-
-                            return True
-
-                    with self.main_camera() as main_camera:
-                        if main_camera is None:
-                            error_internal("main camera is busy")
-
-                        main_camera.acquire_with_config(
-                            command.channel,
-                            mode="until_stop",
-                            callback=forward_image,
-                        )
-
-                    logger.debug("squid - channel stream begin")
-
-                    result = cmd.StreamingStartedResponse(channel=command.channel)
-                    return result  # type: ignore[no-any-return]
+                    result = await self._execute_ChannelStreamBegin(qmc,command)
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.LaserAutofocusCalibrate):
-                    result = await self._laser_af_calibrate_here()
+                    result = await self._execute_LaserAutofocusCalibrate(qmc,command)
                     logger.debug("squid - calibrated laser autofocus")
-                    return result  # type: ignore[no-any-return]
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusApproachTargetDisplacement):
-
-                    # Extract values from command for use in nested function
-                    config_file = command.config_file
-                    target_offset_um = command.target_offset_um
-
-                    async def _estimate_offset_mm():
-                        res = await self.execute(
-                            cmd.AutofocusMeasureDisplacement(config_file=config_file)
-                        )
-
-                        current_displacement_um = res.displacement_um
-                        assert current_displacement_um is not None
-
-                        return (target_offset_um - current_displacement_um) * 1e-3
-
-                    if self.is_in_loading_position:
-                        cmd.error_internal(detail="now allowed while in loading position")
-
-                    if self.state != CoreState.Idle:
-                        cmd.error_internal(detail="cannot move while in non-idle state")
-
-                    # get autofocus calibration data
-                    conf_af_calib_x = LaserAutofocusConfig.CALIBRATION_X_PEAK_POS.value_item.floatvalue
-                    conf_af_calib_umpx = LaserAutofocusConfig.CALIBRATION_UM_PER_PX.value_item.floatvalue
-                    # autofocus_calib=LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx,x_reference=conf_af_calib_x,calibration_position=Position.zero())
-
-                    # we are looking for a z coordinate where the measured dot_x is equal to this target_x.
-                    # we can estimate the current z offset based on the currently measured dot_x.
-                    # then we loop:
-                    #   we move by the estimated offset to reduce the difference between target_x and dot_x.
-                    #   then we check if we are at target_x.
-                    #     if we have not reached it, we move further in that direction, based on another estimate.
-                    #     if have overshot (moved past) it, we move back by some estimate.
-                    #     terminate when dot_x is within a margin of target_x.
-
-                    OFFSET_MOVEMENT_THRESHOLD_MM = 0.5e-3
-
-                    current_state = await qmc.get_last_position()
-                    current_z = current_state.z_pos_mm
-                    initial_z = current_z
-
-                    if command.pre_approach_refz:
-                        refz_item = None
-                        try:
-                            refz_item = LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value_item
-                        except KeyError:
-                            cmd.error_internal(
-                                detail="laser.autofocus.calibration.ref_z_mm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set"
-                            )
-
-                        assert refz_item is not None
-
-                        # move to reference z, only if it is far enough away to make a move worth it
-                        if (
-                            math.fabs(current_z - refz_item.floatvalue)
-                            > OFFSET_MOVEMENT_THRESHOLD_MM
-                        ):
-                            res = await self.execute(
-                                cmd.MoveTo(
-                                    x_mm=None,
-                                    y_mm=None,
-                                    z_mm=refz_item.floatvalue,
-                                )
-                            )
-
-                        logger.debug("autofocus - did pre approach refz")
-
-                    old_state = self.state
-                    self.state = CoreState.Moving
-
-                    last_distance_estimate_mm = 0.0
-                    num_compensating_moves = 0
-                    reached_threshold = False
-                    try:
-                        last_distance_estimate_mm = await _estimate_offset_mm()
-                        logger.debug("autofocus - estimated offset")
-                        last_z_mm = (await qmc.get_last_position()).z_pos_mm
-                        MAX_MOVEMENT_RANGE_MM = 0.3  # should be derived from the calibration data, but this value works fine in practice
-                        if math.fabs(last_distance_estimate_mm) > MAX_MOVEMENT_RANGE_MM:
-                            cmd.error_internal(
-                                detail="measured autofocus focal plane offset too large"
-                            )
-
-                        for rep_i in range(command.max_num_reps):
-                            if rep_i == 0:
-                                distance_estimate_mm = last_distance_estimate_mm
-                            else:
-                                distance_estimate_mm = await _estimate_offset_mm()
-                                logger.debug("autofocus - estimated offset")
-
-                            # stop if the new estimate indicates a larger distance to the focal plane than the previous estimate
-                            # (since this indicates that we have moved away from the focal plane, which should not happen)
-                            if rep_i > 0 and math.fabs(last_distance_estimate_mm) < math.fabs(
-                                distance_estimate_mm
-                            ):
-                                # move back to last z, since that seemed like the better position to be in
-                                await qmc.send_cmd(mc.Command.move_to_mm("z", last_z_mm))
-                                logger.debug("autofocus - reset z to known good position")
-                                # TODO unsure if this is the best approach. we cannot do better, but we also have not actually gotten close to the offset
-                                reached_threshold = True
-                                break
-
-                            last_distance_estimate_mm = distance_estimate_mm
-                            last_z_mm = (await qmc.get_last_position()).z_pos_mm
-
-                            # if movement distance is not worth compensating, stop
-                            if math.fabs(distance_estimate_mm) < OFFSET_MOVEMENT_THRESHOLD_MM:
-                                reached_threshold = True
-                                break
-
-                            await qmc.send_cmd(mc.Command.move_by_mm("z", distance_estimate_mm))
-                            num_compensating_moves += 1
-                            logger.debug("autofocus - refined z")
-
-                    except Exception:
-                        # if any interaction failed, attempt to reset z position to known somewhat-good position
-                        await qmc.send_cmd(mc.Command.move_to_mm("z", initial_z))
-                        logger.debug("autofocus - reset z position")
-                    finally:
-                        self.state = old_state
-
-                    logger.debug("squid - used autofocus to approach target displacement")
-
-                    res = cmd.AutofocusApproachTargetDisplacementResult(
-                        num_compensating_moves=num_compensating_moves,
-                        uncompensated_offset_mm=last_distance_estimate_mm,
-                        reached_threshold=reached_threshold,
-                    )
-                    return res  # type: ignore[no-any-return]
+                    result = await self._execute_AutofocusApproachTargetDisplacement(qmc,command)
+                    return result # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.MC_getLastPosition):
                     logger.debug("squid - fetching last stage position")

@@ -93,22 +93,42 @@ class Camera(ABC):
         pass
 
     @abstractmethod
-    def acquire_with_config(
-        self,
-        config: AcquisitionChannelConfig,
-        mode: tp.Literal["once", "until_stop"] = "once",
-        callback: tp.Callable[[np.ndarray], bool] | None = None,
-    ) -> np.ndarray | None:
+    def snap(self, config: AcquisitionChannelConfig) -> np.ndarray:
         """
-        Acquire image with given configuration.
+        Acquire a single image in trigger mode.
 
         Args:
-            config: Acquisition configuration (exposure time, gain, etc.)
-            mode: "once" for single image, "until_stop" for continuous until callback returns True
-            callback: Callback function for continuous mode
+            config: Acquisition configuration (exposure time, gain, pixel format, etc.)
 
         Returns:
-            np.ndarray of image data if mode is "once", None if mode is "until_stop"
+            np.ndarray: Image data as numpy array
+        """
+        pass
+
+    @abstractmethod
+    def start_streaming(
+        self,
+        config: AcquisitionChannelConfig,
+        callback: tp.Callable[[np.ndarray], None],
+    ) -> None:
+        """
+        Start continuous image streaming in continuous mode.
+
+        The callback will be called for each acquired image. The callback return value
+        is ignored - use stop_streaming() to end streaming.
+
+        Args:
+            config: Acquisition configuration (exposure time, gain, pixel format, etc.)
+            callback: Function to call with each image data (np.ndarray). Return value is ignored.
+        """
+        pass
+
+    @abstractmethod
+    def stop_streaming(self) -> None:
+        """
+        Stop continuous image streaming and reset to trigger mode.
+
+        Safe to call even if streaming is not active.
         """
         pass
 
@@ -116,7 +136,7 @@ class Camera(ABC):
     def get_exposure_time_limits(self) -> HardwareLimitValue:
         """
         Get camera's exposure time limits.
-        
+
         Returns:
             HardwareLimitValue with min/max/step values (all in milliseconds)
         """
@@ -126,27 +146,9 @@ class Camera(ABC):
     def get_analog_gain_limits(self) -> HardwareLimitValue:
         """
         Get camera's analog gain limits.
-        
+
         Returns:
             HardwareLimitValue with min/max/step values (all in decibels)
-        """
-        pass
-
-    @abstractmethod
-    def set_acquisition_mode_trigger(
-        self,
-    )->None:
-        """
-        set acquisition to trigger mode.
-        """
-        pass
-
-    @abstractmethod
-    def stop_acquisition(self) -> None:
-        """
-        Force stop any ongoing acquisition.
-
-        This method should interrupt continuous acquisition mode safely.
         """
         pass
 

@@ -307,11 +307,11 @@ class ProtocolGenerator(BaseModel):
     def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
         """
         Sort channels according to the specified imaging order.
-        
+
         Args:
             channels: List of enabled AcquisitionChannelConfig objects
             imaging_order: Sorting strategy to use
-            
+
         Returns:
             Sorted list of channels
         """
@@ -587,7 +587,6 @@ class ProtocolGenerator(BaseModel):
 
     def iter_channels(self) -> tp.Iterator[ChannelInfo]:
         """Iterator over channels with imaging order applied"""
-        g_config = basics.GlobalConfigHandler.get_dict()
         imaging_order_item = ImagingConfig.ORDER.value_item
         assert imaging_order_item is not None
         imaging_order = tp.cast(ImagingOrder, imaging_order_item.value)
@@ -707,7 +706,6 @@ class ProtocolGenerator(BaseModel):
         last_image_information = None
 
         num_images_acquired = 0
-        storage_usage_bytes = 0
         storage_tracker = StorageTracker()
 
         # get current z coordinate as z reference

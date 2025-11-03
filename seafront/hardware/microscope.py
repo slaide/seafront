@@ -75,8 +75,6 @@ class Microscope(BaseModel, abc.ABC):
     _lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
     _lock_reasons: list[str] = PrivateAttr(default_factory=list)
     """Stack of reasons for why the lock is currently held"""
-    _stop_streaming_flag: bool = PrivateAttr(default=False)
-    "indicate that streaming should stop, without locking hardware"
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
