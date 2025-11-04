@@ -1155,9 +1155,16 @@ class Core:
 
         # real/should position = measured/is position + calibrated offset
         # i.e. calibrated offset = real/should position - measured/is position
-        ref_x_mm = plate.get_well_offset_x("B02") - current_pos.x_pos_mm
-        ref_y_mm = plate.get_well_offset_y("B02") - current_pos.y_pos_mm
-        ref_z_mm = 0.0  # TODO currently unused
+        old_x_mm=CalibrationConfig.OFFSET_X_MM.get_item().floatvalue
+        old_y_mm=CalibrationConfig.OFFSET_Y_MM.get_item().floatvalue
+        old_z_mm=CalibrationConfig.OFFSET_Z_MM.get_item().floatvalue
+        # new offset is relative to existing calibration, hence add old to new offsets for new reference
+        ref_x_mm = old_x_mm + plate.get_well_offset_x("B02") - current_pos.x_pos_mm
+        ref_y_mm = old_y_mm + plate.get_well_offset_y("B02") - current_pos.y_pos_mm
+        ref_z_mm = old_z_mm + 0.0  # TODO currently unused
+
+        logger.debug(f"old plate calibration: {old_x_mm:.2} {old_y_mm:.2} {old_z_mm:.2}")
+        logger.debug(f"new plate calibration: {ref_x_mm:.2} {ref_y_mm:.2} {ref_z_mm:.2}")
 
         # new_config_items:tp.Union[tp.Dict[str,ConfigItem
         GlobalConfigHandler.override(
