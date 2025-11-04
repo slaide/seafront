@@ -22,6 +22,7 @@ from scipy import stats  # for linear regression
 from seafront.config.basics import (
     CameraDriver,
     ChannelConfig,
+    ConfigItem,
     FilterConfig,
     GlobalConfigHandler,
     ImagingOrder,
@@ -2136,3 +2137,26 @@ class SquidAdapter(Microscope):
                     detail=f"Channel '{channel.name}' has no filter selected, but filter wheel is available. "
                     "Please select a filter for all enabled channels."
                 )
+
+    def extend_machine_config(self, config_items: list[ConfigItem]) -> None:
+        """
+        Extend machine configuration with microscope-specific options.
+
+        Delegates to cameras to update their pixel format options based on
+        actual hardware capabilities.
+
+        Args:
+            config_items: List of ConfigItem objects to modify in-place
+        """
+        try:
+            # Ask main camera to extend config
+            with self.main_camera.locked(blocking=False) as camera:
+                if camera is not None:
+                    camera.extend_machine_config(config_items)
+
+            # Ask focus camera to extend config if available
+            with self.focus_camera.locked(blocking=False) as camera:
+                if camera is not None:
+                    camera.extend_machine_config(config_items)
+        except Exception as e:
+            logger.debug(f"Could not extend machine config from cameras: {e}")

@@ -6,6 +6,7 @@ from enum import Enum
 import numpy as np
 from seaconfig import AcquisitionChannelConfig
 
+from seafront.config.basics import ConfigItem
 from seafront.logger import logger
 
 
@@ -159,6 +160,19 @@ class Camera(ABC):
 
         Returns:
             List of format strings (e.g., ["mono8", "mono10", "mono12"])
+        """
+        pass
+
+    @abstractmethod
+    def extend_machine_config(self, config_items: list[ConfigItem]) -> None:
+        """
+        Extend machine configuration with camera-specific options.
+
+        Cameras can modify config_items in-place to add or update options
+        based on their hardware capabilities (e.g., pixel formats).
+
+        Args:
+            config_items: List of ConfigItem objects to modify in-place
         """
         pass
 

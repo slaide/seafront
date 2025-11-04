@@ -28,7 +28,7 @@ import numpy as np
 import seaconfig as sc
 from pydantic import PrivateAttr
 
-from seafront.config.basics import ChannelConfig, FilterConfig, GlobalConfigHandler, ImagingOrder
+from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, GlobalConfigHandler, ImagingOrder
 from seafront.config.handles import ImagingConfig, LaserAutofocusConfig
 from seafront.hardware.adapter import AdapterState, CoreState, Position
 from seafront.hardware.camera import HardwareLimitValue
@@ -866,6 +866,20 @@ class MockMicroscope(Microscope):
                     detail=f"Channel '{channel.name}' has no filter selected, but filter wheel is available. "
                     "Please select a filter for all enabled channels."
                 )
+
+    def extend_machine_config(self, config_items: list[ConfigItem]) -> None:
+        """
+        Extend machine configuration with microscope-specific options.
+
+        For MockMicroscope, this is a no-op since there are no actual hardware
+        capabilities to query. Mock microscope doesn't have real cameras that
+        can report supported formats.
+
+        Args:
+            config_items: List of ConfigItem objects to modify in-place
+        """
+        # Mock microscope has no real hardware, so no extension needed
+        pass
 
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         """Execute mock commands."""

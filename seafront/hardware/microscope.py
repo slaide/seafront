@@ -15,7 +15,7 @@ import numpy as np
 import seaconfig as sc
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from seafront.config.basics import ChannelConfig, FilterConfig, ImagingOrder
+from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, ImagingOrder
 from seafront.hardware.adapter import AdapterState, CoreState
 from seafront.server import commands as cmd
 
@@ -277,6 +277,20 @@ class Microscope(BaseModel, abc.ABC):
 
         Raises:
             Calls error_internal() if validation fails
+        """
+        pass
+
+    @abc.abstractmethod
+    def extend_machine_config(self, config_items: list[ConfigItem]) -> None:
+        """
+        Extend machine configuration with microscope-specific options.
+
+        Microscope implementations can modify config_items in-place to add or update
+        options based on their hardware capabilities. This method should delegate to
+        cameras and other hardware components to allow them to extend the config.
+
+        Args:
+            config_items: List of ConfigItem objects to modify in-place
         """
         pass
 

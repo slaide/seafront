@@ -175,35 +175,6 @@ name_validity_regex = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
 
 
 
-@app.api_route(
-    "/api/get_features/machine_defaults",
-    methods=["POST"],
-    summary="Get default low-level machine parameters.",
-)
-def get_machine_defaults() -> list[ConfigItem]:
-    """
-    get a list of all the low level machine settings
-
-    these settings may be changed on the client side, for individual acquisitions
-    (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
-    """
-
-    config_items = GlobalConfigHandler.get()
-
-    # Convert JSON5 strings to standard JSON for browser compatibility
-    for item in config_items:
-        if item.handle in ['channels', 'filters'] and item.value_kind == 'text':
-            try:
-                # Parse JSON5 and re-serialize as standard JSON
-                parsed_data = json5.loads(item.strvalue)
-                item.value = json.dumps(parsed_data)
-            except Exception as e:
-                # If parsing fails, leave the original value
-                print(f"Warning: Failed to convert {item.handle} from JSON5 to JSON: {e}")
-
-    return config_items
-
-
 class CoreLock(BaseModel):
     """
     basic utility to generate a token that can be used to access mutating core functions (e.g. actions)
@@ -620,6 +591,13 @@ class Core:
         route_wrapper(
             "/api/get_features/hardware_capabilities",
             CustomRoute(handler=self.get_hardware_capabilities),
+            methods=["POST"],
+        )
+
+        # Register machine defaults route
+        route_wrapper(
+            "/api/get_features/machine_defaults",
+            CustomRoute(handler=self.get_machine_defaults),
             methods=["POST"],
         )
 
@@ -1454,6 +1432,35 @@ class Core:
             main_camera_imaging_channels=acquisition_channels,
             hardware_limits=hardware_limits_obj.to_dict(),
         )
+
+    def get_machine_defaults(self) -> list[ConfigItem]:
+        """
+        Get a list of all the low level machine settings with dynamic pixel format injection.
+
+        These settings may be changed on the client side, for individual acquisitions
+        (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
+        """
+        config_items = GlobalConfigHandler.get()
+
+        # Let the microscope extend config with hardware-specific options
+        try:
+            self.microscope.extend_machine_config(config_items)
+        except Exception as e:
+            logger.debug(f"Could not extend machine config from microscope: {e}")
+            # Continue with default options if hardware unavailable
+
+        # Convert JSON5 strings to standard JSON for browser compatibility
+        for item in config_items:
+            if item.handle in ['channels', 'filters'] and item.value_kind == 'text':
+                try:
+                    # Parse JSON5 and re-serialize as standard JSON
+                    parsed_data = json5.loads(item.strvalue)
+                    item.value = json.dumps(parsed_data)
+                except Exception as e:
+                    # If parsing fails, leave the original value
+                    print(f"Warning: Failed to convert {item.handle} from JSON5 to JSON: {e}")
+
+        return config_items
 
     async def start_acquisition(
         self, config_file: sc.AcquisitionConfig

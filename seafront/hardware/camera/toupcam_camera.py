@@ -6,6 +6,7 @@ import toupcam.toupcam as tc
 from pydantic import BaseModel, ConfigDict
 from seaconfig import AcquisitionChannelConfig
 
+from seafront.config.basics import ConfigItem, ConfigItemOption
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
@@ -390,6 +391,59 @@ class ToupCamCamera(Camera):
             supported.append("mono16")
 
         return supported
+
+    def extend_machine_config(self, config_items: list[ConfigItem]) -> None:
+        """
+        Extend machine configuration with camera-specific pixel format options.
+
+        Updates the pixel format options for the main or autofocus camera based
+        on actual hardware capabilities.
+
+        Args:
+            config_items: List of ConfigItem objects to modify in-place
+        """
+        if not self.handle or not self.device_type:
+            return
+
+        supported_formats = self.get_supported_pixel_formats()
+
+        # Determine the config key based on device type
+        match self.device_type:
+            case "main":
+                config_key = "camera.main.pixel_format"
+            case "autofocus":
+                config_key = "camera.autofocus.pixel_format"
+            case _:
+                # Should not happen due to early return, but handle defensively
+                return
+
+        # Build the new options list
+        new_options = [
+            ConfigItemOption(name=fmt.capitalize(), handle=fmt)
+            for fmt in sorted(supported_formats)
+        ]
+
+        # Find and update existing item, or create if missing
+        found = False
+        for item in config_items:
+            if item.handle == config_key:
+                item.options = new_options
+                # Ensure current value is valid
+                if item.value not in supported_formats:
+                    item.value = supported_formats[0]
+                found = True
+                break
+
+        # If not found, create a new config item
+        if not found:
+            new_item = ConfigItem(
+                handle=config_key,
+                name="Pixel Format",
+                value=supported_formats[0],
+                value_kind="option",
+                options=new_options,
+            )
+            config_items.append(new_item)
 
     def _set_exposure_time(self, exposure_time_ms: float) -> None:
         """
