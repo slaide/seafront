@@ -360,6 +360,37 @@ class ToupCamCamera(Camera):
             step=0.1  # Step size in dB - reasonable default
         )
 
+    def get_supported_pixel_formats(self) -> list[str]:
+        """
+        Get list of supported monochrome pixel formats from ToupCam camera.
+
+        Returns:
+            List of format strings (e.g., ["mono8", "mono10", "mono12"])
+        """
+        if not self.handle:
+            raise RuntimeError("Camera not opened")
+
+        supported: list[str] = []
+
+        # Check mono mode support (required for all formats)
+        if not (self._original_device.model.flag & tc.TOUPCAM_FLAG_MONO):
+            raise RuntimeError("camera does not support mono mode")
+
+        # Check for mono8 (base format)
+        supported.append("mono8")
+
+        # Check flags for higher bit depths
+        if self._original_device.model.flag & tc.TOUPCAM_FLAG_RAW10:
+            supported.append("mono10")
+        if self._original_device.model.flag & tc.TOUPCAM_FLAG_RAW12:
+            supported.append("mono12")
+        if self._original_device.model.flag & tc.TOUPCAM_FLAG_RAW14:
+            supported.append("mono14")
+        if self._original_device.model.flag & tc.TOUPCAM_FLAG_RAW16:
+            supported.append("mono16")
+
+        return supported
+
     def _set_exposure_time(self, exposure_time_ms: float) -> None:
         """
         Set camera exposure time.

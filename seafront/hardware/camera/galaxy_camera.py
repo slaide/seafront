@@ -521,3 +521,24 @@ class GalaxyCamera(Camera):
             max=gain_range['max'],  # type: ignore[typeddict-item]
             step=gain_range['inc']  # type: ignore[typeddict-item]
         )
+
+    def get_supported_pixel_formats(self) -> list[str]:
+        """
+        Get list of supported monochrome pixel formats from Galaxy camera.
+
+        Returns:
+            List of format strings (e.g., ["mono8", "mono10", "mono12"])
+        """
+        if not self.handle:
+            raise RuntimeError("Camera not opened")
+
+        pixel_format_range = self.handle.PixelFormat.get_range()
+
+        # Filter for monochrome formats only
+        supported: list[str] = []
+        mono_formats = ["mono8", "mono10", "mono12", "mono14", "mono16"]
+        for fmt in mono_formats:
+            if any(k.lower() == fmt for k in pixel_format_range.keys()):
+                supported.append(fmt)
+
+        return supported

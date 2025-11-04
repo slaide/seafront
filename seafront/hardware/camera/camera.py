@@ -152,6 +152,16 @@ class Camera(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_supported_pixel_formats(self) -> list[str]:
+        """
+        Get list of supported monochrome pixel formats.
+
+        Returns:
+            List of format strings (e.g., ["mono8", "mono10", "mono12"])
+        """
+        pass
+
 def get_all_cameras() -> list[Camera]:
     """
     Get all available cameras from all supported manufacturers.

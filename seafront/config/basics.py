@@ -924,6 +924,52 @@ class GlobalConfigHandler:
         return ret
 
     @staticmethod
+    def update_pixel_format_options(
+        main_camera_formats: list[str],
+        autofocus_camera_formats: list[str] | None = None,
+    ) -> None:
+        """
+        Update pixel format option lists with actual camera capabilities.
+
+        Replaces hardcoded pixel format options with runtime-fetched camera capabilities.
+        This ensures the config always reflects what the actual hardware supports.
+
+        Args:
+            main_camera_formats: List of supported formats from main camera (e.g., ["mono8", "mono10", "mono12"])
+            autofocus_camera_formats: List of supported formats from autofocus camera, or None if autofocus unavailable
+        """
+        config_dict = GlobalConfigHandler.get_dict()
+
+        # Update main camera pixel format options
+        main_format_item = config_dict.get("camera.main.pixel_format")
+        if main_format_item is not None:
+            # Create new options list from actual camera capabilities
+            new_options = [
+                ConfigItemOption(name=fmt.capitalize(), handle=fmt)
+                for fmt in sorted(main_camera_formats)
+            ]
+            main_format_item.options = new_options
+
+            # Ensure current value is still valid, reset to first if not
+            if main_format_item.value not in main_camera_formats:
+                main_format_item.value = main_camera_formats[0]
+
+        # Update autofocus camera pixel format options if available
+        if autofocus_camera_formats is not None:
+            autofocus_format_item = config_dict.get("laser.autofocus.camera.pixel_format")
+            if autofocus_format_item is not None:
+                # Create new options list from actual camera capabilities
+                new_options = [
+                    ConfigItemOption(name=fmt.capitalize(), handle=fmt)
+                    for fmt in sorted(autofocus_camera_formats)
+                ]
+                autofocus_format_item.options = new_options
+
+                # Ensure current value is still valid, reset to first if not
+                if autofocus_format_item.value not in autofocus_camera_formats:
+                    autofocus_format_item.value = autofocus_camera_formats[0]
+
+    @staticmethod
     def reset(microscope_name: str | None = None):
         GlobalConfigHandler._current_microscope_name = microscope_name
         GlobalConfigHandler._config_list = GlobalConfigHandler._defaults(microscope_name)

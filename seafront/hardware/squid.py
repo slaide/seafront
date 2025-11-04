@@ -352,6 +352,20 @@ class SquidAdapter(Microscope):
                 logger.critical("startup - microcontroller offline")
                 raise DisconnectError() from e
 
+            # Fetch actual camera capabilities and update config with runtime values
+            from seafront.config.basics import GlobalConfigHandler
+
+            try:
+                main_formats = main_camera.get_supported_pixel_formats()
+                focus_formats = focus_camera.get_supported_pixel_formats()
+                logger.debug(f"startup - main camera supports formats: {main_formats}")
+                logger.debug(f"startup - focus camera supports formats: {focus_formats}")
+                GlobalConfigHandler.update_pixel_format_options(main_formats, focus_formats)
+                logger.info("startup - updated config with actual camera pixel format capabilities")
+            except Exception as e:
+                logger.warning(f"startup - failed to update pixel format options: {e}")
+                # Don't fail startup if this fails, but log the warning
+
             logger.info("startup - connection to hardware devices established")
             self.is_connected = True
 
