@@ -380,7 +380,9 @@ export class ChannelImageView {
                 // sample from texture
                 // red channel (based on format)
                 // convert int value to float
-                float lum = float(texture2D(uTexture, vUv).r);
+                // Invert Y-coordinate to compensate for GPU coordinate system (Y-up)
+                // vs numpy array coordinate system (Y-down, origin top-left)
+                float lum = float(texture2D(uTexture, vec2(vUv.x, 1.0 - vUv.y)).r);
 
                 // adjust from [0;formatMax] to [0;1] space
                 lum/=float(1<<(${imageinfo.bit_depth}));
