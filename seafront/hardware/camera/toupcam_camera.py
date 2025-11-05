@@ -687,9 +687,10 @@ class ToupCamCamera(Camera):
             callback(img_np)
             return False
 
-        self.ctx.callback = streaming_callback_wrapper  # type: ignore
-
-        self._set_acquisition_mode(acq_mode=AcquisitionMode.CONTINUOUS)
+        self._set_acquisition_mode(
+            acq_mode=AcquisitionMode.CONTINUOUS,
+            with_cb=streaming_callback_wrapper
+        )
 
         # trigger until stop
         self.handle.Trigger(0xffff)
