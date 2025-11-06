@@ -1,15 +1,108 @@
 import time
 import typing as tp
+from functools import wraps
 
 import numpy as np
 import toupcam.toupcam as tc
 from pydantic import BaseModel, ConfigDict
+
 from seaconfig import AcquisitionChannelConfig
 
-from seafront.config.basics import ConfigItem, ConfigItemOption
+from seafront.config.basics import GlobalConfigHandler, ConfigItem, ConfigItemOption
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
+
+
+def _camera_operation_with_reconnect(func):
+    """
+    Decorator for camera API operations that implements nested retry logic:
+    - Inner loop: operation_retry_attempts on the current connection
+    - Outer loop: reconnection_attempts with reconnection_delay_ms between
+
+    Retry parameters are fetched from GlobalConfig at runtime.
+    On exceptions, attempts to reconnect then retries the operation.
+    Only retries on transient errors - persistent failures are immediately re-raised.
+    """
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        # Fetch retry configuration from GlobalConfig
+        try:
+            g_config = GlobalConfigHandler.get_dict()
+
+            reconnect_attempts_item = g_config.get("camera.reconnection_attempts")
+            reconnect_attempts = 5 if reconnect_attempts_item is None else reconnect_attempts_item.intvalue
+
+            reconnect_delay_ms_item = g_config.get("camera.reconnection_delay_ms")
+            reconnect_delay_ms = 1000.0 if reconnect_delay_ms_item is None else reconnect_delay_ms_item.floatvalue
+
+            retry_attempts_item = g_config.get("camera.operation_retry_attempts")
+            retry_attempts = 5 if retry_attempts_item is None else retry_attempts_item.intvalue
+
+            logger.debug(
+                f"{func.__name__}: loaded retry config: "
+                f"reconnect_attempts={reconnect_attempts}, "
+                f"reconnect_delay_ms={reconnect_delay_ms}, "
+                f"retry_attempts={retry_attempts}"
+            )
+        except Exception as e:
+            logger.error(
+                f"{func.__name__}: error retrieving retry config: {type(e).__name__}: {e}, "
+                f"using defaults (reconnect_attempts=5, reconnect_delay_ms=1000, retry_attempts=5)"
+            )
+            reconnect_attempts = 5
+            reconnect_delay_ms = 1000.0
+            retry_attempts = 5
+
+        last_error: Exception | None = None
+
+        for reconnect_attempt in range(reconnect_attempts):
+            for retry_attempt in range(retry_attempts):
+                try:
+                    return func(self, *args, **kwargs)
+                except Exception as e:
+                    last_error = e
+                    logger.warning(
+                        f"{func.__name__} failed: "
+                        f"reconnect_attempt={reconnect_attempt + 1}/{reconnect_attempts}, "
+                        f"retry_attempt={retry_attempt + 1}/{retry_attempts}, "
+                        f"error_type={type(e).__name__}, error='{e}'"
+                    )
+                    if retry_attempt < retry_attempts - 1:
+                        # Still have retries left on this connection, just retry
+                        continue
+                    else:
+                        # This connection failed all retries, try reconnection
+                        break
+
+            if reconnect_attempt < reconnect_attempts - 1:
+                # Try to reconnect for next attempt
+                logger.info(
+                    f"{func.__name__}: attempting reconnection "
+                    f"(attempt {reconnect_attempt + 1}/{reconnect_attempts})"
+                )
+                try:
+                    self.close()
+                    self.open(self.device_type)
+                    logger.info(
+                        f"{func.__name__}: successfully reconnected, retrying operation"
+                    )
+                except Exception as reconnect_error:
+                    logger.warning(
+                        f"{func.__name__}: reconnection failed: "
+                        f"{type(reconnect_error).__name__}: {reconnect_error}"
+                    )
+                # Wait before next reconnection attempt
+                time.sleep(reconnect_delay_ms / 1000.0)
+
+        # All retries and reconnection attempts failed
+        if last_error:
+            logger.error(
+                f"{func.__name__}: all retry/reconnection attempts exhausted, re-raising exception"
+            )
+            raise last_error
+
+    return wrapper
 
 
 class toupcam_ctx:
@@ -148,7 +241,7 @@ class ToupCamCamera(Camera):
                     raise RuntimeError("Failed to open ToupCam camera")
 
             except Exception as e:
-                logger.debug(f"toupcam - opening failed {i} times {e=}")
+                logger.debug(f"toupcam - opening failed {i+1} times {e=}")
 
                 try:
                     self.close()
@@ -243,6 +336,72 @@ class ToupCamCamera(Camera):
         self.pullmode_active=True
 
         return True
+
+    @_camera_operation_with_reconnect
+    def _api_trigger_sync(self, pullimage_pix_format: int, img_bytes: bytes, frame_info: tp.Any) -> None:
+        """
+        Synchronous trigger for single frame acquisition.
+        Decorated with nested retry logic for connection resilience.
+
+        Args:
+            pullimage_pix_format: Pixel format code for image buffer
+            img_bytes: Image buffer to fill
+            frame_info: Frame info structure
+
+        Raises:
+            Exception: if trigger fails after all retry/reconnection attempts
+        """
+        if self.handle is None:
+            raise RuntimeError("Camera handle is None - not connected")
+        self.handle.TriggerSyncV4(0, img_bytes, pullimage_pix_format, 0, frame_info)  # type: ignore[arg-type]
+
+    @_camera_operation_with_reconnect
+    def _api_trigger(self, num_frames: int) -> None:
+        """
+        Start continuous triggering for multiple frames.
+        Decorated with nested retry logic for connection resilience.
+
+        Args:
+            num_frames: Number of frames to trigger (0xffff for continuous)
+
+        Raises:
+            Exception: if trigger fails after all retry/reconnection attempts
+        """
+        if self.handle is None:
+            raise RuntimeError("Camera handle is None - not connected")
+        self.handle.Trigger(num_frames)
+
+    @_camera_operation_with_reconnect
+    def _api_set_exposure_time(self, exposure_us: int) -> None:
+        """
+        Set exposure time via API.
+        Decorated with nested retry logic for connection resilience.
+
+        Args:
+            exposure_us: Exposure time in microseconds
+
+        Raises:
+            Exception: if operation fails after all retry/reconnection attempts
+        """
+        if self.handle is None:
+            raise RuntimeError("Camera handle is None - not connected")
+        self.handle.put_ExpoTime(exposure_us)
+
+    @_camera_operation_with_reconnect
+    def _api_set_analog_gain(self, gain_percent: int) -> None:
+        """
+        Set analog gain via API.
+        Decorated with nested retry logic for connection resilience.
+
+        Args:
+            gain_percent: Analog gain as percentage (100-10000%)
+
+        Raises:
+            Exception: if operation fails after all retry/reconnection attempts
+        """
+        if self.handle is None:
+            raise RuntimeError("Camera handle is None - not connected")
+        self.handle.put_ExpoAGain(gain_percent)
 
     def _set_acquisition_mode(
         self,
@@ -458,7 +617,7 @@ class ToupCamCamera(Camera):
         exposure_us = int(exposure_time_ms * 1000)
         context_msg = f"camera - toupcam exposure time set to {exposure_time_ms}ms (target: {exposure_us}us, real: {self.handle.get_RealExpoTime()}us)"
         with toupcam_ctx(context_msg):
-            self.handle.put_ExpoTime(exposure_us)
+            self._api_set_exposure_time(exposure_us)
         logger.debug(context_msg)
 
     def _set_analog_gain(self, gain_db: float) -> None:
@@ -478,7 +637,7 @@ class ToupCamCamera(Camera):
         gain_percent = int(gain_factor * 100)
         context_msg = f"camera - toupcam analog gain set to {gain_db} ({gain_percent}%)"
         with toupcam_ctx(context_msg):
-            self.handle.put_ExpoAGain(gain_percent)
+            self._api_set_analog_gain(gain_percent)
         logger.debug(context_msg)
 
     def _set_pixel_format(
@@ -627,12 +786,10 @@ class ToupCamCamera(Camera):
 
             img_bytes = bytes(self.height * self.width * bytes_per_pixel)
 
-            # lower overhead than regular trigger for single acquisition
-            self.handle.TriggerSyncV4(
-                0,
-                img_bytes,
+            # lower overhead than regular trigger for single acquisition (with retry logic)
+            self._api_trigger_sync(
                 pullimage_pix_format,  # type: ignore[arg-type]
-                0,
+                img_bytes,
                 tc.ToupcamFrameInfoV4(),
             )
 
@@ -644,7 +801,7 @@ class ToupCamCamera(Camera):
 
         finally:
             self.acquisition_ongoing = False
-            self.handle.Trigger(0)
+            self._api_trigger(0)
 
     def start_streaming(
         self,
@@ -692,8 +849,8 @@ class ToupCamCamera(Camera):
             with_cb=streaming_callback_wrapper
         )
 
-        # trigger until stop
-        self.handle.Trigger(0xffff)
+        # trigger until stop (with retry logic)
+        self._api_trigger(0xffff)
 
     def stop_streaming(self) -> None:
         """

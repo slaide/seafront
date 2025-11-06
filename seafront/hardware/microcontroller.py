@@ -16,6 +16,7 @@ import serial
 import serial.tools.list_ports
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from seafront.config.basics import GlobalConfigHandler
 from seafront.hardware.adapter import Position as AdapterPosition
 from seafront.hardware.firmware_config import get_firmware_config
 from seafront.logger import logger
@@ -39,6 +40,18 @@ class MicrocontrollerTimeoutInfo:
 @dataclass
 class MicrocontrollerTimeout(BaseException):
     info: MicrocontrollerTimeoutInfo | None = None
+
+
+class HandleIsNone(Exception):
+    """
+    Raised when attempting USB operations while microcontroller handle is None.
+
+    The handle being None is an explicit part of the type system indicating the
+    microcontroller is not currently connected. This exception should trigger retry
+    logic and reconnection attempts in the USB operation decorator.
+    """
+
+    pass
 
 
 def intFromPayload(payload, start_index, num_bytes):
@@ -784,6 +797,99 @@ def microcontroller_exclusive(f):
     return wrapper
 
 
+def _usb_operation_with_reconnect(func):
+    """
+    Decorator for USB operations that implements nested retry logic:
+    - Inner loop: operation_retry_attempts on the current connection
+    - Outer loop: reconnection_attempts with reconnection_delay_ms between
+
+    Retry parameters are fetched from GlobalConfig at runtime.
+    Retries only on expected transient failures (IOError, HandleIsNone).
+    Other exceptions propagate immediately.
+    """
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        # Fetch retry configuration from GlobalConfig
+
+        g_config = GlobalConfigHandler.get_dict()
+
+        reconnect_attempts_item = g_config.get("microcontroller.reconnection_attempts")
+        reconnect_attempts = 5 if reconnect_attempts_item is None else reconnect_attempts_item.intvalue
+
+        reconnect_delay_ms_item = g_config.get("microcontroller.reconnection_delay_ms")
+        reconnect_delay_ms = 1000.0 if reconnect_delay_ms_item is None else reconnect_delay_ms_item.floatvalue
+
+        retry_attempts_item = g_config.get("microcontroller.operation_retry_attempts")
+        retry_attempts = 5 if retry_attempts_item is None else retry_attempts_item.intvalue
+
+        last_error: IOError | HandleIsNone | None = None
+
+        for reconnect_attempt in range(reconnect_attempts):
+            for retry_attempt in range(retry_attempts):
+                try:
+                    return func(self, *args, **kwargs)
+                except HandleIsNone as e:
+                    # Expected: handle is None (disconnected state)
+                    last_error = e
+                    logger.debug(
+                        f"{func.__name__} disconnected: "
+                        f"reconnect_attempt={reconnect_attempt + 1}/{reconnect_attempts}, "
+                        f"retry_attempt={retry_attempt + 1}/{retry_attempts}"
+                    )
+                except IOError as e:
+                    # Expected: USB communication error
+                    last_error = e
+                    logger.warning(
+                        f"{func.__name__} USB error: "
+                        f"reconnect_attempt={reconnect_attempt + 1}/{reconnect_attempts}, "
+                        f"retry_attempt={retry_attempt + 1}/{retry_attempts}, "
+                        f"errno={e.errno if hasattr(e, 'errno') else 'N/A'}, error='{e}'"
+                    )
+                # All other exceptions propagate immediately without retry
+
+                if retry_attempt < retry_attempts - 1:
+                    # Still have retries left on this connection, just retry
+                    continue
+                else:
+                    # This connection failed all retries, try reconnection
+                    break
+
+            if reconnect_attempt < reconnect_attempts - 1:
+                # Try to reconnect for next attempt
+                logger.info(
+                    f"{func.__name__}: attempting reconnection "
+                    f"(attempt {reconnect_attempt + 1}/{reconnect_attempts})"
+                )
+                try:
+                    if self.handle is not None:
+                        self.handle.close()
+                        self.handle = None
+                except Exception:
+                    pass
+
+                # Wait before reconnection
+                time.sleep(reconnect_delay_ms / 1000.0)
+
+                try:
+                    self.open()
+                    logger.info(
+                        f"{func.__name__}: successfully reconnected, retrying operation"
+                    )
+                except Exception as reconnect_error:
+                    logger.warning(
+                        f"{func.__name__}: reconnection failed: {type(reconnect_error).__name__}: {reconnect_error}"
+                    )
+
+        # All retries and reconnection attempts failed
+        if last_error:
+            logger.error(
+                f"{func.__name__}: all retry/reconnection attempts exhausted, re-raising exception"
+            )
+            raise last_error
+
+    return wrapper
+
+
 class Microcontroller(BaseModel):
     device_info: SerialDeviceInfo
 
@@ -960,22 +1066,23 @@ class Microcontroller(BaseModel):
                 await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
 
-            if self.handle.in_waiting < firmware_config.READ_PACKET_LENGTH:
+            bytes_waiting = self._usb_check_waiting()
+
+            if bytes_waiting < firmware_config.READ_PACKET_LENGTH:
                 await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
 
             # skip all bytes except those in the last package, since parsing takes too long
             # TODO make this fast enough to check all packet command ids, to not skip over the
             # result of a command that finishes quickly
-            num_bytes_to_skip = (
-                self.handle.in_waiting // firmware_config.READ_PACKET_LENGTH
+            num_packets_to_skip = (
+                bytes_waiting // firmware_config.READ_PACKET_LENGTH
             ) - 1
-            if num_bytes_to_skip > 0:
-                self.handle.read(num_bytes_to_skip * firmware_config.READ_PACKET_LENGTH)
+            if num_packets_to_skip > 0:
+                self._usb_receive(num_packets_to_skip * firmware_config.READ_PACKET_LENGTH)
 
-            packet = MicrocontrollerStatusPackage(
-                self.handle.read(firmware_config.READ_PACKET_LENGTH)
-            )
+            data = self._usb_receive(firmware_config.READ_PACKET_LENGTH)
+            packet = MicrocontrollerStatusPackage(data)
 
             # save current position as last known position
             self.last_position = packet.pos
@@ -1029,6 +1136,9 @@ class Microcontroller(BaseModel):
         else:
             cmds = [cmd_in]
 
+        # make more than one attempt at completing a command
+        NUM_CMD_REPEATS_MAX = 5
+
         for cmd in cmds:
             # generate command id
             cmd.set_id(self._get_next_cmd_id())
@@ -1055,14 +1165,10 @@ class Microcontroller(BaseModel):
                     acquired_illum_lock = True
 
             try:
-                if self.handle is None:
-                    raise RuntimeError("mc handle is None")
+                # Send command with nested retry logic via decorator
+                self._usb_send(cmd.bytes)
 
-                self.handle.write(cmd.bytes)
                 if cmd.wait_for_completion:
-                    # make more than one attempt at completing a command
-                    NUM_CMD_REPEATS_MAX = 5
-
                     for cmd_repeat_attempt in range(NUM_CMD_REPEATS_MAX):
                         logger.debug(
                             f"awaiting {CommandName(cmd[1])} the {cmd_repeat_attempt}th time"
@@ -1081,33 +1187,70 @@ class Microcontroller(BaseModel):
                             )
 
                         break
-            except IOError as e:
-                # Detailed logging for IOError diagnosis
-                logger.error(
-                    f"IOError in send_cmd: type={type(e).__name__}, "
-                    f"message='{e}', "
-                    f"command_name={CommandName(cmd[1]).name if cmd[1] < len(CommandName.__members__) else f'UNKNOWN({cmd[1]})' }, "
-                    f"command_id={cmd[0]}, "
-                    f"handle_state={'OPEN' if self.handle is not None else 'CLOSED'}"
-                )
-                # Quick reconnect attempt
-                logger.debug("Attempting quick reconnect within grace period...")
-                if self._try_quick_reconnect_with_grace_period():
-                    logger.info(
-                        f"Microcontroller reconnected within grace period - "
-                        f"retrying command {CommandName(cmd[1]).name} (ID {cmd[0]})"
-                    )
-                    # Recursively retry the command with new command ID
-                    return await self.send_cmd(cmd_in)
-                else:
-                    logger.error(
-                        f"Quick reconnect failed for command {CommandName(cmd[1]).name} (ID {cmd[0]}) - "
-                        f"propagating IOError"
-                    )
-                    raise
+            except Exception as e:
+                logger.warning(f"unknown error {e}")
+                raise
             finally:
                 if acquired_illum_lock:
                     self.illum.release()
+
+    @_usb_operation_with_reconnect
+    def _usb_send(self, data: bytes | bytearray) -> None:
+        """
+        Send data over USB to the microcontroller.
+        Decorated with nested retry logic for connection resilience.
+
+        Args:
+            data: bytes or bytearray to send
+
+        Raises:
+            IOError: if send fails after all retry/reconnection attempts
+            HandleIsNone: if handle is None
+        """
+        if self.handle is None:
+            raise HandleIsNone("Microcontroller handle is None - not connected")
+
+        self.handle.write(data)
+
+    @_usb_operation_with_reconnect
+    def _usb_receive(self, size: int) -> bytes:
+        """
+        Receive data over USB from the microcontroller.
+        Decorated with nested retry logic for connection resilience.
+
+        Args:
+            size: number of bytes to read
+
+        Returns:
+            bytes read from the microcontroller
+
+        Raises:
+            IOError: if receive fails after all retry/reconnection attempts
+            HandleIsNone: if handle is None
+        """
+        if self.handle is None:
+            raise HandleIsNone("Microcontroller handle is None - not connected")
+
+        data = self.handle.read(size)
+        return data
+
+    @_usb_operation_with_reconnect
+    def _usb_check_waiting(self) -> int:
+        """
+        Check how many bytes are waiting to be read.
+        Decorated with nested retry logic for connection resilience.
+
+        Returns:
+            number of bytes waiting in the input buffer
+
+        Raises:
+            IOError: if check fails after all retry/reconnection attempts
+            HandleIsNone: if handle is None
+        """
+        if self.handle is None:
+            raise HandleIsNone("Microcontroller handle is None - not connected")
+
+        return self.handle.in_waiting
 
     def _find_device_by_usb_ids(self) -> SerialDeviceInfo | None:
         """
@@ -1245,150 +1388,6 @@ class Microcontroller(BaseModel):
             self.handle = None
 
         logger.debug("microcontroller - closed")
-
-    @microcontroller_exclusive
-    def try_quick_reconnect(self, grace_period_s: float) -> bool:
-        """
-        Attempt to reconnect microcontroller within grace period.
-
-        This method tries to re-establish a serial connection if it was lost,
-        without closing the connection first. If successful, the connection is
-        restored and we can continue without needing to re-home.
-
-        Args:
-            grace_period_s: Maximum time to spend attempting reconnection in seconds
-
-        Returns:
-            True if reconnection succeeds within grace period, False otherwise
-        """
-        start_time = time.time()
-        logger.debug(
-            f"try_quick_reconnect(): starting reconnection attempt with "
-            f"grace_period={grace_period_s:.3f}s, current_handle_state={'OPEN' if self.handle else 'CLOSED'}"
-        )
-
-        # Record disconnect time if not already set
-        if self._last_disconnect_time is None:
-            self._last_disconnect_time = start_time
-            logger.debug(f"try_quick_reconnect(): recorded disconnect time {self._last_disconnect_time}")
-        else:
-            logger.debug(
-                f"try_quick_reconnect(): disconnect already recorded at {self._last_disconnect_time} "
-                f"({start_time - self._last_disconnect_time:.3f}s ago)"
-            )
-
-        # If we're already connected, no need to reconnect
-        if self.handle is not None:
-            # Check if connection is still valid
-            try:
-                # Try a quick non-blocking read to verify connection
-                if self.handle.in_waiting >= 0:
-                    logger.info(
-                        f"try_quick_reconnect(): handle still valid, connection appears intact, "
-                        f"returning success immediately"
-                    )
-                    return True
-            except Exception as e:
-                logger.warning(
-                    f"try_quick_reconnect(): handle exists but validation check failed: {type(e).__name__}: {e}"
-                )
-
-        # Try to re-establish connection within grace period
-        attempt_count = 0
-        while (elapsed_time := (time.time() - start_time)) < grace_period_s:
-            attempt_count += 1
-            remaining_time = grace_period_s - elapsed_time
-            logger.debug(
-                f"try_quick_reconnect(): attempt {attempt_count}, "
-                f"elapsed={elapsed_time:.3f}s, remaining={remaining_time:.3f}s"
-            )
-            try:
-                if self.handle is None:
-                    logger.debug(
-                        f"try_quick_reconnect(): handle is None, calling open() to re-establish connection"
-                    )
-                    # Use the enhanced open() method which handles device path changes
-                    self.open()
-                    logger.debug(f"try_quick_reconnect(): open() completed successfully")
-
-                # Verify connection by checking if we can read
-                if self.handle is not None:
-                    in_waiting = self.handle.in_waiting
-                    logger.debug(
-                        f"try_quick_reconnect(): handle valid, bytes_in_waiting={in_waiting}"
-                    )
-                    if in_waiting >= 0:
-                        logger.info(
-                            f"try_quick_reconnect(): successfully re-established connection "
-                            f"after {elapsed_time:.3f}s and {attempt_count} attempts"
-                        )
-                        self._last_disconnect_time = None  # Reset disconnect time on success
-                        return True
-            except Exception as e:
-                logger.warning(
-                    f"try_quick_reconnect(): attempt {attempt_count} failed: "
-                    f"type={type(e).__name__}, message='{e}'"
-                )
-                if self.handle is not None:
-                    try:
-                        logger.debug(f"try_quick_reconnect(): closing handle after failed attempt")
-                        self.handle.close()
-                    except Exception as close_err:
-                        logger.debug(
-                            f"try_quick_reconnect(): error closing handle: {type(close_err).__name__}: {close_err}"
-                        )
-                    self.handle = None
-
-            # Brief sleep before retry
-            time.sleep(0.001)
-
-        # Grace period expired
-        elapsed_time = time.time() - start_time
-        logger.error(
-            f"try_quick_reconnect(): failed to re-establish connection within grace period: "
-            f"grace_period={grace_period_s:.3f}s, total_elapsed={elapsed_time:.3f}s, "
-            f"attempts_made={attempt_count}"
-        )
-        return False
-
-    def _try_quick_reconnect_with_grace_period(self) -> bool:
-        """
-        Try reconnect using grace period from global config.
-
-        Reads the configured grace period and attempts quick reconnection.
-        """
-        logger.debug("_try_quick_reconnect_with_grace_period(): retrieving grace period from config")
-        try:
-            from seafront.config.basics import GlobalConfigHandler
-
-            g_config = GlobalConfigHandler.get_dict()
-            grace_period_ms = g_config.get("microcontroller.reconnection_grace_period_ms")
-
-            if grace_period_ms is None:
-                grace_period_s = 0.2  # Default 200ms
-                logger.debug(
-                    f"_try_quick_reconnect_with_grace_period(): "
-                    f"config entry not found, using default 0.2s (200ms)"
-                )
-            else:
-                grace_period_s = grace_period_ms.floatvalue / 1000.0
-                logger.debug(
-                    f"_try_quick_reconnect_with_grace_period(): "
-                    f"grace_period_ms={grace_period_ms.floatvalue}, "
-                    f"converted to {grace_period_s:.3f}s"
-                )
-        except Exception as e:
-            logger.error(
-                f"_try_quick_reconnect_with_grace_period(): error retrieving config: "
-                f"type={type(e).__name__}, message='{e}', using default 0.2s"
-            )
-            grace_period_s = 0.2  # Fallback to default
-
-        logger.info(
-            f"_try_quick_reconnect_with_grace_period(): "
-            f"calling try_quick_reconnect() with grace_period={grace_period_s:.3f}s"
-        )
-        return self.try_quick_reconnect(grace_period_s)
 
     @microcontroller_exclusive
     async def filter_wheel_set_position(self, position: int):
