@@ -44,18 +44,25 @@ const placeholder_microscope_name="<undefined>";
 
 import { tooltipConfig, enabletooltip } from "tooltip";
 
-// Interface settings with defaults
+/**
+ *  Interface settings with defaults
+ * @type {CachedInterfaceSettings}
+ */
 const defaultInterfaceSettings = {
     tooltip: {
         enabled: true,
         delayMs: 400
-    }
+    },
+    busyLingerMs:0,
+    theme:"light",
+    savedAt:"0",
+    popupHideDelayMs: 500
 };
 
 // Current interface settings (will be merged with saved settings)
 const interfaceSettings = structuredClone(defaultInterfaceSettings);
 
-Object.assign(window, { enabletooltip, tooltipConfig });
+Object.assign(window, { enabletooltip, tooltipConfig, interfaceSettings });
 
 import { initTabs } from "tabs";
 Object.assign(window, { initTabs });
@@ -106,6 +113,7 @@ document.addEventListener("alpine:init", () => {
         server_url: window.location.origin,
 
         tooltipConfig,
+        interfaceSettings,
 
         // Central error modal state
         /** @type {{ show: boolean, title: string, message: string, timestamp: Date | null, showReloadButton: boolean }} */
@@ -304,6 +312,7 @@ document.addEventListener("alpine:init", () => {
                 if (saved) {
                     // Merge each section separately to handle nested objects
                     if (saved.tooltip) Object.assign(interfaceSettings.tooltip, saved.tooltip);
+                    if (saved.popupHideDelayMs !== undefined) interfaceSettings.popupHideDelayMs = saved.popupHideDelayMs;
                     if (saved.busyLingerMs !== undefined) this.busyLingerMs = saved.busyLingerMs;
 
                     // Apply to tooltipConfig
@@ -3551,7 +3560,7 @@ document.addEventListener("alpine:init", () => {
          * Validate filter selection and show/hide error state
          * Called via x-effect to update validation when channel or filter wheel availability changes
          * @param {HTMLSelectElement} selectEl - The filter select element
-         * @param {object} channel - The channel object
+         * @param {AcquisitionChannelConfig} channel - The channel object
          * @param {boolean} isFilterWheelAvailable - Whether filter wheel is available
          */
         setupFilterValidation(selectEl, channel, isFilterWheelAvailable) {
@@ -3575,11 +3584,13 @@ document.addEventListener("alpine:init", () => {
 
                 // Remove any existing tooltips for this element
                 const existingTooltips = Array.from(document.querySelectorAll('.number-input-tooltip')).filter(
+                    /// @ts-ignore
                     tooltip => tooltip._associatedElement === selectEl
                 );
                 existingTooltips.forEach(tooltip => tooltip.remove());
 
                 // Create error tooltip
+                /** @ts-ignore @type {HTMLElement&{_associatedElement:HTMLElement}} */
                 const tooltip = document.createElement('div');
                 tooltip.className = 'number-input-tooltip';
                 tooltip.textContent = errorMessage; // Explicitly set the text content
@@ -3627,6 +3638,7 @@ document.addEventListener("alpine:init", () => {
                 selectEl.classList.remove("filter-select-error");
                 // Remove any existing tooltips for this element
                 const existingTooltips = Array.from(document.querySelectorAll('.number-input-tooltip')).filter(
+                    /// @ts-ignore
                     tooltip => tooltip._associatedElement === selectEl
                 );
                 existingTooltips.forEach(tooltip => tooltip.remove());

@@ -168,6 +168,7 @@ declare global {
             enabled: boolean;
             delayMs: number;
         };
+        popupHideDelayMs: number;
         busyLingerMs: number;
         theme: string;
         savedAt: string;

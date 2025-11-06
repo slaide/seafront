@@ -1032,6 +1032,20 @@
                                         @input="saveInterfaceSettings()"
                                     />
 
+                                    <label for="popup-hide-delay-input">Popup hide delay (ms):</label>
+                                    <input
+                                        id="popup-hide-delay-input"
+                                        type="number"
+                                        min="0"
+                                        max="2000"
+                                        step="50"
+                                        x-model.number="interfaceSettings.popupHideDelayMs"
+                                        is="number-input"
+                                        x-init="registerNumberInput($el),enabletooltip($el)"
+                                        x-bind:tooltip="`How long to wait before hiding popups after moving the mouse away. Range: 0-2000ms (0 = instant, 500 = default)`"
+                                        @input="saveInterfaceSettings()"
+                                    />
+
                                     <label for="busy-linger-input">Busy indicator linger (ms):</label>
                                     <input
                                         id="busy-linger-input"
@@ -2358,17 +2372,63 @@
                             }
                         </style>
                         <script>
+                            // Global tracking for currently open popup
+                            let currentlyOpenPopup = null;
+
+                            function closeAllPopupsExcept(exceptPopup) {
+                                if (currentlyOpenPopup !== null && currentlyOpenPopup !== exceptPopup) {
+                                    makeInvisible(currentlyOpenPopup);
+                                }
+                                currentlyOpenPopup = exceptPopup;
+                            }
+
                             function registerContainedPopup(el) {
                                 const target_popups = el.getElementsByClassName("popup");
                                 if (target_popups.length != 1) throw new Error(``);
                                 const target_popup = target_popups[0];
+                                let hideTimeoutId = null;
+                                let isOverSpawner = false;
+                                let isOverPopup = false;
+
+                                const cancelHideTimeout = () => {
+                                    if (hideTimeoutId !== null) {
+                                        clearTimeout(hideTimeoutId);
+                                        hideTimeoutId = null;
+                                    }
+                                };
+
+                                const checkAndHide = () => {
+                                    cancelHideTimeout();
+                                    // Only hide if mouse is over neither element
+                                    if (!isOverSpawner && !isOverPopup) {
+                                        hideTimeoutId = setTimeout(() => {
+                                            makeInvisible(target_popup);
+                                            hideTimeoutId = null;
+                                        }, interfaceSettings.popupHideDelayMs);
+                                    }
+                                };
 
                                 makeInvisible(target_popup);
                                 el.addEventListener("mouseenter", () => {
+                                    isOverSpawner = true;
+                                    cancelHideTimeout();
                                     makeVisible(target_popup);
+                                    // Close any other open popup
+                                    closeAllPopupsExcept(target_popup);
                                 });
                                 el.addEventListener("mouseleave", () => {
-                                    makeInvisible(target_popup);
+                                    isOverSpawner = false;
+                                    checkAndHide();
+                                });
+
+                                // Also handle mouse events on the popup itself
+                                target_popup.addEventListener("mouseenter", () => {
+                                    isOverPopup = true;
+                                    cancelHideTimeout();
+                                });
+                                target_popup.addEventListener("mouseleave", () => {
+                                    isOverPopup = false;
+                                    checkAndHide();
                                 });
                             }
                             function makeVisible(el) {
