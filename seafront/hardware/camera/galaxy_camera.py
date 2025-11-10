@@ -53,7 +53,10 @@ def _camera_operation_with_reconnect(func):
         for reconnect_attempt in range(reconnect_attempts):
             for retry_attempt in range(retry_attempts):
                 try:
-                    return func(self, *args, **kwargs)
+                    result = func(self, *args, **kwargs)
+                    if retry_attempt > 0 or reconnect_attempt > 0:
+                        logger.debug(f"{func.__name__} succeeded")
+                    return result
                 except Exception as e:
                     last_error = e
                     logger.warning(
@@ -64,6 +67,7 @@ def _camera_operation_with_reconnect(func):
                     )
                     if retry_attempt < retry_attempts - 1:
                         # Still have retries left on this connection, just retry
+                        time.sleep(0.005)  # 5ms delay between retry attempts
                         continue
                     else:
                         # This connection failed all retries, try reconnection

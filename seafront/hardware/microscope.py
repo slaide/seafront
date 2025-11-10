@@ -16,7 +16,7 @@ import seaconfig as sc
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, ImagingOrder
-from seafront.hardware.adapter import AdapterState, CoreState
+from seafront.hardware.adapter import AdapterState
 from seafront.server import commands as cmd
 
 
@@ -59,7 +59,6 @@ class Microscope(BaseModel, abc.ABC):
     # Common state attributes
     channels: list[ChannelConfig]
     filters: list[FilterConfig]
-    state: CoreState = CoreState.Idle
     is_connected: bool = False
     is_in_loading_position: bool = False
 

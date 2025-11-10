@@ -866,6 +866,12 @@ class GlobalConfigHandler:
                 value=5,
             ),
             ConfigItem(
+                name="microcontroller operation retry delay [ms]",
+                handle="microcontroller.operation_retry_delay_ms",
+                value_kind="float",
+                value=5.0,
+            ),
+            ConfigItem(
                 name="camera reconnection attempts",
                 handle="camera.reconnection_attempts",
                 value_kind="int",

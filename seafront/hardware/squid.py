@@ -36,7 +36,7 @@ from seafront.config.handles import (
     LaserAutofocusConfig,
 )
 from seafront.hardware import microcontroller as mc
-from seafront.hardware.adapter import AdapterState, CoreState
+from seafront.hardware.adapter import AdapterState
 from seafront.hardware.camera import (
     Camera,
     CameraOpenRequest,
@@ -1095,7 +1095,6 @@ class SquidAdapter(Microscope):
         z_pos_mm = self._pos_z_measured_to_real(last_stage_position.z_pos_mm)
 
         self.last_state = AdapterState(
-            state=self.state,
             is_in_loading_position=self.is_in_loading_position,
             stage_position=cmd.Position(
                 x_pos_mm=x_pos_mm,
@@ -1209,8 +1208,6 @@ class SquidAdapter(Microscope):
         if self.is_in_loading_position:
             cmd.error_internal(detail="already in loading position")
 
-        self.state = CoreState.Moving
-
         # home z
         await qmc.send_cmd(mc.Command.home("z"))
 
@@ -1225,8 +1222,6 @@ class SquidAdapter(Microscope):
 
         self.is_in_loading_position = True
 
-        self.state = CoreState.LoadingPosition
-
         logger.debug("squid - entered loading position")
 
         result = cmd.BasicSuccessResponse()
@@ -1240,15 +1235,11 @@ class SquidAdapter(Microscope):
         if not self.is_in_loading_position:
             cmd.error_internal(detail="not in loading position")
 
-        self.state = CoreState.Moving
-
         await qmc.send_cmd(mc.Command.move_to_mm("x", 30))
         await qmc.send_cmd(mc.Command.move_to_mm("y", 30))
         await qmc.send_cmd(mc.Command.move_to_mm("z", 1))
 
         self.is_in_loading_position = False
-
-        self.state = CoreState.Idle
 
         logger.debug("squid - left loading position")
 
@@ -1290,11 +1281,7 @@ class SquidAdapter(Microscope):
         if is_forbidden:
             cmd.error_internal(detail=error_message)
 
-        self.state = CoreState.Moving
-
         await qmc.send_cmd(mc.Command.move_by_mm(command.axis, command.distance_mm))
-
-        self.state = CoreState.Idle
 
         logger.debug("squid - moved by")
 
@@ -1323,9 +1310,6 @@ class SquidAdapter(Microscope):
             )
             if is_forbidden:
                 cmd.error_internal(detail=error_message)
-
-        prev_state = self.state
-        self.state = CoreState.Moving
 
         approach_x_before_y = True
 
@@ -1393,8 +1377,6 @@ class SquidAdapter(Microscope):
                     detail=f"calibrated z coordinate out of bounds {z_mm = }"
                 )
             await qmc.send_cmd(mc.Command.move_to_mm("z", z_mm))
-
-        self.state = prev_state
 
         logger.debug("squid - moved to")
 
@@ -1476,7 +1458,6 @@ class SquidAdapter(Microscope):
 
             # Force microscope state cleanup
             self.stream_callback = None
-            self.state = CoreState.Idle
             logger.debug("squid - completed forced comprehensive cleanup")
 
         result = cmd.BasicSuccessResponse()
@@ -1513,8 +1494,6 @@ class SquidAdapter(Microscope):
 
         if self.stream_callback is not None:
             cmd.error_internal(detail="Cannot take snapshot while camera is streaming")
-
-        self.state = CoreState.ChannelSnap
 
         # Validate channel configuration for acquisition
         self.validate_channel_for_acquisition(command.channel)
@@ -1583,8 +1562,6 @@ class SquidAdapter(Microscope):
                 await qmc.send_cmd(mc.Command.illumination_end(illum_code))
                 logger.debug("channel snap - after illum off")
 
-            self.state = CoreState.Idle
-
             img, cambits = _process_image(img, camera=main_camera)
 
         logger.debug("squid - took channel snapshot")
@@ -1622,8 +1599,6 @@ class SquidAdapter(Microscope):
             )
 
         GlobalConfigHandler.override(command.machine_config)
-
-        self.state = CoreState.ChannelStream
 
         # Validate channel configuration for acquisition
         self.validate_channel_for_acquisition(command.channel)
@@ -1725,9 +1700,6 @@ class SquidAdapter(Microscope):
         if self.is_in_loading_position:
             cmd.error_internal(detail="now allowed while in loading position")
 
-        if self.state != CoreState.Idle:
-            cmd.error_internal(detail="cannot move while in non-idle state")
-
         # get autofocus calibration data
         conf_af_calib_x = LaserAutofocusConfig.CALIBRATION_X_PEAK_POS.value_item.floatvalue
         conf_af_calib_umpx = LaserAutofocusConfig.CALIBRATION_UM_PER_PX.value_item.floatvalue
@@ -1773,9 +1745,6 @@ class SquidAdapter(Microscope):
                 )
 
             logger.debug("autofocus - did pre approach refz")
-
-        old_state = self.state
-        self.state = CoreState.Moving
 
         last_distance_estimate_mm = 0.0
         num_compensating_moves = 0
@@ -1825,8 +1794,6 @@ class SquidAdapter(Microscope):
             # if any interaction failed, attempt to reset z position to known somewhat-good position
             await qmc.send_cmd(mc.Command.move_to_mm("z", initial_z))
             logger.debug("autofocus - reset z position")
-        finally:
-            self.state = old_state
 
         logger.debug("squid - used autofocus to approach target displacement")
 

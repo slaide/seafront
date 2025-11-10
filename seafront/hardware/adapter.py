@@ -1,15 +1,5 @@
-from enum import Enum
-
 from pydantic import BaseModel
 
-
-class CoreState(str, Enum):
-    Idle="idle"
-    ChannelSnap="channel_snap"
-    ChannelStream="channel_stream"
-    LoadingPosition="loading_position"
-    Moving="moving"
-    Disconnected="disconnected"
 
 class Position(BaseModel):
     x_pos_mm:float
@@ -22,6 +12,5 @@ class Position(BaseModel):
 
 class AdapterState(BaseModel):
     "state of an adapter (like SquidAdapter)"
-    state:CoreState
     is_in_loading_position:bool
     stage_position:Position

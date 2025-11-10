@@ -51,7 +51,6 @@ declare global {
     type CoreCurrentState = {
         adapter_state: {
             is_in_loading_position: boolean;
-            state: "idle";
             stage_position: AdapterPosition;
         };
         latest_imgs: {

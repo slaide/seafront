@@ -822,12 +822,22 @@ def _usb_operation_with_reconnect(func):
         retry_attempts_item = g_config.get("microcontroller.operation_retry_attempts")
         retry_attempts = 5 if retry_attempts_item is None else retry_attempts_item.intvalue
 
+        retry_delay_ms_item = g_config.get("microcontroller.operation_retry_delay_ms")
+        retry_delay_ms = 5.0 if retry_delay_ms_item is None else retry_delay_ms_item.floatvalue
+
         last_error: IOError | HandleIsNone | None = None
 
         for reconnect_attempt in range(reconnect_attempts):
             for retry_attempt in range(retry_attempts):
                 try:
-                    return func(self, *args, **kwargs)
+                    result = func(self, *args, **kwargs)
+                    if retry_attempt > 0 or reconnect_attempt > 0:
+                        logger.debug(
+                            f"{func.__name__} succeeded after retry: "
+                            f"reconnect_attempt={reconnect_attempt + 1}/{reconnect_attempts}, "
+                            f"retry_attempt={retry_attempt + 1}/{retry_attempts}"
+                        )
+                    return result
                 except HandleIsNone as e:
                     # Expected: handle is None (disconnected state)
                     last_error = e
@@ -849,6 +859,7 @@ def _usb_operation_with_reconnect(func):
 
                 if retry_attempt < retry_attempts - 1:
                     # Still have retries left on this connection, just retry
+                    time.sleep(retry_delay_ms / 1000.0)  # Configurable delay between retry attempts
                     continue
                 else:
                     # This connection failed all retries, try reconnection

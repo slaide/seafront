@@ -30,7 +30,7 @@ from pydantic import PrivateAttr
 
 from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, GlobalConfigHandler, ImagingOrder
 from seafront.config.handles import ImagingConfig, LaserAutofocusConfig
-from seafront.hardware.adapter import AdapterState, CoreState, Position
+from seafront.hardware.adapter import AdapterState, Position
 from seafront.hardware.camera import Camera, HardwareLimitValue, MockCamera
 from seafront.hardware.firmware_config import (
     get_firmware_config,
@@ -330,7 +330,6 @@ class MockMicroscope(Microscope):
         logger.info("Mock microscope: opening connections")
         self.main_camera.value.open("main")
         self.is_connected = True
-        self.state = CoreState.Idle
 
     def close(self) -> None:
         """Mock connection closing."""
@@ -344,7 +343,6 @@ class MockMicroscope(Microscope):
         self._streaming_acquisition_config = None
         self.stream_callback = None
         self.is_connected = False
-        self.state = CoreState.Idle
 
     async def home(self) -> None:
         """Mock homing sequence."""
@@ -369,7 +367,6 @@ class MockMicroscope(Microscope):
         )
 
         self.last_state = AdapterState(
-            state=self.state,
             stage_position=calibrated_pos,
             is_in_loading_position=self.is_in_loading_position,
         )
