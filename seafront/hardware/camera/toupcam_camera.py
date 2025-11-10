@@ -312,8 +312,9 @@ class ToupCamCamera(Camera):
         with toupcam_ctx("put option"):
             self._set_toupcam_option(tc.TOUPCAM_OPTION_TRIGGER,1)
 
-        self.acq_mode = None
-        self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
+        # Initialize in ON_TRIGGER mode
+        self.ctx.mode = "once"
+        self.acq_mode = AcquisitionMode.ON_TRIGGER
 
         self._start_pullmode()
 
@@ -463,38 +464,6 @@ class ToupCamCamera(Camera):
         if self.handle is None:
             raise RuntimeError("Camera handle is None - not connected")
         self.handle.put_ExpoAGain(gain_percent)
-
-    def _set_acquisition_mode(
-        self,
-        acq_mode: AcquisitionMode,
-        with_cb: tp.Callable[[np.ndarray], bool] | None = None,
-        continuous_target_fps: float | None = None,
-    ):
-        """Set acquisition mode."""
-        if not self.handle:
-            raise RuntimeError("Camera not opened")
-
-        if self.acq_mode == acq_mode:
-            return
-
-        match acq_mode:
-            case AcquisitionMode.ON_TRIGGER:
-                if with_cb is not None:
-                    raise RuntimeError("callback is not allowed for on trigger mode")
-
-                self.ctx.mode="once"
-
-                # ToupCam doesn't have explicit trigger modes like Galaxy
-                # We'll use single-shot acquisition
-
-            case AcquisitionMode.CONTINUOUS:
-                if with_cb is None:
-                    raise RuntimeError("callback must be set for continuous mode")
-
-                self.ctx.mode="until_stop"
-                self.ctx.callback=with_cb # type: ignore
-
-        self.acq_mode = acq_mode
 
     def _set_toupcam_option(self,option,value)->bool:
         "return true if value has been changed, False if value was already set"
@@ -843,7 +812,9 @@ class ToupCamCamera(Camera):
 
         self.acquisition_ongoing = True
         try:
-            self._set_acquisition_mode(acq_mode=AcquisitionMode.ON_TRIGGER)
+            # Set to ON_TRIGGER mode for single frame acquisition
+            self.ctx.mode = "once"
+            self.acq_mode = AcquisitionMode.ON_TRIGGER
 
             img_bytes = bytes(self.height * self.width * bytes_per_pixel)
 
@@ -894,7 +865,6 @@ class ToupCamCamera(Camera):
         self.ctx.bytes_per_pixel = bytes_per_pixel
         self.ctx.pullimage_pix_format = pullimage_pix_format  # type: ignore[assignment]
         self.ctx.dtype = dtype
-        self.ctx.mode = "until_stop"
 
         # Wrap callback to ignore return value
         def streaming_callback_wrapper(img_np: np.ndarray) -> bool:
@@ -905,10 +875,10 @@ class ToupCamCamera(Camera):
             callback(img_np)
             return False
 
-        self._set_acquisition_mode(
-            acq_mode=AcquisitionMode.CONTINUOUS,
-            with_cb=streaming_callback_wrapper
-        )
+        # Set to CONTINUOUS mode for streaming
+        self.ctx.mode = "until_stop"
+        self.ctx.callback = streaming_callback_wrapper  # type: ignore
+        self.acq_mode = AcquisitionMode.CONTINUOUS
 
         # trigger until stop (with retry logic)
         self._api_trigger(0xffff)
