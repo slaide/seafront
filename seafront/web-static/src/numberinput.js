@@ -267,8 +267,6 @@ export function registerNumberInput(el) {
         if (!isValid) {
             // Add error styling regardless of forceValid
             el.classList.add("number-input-error");
-            console.log('Adding error styling, classes now:', el.className);
-            console.log('Element type:', el.type, 'Element tagName:', el.tagName);
             
             // Create tooltip
             const tooltip = document.createElement('div');

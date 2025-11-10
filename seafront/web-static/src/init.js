@@ -2610,7 +2610,6 @@ document.addEventListener("alpine:init", () => {
                             return check(v);
                         })
                         .then((v) => {
-                            console.log(v);
                             return v;
                         });
                 },
