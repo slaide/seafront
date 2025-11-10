@@ -8,8 +8,6 @@ throughout the codebase with organized, type-safe enum values.
 from enum import Enum
 from typing import Any
 
-from seafront.config.basics import GlobalConfigHandler
-
 
 class ConfigHandle(Enum):
     """Base class for config handle enums with utility methods."""
@@ -21,6 +19,7 @@ class ConfigHandle(Enum):
     @classmethod
     def get_dict(cls) -> dict[str, Any]:
         """Get the global config dict for convenient access."""
+        from seafront.config.basics import GlobalConfigHandler
         return GlobalConfigHandler.get_dict()
 
     def get_item(self) -> Any:
@@ -49,6 +48,22 @@ class CameraConfig(ConfigHandle):
     MAIN_IMAGE_HEIGHT_PX = "camera.main.image.height_px"
     MAIN_IMAGE_FLIP_HORIZONTAL = "camera.main.image.flip_horizontal"
     MAIN_IMAGE_FLIP_VERTICAL = "camera.main.image.flip_vertical"
+
+    # Camera communication and retry settings
+    RECONNECTION_ATTEMPTS = "camera.reconnection_attempts"
+    RECONNECTION_DELAY_MS = "camera.reconnection_delay_ms"
+    OPERATION_RETRY_ATTEMPTS = "camera.operation_retry_attempts"
+
+
+class MicrocontrollerConfig(ConfigHandle):
+    """Microcontroller communication and retry configuration handles."""
+
+    # Connection grace period and retry settings
+    RECONNECTION_GRACE_PERIOD_MS = "microcontroller.reconnection_grace_period_ms"
+    RECONNECTION_ATTEMPTS = "microcontroller.reconnection_attempts"
+    RECONNECTION_DELAY_MS = "microcontroller.reconnection_delay_ms"
+    OPERATION_RETRY_ATTEMPTS = "microcontroller.operation_retry_attempts"
+    OPERATION_RETRY_DELAY_MS = "microcontroller.operation_retry_delay_ms"
 
 
 class LaserAutofocusConfig(ConfigHandle):
@@ -138,13 +153,14 @@ class IlluminationConfig(ConfigHandle):
 def get_config_item(handle: ConfigHandle | str) -> Any:
     """
     Get a config item by handle enum or string.
-    
+
     Args:
         handle: ConfigHandle enum or string handle
-        
+
     Returns:
         The config item
     """
+    from seafront.config.basics import GlobalConfigHandler
     g_config = GlobalConfigHandler.get_dict()
 
     if isinstance(handle, ConfigHandle):

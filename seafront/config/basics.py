@@ -9,9 +9,204 @@ import json5
 from pydantic import BaseModel, Field
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
+# Import handle enums for config defaults
+from seafront.config.handles import (
+    CameraConfig,
+    CalibrationConfig,
+    FilterWheelConfig,
+    ImagingConfig,
+    ImageConfig,
+    IlluminationConfig,
+    LaserAutofocusConfig,
+    MicrocontrollerConfig,
+    ProtocolConfig,
+    StorageConfig,
+    SystemConfig,
+)
+
 CameraDriver = tp.Literal["galaxy", "toupcam"]
 MicroscopeType = tp.Literal["squid", "mock"]
 ImagingOrder = tp.Literal["z_order", "wavelength_order", "protocol_order"]
+
+
+def set_config_item_int(
+    config_items: list[ConfigItem],
+    handle: str,
+    value: int,
+    name: str | None = None,
+    frozen: bool = False,
+) -> None:
+    """
+    Set or update an integer config item in the list.
+
+    If an item with the given handle exists, updates its value.
+    If not found, creates and appends a new ConfigItem.
+
+    Args:
+        config_items: List of ConfigItem objects to modify in-place
+        handle: Unique identifier for the config item
+        value: Integer value to set
+        name: Display name (used only when creating new item)
+        frozen: Whether item can be modified by user
+    """
+    for item in config_items:
+        if item.handle == handle and item.value_kind == "int":
+            item.value = value
+            return
+    # Item not found, create and append
+    config_items.append(
+        ConfigItem(
+            handle=handle,
+            name=name or handle,
+            value_kind="int",
+            value=value,
+            frozen=frozen,
+        )
+    )
+
+
+def set_config_item_float(
+    config_items: list[ConfigItem],
+    handle: str,
+    value: float,
+    name: str | None = None,
+    frozen: bool = False,
+) -> None:
+    """
+    Set or update a float config item in the list.
+
+    If an item with the given handle exists, updates its value.
+    If not found, creates and appends a new ConfigItem.
+
+    Args:
+        config_items: List of ConfigItem objects to modify in-place
+        handle: Unique identifier for the config item
+        value: Float value to set
+        name: Display name (used only when creating new item)
+        frozen: Whether item can be modified by user
+    """
+    for item in config_items:
+        if item.handle == handle and item.value_kind == "float":
+            item.value = value
+            return
+    # Item not found, create and append
+    config_items.append(
+        ConfigItem(
+            handle=handle,
+            name=name or handle,
+            value_kind="float",
+            value=value,
+            frozen=frozen,
+        )
+    )
+
+
+def set_config_item_text(
+    config_items: list[ConfigItem],
+    handle: str,
+    value: str,
+    name: str | None = None,
+    frozen: bool = False,
+) -> None:
+    """
+    Set or update a text config item in the list.
+
+    If an item with the given handle exists, updates its value.
+    If not found, creates and appends a new ConfigItem.
+
+    Args:
+        config_items: List of ConfigItem objects to modify in-place
+        handle: Unique identifier for the config item
+        value: String value to set
+        name: Display name (used only when creating new item)
+        frozen: Whether item can be modified by user
+    """
+    for item in config_items:
+        if item.handle == handle and item.value_kind == "text":
+            item.value = value
+            return
+    # Item not found, create and append
+    config_items.append(
+        ConfigItem(
+            handle=handle,
+            name=name or handle,
+            value_kind="text",
+            value=value,
+            frozen=frozen,
+        )
+    )
+
+
+def set_config_item_option(
+    config_items: list[ConfigItem],
+    handle: str,
+    value: str,
+    options: list[ConfigItemOption],
+    name: str | None = None,
+    frozen: bool = False,
+) -> None:
+    """
+    Set or update an option config item in the list.
+
+    If an item with the given handle exists, updates its value and options.
+    If not found, creates and appends a new ConfigItem.
+
+    Args:
+        config_items: List of ConfigItem objects to modify in-place
+        handle: Unique identifier for the config item
+        value: Option value to set (must be a valid handle from options list)
+        options: List of ConfigItemOption to set as available options
+        name: Display name (used only when creating new item)
+        frozen: Whether item can be modified by user
+    """
+    for item in config_items:
+        if item.handle == handle and item.value_kind == "option":
+            item.value = value
+            item.options = options
+            return
+    # Item not found, create and append
+    config_items.append(
+        ConfigItem(
+            handle=handle,
+            name=name or handle,
+            value_kind="option",
+            value=value,
+            options=options,
+            frozen=frozen,
+        )
+    )
+
+
+def set_config_item_bool(
+    config_items: list[ConfigItem],
+    handle: str,
+    value: bool,
+    name: str | None = None,
+    frozen: bool = False,
+) -> None:
+    """
+    Set or update a boolean option config item in the list.
+
+    Convenience wrapper for option-type boolean values (yes/no).
+    If an item with the given handle exists, updates its value.
+    If not found, creates and appends a new ConfigItem.
+
+    Args:
+        config_items: List of ConfigItem objects to modify in-place
+        handle: Unique identifier for the config item
+        value: Boolean value to set
+        name: Display name (used only when creating new item)
+        frozen: Whether item can be modified by user
+    """
+    str_value = "yes" if value else "no"
+    set_config_item_option(
+        config_items,
+        handle,
+        str_value,
+        ConfigItemOption.get_bool_options(),
+        name=name,
+        frozen=frozen,
+    )
 
 
 class PowerCalibration(BaseModel):
@@ -446,14 +641,14 @@ class GlobalConfigHandler:
         main_camera_attributes = [
             ConfigItem(
                 name="main camera model",
-                handle="camera.main.model",
+                handle=CameraConfig.MAIN_MODEL.value,
                 value_kind="text",
                 value=critical_machine_config.main_camera_model,
                 frozen=True,
             ),
             ConfigItem(
                 name="main camera driver",
-                handle="camera.main.driver",
+                handle=CameraConfig.MAIN_DRIVER.value,
                 value_kind="option",
                 value=critical_machine_config.main_camera_driver,
                 options=[
@@ -470,7 +665,7 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera objective",
-                handle="camera.main.objective",
+                handle=CameraConfig.MAIN_OBJECTIVE.value,
                 value_kind="option",
                 value="20xolympus",
                 options=[
@@ -499,7 +694,7 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera trigger",
-                handle="camera.main.trigger",
+                handle=CameraConfig.MAIN_TRIGGER.value,
                 value_kind="option",
                 value="software",
                 options=[
@@ -515,7 +710,7 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera pixel format",
-                handle="camera.main.pixel_format",
+                handle=CameraConfig.MAIN_PIXEL_FORMAT.value,
                 value_kind="option",
                 value="mono8",
                 options=[
@@ -535,19 +730,19 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera image width [px]",
-                handle="camera.main.image.width_px",
+                handle=CameraConfig.MAIN_IMAGE_WIDTH_PX.value,
                 value_kind="int",
                 value=2500,
             ),
             ConfigItem(
                 name="main camera image height [px]",
-                handle="camera.main.image.height_px",
+                handle=CameraConfig.MAIN_IMAGE_HEIGHT_PX.value,
                 value_kind="int",
                 value=2500,
             ),
             ConfigItem(
                 name="main camera flip image horizontally",
-                handle="camera.main.image.flip_horizontal",
+                handle=CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value,
                 value_kind="option",
                 value="no",
                 options=ConfigItemOption.get_bool_options(),
@@ -555,7 +750,7 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="main camera flip image vertically",
-                handle="camera.main.image.flip_vertical",
+                handle=CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value,
                 value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
@@ -565,7 +760,7 @@ class GlobalConfigHandler:
 
         laser_autofocus_system_available_attribute = ConfigItem(
             name="laser autofocus system available",
-            handle="laser.autofocus.available",
+            handle=LaserAutofocusConfig.AVAILABLE.value,
             value_kind="option",
             value=critical_machine_config.laser_autofocus_available or "no",
             options=ConfigItemOption.get_bool_options(),
@@ -574,7 +769,7 @@ class GlobalConfigHandler:
 
         filter_wheel_system_available_attribute = ConfigItem(
             name="filter wheel system available",
-            handle="filter.wheel.available",
+            handle=FilterWheelConfig.AVAILABLE.value,
             value_kind="option",
             value=critical_machine_config.filter_wheel_available or "no",
             options=ConfigItemOption.get_bool_options(),
@@ -588,14 +783,14 @@ class GlobalConfigHandler:
             laser_autofocus_system_attributes = [
                 ConfigItem(
                     name="laser autofocus camera model",
-                    handle="laser.autofocus.camera.model",
+                    handle=LaserAutofocusConfig.CAMERA_MODEL.value,
                     value_kind="text",
                     value=critical_machine_config.laser_autofocus_camera_model,
                     frozen=True,
                 ),
                 ConfigItem(
                     name="laser autofocus camera driver",
-                    handle="laser.autofocus.camera.driver",
+                    handle=LaserAutofocusConfig.CAMERA_DRIVER.value,
                     value_kind="option",
                     value=critical_machine_config.laser_autofocus_camera_driver,
                     options=[
@@ -612,26 +807,26 @@ class GlobalConfigHandler:
                 ),
                 ConfigItem(
                     name="laser autofocus exposure time [ms]",
-                    handle="laser.autofocus.exposure_time_ms",
+                    handle=LaserAutofocusConfig.EXPOSURE_TIME_MS.value,
                     value_kind="float",
                     value=5.0,
                 ),
                 ConfigItem(
                     name="laser autofocus camera analog gain",
-                    handle="laser.autofocus.camera.analog_gain",
+                    handle=LaserAutofocusConfig.CAMERA_ANALOG_GAIN.value,
                     value_kind="float",
                     value=0.0,
                 ),
                 ConfigItem(
                     name="laser autofocus use glass top",
-                    handle="laser.autofocus.use_glass_top",
+                    handle=LaserAutofocusConfig.USE_GLASS_TOP.value,
                     value_kind="option",
                     value="no",
                     options=ConfigItemOption.get_bool_options(),
                 ),
                 ConfigItem(
                     name="laser autofocus camera pixel format",
-                    handle="laser.autofocus.camera.pixel_format",
+                    handle=LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value,
                     value_kind="option",
                     value="mono8",
                     options=[
@@ -647,35 +842,35 @@ class GlobalConfigHandler:
                 ),
                 ConfigItem(
                     name="laser autofocus warm up laser",
-                    handle="laser.autofocus.warm_up_laser",
+                    handle=LaserAutofocusConfig.WARM_UP_LASER.value,
                     value_kind="action",
                     value="/api/action/laser_autofocus_warm_up_laser",
                 ),
                 # offset added to measured z displacement
                 ConfigItem(
                     name="laser autofocus offset [um]",
-                    handle="laser.autofocus.offset_um",
+                    handle=LaserAutofocusConfig.OFFSET_UM.value,
                     value_kind="float",
                     value=0.0,
                 ),
                 # calibration z span
                 ConfigItem(
                     name="laser autofocus calibration z span [mm]",
-                    handle="laser.autofocus.calibration.z_span_mm",
+                    handle=LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM.value,
                     value_kind="float",
                     value=0.3,
                 ),
                 # calibration number of z steps
                 ConfigItem(
                     name="laser autofocus calibration number of z steps",
-                    handle="laser.autofocus.calibration.num_z_steps",
+                    handle=LaserAutofocusConfig.CALIBRATION_NUM_Z_STEPS.value,
                     value_kind="int",
                     value=7,
                 ),
                 # is calibrated flag
                 ConfigItem(
                     name="laser autofocus is calibrated",
-                    handle="laser.autofocus.calibration.is_calibrated",
+                    handle=LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.value,
                     value_kind="option",
                     value="no",
                     options=ConfigItemOption.get_bool_options(),
@@ -683,21 +878,21 @@ class GlobalConfigHandler:
                 # calibrated x on sensor
                 ConfigItem(
                     name="laser autofocus calibration: x peak pos",
-                    handle="laser.autofocus.calibration.x_peak_pos",
+                    handle=LaserAutofocusConfig.CALIBRATION_X_PEAK_POS.value,
                     value_kind="float",
                     value=0.0,
                 ),
                 # calibrated um/px on sensor
                 ConfigItem(
                     name="laser autofocus calibration: um per px",
-                    handle="laser.autofocus.calibration.um_per_px",
+                    handle=LaserAutofocusConfig.CALIBRATION_UM_PER_PX.value,
                     value_kind="float",
                     value=0.0,
                 ),
                 # z coordinate at time of calibration
                 ConfigItem(
                     name="laser autofocus calibration: ref z in mm",
-                    handle="laser.autofocus.calibration.ref_z_mm",
+                    handle=LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value,
                     value_kind="float",
                     value=0.0,
                 ),
@@ -709,7 +904,7 @@ class GlobalConfigHandler:
             filter_wheel_system_attributes = [
                 ConfigItem(
                     name="filter wheel configuration",
-                    handle="filter.wheel.configuration",
+                    handle=FilterWheelConfig.CONFIGURATION.value,
                     value_kind="text",
                     value=critical_machine_config.filters,
                     frozen=True,
@@ -721,44 +916,44 @@ class GlobalConfigHandler:
         ret = [
             ConfigItem(
                 name="microscope name",
-                handle="system.microscope_name",
+                handle=SystemConfig.MICROSCOPE_NAME.value,
                 value_kind="text",
                 value=critical_machine_config.microscope_name,
                 frozen=True,
             ),
             ConfigItem(
                 name="calibrate top left of B2 here",
-                handle="calibration.calibrate_B2_here",
+                handle=CalibrationConfig.CALIBRATE_B2_HERE.value,
                 value_kind="action",
                 value="/api/action/calibrate_stage_xy_here",
             ),
             ConfigItem(
                 name="calibration offset x [mm]",
-                handle="calibration.offset.x_mm",
+                handle=CalibrationConfig.OFFSET_X_MM.value,
                 value_kind="float",
                 value=critical_machine_config.calibration_offset_x_mm,
             ),
             ConfigItem(
                 name="calibration offset y [mm]",
-                handle="calibration.offset.y_mm",
+                handle=CalibrationConfig.OFFSET_Y_MM.value,
                 value_kind="float",
                 value=critical_machine_config.calibration_offset_y_mm,
             ),
             ConfigItem(
                 name="calibration offset z [mm]",
-                handle="calibration.offset.z_mm",
+                handle=CalibrationConfig.OFFSET_Z_MM.value,
                 value_kind="float",
                 value=critical_machine_config.calibration_offset_z_mm,
             ),
             ConfigItem(
                 name="turn off all illumination",
-                handle="illumination.turn_off_all",
+                handle=IlluminationConfig.TURN_OFF_ALL.value,
                 value_kind="action",
                 value="/api/action/turn_off_all_illumination",
             ),
             ConfigItem(
                 name="base output storage directory",
-                handle="storage.base_image_output_dir",
+                handle=StorageConfig.BASE_IMAGE_OUTPUT_DIR.value,
                 value_kind="text",
                 value=critical_machine_config.base_image_output_dir,
             ),
@@ -769,52 +964,52 @@ class GlobalConfigHandler:
             # this flag indicates if the lower bits should be padded (and value bits shifted into upper bits)
             ConfigItem(
                 name="image file pad low",
-                handle="image.file.pad_low",
+                handle=ImageConfig.FILE_PAD_LOW.value,
                 value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
             ),
             ConfigItem(
                 name="image filename use channel name",
-                handle="image.filename.use_channel_name",
+                handle=ImageConfig.FILENAME_USE_CHANNEL_NAME.value,
                 value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
             ),
             ConfigItem(
                 name="image filename xy index start",
-                handle="image.filename.xy_index_start",
+                handle=ImageConfig.FILENAME_XY_INDEX_START.value,
                 value_kind="int",
                 value=0,
             ),
             ConfigItem(
                 name="image filename z index start",
-                handle="image.filename.z_index_start",
+                handle=ImageConfig.FILENAME_Z_INDEX_START.value,
                 value_kind="int",
                 value=0,
             ),
             ConfigItem(
                 name="image filename site index start",
-                handle="image.filename.site_index_start",
+                handle=ImageConfig.FILENAME_SITE_INDEX_START.value,
                 value_kind="int",
                 value=1,
             ),
             ConfigItem(
                 name="image filename zero pad column index",
-                handle="image.filename.zero_pad_column",
+                handle=ImageConfig.FILENAME_ZERO_PAD_COLUMN.value,
                 value_kind="option",
                 value="yes",
                 options=ConfigItemOption.get_bool_options(),
             ),
             ConfigItem(
                 name="forbidden areas",
-                handle="protocol.forbidden_areas",
+                handle=ProtocolConfig.FORBIDDEN_AREAS.value,
                 value_kind="text",
                 value=critical_machine_config.forbidden_areas or '{"forbidden_areas":[]}',
             ),
             ConfigItem(
                 name="imaging channels configuration",
-                handle="imaging.channels",
+                handle=ImagingConfig.CHANNELS.value,
                 value_kind="text",
                 value=critical_machine_config.channels,
                 frozen=True,
@@ -823,7 +1018,7 @@ class GlobalConfigHandler:
             filter_wheel_system_available_attribute,
             ConfigItem(
                 name="imaging order",
-                handle="imaging.order",
+                handle=ImagingConfig.ORDER.value,
                 value_kind="option",
                 value="protocol_order",
                 options=[
@@ -843,49 +1038,49 @@ class GlobalConfigHandler:
             ),
             ConfigItem(
                 name="microcontroller reconnection grace period [ms]",
-                handle="microcontroller.reconnection_grace_period_ms",
+                handle=MicrocontrollerConfig.RECONNECTION_GRACE_PERIOD_MS.value,
                 value_kind="float",
                 value=200.0,
             ),
             ConfigItem(
                 name="microcontroller reconnection attempts",
-                handle="microcontroller.reconnection_attempts",
+                handle=MicrocontrollerConfig.RECONNECTION_ATTEMPTS.value,
                 value_kind="int",
                 value=5,
             ),
             ConfigItem(
                 name="microcontroller reconnection delay [ms]",
-                handle="microcontroller.reconnection_delay_ms",
+                handle=MicrocontrollerConfig.RECONNECTION_DELAY_MS.value,
                 value_kind="float",
                 value=1000.0,
             ),
             ConfigItem(
                 name="microcontroller operation retry attempts",
-                handle="microcontroller.operation_retry_attempts",
+                handle=MicrocontrollerConfig.OPERATION_RETRY_ATTEMPTS.value,
                 value_kind="int",
                 value=5,
             ),
             ConfigItem(
                 name="microcontroller operation retry delay [ms]",
-                handle="microcontroller.operation_retry_delay_ms",
+                handle=MicrocontrollerConfig.OPERATION_RETRY_DELAY_MS.value,
                 value_kind="float",
                 value=5.0,
             ),
             ConfigItem(
                 name="camera reconnection attempts",
-                handle="camera.reconnection_attempts",
+                handle=CameraConfig.RECONNECTION_ATTEMPTS.value,
                 value_kind="int",
                 value=5,
             ),
             ConfigItem(
                 name="camera reconnection delay [ms]",
-                handle="camera.reconnection_delay_ms",
+                handle=CameraConfig.RECONNECTION_DELAY_MS.value,
                 value_kind="float",
                 value=1000.0,
             ),
             ConfigItem(
                 name="camera operation retry attempts",
-                handle="camera.operation_retry_attempts",
+                handle=CameraConfig.OPERATION_RETRY_ATTEMPTS.value,
                 value_kind="int",
                 value=5,
             ),
@@ -983,7 +1178,7 @@ class GlobalConfigHandler:
         config_dict = GlobalConfigHandler.get_dict()
 
         # Update main camera pixel format options
-        main_format_item = config_dict.get("camera.main.pixel_format")
+        main_format_item = config_dict.get(CameraConfig.MAIN_PIXEL_FORMAT.value)
         if main_format_item is not None:
             # Create new options list from actual camera capabilities
             new_options = [
@@ -998,7 +1193,7 @@ class GlobalConfigHandler:
 
         # Update autofocus camera pixel format options if available
         if autofocus_camera_formats is not None:
-            autofocus_format_item = config_dict.get("laser.autofocus.camera.pixel_format")
+            autofocus_format_item = config_dict.get(LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value)
             if autofocus_format_item is not None:
                 # Create new options list from actual camera capabilities
                 new_options = [

@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from seaconfig import AcquisitionChannelConfig
 
-from seafront.config.basics import GlobalConfigHandler, ConfigItem, ConfigItemOption
+from seafront.config.basics import GlobalConfigHandler, set_config_item_bool, ConfigItem, ConfigItemOption
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
@@ -603,9 +603,9 @@ class ToupCamCamera(Camera):
         # Determine the config key based on device type
         match self.device_type:
             case "main":
-                config_key = "camera.main.pixel_format"
+                config_key = CameraConfig.MAIN_PIXEL_FORMAT.value
             case "autofocus":
-                config_key = "camera.autofocus.pixel_format"
+                config_key = LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value
             case _:
                 # Should not happen due to early return, but handle defensively
                 return
@@ -637,6 +637,11 @@ class ToupCamCamera(Camera):
                 options=new_options,
             )
             config_items.append(new_item)
+
+        # Set camera-specific image flip defaults for main ToupCam cameras only
+        if self.device_type == "main":
+            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, False, frozen=True)
+            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value, False, frozen=True)
 
     def _set_exposure_time(self, exposure_time_ms: float) -> None:
         """

@@ -1574,7 +1574,7 @@ class Core:
         objective_magnification: int | None = None
         try:
             g_config = GlobalConfigHandler.get_dict()
-            objective_config_item = g_config.get("camera.main.objective")
+            objective_config_item = g_config.get(CameraConfig.MAIN_OBJECTIVE.value)
             if objective_config_item:
                 # Parse objective value (e.g., "20xolympus" -> 20)
                 objective_value = objective_config_item.strvalue
@@ -1863,7 +1863,7 @@ class Core:
 
                         # Store the image
                         g_dict = GlobalConfigHandler.get_dict()
-                        pixel_format = g_dict["camera.main.pixel_format"].strvalue
+                        pixel_format = g_dict[CameraConfig.MAIN_PIXEL_FORMAT.value].strvalue
                         await self._store_new_image(
                             img=result._img,
                             pixel_format=pixel_format,

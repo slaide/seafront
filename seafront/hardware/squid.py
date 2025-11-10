@@ -219,10 +219,10 @@ class SquidAdapter(Microscope):
             raise RuntimeError(error_msg)
 
         # Get camera configuration
-        main_camera_model_name = g_dict["camera.main.model"].strvalue
-        main_camera_driver = g_dict["camera.main.driver"].strvalue
-        focus_camera_model_name = g_dict["laser.autofocus.camera.model"].strvalue
-        focus_camera_driver = g_dict["laser.autofocus.camera.driver"].strvalue
+        main_camera_model_name = g_dict[CameraConfig.MAIN_MODEL.value].strvalue
+        main_camera_driver = g_dict[CameraConfig.MAIN_DRIVER.value].strvalue
+        focus_camera_model_name = g_dict[LaserAutofocusConfig.CAMERA_MODEL.value].strvalue
+        focus_camera_driver = g_dict[LaserAutofocusConfig.CAMERA_DRIVER.value].strvalue
 
         # Validate camera drivers
         valid_drivers = tp.get_args(CameraDriver)  # Get valid values from the Literal type
