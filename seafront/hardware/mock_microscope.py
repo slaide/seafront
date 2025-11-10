@@ -63,9 +63,6 @@ class MockMicroscope(Microscope):
     _is_homed: bool = PrivateAttr(default=False)
     _streaming_channel: ChannelConfig | None = PrivateAttr(default=None)
     _streaming_acquisition_config: sc.AcquisitionChannelConfig | None = PrivateAttr(default=None)
-    _streaming_thread: threading.Thread | None = PrivateAttr(default=None)
-    _streaming_stop_event: threading.Event = PrivateAttr(default_factory=threading.Event)
-    _streaming_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _latest_images: dict[str, cmd.ImageStoreEntry] = PrivateAttr(default_factory=dict)
 
     # Per-axis movement parameters - loaded from firmware profile
@@ -331,6 +328,7 @@ class MockMicroscope(Microscope):
     def open_connections(self) -> None:
         """Mock connection opening - always succeeds."""
         logger.info("Mock microscope: opening connections")
+        self.main_camera.value.open("main")
         self.is_connected = True
         self.state = CoreState.Idle
 
@@ -338,11 +336,8 @@ class MockMicroscope(Microscope):
         """Mock connection closing."""
         logger.info("Mock microscope: closing connections")
 
-        # Stop background thread
-        if self._streaming_thread is not None:
-            self._streaming_stop_event.set()
-            self._streaming_thread.join(timeout=1.0)
-            self._streaming_thread = None
+        # Ensure streaming is stopped (safety measure - should be done via ChannelStreamEnd)
+        self.main_camera.value.stop_streaming()
 
         # Clean up streaming state
         self._streaming_channel = None
@@ -416,133 +411,6 @@ class MockMicroscope(Microscope):
         """Convert real Z position to measured position."""
         return z_mm - self.calibrated_stage_position[2]
 
-    def _background_streaming_thread(self) -> None:
-        """Background thread that continuously generates streaming images and calls callbacks."""
-        frame_rate = 6  # FPS - realistic microscope streaming rate
-        frame_interval = 1.0 / frame_rate
-        frame_number = 0
-
-        logger.info("Mock microscope: background streaming thread started")
-
-        while not self._streaming_stop_event.is_set():
-            if self._streaming_channel is None or self._streaming_acquisition_config is None:
-                time.sleep(0.1)
-                continue
-
-            # Generate synthetic image with frame-based variation and acquisition parameters
-            synthetic_img = self._generate_synthetic_image(
-                self._streaming_channel,
-                frame_number=frame_number,
-                exposure_time_ms=self._streaming_acquisition_config.exposure_time_ms,
-                analog_gain=self._streaming_acquisition_config.analog_gain
-            )
-
-            # Call stream_callback directly (like camera hardware does)
-            with self._streaming_lock:
-                current_callback = self.stream_callback
-
-            if current_callback is not None:
-                try:
-                    # This is the key: call callback for EVERY frame generated
-                    should_stop = current_callback(synthetic_img)
-
-                    if should_stop:
-                        logger.info("Mock microscope: stream callback requested stop")
-                        break
-
-                except Exception as e:
-                    logger.error(f"Mock microscope: error in stream callback: {e}")
-                    break
-
-            frame_number += 1
-
-            # Wait for next frame or until stop event is set
-            if self._streaming_stop_event.wait(frame_interval):
-                break
-
-        logger.info("Mock microscope: background streaming thread stopped")
-
-    def _generate_synthetic_image(self, channel: ChannelConfig, width: int = 1024, height: int = 1024, frame_number: int = 0, exposure_time_ms: float = 50.0, analog_gain: float = 1.0) -> np.ndarray:
-        """Generate a synthetic image for testing."""
-        # Use frame number to create variation between frames
-        np.random.seed((frame_number * 73 + hash(channel.handle)) % 2**31)
-
-        # Add time-based noise variation
-        time_factor = np.sin(frame_number * 0.1) * 0.2 + 1.0  # Varies between 0.8 and 1.2
-
-        # Calculate exposure and gain factors
-        # Exposure: linear relationship, normalized to 50ms baseline
-        exposure_factor = exposure_time_ms / 50.0
-
-        # Analog gain: convert from dB to linear scale
-        # 0 dB = 1x, 10 dB = 10x, 20 dB = 100x
-        gain_factor = 10.0 ** (analog_gain / 10.0)
-
-        # Create different patterns based on channel type
-        if channel.handle.startswith('bfled'):
-            # Brightfield: create cellular-like structures with variation
-            # Start with low background that scales with exposure
-            base_intensity = int(2000 * time_factor * exposure_factor)  # Much lower background
-            base = np.random.normal(base_intensity, 500, (height, width)).astype(np.uint16)
-
-            # Add some circular "cells" that slightly move/change
-            y, x = np.ogrid[:height, :width]
-            num_cells = 20 + int(5 * np.sin(frame_number * 0.05))  # Cell count varies
-            for i in range(num_cells):
-                # Cells have slight movement over time
-                base_x = 100 + (i * 100) % (width - 100)
-                base_y = 100 + ((i * 73) % (height - 100))
-                drift_x = 10 * np.sin(frame_number * 0.02 + i)
-                drift_y = 10 * np.cos(frame_number * 0.03 + i)
-
-                center_x = int(base_x + drift_x)
-                center_y = int(base_y + drift_y)
-                radius = 25 + int(10 * np.sin(frame_number * 0.04 + i))  # Size varies
-
-                if 0 <= center_x < width and 0 <= center_y < height:
-                    mask = (x - center_x)**2 + (y - center_y)**2 < radius**2
-                    # Signal from cells scales with exposure time (more photons collected)
-                    cell_signal = int(8000 * time_factor * exposure_factor * (0.8 + 0.4 * np.random.random()))
-                    # Add signal to existing background (avoid saturation)
-                    base[mask] += np.clip(cell_signal + np.random.normal(0, 500, int(np.sum(mask))), 0, 50000).astype(np.uint16)
-
-        else:
-            # Fluorescence: create spot-like structures with blinking/movement
-            # Very low background for fluorescence that scales with exposure
-            base_intensity = int(300 * time_factor * exposure_factor)  # Much lower background
-            base = np.random.normal(base_intensity, 100, (height, width)).astype(np.uint16)
-
-            # Add bright fluorescent spots that blink and move
-            y, x = np.ogrid[:height, :width]
-            num_spots = 25 + int(10 * np.sin(frame_number * 0.08))  # Number of spots varies
-            for i in range(num_spots):
-                # Some spots blink on/off
-                blink_factor = max(0, np.sin(frame_number * 0.1 + i * 0.5))
-                if blink_factor < 0.2:  # Skip spots that are "off"
-                    continue
-
-                # More irregular and spread out positioning using different prime numbers
-                base_x = (i * 347 + hash(channel.handle) * 191) % width
-                base_y = (i * 431 + hash(channel.handle) * 239) % height
-                drift_x = 8 * np.sin(frame_number * 0.03 + i * 0.7)
-                drift_y = 8 * np.cos(frame_number * 0.04 + i * 0.7)
-
-                center_x = int(base_x + drift_x) % width
-                center_y = int(base_y + drift_y) % height
-                radius = 15 + int(10 * np.sin(frame_number * 0.06 + i))  # Much larger spots, similar to cells
-
-                mask = (x - center_x)**2 + (y - center_y)**2 < radius**2
-                # Fluorescent signal scales with exposure time (more photons collected)
-                spot_signal = int(12000 * time_factor * exposure_factor * blink_factor * (0.7 + 0.6 * np.random.random()))
-                # Add signal to existing background (avoid saturation)
-                base[mask] += np.clip(spot_signal + np.random.normal(0, 1000, int(np.sum(mask))), 0, 40000).astype(np.uint16)
-
-        # Apply analog gain to entire image (background + signal + noise)
-        # This simulates the camera's analog amplification stage
-        final_image = base.astype(np.float32) * gain_factor
-
-        return np.clip(final_image, 0, 65535).astype(np.uint16)
-
     def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
         """
         Sort channels according to the specified imaging order.
@@ -604,22 +472,8 @@ class MockMicroscope(Microscope):
         enabled_channels = self._sort_channels_by_imaging_order(enabled_channels, tp.cast(ImagingOrder, imaging_order_value))
 
         for channel in enabled_channels:
-            # Find matching channel config
-            matching_configs = [ch for ch in self.channels if ch.handle == channel.handle]
-            if not matching_configs:
-                logger.warning(f"No channel config found for handle: {channel.handle}")
-                continue
-
-            channel_config = matching_configs[0]
-
-            # Generate synthetic image
-            frame_num = int(time.time() * 10 + hash(channel.handle)) % 10000
-            synthetic_img = self._generate_synthetic_image(
-                channel_config,
-                frame_number=frame_num,
-                exposure_time_ms=channel.exposure_time_ms,
-                analog_gain=channel.analog_gain
-            )
+            # Generate synthetic image via camera
+            synthetic_img = self.main_camera.value.snap(channel)
 
             # Create image store entry
             image_entry = cmd.ImageStoreEntry(
@@ -1016,20 +870,8 @@ class MockMicroscope(Microscope):
             # Simulate imaging delay based on exposure time
             await self._delay_for_imaging(command.channel.exposure_time_ms)
 
-            # Find matching channel config
-            matching_configs = [ch for ch in self.channels if ch.handle == command.channel.handle]
-            if not matching_configs:
-                raise ValueError(f"No channel config found for handle: {command.channel.handle}")
-
-            channel_config = matching_configs[0]
-            # For snapshots, use current time to create unique images
-            frame_num = int(time.time() * 10) % 10000  # Use time-based frame number
-            synthetic_img = self._generate_synthetic_image(
-                channel_config,
-                frame_number=frame_num,
-                exposure_time_ms=command.channel.exposure_time_ms,
-                analog_gain=command.channel.analog_gain
-            )
+            # Generate synthetic image via camera
+            synthetic_img = self.main_camera.value.snap(command.channel)
 
             result = cmd.ImageAcquiredResponse()
             result._img = synthetic_img
@@ -1084,7 +926,7 @@ class MockMicroscope(Microscope):
             logger.info(f"Mock microscope: starting stream for channel {command.channel.handle}")
 
             # Check if already streaming
-            if self.stream_callback is not None and self._streaming_thread is not None:
+            if self.stream_callback is not None:
                 cmd.error_internal("Streaming already active - stop current stream before starting a new one")
 
             # Validate channel configuration for acquisition
@@ -1098,21 +940,21 @@ class MockMicroscope(Microscope):
             self._streaming_channel = matching_configs[0]
             self._streaming_acquisition_config = command.channel
 
-            # Clear stop event and start background thread (mimics camera hardware)
-            self._streaming_stop_event.clear()
-            self._streaming_thread = threading.Thread(target=self._background_streaming_thread, daemon=True)
-            self._streaming_thread.start()
+            # Create wrapper to forward camera images to microscope's stream callback
+            def streaming_callback_wrapper(img: np.ndarray) -> None:
+                if self.stream_callback is not None:
+                    self.stream_callback(img)
+
+            # Delegate streaming to camera (camera manages its own thread)
+            self.main_camera.value.start_streaming(command.channel, callback=streaming_callback_wrapper)
 
             return cmd.StreamingStartedResponse(channel=command.channel)  # type: ignore
 
         elif isinstance(command, cmd.ChannelStreamEnd):
             logger.info("Mock microscope: ending channel stream")
 
-            # Stop background thread
-            if self._streaming_thread is not None:
-                self._streaming_stop_event.set()
-                self._streaming_thread.join(timeout=1.0)  # Wait up to 1 second
-                self._streaming_thread = None
+            # Stop camera streaming (camera manages its own thread cleanup)
+            self.main_camera.value.stop_streaming()
 
             # Clean up streaming state
             self._streaming_channel = None
