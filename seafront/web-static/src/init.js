@@ -1519,7 +1519,7 @@ document.addEventListener("alpine:init", () => {
         status_reconnect(url) {
             // if new url is same one, and a connection is already [in process of] being established
             // skip reconnect attempt.
-            if (url == this.server_url && this.status_ws != null) {
+            if (url == this.server_url && this.status_ws != null && this.isConnectedToServer) {
                 return;
             }
 
