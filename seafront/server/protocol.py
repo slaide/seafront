@@ -4,15 +4,40 @@ import datetime as dt
 import math
 import pathlib as path
 import random
+import re
 import string
 import time
 import typing as tp
+import uuid
 from concurrent.futures import Future as ConcurrentFuture
 from threading import Thread
 
 import json5
 import seaconfig as sc
 import tifffile
+from ome_types import OME
+from ome_types.model import (
+    Channel,
+    Detector,
+    Image,
+    Instrument,
+    Laser,
+    LightEmittingDiode,
+    LightSourceSettings,
+    Microscope,
+    Microscope_Type,
+    Objective,
+    Objective_Correction,
+    Objective_Immersion,
+    ObjectiveSettings,
+    Pixels,
+    Plane,
+    PixelType,
+    Pixels_DimensionOrder,
+    StageLabel,
+    Detector_Type,
+    TiffData,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 import seafront.server.commands as cmds
@@ -197,32 +222,344 @@ def make_unique_acquisition_id(length: tp.Literal[16, 32] = 16) -> str:
     return first_char + remaining
 
 
+def extract_wavelength_nm(channel_name: str) -> int | None:
+    """
+    Extract wavelength in nm from channel name using regex.
+
+    Examples:
+        "Fluorescence 405 nm Ex" -> 405
+        "BF LED matrix full" -> None
+    """
+    match = re.search(r'(\d+)\s*nm', channel_name, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def build_ome_instrument(
+    microscope_name: str,
+    camera_vendor: str,
+    camera_model: str,
+    camera_sn: str,
+    hardware_channels: list[basics.ChannelConfig],
+    objective_magnification: int | None = None,
+) -> OME:
+    """
+    Build OME instrument structure with microscope-wide metadata.
+
+    This function creates the reusable portions of the OME structure that are
+    identical across all images in an acquisition: Microscope, Detector, Objective,
+    and all light sources. The returned OME object can be reused to build multiple
+    image OME-TIFF files efficiently.
+
+    Args:
+        microscope_name: Name of the microscope
+        camera_vendor: Camera manufacturer name
+        camera_model: Camera model name
+        camera_sn: Camera serial number
+        hardware_channels: List of available hardware channels for wavelength lookup
+        objective_magnification: Objective magnification (e.g., 4, 10, 20)
+
+    Returns:
+        OME object with UUID and Instrument pre-populated
+    """
+    # Create OME root with unique UUID for this template
+    # Each OME-TIFF file will get its own UUID when serialized
+    ome_uuid = f"urn:uuid:{uuid.uuid4()}"
+    ome = OME(creator="Seafront", uuid=ome_uuid)
+
+    # Add light sources for all channels and separate by type
+    lasers = []
+    leds = []
+    for i, hw_channel in enumerate(hardware_channels):
+        # Determine light source type from slot
+        source_slot = hw_channel.source_slot
+        wavelength_nm = extract_wavelength_nm(hw_channel.name)
+
+        if 0 <= source_slot <= 10:
+            # LED matrix
+            light_source = LightEmittingDiode(
+                id=f"LightSource:{i}",
+                manufacturer=None,
+                model=None,
+                serial_number=None,
+            )
+            leds.append(light_source)
+        elif 11 <= source_slot <= 15:
+            # Laser
+            light_source = Laser(
+                id=f"LightSource:{i}",
+                manufacturer=None,
+                model=None,
+                serial_number=None,
+                wavelength=wavelength_nm,  # Laser has wavelength field
+            )
+            lasers.append(light_source)
+        else:
+            # Generic light source (treat as LED)
+            light_source = LightEmittingDiode(
+                id=f"LightSource:{i}",
+                manufacturer=None,
+                model=None,
+                serial_number=None,
+            )
+            leds.append(light_source)
+
+    # Create instrument with detector and light sources
+    instrument = Instrument(id="Instrument:0")
+
+    # Add microscope information
+    # SQUID microscope is inverted (sample on top, objective below)
+    microscope = Microscope(
+        manufacturer="Cephla",
+        model=microscope_name,
+        type=Microscope_Type.INVERTED,
+    )
+    instrument.microscope = microscope
+
+    # Add objective if magnification is available
+    if objective_magnification is not None:
+        objective = Objective(
+            id="Objective:0",
+            manufacturer="Olympus",
+            nominal_magnification=float(objective_magnification),
+            correction=Objective_Correction.PLAN_APO,  # Olympus objectives are typically plan-apochromatic
+            immersion=Objective_Immersion.AIR,         # SQUID uses air objectives
+        )
+        instrument.objectives = [objective]
+
+    # Add detector (main camera)
+    detector = Detector(
+        id="Detector:0",
+        manufacturer=camera_vendor if camera_vendor else None,
+        model=camera_model if camera_model else None,
+        serial_number=camera_sn if camera_sn else None,
+        type=Detector_Type.CCD,
+    )
+    instrument.detectors = [detector]
+
+    # Add light sources to instrument
+    if lasers:
+        instrument.lasers = lasers
+    if leds:
+        instrument.light_emitting_diodes = leds
+
+    ome.instruments = [instrument]
+
+    return ome
+
+
+def build_ome_metadata(
+    ome_template: OME,
+    image_entry: cmds.ImageStoreEntry,
+    channel_config: sc.AcquisitionChannelConfig,
+    position: cmds.SitePosition,
+    plane_index: int,
+    pixel_size_um: float,
+    project_name: str,
+    plate_name: str,
+    cell_line: str,
+    hardware_channels: list[basics.ChannelConfig],
+    autofocus_succeeded: bool = False,
+) -> str:
+    """
+    Build OME-XML metadata string for an acquired image.
+
+    Takes a pre-constructed OME template with microscope-wide metadata
+    (Instrument, Microscope, Detector, Objectives, LightSources) and adds
+    image-specific metadata (Image, Pixels, Channel, Plane, TiffData).
+
+    Args:
+        ome_template: Pre-built OME object with Instrument populated
+        image_entry: Image data and metadata
+        channel_config: Channel acquisition settings
+        position: Stage position and well information
+        plane_index: Z-plane index (0-based)
+        pixel_size_um: Physical pixel size in micrometers
+        project_name: Project/experiment name
+        plate_name: Plate identifier
+        cell_line: Cell line identifier
+        hardware_channels: List of available hardware channels for wavelength lookup
+        autofocus_succeeded: Whether autofocus succeeded for this plane
+
+    Returns:
+        OME-XML string with complete metadata hierarchy
+    """
+    # Start with the template and add image-specific elements
+    # Generate new UUID for this specific OME-TIFF file
+    ome_uuid = f"urn:uuid:{uuid.uuid4()}"
+    ome = OME(creator="Seafront", uuid=ome_uuid)
+    # Copy instrument from template
+    ome.instruments = ome_template.instruments
+
+    # Find hardware channel info for current channel
+    hw_channel_info = next(
+        (ch for ch in hardware_channels if ch.handle == channel_config.handle),
+        None
+    )
+    wavelength_nm = (
+        extract_wavelength_nm(hw_channel_info.name)
+        if hw_channel_info else None
+    )
+
+    # Determine pixel type for OME
+    pixel_type_map = {
+        "mono8": PixelType.UINT8,
+        "mono10": PixelType.UINT16,
+        "mono12": PixelType.UINT16,
+        "mono14": PixelType.UINT16,
+        "mono16": PixelType.UINT16,
+    }
+    pixel_type = pixel_type_map.get(
+        image_entry.pixel_format.lower(),
+        PixelType.UINT8
+    )
+
+    # Create pixels element
+    # Note: Each TIFF file contains a single 2D image plane, so size_z=1
+    # (not the full Z-stack size). The Z-position is indicated in the Plane element
+    # and the file name, not in the Pixels dimensions.
+    pixels = Pixels(
+        id="Pixels:0",
+        dimension_order=Pixels_DimensionOrder.XYCZT,
+        size_x=image_entry.info.width_px,
+        size_y=image_entry.info.height_px,
+        size_c=1,  # Single channel per image
+        size_z=1,  # Single plane per file
+        size_t=1,  # No time dimension in single acquisition
+        type=pixel_type,
+        physical_size_x=pixel_size_um,
+        physical_size_y=pixel_size_um,
+        physical_size_z=channel_config.delta_z_um if channel_config.delta_z_um > 0 else None,
+    )
+
+    # Create channel
+    channel = Channel(
+        id="Channel:0:0",
+        name=channel_config.name,
+        samples_per_pixel=1,
+    )
+
+    # Add light source settings if we found the hardware channel
+    if hw_channel_info:
+        light_source_index = hardware_channels.index(hw_channel_info)
+        light_source_settings = LightSourceSettings(
+            id=f"LightSource:{light_source_index}",
+            wavelength=wavelength_nm,
+            attenuation=channel_config.illum_perc / 100.0,  # Convert 0-100 to 0-1
+        )
+        channel.light_source_settings = light_source_settings
+
+    pixels.channels = [channel]
+
+    # Create plane with detailed acquisition information
+    # Note: the_z=0 because this file contains only one plane (local index 0)
+    # The global Z-position is stored in position_z and in the image name
+    plane = Plane(
+        the_z=0,  # Local index in this file (always 0 for single-plane TIFF)
+        the_c=0,  # Local channel index
+        the_t=0,  # Local time index
+        exposure_time=channel_config.exposure_time_ms / 1000.0,  # Convert ms to seconds
+        position_x=position.position.x_pos_mm,
+        position_y=position.position.y_pos_mm,
+        position_z=position.position.z_pos_mm,
+    )
+
+    # Create TiffData block to explicitly link Plane to TIFF IFD
+    # This helps ImageJ and other OME tools properly associate metadata with image data
+    tiffdata = TiffData(
+        ifd=0,  # Point to the first (and only) TIFF IFD in this file
+        first_z=0,  # Local index in this file (always 0 for single-plane TIFF)
+        first_c=0,  # First channel index
+        first_t=0,  # First time index
+        plane_count=1,
+    )
+
+    pixels.tiff_data_blocks = [tiffdata]
+    pixels.planes = [plane]
+
+    # Extract microscope information from template
+    microscope_name = ""
+    has_objective = False
+    if ome_template.instruments and len(ome_template.instruments) > 0:
+        instrument = ome_template.instruments[0]
+        if instrument.microscope:
+            microscope_name = instrument.microscope.model or ""
+        has_objective = bool(instrument.objectives) and len(instrument.objectives) > 0
+
+    # Create image with pixels
+    image = Image(
+        id="Image:0",
+        name=f"{position.well_name}_{channel_config.handle}_z{plane_index:03d}",
+        acquisition_date=dt.datetime.fromtimestamp(image_entry.info.timestamp, dt.UTC),
+        pixels=pixels,
+    )
+
+    # Create stage label with well and site information
+    stage_label = StageLabel(
+        name=position.well_name,
+        x=position.position.x_pos_mm,
+        y=position.position.y_pos_mm,
+        z=position.position.z_pos_mm,
+    )
+    image.stage_label = stage_label
+
+    # Link objective settings to image if objective was defined
+    if has_objective:
+        image.objective_settings = ObjectiveSettings(id="Objective:0")
+
+    # Add image description with experiment context
+    image.description = (
+        f"Project: {project_name}\n"
+        f"Plate: {plate_name}\n"
+        f"Cell Line: {cell_line}\n"
+        f"Well: {position.well_name}\n"
+        f"Site: ({position.site_x}, {position.site_y}, {position.site_z})\n"
+        f"Channel: {channel_config.handle}\n"
+        f"Z-Plane: {plane_index}/{channel_config.num_z_planes}\n"
+        f"Microscope: {microscope_name}\n"
+        f"Analog Gain: {channel_config.analog_gain:.2f} dB\n"
+        f"Autofocus: {'Success' if autofocus_succeeded else 'N/A'}"
+    )
+
+    ome.images = [image]
+
+    # Convert OME object to XML string
+    return ome.to_xml()
+
+
 async def store_image(
     image_entry: cmds.ImageStoreEntry,
     img_compression_algorithm: tp.Literal["LZW", "zlib"],
-    metadata: dict[str, str],
+    channel_config: sc.AcquisitionChannelConfig,
+    position: cmds.SitePosition,
+    plane_index: int,
+    pixel_size_um: float,
+    project_name: str,
+    plate_name: str,
+    cell_line: str,
+    hardware_channels: list[basics.ChannelConfig],
+    ome_template: OME,
+    autofocus_succeeded: bool = False,
     storage_tracker: StorageTracker | None = None,
 ):
     """
-    store img as .tiff file, with compression and some metadata
+    Store image as OME-TIFF file with OME-XML metadata and compression.
 
-    params:
-        metadata: embedded into the file
-            e.g.:
-                {
-                    "BitsPerPixel":latest_channel_image.bit_depth, # type:ignore
-                    "BitPaddingInfo":"lower bits are padding with 0s",
-
-                    "LightSourceName":channel.name,
-                    "PixelSizeUM":f"{PIXEL_SIZE_UM:.3f}",
-
-                    "ExposureTime":f"{int(channel.exposure_time_ms*1e3)}",
-                    "ExposureTimeMS":f"{channel.exposure_time_ms:.3f}",
-                    "AnalogGainDB":f"{channel.analog_gain:.1f}",
-
-                    "Make":core_main_cam.vendor_name,
-                    "Model":core_main_cam.model_name,
-                }
+    Args:
+        image_entry: Image data and basic metadata
+        img_compression_algorithm: LZW or zlib compression
+        channel_config: Channel acquisition settings
+        position: Stage position and well information
+        plane_index: Z-plane index for this image
+        pixel_size_um: Physical pixel size in micrometers
+        project_name: Project/experiment name
+        plate_name: Plate identifier
+        cell_line: Cell line identifier
+        hardware_channels: List of available hardware channels
+        ome_template: Pre-built OME template with Instrument populated
+        autofocus_succeeded: Whether autofocus succeeded for this plane
+        storage_tracker: Optional tracker for storage usage
     """
 
     image_storage_path = image_entry.info.storage_path
@@ -232,6 +569,21 @@ async def store_image(
     storage_path = path.Path(image_storage_path)
     storage_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Build OME-XML metadata
+    ome_xml = build_ome_metadata(
+        ome_template=ome_template,
+        image_entry=image_entry,
+        channel_config=channel_config,
+        position=position,
+        plane_index=plane_index,
+        pixel_size_um=pixel_size_um,
+        project_name=project_name,
+        plate_name=plate_name,
+        cell_line=cell_line,
+        hardware_channels=hardware_channels,
+        autofocus_succeeded=autofocus_succeeded,
+    )
+
     # takes 70-250ms
     tifffile.imwrite(
         storage_path,
@@ -239,8 +591,9 @@ async def store_image(
         compression=img_compression_algorithm,
         compressionargs={},  # for zlib: {'level': 8},
         maxworkers=1,
-        # this metadata is just embedded as a comment in the file
-        metadata=metadata,
+        # OME-TIFF with OME-XML in ImageDescription (industry standard)
+        # description parameter accepts OME-XML string for OME-TIFF files
+        description=ome_xml,
         photometric="minisblack",  # zero means black
     )
 
@@ -269,6 +622,12 @@ class ProtocolGenerator(BaseModel):
     image_store_pool: AsyncThreadPool = Field(default_factory=lambda: AsyncThreadPool())
 
     img_compression_algorithm: tp.Literal["LZW", "zlib"] = "LZW"
+
+    # Microscope context for OME metadata
+    ome_template: OME = Field(...)
+    "Pre-built OME template with Instrument, Microscope, Detector, Objectives, LightSources"
+    hardware_channels: list[basics.ChannelConfig] = Field(default_factory=list)
+    "List of available hardware channels with wavelength info"
 
     # the values below are initialized during post init hook
     num_wells: int = -1
@@ -964,19 +1323,16 @@ class ProtocolGenerator(BaseModel):
                         image_store_task = store_image(
                             image_entry=image_store_entry,
                             img_compression_algorithm=self.img_compression_algorithm,
-                            metadata={
-                                "BitsPerPixel": f"{image_store_entry.bit_depth}",
-                                "Make": "CameraMaker",
-                                "Model": "CameraModel",
-                                "LightSourceName": channel.name,
-                                "ExposureTimeMS": f"{channel.exposure_time_ms:.2f}",
-                                "AnalogGainDB": f"{channel.analog_gain:.2f}",
-                                "PixelSizeUM": f"{PIXEL_SIZE_UM:.3f}",
-                                "Position_x_mm": f"{image_store_entry.info.position.position.x_pos_mm:.3f}",
-                                "Position_y_mm": f"{image_store_entry.info.position.position.y_pos_mm:.3f}",
-                                "Position_z_mm": f"{image_store_entry.info.position.position.z_pos_mm:.3f}",
-                                "autofocus_succeeded": f"{autofocus_succeeded}",
-                            },
+                            channel_config=channel,
+                            position=image_store_entry.info.position,
+                            plane_index=plane_index,
+                            pixel_size_um=PIXEL_SIZE_UM,
+                            project_name=self.config_file.project_name,
+                            plate_name=self.config_file.plate_name,
+                            cell_line=self.config_file.cell_line,
+                            hardware_channels=self.hardware_channels,
+                            ome_template=self.ome_template,
+                            autofocus_succeeded=autofocus_succeeded,
                             storage_tracker=storage_tracker,
                         )
                         self.image_store_pool.run(image_store_task)

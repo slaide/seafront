@@ -155,6 +155,11 @@ class Locked[T]:
         self.lock = threading.RLock()
         self.t = t
 
+    @property
+    def value(self) -> T:
+        """Quick access to the wrapped value without locking (for read-only access)."""
+        return self.t
+
     @contextmanager
     def locked(self, blocking: bool = True) -> tp.Iterator[T | None]:
         if self.lock.acquire(blocking=blocking):

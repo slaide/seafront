@@ -31,12 +31,13 @@ from pydantic import PrivateAttr
 from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, GlobalConfigHandler, ImagingOrder
 from seafront.config.handles import ImagingConfig, LaserAutofocusConfig
 from seafront.hardware.adapter import AdapterState, CoreState, Position
-from seafront.hardware.camera import HardwareLimitValue
+from seafront.hardware.camera import Camera, HardwareLimitValue, MockCamera
 from seafront.hardware.firmware_config import (
     get_firmware_config,
 )
 from seafront.hardware.illumination import IlluminationController
 from seafront.hardware.microscope import HardwareLimits, Microscope, microscope_exclusive
+from seafront.hardware.squid import Locked
 from seafront.logger import logger
 from seafront.server import commands as cmd
 
@@ -46,7 +47,7 @@ from seafront.hardware.forbidden_areas import ForbiddenAreaList
 class MockMicroscope(Microscope):
     """
     Mock microscope implementation for testing and development.
-    
+
     This implementation:
     - Simulates all hardware operations without actual hardware
     - Returns instantly from all operations
@@ -55,6 +56,7 @@ class MockMicroscope(Microscope):
     """
 
     illumination_controller: IlluminationController
+    main_camera: Locked[Camera]
 
     # Mock hardware state
     _current_position: Position = PrivateAttr(default_factory=lambda: Position(x_pos_mm=0.0, y_pos_mm=0.0, z_pos_mm=0.0))
@@ -315,10 +317,14 @@ class MockMicroscope(Microscope):
         # Create illumination controller
         illumination_controller = IlluminationController(channel_configs)
 
+        # Create mock camera
+        mock_camera = MockCamera()
+
         return cls(
             channels=channel_configs,
             filters=filter_configs,
             illumination_controller=illumination_controller,
+            main_camera=Locked(mock_camera),
         )
 
     @microscope_exclusive

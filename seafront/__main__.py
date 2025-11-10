@@ -107,6 +107,7 @@ from seafront.server.commands import (
 from seafront.server.protocol import (
     AsyncThreadPool,
     ProtocolGenerator,
+    build_ome_instrument,
     make_unique_acquisition_id,
 )
 
@@ -1555,12 +1556,54 @@ class Core:
         if plate_name_issue is not None:
             error_internal(detail=f"plate name is not acceptable: {plate_name_issue}")
 
+        # Get camera info for OME metadata from microscope
+        camera_vendor = ""
+        camera_model = ""
+        camera_sn = ""
+        try:
+            if hasattr(self.microscope, 'main_camera') and self.microscope.main_camera is not None:  # type: ignore
+                # main_camera is a Locked[Camera], need to access the camera object
+                camera = self.microscope.main_camera.value  # type: ignore
+                camera_vendor = getattr(camera, 'vendor_name', '')
+                camera_model = getattr(camera, 'model_name', '')
+                camera_sn = getattr(camera, 'sn', '')
+        except Exception as e:
+            logger.warning(f"Could not get camera info for OME metadata: {e}")
+
+        # Extract objective magnification from configuration
+        objective_magnification: int | None = None
+        try:
+            g_config = GlobalConfigHandler.get_dict()
+            objective_config_item = g_config.get("camera.main.objective")
+            if objective_config_item:
+                # Parse objective value (e.g., "20xolympus" -> 20)
+                objective_value = objective_config_item.strvalue
+                # Extract magnification from objective string
+                import re
+                mag_match = re.match(r'(\d+)x', objective_value)
+                if mag_match:
+                    objective_magnification = int(mag_match.group(1))
+        except Exception as e:
+            logger.debug(f"Could not extract objective magnification: {e}")
+
+        # Build OME template with microscope-wide metadata
+        ome_template = build_ome_instrument(
+            microscope_name=self.microscope_name,
+            camera_vendor=camera_vendor,
+            camera_model=camera_model,
+            camera_sn=camera_sn,
+            hardware_channels=self.microscope.channels,
+            objective_magnification=objective_magnification,
+        )
+
         protocol = ProtocolGenerator(
             config_file=config_file,
             handle_q_in=handle_q_in,
             plate=plate,
             acquisition_status=acquisition_status,
             acquisition_id=acquisition_id,
+            ome_template=ome_template,
+            hardware_channels=self.microscope.channels,
         )
 
         if protocol.num_images_total == 0:

@@ -10,6 +10,7 @@ from .camera import (
     camera_open,
     get_all_cameras,
 )
+from .mock_camera import MockCamera
 
 __all__ = [
     "Camera",
@@ -20,4 +21,5 @@ __all__ = [
     "CameraOpenRequest",
     "get_all_cameras",
     "camera_open",
+    "MockCamera",
 ]
