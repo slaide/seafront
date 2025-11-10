@@ -317,6 +317,10 @@ class ToupCamCamera(Camera):
 
         self._start_pullmode()
 
+        # Maximize framerate for live streaming
+        # ToupCam defaults to 90% of max framerate, which limits streaming performance
+        self._maximize_framerate()
+
     def _stop_pullmode(self)->bool:
         """return true if stopped, otherwise false"""
         assert self.handle is not None
@@ -336,6 +340,63 @@ class ToupCamCamera(Camera):
         self.pullmode_active=True
 
         return True
+
+    def _maximize_framerate(self) -> None:
+        """
+        Maximize camera framerate for live streaming.
+
+        ToupCam defaults to 90% of maximum framerate. This method sets the framerate
+        to the absolute maximum available to achieve best live streaming performance.
+
+        Uses precise framerate control if supported, otherwise falls back to basic
+        framerate limit. Must be called after pull mode is started (queries require
+        camera to be running).
+        """
+        if not self.handle:
+            return
+
+        try:
+            # Check if camera supports precise framerate (modern API)
+            supports_precise = (self._original_device.model.flag & tc.TOUPCAM_FLAG_PRECISE_FRAMERATE) != 0  # type: ignore[attr-defined]
+
+            if supports_precise:
+                try:
+                    # Ensure bandwidth is at 100% for max framerate
+                    with toupcam_ctx("set bandwidth to 100%", ignore_error=True):
+                        self._set_toupcam_option(tc.TOUPCAM_OPTION_BANDWIDTH, 100)  # type: ignore[attr-defined]
+
+                    # Query maximum precise framerate (in 0.1fps units)
+                    # Must be done while camera is running (pull mode active)
+                    max_fps_tenths = self.handle.get_Option(tc.TOUPCAM_OPTION_MAX_PRECISE_FRAMERATE)  # type: ignore[attr-defined]
+                    min_fps_tenths = self.handle.get_Option(tc.TOUPCAM_OPTION_MIN_PRECISE_FRAMERATE)  # type: ignore[attr-defined]
+
+                    if max_fps_tenths > 0:
+                        # Set to maximum available framerate
+                        with toupcam_ctx(f"set precise framerate to {max_fps_tenths} (0.1fps units = {max_fps_tenths/10}fps)", ignore_error=True):
+                            self._set_toupcam_option(tc.TOUPCAM_OPTION_PRECISE_FRAMERATE, max_fps_tenths)  # type: ignore[attr-defined]
+                        logger.debug(
+                            f"toupcam - maximized framerate using precise mode: "
+                            f"max={max_fps_tenths/10}fps, min={min_fps_tenths/10}fps"
+                        )
+                    else:
+                        logger.warning("toupcam - failed to query max precise framerate")
+
+                except Exception as e:
+                    logger.warning(f"toupcam - failed to set precise framerate: {e}")
+
+            else:
+                # Fallback to basic framerate limit: set to 0 (unlimited)
+                # Note: basic option cannot be changed while camera is running,
+                # so this may not work post-initialization, but log attempt
+                try:
+                    with toupcam_ctx("set framerate limit to unlimited", ignore_error=True):
+                        self._set_toupcam_option(tc.TOUPCAM_OPTION_FRAMERATE, 0)  # type: ignore[attr-defined]
+                    logger.debug("toupcam - set basic framerate limit to unlimited")
+                except Exception as e:
+                    logger.warning(f"toupcam - failed to set basic framerate limit: {e}")
+
+        except Exception as e:
+            logger.error(f"toupcam - error during framerate maximization: {e}")
 
     @_camera_operation_with_reconnect
     def _api_trigger_sync(self, pullimage_pix_format: int, img_bytes: bytes, frame_info: tp.Any) -> None:
