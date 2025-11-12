@@ -27,6 +27,14 @@ class NumberInput extends HTMLInputElement {
 window.customElements.define("number-input", NumberInput, { extends: "input" });
 
 /**
+ * @typedef {{
+ *   minvalue: number | null;
+ *   maxvalue: number | null;
+ *   stepvalue: number | null;
+ * }} NumberLimits
+ */
+
+/**
  * register input event overrides on (functionally) number input element.
  * enforces numberic limits and step size while typing, so that the field may never contain invalid values.
  * @param {NumberInput} el
@@ -56,6 +64,7 @@ export function registerNumberInput(el) {
     /**
      * Get current resolved values from attributes
      * This evaluates attribute expressions against the global Alpine data
+     * @returns {NumberLimits}
      */
     function getCurrentLimits() {
         const currentMin = el.getAttribute('min');
@@ -67,76 +76,23 @@ export function registerNumberInput(el) {
         let maxvalue = null;
         let stepvalue = null;
         
-        try {
-            // Access the global Alpine data through the nearest Alpine component
-            const alpineEl = el.closest('[x-data]');
-            if (alpineEl && alpineEl._x_dataStack && alpineEl._x_dataStack.length > 0) {
-                const data = alpineEl._x_dataStack[0];
-                
-                if (currentMin && currentMin.startsWith('limits.')) {
-                    minvalue = getNestedValue(data, currentMin);
-                } else {
-                    minvalue = parseFloat(currentMin);
-                    if (isNaN(minvalue)) minvalue = null;
-                }
-                
-                if (currentMax && currentMax.startsWith('limits.')) {
-                    maxvalue = getNestedValue(data, currentMax);
-                } else {
-                    maxvalue = parseFloat(currentMax);
-                    if (isNaN(maxvalue)) maxvalue = null;
-                }
-                
-                if (currentStep && currentStep.startsWith('limits.')) {
-                    stepvalue = getNestedValue(data, currentStep);
-                } else {
-                    stepvalue = parseFloat(currentStep);
-                    if (isNaN(stepvalue)) stepvalue = null;
-                }
-            } else {
-                // Fallback to simple parsing
-                minvalue = parseFloat(currentMin);
-                if (isNaN(minvalue)) minvalue = null;
-                
-                maxvalue = parseFloat(currentMax);
-                if (isNaN(maxvalue)) maxvalue = null;
-                
-                stepvalue = parseFloat(currentStep);
-                if (isNaN(stepvalue)) stepvalue = null;
-            }
-        } catch (e) {
-            console.warn('Error resolving limits:', e);
-            // Fallback to simple parsing
-            minvalue = parseFloat(currentMin);
-            if (isNaN(minvalue)) minvalue = null;
-            
-            maxvalue = parseFloat(currentMax);
-            if (isNaN(maxvalue)) maxvalue = null;
-            
-            stepvalue = parseFloat(currentStep);
-            if (isNaN(stepvalue)) stepvalue = null;
-        }
+        minvalue = parseFloat(currentMin||"");
+        if (isNaN(minvalue)) minvalue = null;
+        
+        maxvalue = parseFloat(currentMax||"");
+        if (isNaN(maxvalue)) maxvalue = null;
+        
+        stepvalue = parseFloat(currentStep||"");
+        if (isNaN(stepvalue)) stepvalue = null;
         
         return { minvalue, maxvalue, stepvalue };
-    }
-    
-    /**
-     * Get nested value from object using dot notation
-     * @param {object} obj - Object to search in
-     * @param {string} path - Dot-separated path like "limits.imaging_exposure_time_ms.min"
-     * @returns {any} - The nested value or null if not found
-     */
-    function getNestedValue(obj, path) {
-        return path.split('.').reduce((current, key) => {
-            return current && current[key] !== undefined ? current[key] : null;
-        }, obj);
     }
 
     // Note: numdigits will be calculated dynamically in validation
     /**
      *
      * @param {number} newval
-     * @param {object} limits - optional limits object with minvalue, maxvalue, stepvalue
+     * @param {NumberLimits?} limits - optional limits object with minvalue, maxvalue, stepvalue
      * @returns {string}
      */
     function formatNumberInput(newval, limits = null) {
@@ -243,24 +199,17 @@ export function registerNumberInput(el) {
                 console.log('Invalid: not a number', el.value);
             }
         } else {
-            // For valid numbers, check additional constraints
-            
-            // Special case: preserve "-0" during typing (user might be typing "-0.5")
-            if (!forceValid && el.value === '-0') {
-                isValid = true;
-            } else {
-                // Check range constraints
-                if (minValue != null && currentValue < minValue) {
-                    isValid = false;
-                    errorMessage = `Value too small - minimum is ${minValue}`;
-                } else if (maxValue != null && currentValue > maxValue) {
-                    isValid = false;
-                    errorMessage = `Value too big - maximum is ${maxValue}`;
-                } else if (stepValue != null && getnumberofdecimaldigits(currentValue) > getnumberofdecimaldigits(stepValue)) {
-                    const maxDecimals = getnumberofdecimaldigits(stepValue);
-                    isValid = false;
-                    errorMessage = `Too many decimal places - maximum ${maxDecimals} allowed`;
-                }
+            // For valid numbers, check range and step constraints
+            if (minValue != null && currentValue < minValue) {
+                isValid = false;
+                errorMessage = `Value too small - minimum is ${minValue}`;
+            } else if (maxValue != null && currentValue > maxValue) {
+                isValid = false;
+                errorMessage = `Value too big - maximum is ${maxValue}`;
+            } else if (stepValue != null && getnumberofdecimaldigits(currentValue) > getnumberofdecimaldigits(stepValue)) {
+                const maxDecimals = getnumberofdecimaldigits(stepValue);
+                isValid = false;
+                errorMessage = `Too many decimal places - maximum ${maxDecimals} allowed`;
             }
         }
 
@@ -342,9 +291,9 @@ export function registerNumberInput(el) {
         validateInput(true); // Format valid values on blur, preserve invalid ones with error styling
     });
 
-    el.addEventListener("input", () => {
+    el.addEventListener("input", (event) => {
         validateInput(false); // Just validate, don't correct
-    });
+    }, {capture: true}); // Use capture phase to run before Alpine.js
 
     el.addEventListener("keydown", (event) => {
         // Handle arrow keys for step increments if step is defined

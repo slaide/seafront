@@ -1732,9 +1732,9 @@
 
                                                 <input
                                                     type="number"
-                                                    min="limits.imaging_exposure_time_ms.min"
-                                                    step="limits.imaging_exposure_time_ms.step"
-                                                    max="limits.imaging_exposure_time_ms.max"
+                                                    x-bind:min="limits.imaging_exposure_time_ms.min"
+                                                    x-bind:step="limits.imaging_exposure_time_ms.step"
+                                                    x-bind:max="limits.imaging_exposure_time_ms.max"
                                                     placeholder="5"
                                                     x-model.number="channel.exposure_time_ms"
                                                     x-init="registerNumberInput($el),enabletooltip($el)"
@@ -1745,9 +1745,9 @@
 
                                                 <input
                                                     type="number"
-                                                    min="limits.imaging_analog_gain_db.min"
-                                                    step="limits.imaging_analog_gain_db.step"
-                                                    max="limits.imaging_analog_gain_db.max"
+                                                    x-bind:min="limits.imaging_analog_gain_db.min"
+                                                    x-bind:step="limits.imaging_analog_gain_db.step"
+                                                    x-bind:max="limits.imaging_analog_gain_db.max"
                                                     placeholder="0"
                                                     x-model.number="channel.analog_gain"
                                                     x-init="registerNumberInput($el),enabletooltip($el)"
@@ -1758,9 +1758,9 @@
 
                                                 <input
                                                     type="number"
-                                                    min="limits.imaging_focus_offset_um.min"
-                                                    step="limits.imaging_focus_offset_um.step"
-                                                    max="limits.imaging_focus_offset_um.max"
+                                                    x-bind:min="limits.imaging_focus_offset_um.min"
+                                                    x-bind:step="limits.imaging_focus_offset_um.step"
+                                                    x-bind:max="limits.imaging_focus_offset_um.max"
                                                     placeholder="0"
                                                     x-model.number="channel.z_offset_um"
                                                     x-init="registerNumberInput($el),enabletooltip($el)"
@@ -1784,9 +1784,9 @@
 
                                                 <input
                                                     type="number"
-                                                    min="limits.imaging_number_z_planes.min"
-                                                    step="limits.imaging_number_z_planes.step"
-                                                    max="limits.imaging_number_z_planes.max"
+                                                    x-bind:min="limits.imaging_number_z_planes.min"
+                                                    x-bind:step="limits.imaging_number_z_planes.step"
+                                                    x-bind:max="limits.imaging_number_z_planes.max"
                                                     placeholder="1"
                                                     x-model.number="channel.num_z_planes"
                                                     is="number-input"
@@ -1797,9 +1797,9 @@
 
                                                 <input
                                                     type="number"
-                                                    min="limits.imaging_delta_z_um.min"
-                                                    step="limits.imaging_delta_z_um.step"
-                                                    max="limits.imaging_delta_z_um.max"
+                                                    x-bind:min="limits.imaging_delta_z_um.min"
+                                                    x-bind:step="limits.imaging_delta_z_um.step"
+                                                    x-bind:max="limits.imaging_delta_z_um.max"
                                                     placeholder="3"
                                                     x-model.number="channel.delta_z_um"
                                                     is="number-input"
