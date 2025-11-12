@@ -38,6 +38,8 @@ import {
     collapseAllNamespaces,
 } from "./namespace-parser.js";
 
+import { APIClient, WebSocketManager } from "./api-client.js";
+
 Object.assign(window,{toggleNamespaceExpansion});
 
 const placeholder_microscope_name="<undefined>";
@@ -111,6 +113,20 @@ document.addEventListener("alpine:init", () => {
     Alpine.data("microscope_state", () => ({
         /** url to microscope (hardware) server (default to same origin as gui) */
         server_url: window.location.origin,
+
+        // These will be initialized in the init() method
+        /** @type {APIClient?}  */
+        _api: null,
+        get api(){
+            if(!this._api)throw new Error(`this._api is null`);
+            return this._api;
+        },
+        /** @type {WebSocketManager?} */
+        _wsManager: null,
+        get wsManager(){
+            if(!this._wsManager)throw new Error(`this._wsManager is null`);
+            return this._wsManager;
+        },
 
         tooltipConfig,
         interfaceSettings,
@@ -610,59 +626,26 @@ document.addEventListener("alpine:init", () => {
          * @returns {Promise<HardwareCapabilities>}
          */
         async getHardwareCapabilities() {
-            const plateinfo = await fetch(
-                `${this.server_url}/api/get_features/hardware_capabilities`,
-                {
-                    method: "POST",
-                    body: "{}",
-                    headers: [["Content-Type", "application/json"]],
-                },
-            ).then((v) => {
-                /** @ts-ignore @type {CheckMapSquidRequestFn<HardwareCapabilities,InternalErrorModel>} */
-                const check = this.checkMapSquidRequest.bind(this);
-                return check(v);
+            return this.api.post('/api/get_features/hardware_capabilities', {}, {
+                context: 'Get hardware capabilities'
             });
-
-            return plateinfo;
         },
         /**
          * @returns {Promise<MachineDefaults>}
          */
         async getMachineDefaults() {
-            const machinedefaults = await fetch(
-                `${this.server_url}/api/get_features/machine_defaults`,
-                {
-                    method: "POST",
-                    body: "{}",
-                    headers: [["Content-Type", "application/json"]],
-                },
-            ).then((v) => {
-                /** @ts-ignore @type {CheckMapSquidRequestFn<MachineDefaults,InternalErrorModel>} */
-                const check = this.checkMapSquidRequest.bind(this);
-                return check(v);
+            return this.api.post('/api/get_features/machine_defaults', {}, {
+                context: 'Get machine defaults'
             });
-
-            return machinedefaults;
         },
 
         /**
          * @returns {Promise<ConfigListResponse>}
          */
         async getConfigList() {
-            const configlist = await fetch(
-                `${this.server_url}/api/acquisition/config_list`,
-                {
-                    method: "POST",
-                    body: "{}",
-                    headers: [["Content-Type", "application/json"]],
-                },
-            ).then((v) => {
-                /** @ts-ignore @type {CheckMapSquidRequestFn<ConfigListResponse,InternalErrorModel>} */
-                const check = this.checkMapSquidRequest.bind(this);
-                return check(v);
+            return this.api.post('/api/acquisition/config_list', {}, {
+                context: 'Get config list'
             });
-
-            return configlist;
         },
 
         /**
@@ -715,20 +698,17 @@ document.addEventListener("alpine:init", () => {
          **/
         async defaultConfig() {
             // Load default protocol from server using existing config_fetch endpoint
-            const response = await fetch(`${this.server_url}/api/acquisition/config_fetch`, {
-                method: "POST",
-                body: JSON.stringify({ config_file: "default.json" }),
-                headers: [["Content-Type", "application/json"]],
-            });
-
-            if (!response.ok) {
-                const errorMsg = `Failed to load default protocol: HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const response = await this.api.post('/api/acquisition/config_fetch',
+                    { config_file: "default.json" },
+                    { context: 'Load default config', showError: false }
+                );
+                return response.file;
+            } catch (error) {
+                const errorMsg = `Failed to load default protocol. Please ensure default.json exists and run: uv run python scripts/generate_default_protocol.py`;
                 console.error(errorMsg);
-                throw new Error(errorMsg + ". Please ensure default.json exists and run: uv run python scripts/generate_default_protocol.py");
+                throw new Error(errorMsg);
             }
-
-            const protocolData = await response.json();
-            return protocolData.file;
         },
 
         /** protocols stored on server @type {ConfigListEntry[]} */
@@ -1004,100 +984,91 @@ document.addEventListener("alpine:init", () => {
                 throw new Error(`cannot runMachineConfigAction on non-action config ${config.handle} (kind=${config.value_kind})`);
             }
 
-            const action_url = `${this.server_url}${config.value}`;
-            console.log(`executing action: '${action_url}'`);
-            return fetch(action_url, {
-                method: "POST",
-                body: JSON.stringify({}),
-                headers: [["Content-Type", "application/json"]],
-            }).then((v) => {
-                /** @ts-ignore @type {CheckMapSquidRequestFn<BasicSuccessResponse,InternalErrorModel>} */
-                const check = this.checkMapSquidRequest.bind(this);
-                return check(v);
+            console.log(`executing action: '${config.value}'`);
+            return this.api.post(config.value, {}, {
+                context: `Execute action: ${config.handle}`
             });
         },
 
         // keep track of number of open websockets (to limit frontend load)
         _numOpenWebsockets: 0,
         
-        // Persistent image WebSocket
-        /** @type {WebSocket|null} */
-        image_ws: null,
         /** @typedef {{resolve: Function, reject: Function, channel_info:ChannelInfo}} PendingImageRequest */
         /** @type {Map<string, PendingImageRequest>} */
         pending_image_requests: new Map(),
-        
-        initImageWebSocket() {
-            if (this.image_ws && this.image_ws.readyState === WebSocket.OPEN) {
-                return; // Already connected
-            }
-            
-            try {
-                this.image_ws = new WebSocket(`${this.server_url}/ws/get_info/acquired_image`);
-                this.image_ws.binaryType = "blob";
-                
-                this.image_ws.onopen = () => {
-                    console.log('Image WebSocket connected');
-                };
-                
-                /** @type {{channel_handle:string,request:PendingImageRequest,metadata:any}|null} */
-                let currentRequest = null;
-                
-                this.image_ws.onmessage = (ev) => {
-                    if(!this.image_ws)throw new Error();
+        /** @type {{channel_handle:string,request:PendingImageRequest,metadata:any}|null} */
+        _image_current_request: null,
 
-                    // The protocol sends metadata first (string), then image data (ArrayBuffer)
-                    if (typeof ev.data === 'string') {
-                        // Metadata message
-                        const metadata = json5.parse(ev.data);
-                        // Find the matching request (we need to track which channel this is for)
-                        // Since we can't reliably get channel_handle from metadata, use FIFO
-                        const [channel_handle, request] = this.pending_image_requests.entries().next().value;
-                        if (request) {
-                            currentRequest = { channel_handle, request, metadata };
-                            // Switch to receive ArrayBuffer for image data
-                            this.image_ws.binaryType = "arraybuffer";
+        initImageWebSocket() {
+            // Check if already connected via WebSocketManager
+            if (this.wsManager.isConnected('image')) {
+                return;
+            }
+
+            try {
+                this.wsManager.createConnection('image', '/ws/get_info/acquired_image', {
+                    onOpen: (ws) => {
+                        console.log('Image WebSocket connected');
+                        // Set initial binary type for metadata (string)
+                        ws.binaryType = "blob";
+                    },
+                    onMessage: (ev) => {
+                        // The protocol sends metadata first (string), then image data (ArrayBuffer)
+                        if (typeof ev.data === 'string') {
+                            // Metadata message
+                            const metadata = json5.parse(ev.data);
+                            // Find the matching request (FIFO queue)
+                            const nextEntry = this.pending_image_requests.entries().next().value;
+                            if (nextEntry) {
+                                const [channel_handle, request] = nextEntry;
+                                if (request) {
+                                    this._image_current_request = { channel_handle, request, metadata };
+                                    // Switch to receive ArrayBuffer for image data
+                                    const ws = this.wsManager.getConnection('image');
+                                    if (ws) ws.binaryType = "arraybuffer";
+                                }
+                            }
+                        } else {
+                            // Image data (ArrayBuffer)
+                            if (this._image_current_request) {
+                                const img_data = ev.data;
+
+                                /** @type {CachedChannelImage} */
+                                const img = Object.assign(this._image_current_request.metadata, {
+                                    data: img_data,
+                                    info: this._image_current_request.request.channel_info,
+                                });
+
+                                this._image_current_request.request.resolve(img);
+                                this.pending_image_requests.delete(this._image_current_request.channel_handle);
+                                this._image_current_request = null;
+
+                                // Switch back to blob for next metadata
+                                const ws = this.wsManager.getConnection('image');
+                                if (ws) ws.binaryType = "blob";
+                            }
                         }
-                    } else {
-                        // Image data (ArrayBuffer)
-                        if (currentRequest) {
-                            const img_data = ev.data;
-                            
-                            /** @type {CachedChannelImage} */
-                            const img = Object.assign(currentRequest.metadata, {
-                                data: img_data,
-                                info: currentRequest.request.channel_info,
-                            });
-                            
-                            currentRequest.request.resolve(img);
-                            this.pending_image_requests.delete(currentRequest.channel_handle);
-                            currentRequest = null;
-                            
-                            // Switch back to blob for next metadata
-                            this.image_ws.binaryType = "blob";
-                        }
-                    }
-                };
-                
-                this.image_ws.onerror = (ev) => {
-                    console.warn('Image WebSocket error:', ev);
-                    // Reject all pending requests
-                    this.pending_image_requests.forEach(request => {
-                        request.reject(new Error('WebSocket error'));
-                    });
-                    this.pending_image_requests.clear();
-                };
-                
-                this.image_ws.onclose = () => {
-                    console.log('Image WebSocket closed');
-                    this.image_ws = null;
-                    // Reject all pending requests
-                    this.pending_image_requests.forEach(request => {
-                        request.reject(new Error('WebSocket closed'));
-                    });
-                    this.pending_image_requests.clear();
-                };
-                
+                    },
+                    onError: (event) => {
+                        console.warn('Image WebSocket error:', event);
+                        // Reject all pending requests
+                        this.pending_image_requests.forEach(request => {
+                            request.reject(new Error('WebSocket error'));
+                        });
+                        this.pending_image_requests.clear();
+                        this._image_current_request = null;
+                    },
+                    onClose: () => {
+                        console.log('Image WebSocket closed');
+                        // Reject all pending requests
+                        this.pending_image_requests.forEach(request => {
+                            request.reject(new Error('WebSocket closed'));
+                        });
+                        this.pending_image_requests.clear();
+                        this._image_current_request = null;
+                    },
+                    autoReconnect: true,
+                });
             } catch (error) {
                 console.warn('Failed to create image WebSocket:', error);
             }
@@ -1112,25 +1083,10 @@ document.addEventListener("alpine:init", () => {
         async fetch_image(channel_info, downsample_factor = 1) {
             // Initialize persistent WebSocket if needed
             this.initImageWebSocket();
-            if(!this.image_ws)throw new Error();
-            
-            // Wait for WebSocket to be ready
-            if (this.image_ws.readyState === WebSocket.CONNECTING) {
-                await new Promise((resolve) => {
-                    const checkReady = () => {
-                        if(!this.image_ws)throw new Error();
 
-                        if (this.image_ws.readyState === WebSocket.OPEN) {
-                            resolve(true);
-                        } else {
-                            setTimeout(checkReady, 10);
-                        }
-                    };
-                    checkReady();
-                });
-            }
-            
-            if (this.image_ws.readyState !== WebSocket.OPEN) {
+            // Wait for WebSocket to be ready
+            const isReady = await this.wsManager.waitForConnection('image', 5000);
+            if (!isReady) {
                 throw new Error('Image WebSocket not available');
             }
 
@@ -1138,20 +1094,18 @@ document.addEventListener("alpine:init", () => {
 
             /**@type {Promise<CachedChannelImage>}*/
             const finished = new Promise((resolve, reject) => {
-                if(!this.image_ws)throw new Error();
-
                 // Store the request
                 this.pending_image_requests.set(channel_handle, {
                     resolve,
                     reject,
                     channel_info,
                 });
-                
-                // Send the request through persistent WebSocket
-                this.image_ws.send(channel_handle);
-                this.image_ws.send(`${downsample_factor}`);
+
+                // Send the request through WebSocketManager
+                this.wsManager.send('image', channel_handle);
+                this.wsManager.send('image', `${downsample_factor}`);
             });
-            
+
             const data = await finished;
             // console.log("fetched image",data.info.channel.name, data);
             return data;
@@ -1282,12 +1236,13 @@ document.addEventListener("alpine:init", () => {
                  * }):Promise<void>}
                  * */
                 async (wellNames, mode, selectionBounds) => {
-                if (this.plateSelectionMode === "wells") {
-                    await this.selectWellsByNames(wellNames, mode);
-                } else if (this.plateSelectionMode === "sites") {
-                    await this.selectSitesByWellArea(wellNames, mode, selectionBounds);
+                    if (this.plateSelectionMode === "wells") {
+                        await this.selectWellsByNames(wellNames, mode);
+                    } else if (this.plateSelectionMode === "sites") {
+                        await this.selectSitesByWellArea(wellNames, mode, selectionBounds);
+                    }
                 }
-            });
+            );
         },
 
         /**
@@ -1383,7 +1338,6 @@ document.addEventListener("alpine:init", () => {
                     is_busy: false,
                     adapter_state: {
                         is_in_loading_position: false,
-                        state:"idle",
                         stage_position:{
                             x_pos_mm:0,
                             y_pos_mm:0,
@@ -1505,9 +1459,7 @@ document.addEventListener("alpine:init", () => {
         /** indicate of connection to server is currently established */
         isConnectedToServer: false,
 
-        // initiate async websocket event loop to update
-        /** @type {WebSocket|null} */
-        status_ws: null,
+        // acquisition status websocket for monitoring acquisition progress
         /** @type {WebSocket|null} */
         acquisition_status_ws: null,
         server_url_input: "",
@@ -1519,7 +1471,7 @@ document.addEventListener("alpine:init", () => {
         status_reconnect(url) {
             // if new url is same one, and a connection is already [in process of] being established
             // skip reconnect attempt.
-            if (url == this.server_url && this.status_ws != null && this.isConnectedToServer) {
+            if (url == this.server_url && this.wsManager.isConnected('status') && this.isConnectedToServer) {
                 return;
             }
 
@@ -1527,80 +1479,66 @@ document.addEventListener("alpine:init", () => {
             // if one has been provided, update current url and proceed.
             if (url) {
                 this.server_url = url;
+                // Close old connection when URL changes so we reconnect to the new server
+                this.wsManager.closeConnection('status');
             }
 
             // reconnection is only attempted if connection is not currently established
             this.isConnectedToServer = false;
 
-            try {
-                // ensure old websocket handle is closed
-                if (
-                    this.status_ws != null &&
-                    this.status_ws.readyState != WebSocket.CLOSED
-                ) {
-                    this.isConnectedToServer = false;
-
-                    this.status_ws.close();
-                }
-
-                // this is an obscure case that sometimes happens in practice.
-                // the underlying bug is probably a state synchronization issue,
-                // but we can work around this by just trying again later.
-                if (this.server_url == null) {
-                    throw new Error(`server_url is invalid. retrying..`);
-                }
-
-                // try reconnecting (may fail if server is closed, in which case just try reconnecting later)
-                this.status_ws = new WebSocket(
-                    `${this.server_url}/ws/get_info/current_state`,
-                );
-                this.status_ws.onmessage = async (ev) => {
-                    const data = json5.parse(ev.data);
-                    await this.updateMicroscopeStatus(data);
-
-                    // if we got this far, the connection to the server is established
-                    this.isConnectedToServer = true;
-
-                    requestAnimationFrame(() => this.status_getstate_loop());
-                };
-                this.status_ws.onerror = (ev) => {
-                    this.isConnectedToServer = false;
-
-                    // wait a short time before attempting to reconnect
-                    setTimeout(() => this.status_reconnect(url), 200);
-                };
-                this.status_ws.onopen = (ev) =>
-                    requestAnimationFrame(() => this.status_getstate_loop());
-            } catch (e) {
-                this.isConnectedToServer = false;
-
-                console.warn(`websocket error: ${e}`);
+            // this is an obscure case that sometimes happens in practice.
+            // the underlying bug is probably a state synchronization issue,
+            // but we can work around this by just trying again later.
+            if (this.server_url == null) {
+                console.warn(`server_url is invalid. retrying..`);
                 setTimeout(() => this.status_reconnect(url), 200);
+                return;
+            }
+
+            // Create new WebSocket connection using WebSocketManager (with correct protocol)
+            // Only create if not already created/connected
+            if (!this.wsManager.getConnection('status')) {
+                this.wsManager.createConnection('status', '/ws/get_info/current_state', {
+                    onMessage: async (ev) => {
+                        try {
+                            const data = json5.parse(ev.data);
+                            await this.updateMicroscopeStatus(data);
+
+                            // if we got this far, the connection to the server is established
+                            this.isConnectedToServer = true;
+                        } catch (error) {
+                            console.error('Error updating microscope status:', error);
+                            // Continue polling - don't break the loop
+                        }
+                    },
+                    onOpen: (ws) => {
+                        // Send initial message immediately to trigger server response
+                        this.wsManager.send('status', "info");
+                        // Schedule polling loop
+                        requestAnimationFrame(() => this.status_getstate_loop());
+                    },
+                    onError: (event) => {
+                        this.isConnectedToServer = false;
+                        // Reconnection is handled by WebSocketManager
+                    },
+                    onClose: () => {
+                        this.isConnectedToServer = false;
+                        // Reconnection is handled by WebSocketManager
+                    },
+                    autoReconnect: true,
+                });
             }
         },
 
         status_getstate_loop() {
-            try {
-                if (
-                    !this.status_ws ||
-                    this.status_ws.readyState == WebSocket.CLOSED
-                ) {
-                    // trigger catch clause which will reconnect
-                    throw new Error(`websocket is closed!`);
-                } else if (this.status_ws.readyState == WebSocket.OPEN) {
-                    // send arbitrary message to receive status update
-                    this.status_ws.send("info");
-                } else {
-                    // console.log(ws.ws.readyState, WebSocket.CLOSED, WebSocket.CONNECTING, WebSocket.OPEN)
-                    // if websocket is not yet ready, try again later
-                    requestAnimationFrame(() => this.status_getstate_loop());
-                }
-            } catch (e) {
-                this.isConnectedToServer = false;
-
-                // wait a short time before attempting to reconnect
-                setTimeout(() => this.status_reconnect(), 200);
+            // Only send if connected; WebSocketManager handles reconnection automatically
+            if (this.wsManager.isConnected('status')) {
+                // send arbitrary message to receive status update
+                this.wsManager.send('status', "info");
             }
+            // Schedule next poll iteration regardless of connection status
+            // The WebSocketManager will reconnect automatically on errors
+            requestAnimationFrame(() => this.status_getstate_loop());
         },
 
         /**
@@ -1711,6 +1649,21 @@ document.addEventListener("alpine:init", () => {
         // which leads to a whole bunch of errors in the console and breaks
         // some functionalities that depend on fields being initialized on mounting.
         async initSelf() {
+            // Initialize API client and WebSocket manager
+            this._api = new APIClient(this.server_url, {
+                onError: (title, message) => this.showError(title, message),
+            });
+
+            this._wsManager = new WebSocketManager(this.server_url, {
+                reconnectDelay: 200,
+                onError: (message) => console.warn(message),
+                onConnectionStateChange: (name, isConnected) => {
+                    if (name === 'status') {
+                        this.isConnectedToServer = isConnected;
+                    }
+                },
+            });
+
             this._plateinfo = await this.getPlateTypes();
             this._microscope_config = await this.defaultConfig();
 
@@ -1783,21 +1736,17 @@ document.addEventListener("alpine:init", () => {
                 console.warn("Could not load cached microscopes list during init:", error);
             }
 
-            // init data
-            const currentStateData = await fetch(
-                `${this.server_url}/api/get_info/current_state`,
-                {
-                    method: "POST",
-                    body: "{}",
-                },
-            );
-            if (!currentStateData.ok)
-                throw new Error(`error in fetch. http status: ${currentStateData.status}`);
-            const currentStateJson = await currentStateData.json();
+            // init data - get initial state from server
+            const currentStateJson = await this.api.post('/api/get_info/current_state', {}, {
+                context: 'Get initial microscope state',
+                showError: false
+            });
             await this.updateMicroscopeStatus(currentStateJson);
 
-            this.status_getstate_loop();
-            
+            // Initialize WebSocket connection for status updates
+            // (onopen handler will start the status_getstate_loop)
+            this.status_reconnect();
+
             // Initialize persistent image WebSocket
             this.initImageWebSocket();
         },
@@ -2333,14 +2282,8 @@ document.addEventListener("alpine:init", () => {
          * @returns {Promise<AcquisitionStatusResponse>}
          */
         async acquisition_status(body) {
-            return fetch(`${this.server_url}/api/acquisition/status`, {
-                method: "POST",
-                body: JSON.stringify(body),
-                headers: [["Content-Type", "application/json"]],
-            }).then((v) => {
-                /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStatusResponse,InternalErrorModel>} */
-                const check = this.checkMapSquidRequest.bind(this);
-                return check(v);
+            return this.api.post('/api/acquisition/status', body, {
+                context: 'Get acquisition status'
             });
         },
 
@@ -2351,19 +2294,9 @@ document.addEventListener("alpine:init", () => {
                  * @returns {Promise<StoreConfigResponse>}
                  */
                 storeConfig: async (body) => {
-                    const response = await fetch(
-                        `${this.server_url}/api/acquisition/config_store`,
-                        {
-                            method: "POST",
-                            body: JSON.stringify(body),
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    ).then((v) => {
-                        return this.checkRequest(v, 'Save Configuration');
+                    return this.api.post('/api/acquisition/config_store', body, {
+                        context: 'Save Configuration'
                     });
-
-                    //@ts-ignore
-                    return response;
                 },
 
                 /**
@@ -2371,20 +2304,9 @@ document.addEventListener("alpine:init", () => {
                  * @returns {Promise<LoadConfigResponse>}
                  */
                 loadConfig: async (body) => {
-                    const response = await fetch(
-                        `${this.server_url}/api/acquisition/config_fetch`,
-                        {
-                            method: "POST",
-                            body: JSON.stringify(body),
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    ).then((v) => {
-                        const ret=this.checkRequest(v, 'Load Configuration');
-                        return ret;
+                    return this.api.post('/api/acquisition/config_fetch', body, {
+                        context: 'Load Configuration'
                     });
-
-                    //@ts-ignore
-                    return response;
                 },
                 /**
                  * rpc to /api/action/move_by
@@ -2392,16 +2314,9 @@ document.addEventListener("alpine:init", () => {
                  * @returns {Promise<MoveByResult>}
                  */
                 moveBy: (body) => {
-                    const response=fetch(`${this.server_url}/api/action/move_by`, {
-                        method: "POST",
-                        body: JSON.stringify(body),
-                        headers: [["Content-Type", "application/json"]],
-                    }).then((v) => {
-                        return this.checkRequest(v, 'Move Stage');
+                    return this.api.post('/api/action/move_by', body, {
+                        context: 'Move Stage'
                     });
-
-                    //@ts-ignore
-                    return response;
                 },
 
                 /**
@@ -2410,14 +2325,8 @@ document.addEventListener("alpine:init", () => {
                  * @returns {Promise<MoveToResult>}
                  */
                 moveTo: (body) => {
-                    return fetch(`${this.server_url}/api/action/move_to`, {
-                        method: "POST",
-                        body: JSON.stringify(body),
-                        headers: [["Content-Type", "application/json"]],
-                    }).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<MoveToResult,InternalErrorModel>} */
-                        const check = this.checkMapSquidRequest.bind(this);
-                        return check(v);
+                    return this.api.post('/api/action/move_to', body, {
+                        context: 'Move to position'
                     });
                 },
 
@@ -2427,14 +2336,8 @@ document.addEventListener("alpine:init", () => {
                  * @returns {Promise<MoveToWellResponse>}
                  */
                 moveToWell: (body) => {
-                    return fetch(`${this.server_url}/api/action/move_to_well`, {
-                        method: "POST",
-                        body: JSON.stringify(body),
-                        headers: [["Content-Type", "application/json"]],
-                    }).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<MoveToWellResponse,InternalErrorModel>} */
-                        const check = this.checkMapSquidRequest.bind(this);
-                        return check(v);
+                    return this.api.post('/api/action/move_to_well', body, {
+                        context: 'Move to well'
                     });
                 },
 
@@ -2449,13 +2352,9 @@ document.addEventListener("alpine:init", () => {
                         // Model is always in backend format
                         const backend_body = body;
 
-                        return fetch(`${this.server_url}/api/action/snap_channel`, {
-                            method: "POST",
-                            body: JSON.stringify(backend_body),
-                            headers: [["Content-Type", "application/json"]],
-                        }).then((v) => {
-                            return this.checkRequest(v, 'Channel Snapshot');
-                        })
+                        return this.api.post('/api/action/snap_channel', backend_body, {
+                            context: 'Channel Snapshot'
+                        });
                     });
                 },
 
@@ -2469,15 +2368,9 @@ document.addEventListener("alpine:init", () => {
                         const body = {
                             config_file: this.microscope_config
                         };
-                        
-                        return fetch(`${this.server_url}/api/action/snap_selected_channels`, {
-                            method: "POST",
-                            body: JSON.stringify(body),
-                            headers: [["Content-Type", "application/json"]],
-                        }).then((v) => {
-                            /** @ts-ignore @type {CheckMapSquidRequestFn<ChannelSnapSelectionResponse,InternalErrorModel>} */
-                            const check = this.checkMapSquidRequest.bind(this);
-                            return check(v);
+
+                        return this.api.post('/api/action/snap_selected_channels', body, {
+                            context: 'Snap selected channels'
                         });
                     });
                 },
@@ -2487,17 +2380,8 @@ document.addEventListener("alpine:init", () => {
                  * @returns {Promise<EnterLoadingPositionResponse>}
                  */
                 enterLoadingPosition: () => {
-                    return fetch(
-                        `${this.server_url}/api/action/enter_loading_position`,
-                        {
-                            method: "POST",
-                            body: "{}",
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    ).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<EnterLoadingPositionResponse,InternalErrorModel>} */
-                        const check = this.checkMapSquidRequest.bind(this);
-                        return check(v);
+                    return this.api.post('/api/action/enter_loading_position', {}, {
+                        context: 'Enter loading position'
                     });
                 },
                 /**
@@ -2505,17 +2389,8 @@ document.addEventListener("alpine:init", () => {
                  * @returns {Promise<LeaveLoadingPositionResponse>}
                  */
                 leaveLoadingPosition: () => {
-                    return fetch(
-                        `${this.server_url}/api/action/leave_loading_position`,
-                        {
-                            method: "POST",
-                            body: "{}",
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    ).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<LeaveLoadingPositionResponse,InternalErrorModel>} */
-                        const check = this.checkMapSquidRequest.bind(this);
-                        return check(v);
+                    return this.api.post('/api/action/leave_loading_position', {}, {
+                        context: 'Leave loading position'
                     });
                 },
                 /**
@@ -2528,17 +2403,8 @@ document.addEventListener("alpine:init", () => {
                     // Model is always in backend format
                     const backend_body = body;
 
-                    return fetch(
-                        `${this.server_url}/api/action/stream_channel_begin`,
-                        {
-                            method: "POST",
-                            body: JSON.stringify(backend_body),
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    ).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<StreamingStartedResponse,InternalErrorModel>} */
-                        const check = this.checkMapSquidRequest.bind(this);
-                        return check(v);
+                    return this.api.post('/api/action/stream_channel_begin', backend_body, {
+                        context: 'Stream channel begin'
                     });
                 },
                 /**
@@ -2549,17 +2415,8 @@ document.addEventListener("alpine:init", () => {
                     // Model is always in backend format
                     const backend_body = body;
 
-                    return fetch(
-                        `${this.server_url}/api/action/stream_channel_end`,
-                        {
-                            method: "POST",
-                            body: JSON.stringify(backend_body),
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    ).then((v) => {
-                        /** @ts-ignore @type {CheckMapSquidRequestFn<StreamEndResponse,InternalErrorModel>} */
-                        const check = this.checkMapSquidRequest.bind(this);
-                        return check(v);
+                    return this.api.post('/api/action/stream_channel_end', backend_body, {
+                        context: 'Stream channel end'
                     });
                 },
                 /**
@@ -2570,23 +2427,11 @@ document.addEventListener("alpine:init", () => {
                 laserAutofocusCalibrate: async (body) => {
                     await this.machineConfigFlush();
 
-                    return fetch(
-                        `${this.server_url}/api/action/laser_autofocus_calibrate`,
-                        {
-                            method: "POST",
-                            body: JSON.stringify(body),
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    )
-                        .then((v) => {
-                            /** @ts-ignore @type {CheckMapSquidRequestFn<LaserAutofocusCalibrateResponse,InternalErrorModel>} */
-                            const check = this.checkMapSquidRequest.bind(this);
-                            return check(v);
-                        })
-                        .then((v) => {
-                            console.log(v);
-                            return v;
-                        });
+                    const response = await this.api.post('/api/action/laser_autofocus_calibrate', body, {
+                        context: 'Laser autofocus calibrate'
+                    });
+                    console.log(response);
+                    return response;
                 },
                 /**
                  *
@@ -2596,22 +2441,9 @@ document.addEventListener("alpine:init", () => {
                 laserAutofocusMoveToTargetOffset: async (body) => {
                     await this.machineConfigFlush();
 
-                    return fetch(
-                        `${this.server_url}/api/action/laser_autofocus_move_to_target_offset`,
-                        {
-                            method: "POST",
-                            body: JSON.stringify(body),
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    )
-                        .then((v) => {
-                            /** @ts-ignore @type {CheckMapSquidRequestFn<LaserAutofocusMoveToTargetOffsetResponse,InternalErrorModel>} */
-                            const check = this.checkMapSquidRequest.bind(this);
-                            return check(v);
-                        })
-                        .then((v) => {
-                            return v;
-                        });
+                    return this.api.post('/api/action/laser_autofocus_move_to_target_offset', body, {
+                        context: 'Laser autofocus move to target offset'
+                    });
                 },
                 /**
                  *
@@ -2621,22 +2453,9 @@ document.addEventListener("alpine:init", () => {
                 laserAutofocusMeasureDisplacement: async (body) => {
                     await this.machineConfigFlush();
 
-                    return fetch(
-                        `${this.server_url}/api/action/laser_autofocus_measure_displacement`,
-                        {
-                            method: "POST",
-                            body: JSON.stringify(body),
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    )
-                        .then((v) => {
-                            /** @ts-ignore @type {CheckMapSquidRequestFn<LaserAutofocusMeasureDisplacementResponse,InternalErrorModel>} */
-                            const check = this.checkMapSquidRequest.bind(this);
-                            return check(v);
-                        })
-                        .then((v) => {
-                            return v;
-                        });
+                    return this.api.post('/api/action/laser_autofocus_measure_displacement', body, {
+                        context: 'Laser autofocus measure displacement'
+                    });
                 },
                 /**
                  *
@@ -2646,22 +2465,9 @@ document.addEventListener("alpine:init", () => {
                 laserAutofocusSnap: async (body) => {
                     await this.machineConfigFlush();
 
-                    return fetch(
-                        `${this.server_url}/api/action/snap_reflection_autofocus`,
-                        {
-                            method: "POST",
-                            body: JSON.stringify(body),
-                            headers: [["Content-Type", "application/json"]],
-                        },
-                    )
-                        .then((v) => {
-                            /** @ts-ignore @type {CheckMapSquidRequestFn<LaserAutofocusSnapResponse,InternalErrorModel>} */
-                            const check = this.checkMapSquidRequest.bind(this);
-                            return check(v);
-                        })
-                        .then((v) => {
-                            return v;
-                        });
+                    return this.api.post('/api/action/snap_reflection_autofocus', body, {
+                        context: 'Snap reflection autofocus'
+                    });
                 },
             };
         },
@@ -2725,25 +2531,17 @@ document.addEventListener("alpine:init", () => {
                 channel: target_channel,
             };
 
-            return fetch(`${this.server_url}/api/action/stream_channel_begin`, {
-                method: "POST",
-                body: JSON.stringify(body),
-                headers: [["Content-Type", "application/json"]],
-            })
-                .then((v) => {
-                    /** @ts-ignore @type {CheckMapSquidRequestFn<StreamBeginResponse,InternalErrorModel>} */
-                    const check = this.checkMapSquidRequest.bind(this);
-                    return check(v);
-                })
-                .then((v) => {
-                    this.isStreaming = true;
-                    return v;
-                })
-                .catch((error) => {
-                    console.error("failed to start streaming", error);
-                    this.isStreaming = false;
-                    throw error;
+            try {
+                const response = await this.api.post('/api/action/stream_channel_begin', body, {
+                    context: 'Start streaming'
                 });
+                this.isStreaming = true;
+                return response;
+            } catch (error) {
+                console.error("failed to start streaming", error);
+                this.isStreaming = false;
+                throw error;
+            }
         },
         /**
          *
@@ -2766,20 +2564,11 @@ document.addEventListener("alpine:init", () => {
                 channel: target_channel,
             };
 
-            return fetch(`${this.server_url}/api/action/stream_channel_end`, {
-                method: "POST",
-                body: JSON.stringify(body),
-                headers: [["Content-Type", "application/json"]],
-            })
-                .then((v) => {
-                    /** @ts-ignore @type {CheckMapSquidRequestFn<StreamEndResponse,InternalErrorModel>} */
-                    const check = this.checkMapSquidRequest.bind(this);
-                    return check(v);
-                })
-                .then((v) => {
-                    this.isStreaming = false;
-                    return v;
-                });
+            const response = await this.api.post('/api/action/stream_channel_end', body, {
+                context: 'End streaming'
+            });
+            this.isStreaming = false;
+            return response;
         },
         /**
          * set this as onchange callback on the select element that controls the streaming channel
@@ -2800,19 +2589,9 @@ document.addEventListener("alpine:init", () => {
                 machine_config: this.microscope_config.machine_config,
             };
 
-            return fetch(`${this.server_url}/api/action/machine_config_flush`, {
-                method: "POST",
-                body: JSON.stringify(body),
-                headers: [["Content-Type", "application/json"]],
-            })
-                .then((v) => {
-                    /** @ts-ignore @type {CheckMapSquidRequestFn<MachineConfigFlushResponse,InternalErrorModel>} */
-                    const check = this.checkMapSquidRequest.bind(this);
-                    return check(v);
-                })
-                .then((v) => {
-                    return v;
-                });
+            return this.api.post('/api/action/machine_config_flush', body, {
+                context: 'Flush machine config'
+            });
         },
 
         // Namespace-related methods

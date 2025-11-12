@@ -148,23 +148,6 @@ function makeQuad(aabb, mat) {
 }
 
 /**
- * Create a closed line loop from an array of 2D points
- * @param {Array<{x: number, y: number}>} points - Array of points that form the closed loop
- * @param {THREE.LineBasicMaterial} mat - Material for the line
- * @returns {THREE.Line} Line loop object
- */
-function makeLineLoop(points, mat) {
-    let geometry = new THREE.BufferGeometry();
-    let positions = [];
-    for (let point of points) {
-        positions.push(point.x, point.y, 0);
-    }
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
-    let line = new THREE.LineLoop(geometry, mat);
-    return line;
-}
-
-/**
  * 
  * @param {AABB} aabb 
  * @param {THREE.Material} mat
@@ -295,6 +278,10 @@ export let matForbiddenAreaColor = 0xCC4444; // Muted red for forbidden areas
  * @property {number} offsetY - Y coordinate relative to the element
  */
 
+/**
+ * @typedef {{minX:number,maxX:number,minY:number,maxY:number}} WellSelectionBounds
+ */
+
 export class PlateNavigator {
     /**
      *
@@ -302,7 +289,7 @@ export class PlateNavigator {
      * @param {object} alpineComponent - Alpine.js component for updating reactive data
      * @returns
      */
-    constructor(containerel, alpineComponent = null) {
+    constructor(containerel, alpineComponent) {
         // Store reference to Alpine component for updating cursor position
         this.alpineComponent = alpineComponent;
         /** @type {THREE.Scene} */
@@ -1280,7 +1267,7 @@ export class PlateNavigator {
 
     /**
      * Set callback function for well selection requests
-     * @param {function(string[], string): void} callback - Callback function that receives array of well names and mode ('select' or 'deselect')
+     * @param {function(string[], string, WellSelectionBounds): void} callback - Callback function that receives array of well names and mode ('select' or 'deselect')
      */
     setWellSelectionCallback(callback) {
         this.onWellSelection = callback;
@@ -1288,23 +1275,15 @@ export class PlateNavigator {
 
     /**
      * Fetch forbidden areas configuration from server
-     * @returns {Promise<Array>} Array of forbidden area objects
+     * @returns {Promise<Array<object>>} Array of forbidden area objects
      */
     async fetchForbiddenAreas() {
         try {
-            const response = await fetch('/api/get_features/machine_defaults', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+            // Use the API client from the parent (Alpine component)
+            const configItems = await this.alpineComponent.api.post('/api/get_features/machine_defaults', {}, {
+                context: 'Fetch machine defaults for forbidden areas',
+                showError: false
             });
-
-            if (!response.ok) {
-                console.warn('Failed to fetch machine defaults for forbidden areas');
-                return [];
-            }
-
-            const configItems = await response.json();
 
             // Find the forbidden areas config item
             const forbiddenAreasItem = configItems.find(item => item.handle === 'protocol.forbidden_areas');
@@ -1360,6 +1339,7 @@ export class PlateNavigator {
         if (!startBackend || !currentBackend) return;
 
         // Transform from backend to display coordinates for Three.js rendering
+        if(!this.plate)throw new Error(`plate is null`);
         const startDisplay = transformBackendToDisplayCoordinates(startBackend.x, startBackend.y, this.plate);
         const currentDisplay = transformBackendToDisplayCoordinates(currentBackend.x, currentBackend.y, this.plate);
 
@@ -1640,6 +1620,7 @@ export class PlateNavigator {
         if (!startBackend || !currentBackend) return;
 
         // Calculate selection bounding box in backend coordinates
+        /** @type {WellSelectionBounds} */
         const selectionBoxBackend = {
             minX: Math.min(startBackend.x, currentBackend.x),
             maxX: Math.max(startBackend.x, currentBackend.x),
@@ -1693,6 +1674,7 @@ export class PlateNavigator {
 
         // Pass selection bounds in backend coordinates for site selection
         // (selectSitesByWellArea expects backend coordinates)
+        /** @type {WellSelectionBounds} */
         const selectionBounds = {
             minX: selectionBoxBackend.minX,
             maxX: selectionBoxBackend.maxX,

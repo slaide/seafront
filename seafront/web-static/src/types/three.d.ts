@@ -109,9 +109,10 @@ declare module "three" {
     class LineBasicMaterial extends Material {
         constructor(opts: {
             color: Color | number,
-            side: SidedNess,
+            side?: SidedNess,
             transparent?: boolean,
             opacity?: number,
+            linewidth?: number,
         });
     }
 
