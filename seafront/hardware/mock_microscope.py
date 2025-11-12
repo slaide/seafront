@@ -977,6 +977,29 @@ class MockMicroscope(Microscope):
             )
             return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)  # type: ignore
 
+        elif isinstance(command, cmd.AutofocusApproachTargetDisplacement):
+            logger.info(
+                f"Mock microscope: approaching target displacement "
+                f"(target={command.target_offset_um}um, max_reps={command.max_num_reps})"
+            )
+            # Mock implementation: simulate reaching the target with minimal moves
+            # In real hardware, this would iteratively measure and move until reaching the target
+
+            # Simulate the approach process
+            await asyncio.sleep(0.1)
+
+            # For mock: simulate that we reach the target threshold quickly
+            # Typical behavior: 1-2 compensating moves needed
+            num_compensating_moves = 1
+            uncompensated_offset_mm = 0.0  # Successfully reached target
+            reached_threshold = True  # Converged to target
+
+            return cmd.AutofocusApproachTargetDisplacementResult(
+                num_compensating_moves=num_compensating_moves,
+                uncompensated_offset_mm=uncompensated_offset_mm,
+                reached_threshold=reached_threshold,
+            )  # type: ignore
+
         else:
             logger.warning(f"Mock microscope: unhandled command type {type(command)}")
             # Return a basic success response for unhandled commands
