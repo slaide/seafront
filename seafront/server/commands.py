@@ -52,6 +52,15 @@ class InternalErrorModel(BaseModel):
     detail: str
 
 
+class ConflictErrorDetail(BaseModel):
+    message: str
+    busy_reasons: list[str]
+
+
+class ConflictErrorModel(BaseModel):
+    detail: ConflictErrorDetail
+
+
 def error_internal(detail: str) -> tp.NoReturn:
     """raise an HTTPException with specified detail"""
     logger.debug(f"error_internal - {detail=}")

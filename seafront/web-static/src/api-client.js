@@ -6,6 +6,17 @@
  */
 
 /**
+ * @typedef {Object} ConflictErrorDetail
+ * @property {string} message - Error message describing the conflict
+ * @property {string[]} busy_reasons - List of reasons why the resource is busy
+ */
+
+/**
+ * @typedef {Object} ConflictErrorModel
+ * @property {ConflictErrorDetail} detail - Conflict error details from server
+ */
+
+/**
  * @typedef {Object} WebSocketManagerOptions
  * @property {number} [reconnectDelay=200] - Delay (ms) before reconnecting
  * @property {(message: string) => void} [onError] - Error callback
@@ -19,6 +30,14 @@
  * @property {() => void} [onClose] - Close handler
  * @property {(event: Event) => void} [onError] - Error handler
  * @property {boolean} [autoReconnect=true] - Whether to auto-reconnect on error/close
+ */
+
+/**
+ * @typedef {Object} WebSocketConnectionData
+ * @property {WebSocket} ws - The WebSocket instance
+ * @property {string} endpoint - The WebSocket endpoint path
+ * @property {WebSocketConnectionOptions} options - Connection options
+ * @property {number} reconnectAttempts - Number of reconnection attempts made
  */
 
 /**
@@ -76,6 +95,7 @@ class APIClient {
                 throw new Error(error);
             } else if (response.status === 409) {
                 // Handle conflict errors (e.g., microscope busy)
+                /** @type {ConflictErrorModel} */
                 const errorBody = await response.json();
                 const reasons = errorBody.detail.busy_reasons.map(r => `  • ${r}`).join('\n');
                 const userMessage = `${errorBody.detail.message}:\n${reasons}`;
@@ -117,7 +137,7 @@ class APIClient {
      * @param {boolean} [options.showError=true] - Whether to show error UI on failure
      * @returns {Promise<TResponse>} - Response data from server
      */
-    async post(endpoint, body = {}, options = {}) {
+    async post(endpoint, body, options = {}) {
         const {
             context = 'API request',
             showError = true,
@@ -173,7 +193,7 @@ class WebSocketManager {
         this.onError = options.onError || (() => {});
         this.onConnectionStateChange = options.onConnectionStateChange || (() => {});
 
-        // Map of connection name -> { ws, endpoint, options, reconnectAttempts }
+        /** @type {Map<string, WebSocketConnectionData>} */
         this.connections = new Map();
     }
 
@@ -206,8 +226,8 @@ class WebSocketManager {
         } = options;
 
         // Close existing connection if present
-        if (this.connections.has(name)) {
-            const existing = this.connections.get(name);
+        const existing = this.connections.get(name);
+        if (existing) {
             if (existing.ws && existing.ws.readyState !== WebSocket.CLOSED) {
                 existing.ws.close();
             }
@@ -233,7 +253,6 @@ class WebSocketManager {
             this.connections.set(name, connectionData);
 
             ws.onopen = () => {
-                console.log(`WebSocket '${name}' connected`);
                 connectionData.reconnectAttempts = 0;
                 this.onConnectionStateChange(name, true);
                 onOpen(ws);
@@ -244,7 +263,6 @@ class WebSocketManager {
             };
 
             ws.onerror = (event) => {
-                console.warn(`WebSocket '${name}' error:`, event);
                 this.onConnectionStateChange(name, false);
                 onError(event);
 
@@ -256,7 +274,6 @@ class WebSocketManager {
             };
 
             ws.onclose = () => {
-                console.log(`WebSocket '${name}' closed`);
                 this.onConnectionStateChange(name, false);
                 onClose();
 
@@ -270,7 +287,7 @@ class WebSocketManager {
             return ws;
         } catch (error) {
             console.warn(`Failed to create WebSocket '${name}':`, error);
-            this.onError(`Failed to create WebSocket: ${error.message}`);
+            this.onError(`Failed to create WebSocket: ${JSON.stringify(error)}`);
             return null;
         }
     }
@@ -292,7 +309,8 @@ class WebSocketManager {
      */
     isConnected(name) {
         const ws = this.getConnection(name);
-        return ws && ws.readyState === WebSocket.OPEN;
+        if(!ws)return false;
+        return ws.readyState === WebSocket.OPEN;
     }
 
     /**
@@ -348,7 +366,6 @@ class WebSocketManager {
         if (!connectionData) return;
 
         connectionData.reconnectAttempts++;
-        console.log(`Scheduling reconnect for '${name}' (attempt ${connectionData.reconnectAttempts})`);
 
         setTimeout(() => {
             if (this.connections.has(name)) {
@@ -393,22 +410,6 @@ class WebSocketManager {
         for (const name of this.connections.keys()) {
             this.closeConnection(name);
         }
-    }
-
-    /**
-     * Get connection status information for all managed connections
-     * @returns {Object.<string, WebSocketConnectionStatus>} - Map of connection names to their status objects
-     */
-    getStatus() {
-        const status = {};
-        for (const [name, connectionData] of this.connections) {
-            status[name] = {
-                connected: connectionData.ws && connectionData.ws.readyState === WebSocket.OPEN,
-                readyState: connectionData.ws ? connectionData.ws.readyState : null,
-                reconnectAttempts: connectionData.reconnectAttempts,
-            };
-        }
-        return status;
     }
 }
 

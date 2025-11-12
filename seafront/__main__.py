@@ -92,6 +92,7 @@ from seafront.server.commands import (
     ImageStoreEntry,
     ImageStoreInfo,
     InternalErrorModel,
+    ConflictErrorModel,
     LaserAutofocusCalibrate,
     LoadingPositionEnter,
     LoadingPositionLeave,
@@ -564,6 +565,7 @@ class Core:
                         operation_id=path[1:].replace("/", ".") + ".get",
                         summary=summary,
                         responses={
+                            409: {"model": ConflictErrorModel},
                             500: {"model": InternalErrorModel},
                         },
                         tags=route.tags,  # type:ignore
@@ -576,6 +578,7 @@ class Core:
                         operation_id=path[1:].replace("/", ".") + ".post",
                         summary=summary,
                         responses={
+                            409: {"model": ConflictErrorModel},
                             500: {"model": InternalErrorModel},
                         },
                         tags=route.tags,  # type:ignore
@@ -2070,6 +2073,12 @@ def custom_openapi():
                 "description": "Success",
                 # actual content type is filled in during return type annotation inspection below
                 "content": {"application/json": {"schema": None}},
+            },
+            "409": {
+                "description": "conflict (e.g., microscope busy)",
+                "content": {
+                    "application/json": {"schema": register_pydantic_schema(ConflictErrorModel)}
+                },
             },
             "500": {
                 "description": "any failure mode",
