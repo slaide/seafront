@@ -297,7 +297,9 @@ document.addEventListener("alpine:init", () => {
          */
         getMicroscopeName() {
             try {
-                const microscopeNameItem = this._microscope_config?.machine_config?.find(item => item.handle === "system.microscope_name");
+                const microscopeNameItem = this._microscope_config?.machine_config?.find(
+                    item => item.handle === "system.microscope_name"
+                );
                 if (!microscopeNameItem || !microscopeNameItem.value) {
                     return null;
                 }
@@ -896,7 +898,7 @@ document.addEventListener("alpine:init", () => {
                 // Only recreate wells if we have fewer wells than expected (sparse data from server)
                 if (currentWells.length < expectedWellCount) {
                     const completeWells = this.createPlateWells(this._microscope_config.wellplate_type);
-                    
+
                     // Merge selection state from sparse data into complete grid
                     if (currentWells.length > 0) {
                         const wellSelectionMap = new Map();
@@ -904,7 +906,7 @@ document.addEventListener("alpine:init", () => {
                             const key = `${well.col},${well.row}`;
                             wellSelectionMap.set(key, well.selected);
                         });
-                        
+
                         completeWells.forEach(well => {
                             const key = `${well.col},${well.row}`;
                             if (wellSelectionMap.has(key)) {
@@ -912,9 +914,9 @@ document.addEventListener("alpine:init", () => {
                             }
                         });
                     }
-                    
+
                     this._microscope_config.plate_wells = completeWells;
-                    
+
                     // Save config after well selections are merged during initialization
                     this.saveCurrentConfig();
                 }
@@ -1691,26 +1693,118 @@ document.addEventListener("alpine:init", () => {
             const savedData = this.loadMicroscopeConfigFromStorage();
             if (savedData) {
                 const savedConfig = savedData.microscope_config;
-                // Smart merge: preserve essential arrays from server if they're empty in savedConfig
+
+                // Save server-provided fields that should NEVER be overwritten by cache
+                // These represent hardware capabilities and microscope identity
+                const serverProvidedMachineConfig = this._microscope_config.machine_config;
+                const serverProvidedChannels = this._microscope_config.channels;
+                const serverProvidedPlateWells = this._microscope_config.plate_wells;
+
+                // Merge cached user preferences with server-provided defaults
+                // Cached config overwrites server defaults, then we restore hardware-specific fields
                 const mergedConfig = { ...this._microscope_config, ...savedConfig };
-                
-                // Preserve channels from server if savedConfig has empty or missing channels
-                if (!savedConfig.channels || savedConfig.channels.length === 0) {
-                    mergedConfig.channels = this._microscope_config.channels;
+
+                // ALWAYS restore server-provided fields (never use cached versions)
+                // machine_config contains microscope identity and must always match the server
+                mergedConfig.machine_config = serverProvidedMachineConfig;
+
+                // ALWAYS restore channels from server (hardware capabilities), but preserve user settings
+                // Start with server's channel list (ensures it matches current hardware)
+                mergedConfig.channels = serverProvidedChannels;
+
+                // Apply cached channel settings ONLY if channel list matches (same hardware)
+                if (savedConfig.channels && savedConfig.channels.length > 0) {
+                    // Check if cached channel list matches server's channel list
+                    const serverHandles = new Set(serverProvidedChannels.map(ch => ch.handle));
+                    const cachedHandles = new Set(savedConfig.channels.map(ch => ch.handle));
+
+                    const channelsMatch =
+                        serverProvidedChannels.length === savedConfig.channels.length &&
+                        serverProvidedChannels.every(ch => cachedHandles.has(ch.handle)) &&
+                        savedConfig.channels.every(ch => serverHandles.has(ch.handle));
+
+                    if (channelsMatch) {
+                        // Channel list matches - safe to merge cached settings
+                        const cachedChannelSettingsMap = new Map();
+                        savedConfig.channels.forEach(channel => {
+                            cachedChannelSettingsMap.set(channel.handle, {
+                                analog_gain: channel.analog_gain,
+                                exposure_time_ms: channel.exposure_time_ms,
+                                illum_perc: channel.illum_perc,
+                                num_z_planes: channel.num_z_planes,
+                                z_offset_um: channel.z_offset_um,
+                                enabled: channel.enabled,
+                                filter_handle: channel.filter_handle,
+                                delta_z_um: channel.delta_z_um
+                            });
+                        });
+
+                        // Apply cached settings to server's channel list
+                        mergedConfig.channels.forEach(channel => {
+                            const cachedSettings = cachedChannelSettingsMap.get(channel.handle);
+                            if (cachedSettings) {
+                                // Preserve user settings while keeping server-provided name/handle
+                                Object.assign(channel, cachedSettings);
+                            }
+                        });
+                    }
+                    // If channels don't match, we already set mergedConfig.channels to serverProvidedChannels
+                    // So cached settings are discarded (hardware changed)
                 }
-                
-                // Preserve plate_wells structure if savedConfig has issues
-                if (!savedConfig.plate_wells || savedConfig.plate_wells.length === 0) {
-                    mergedConfig.plate_wells = this._microscope_config.plate_wells;
+
+                // Handle plate_wells: server may provide sparse data (only selected wells)
+                // Prefer cached complete grid if available, fall back to server's sparse data
+                // The expansion to full grid happens later in manualInit()
+                const expectedWellCount = mergedConfig.wellplate_type?.Num_wells_x * mergedConfig.wellplate_type?.Num_wells_y || 0;
+
+                if (savedConfig.plate_wells && savedConfig.plate_wells.length >= expectedWellCount) {
+                    // Cache has complete grid - use it (preserves all selections)
+                    mergedConfig.plate_wells = savedConfig.plate_wells;
+                } else if (savedConfig.plate_wells && savedConfig.plate_wells.length > serverProvidedPlateWells.length) {
+                    // Cache has more wells than server - use cache and merge server's data
+                    mergedConfig.plate_wells = savedConfig.plate_wells;
+
+                    // Update from sparse server data if present
+                    const serverWellMap = new Map();
+                    serverProvidedPlateWells.forEach(well => {
+                        const key = `${well.col},${well.row}`;
+                        serverWellMap.set(key, well.selected);
+                    });
+
+                    mergedConfig.plate_wells.forEach(well => {
+                        const key = `${well.col},${well.row}`;
+                        if (serverWellMap.has(key)) {
+                            well.selected = serverWellMap.get(key);
+                        }
+                    });
+                } else {
+                    // Use server's data and apply cached selections to it
+                    // (This handles case where server has complete grid or cache is empty)
+                    mergedConfig.plate_wells = serverProvidedPlateWells;
+
+                    if (savedConfig.plate_wells && savedConfig.plate_wells.length > 0) {
+                        const cachedWellSelectionsMap = new Map();
+                        savedConfig.plate_wells.forEach(well => {
+                            const key = `${well.col},${well.row}`;
+                            cachedWellSelectionsMap.set(key, well.selected);
+                        });
+
+                        mergedConfig.plate_wells.forEach(well => {
+                            const key = `${well.col},${well.row}`;
+                            if (cachedWellSelectionsMap.has(key)) {
+                                well.selected = cachedWellSelectionsMap.get(key);
+                            }
+                        });
+                    }
                 }
-                
+
                 // Store grid.mask (site selections) from savedConfig to restore later (after grid initialization)
                 if (savedConfig.grid && savedConfig.grid.mask && savedConfig.grid.mask.length > 0) {
                     this._savedSiteSelections = savedConfig.grid.mask;
                 }
-                
+
                 this._microscope_config = mergedConfig;
-                
+
                 // Store the configIsStored status to restore later (after all initialization)
                 this._savedConfigIsStored = savedData.configIsStored;
             }
