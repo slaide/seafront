@@ -283,13 +283,34 @@
 
         <template x-if="initDone">
             <div id="content">
+                <!-- Mock Mode Indicator Banner -->
+                <div x-show="mockModeActive"
+                     style="grid-area: banner;
+                            background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+                            color: white; padding: 8px 16px; text-align: center;
+                            font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 14px;
+                            border-bottom: 2px solid #e65100;">
+                    ⚠️ Running in offline mock mode - server not available
+                </div>
+
                 <!-- Microscope Busy Indicator -->
                 <div x-show="showBusyIndicator"
                      x-bind:class="busyIndicatorClass"
-                     style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 9999;
-                            background: #ff6b6b; color: white; padding: 12px 24px; border-radius: 8px;
-                            font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-size: 16px;
-                            border: 2px solid #ff5252;">
+                     x-bind:style="{
+                         position: 'fixed',
+                         top: mockModeActive ? '42px' : '20px',
+                         left: '50%',
+                         transform: 'translateX(-50%)',
+                         zIndex: 9999,
+                         background: '#ff6b6b',
+                         color: 'white',
+                         padding: '12px 24px',
+                         borderRadius: '8px',
+                         fontWeight: 'bold',
+                         boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                         fontSize: '16px',
+                         border: '2px solid #ff5252'
+                     }">
                     🔒 Microscope is busy, please wait...
                 </div>
 
@@ -301,6 +322,7 @@
 
                         display: grid;
                         grid-template:
+                            "banner banner" auto
                             "a b" 1fr
                             "f f" auto
                             / 2fr 1fr;

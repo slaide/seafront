@@ -1148,7 +1148,7 @@ export class PlateNavigator {
      * Handle double-click events to move objective to clicked position
      * @param {MouseEvent} event
      */
-    handleDoubleClick(event) {
+    async handleDoubleClick(event) {
         if (!this.plate) {
             console.warn("Cannot move objective - no plate loaded");
             return;
@@ -1160,7 +1160,7 @@ export class PlateNavigator {
         if (plateCoords && this.onObjectiveMoveTo) {
             // Validate coordinates before sending to server
             if (this.isPositionValid(plateCoords.x, plateCoords.y)) {
-                this.onObjectiveMoveTo(plateCoords.x, plateCoords.y);
+                await this.onObjectiveMoveTo(plateCoords.x, plateCoords.y);
             } else {
                 // Show user-friendly error message
                 this.showForbiddenAreaWarning(plateCoords.x, plateCoords.y);

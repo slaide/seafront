@@ -39,6 +39,7 @@ import {
 } from "./namespace-parser.js";
 
 import { APIClient, WebSocketManager } from "./api-client.js";
+import { MockAPIClient, MockWebSocketManager } from "./mock-api-client.js";
 
 Object.assign(window,{toggleNamespaceExpansion});
 
@@ -141,6 +142,9 @@ document.addEventListener("alpine:init", () => {
             showReloadButton: false
         },
 
+        // Mock mode indicator
+        mockModeActive: false,
+
         // Cached microscopes list for Settings panel
         /** @type {string[]} */
         cachedMicroscopes: [],
@@ -186,6 +190,13 @@ document.addEventListener("alpine:init", () => {
             if (title !== 'Microscope Configuration Mismatch') {
                 this.centralError.showReloadButton = false;
             }
+        },
+
+        /**
+         * Show mock mode indicator banner
+         */
+        showMockModeIndicator() {
+            this.mockModeActive = true;
         },
 
         /**
@@ -1153,13 +1164,13 @@ document.addEventListener("alpine:init", () => {
             // Update acquisition status WebSocket based on acquisition state
             if (data.current_acquisition_id) {
                 // Start acquisition status WebSocket if not already running
-                if (!this.acquisition_status_ws || this.acquisition_status_ws.readyState === WebSocket.CLOSED) {
+                if (!this.wsManager.isConnected('acquisition_status')) {
                     this.startAcquisitionStatusWebSocket(data.current_acquisition_id);
                 }
             } else {
                 // No active acquisition, close WebSocket and clear status
-                if (this.acquisition_status_ws && this.acquisition_status_ws.readyState !== WebSocket.CLOSED) {
-                    this.acquisition_status_ws.close();
+                if (this.wsManager.getConnection('acquisition_status')) {
+                    this.wsManager.closeConnection('acquisition_status');
                     this.acquisition_status_ws = null;
                 }
                 this.latest_acquisition_status = null;
@@ -1226,8 +1237,8 @@ document.addEventListener("alpine:init", () => {
             });
 
             // Set up double-click callback to move objective
-            this.plateNavigator.setObjectiveMoveCallback((x_mm, y_mm) => {
-                this.moveObjectiveTo(x_mm, y_mm);
+            this.plateNavigator.setObjectiveMoveCallback(async (x_mm, y_mm) => {
+                await this.moveObjectiveTo(x_mm, y_mm);
             });
 
             // Set up shift+drag callback to select wells or sites
@@ -1264,6 +1275,7 @@ document.addEventListener("alpine:init", () => {
                 await this.Actions.moveTo(moveRequest);
             } catch (error) {
                 console.error("Failed to move objective:", error);
+                throw error;
             }
         },
 
@@ -1549,48 +1561,48 @@ document.addEventListener("alpine:init", () => {
          */
         startAcquisitionStatusWebSocket(acquisitionId) {
             try {
-                // Close existing WebSocket if any
-                if (this.acquisition_status_ws && this.acquisition_status_ws.readyState !== WebSocket.CLOSED) {
-                    this.acquisition_status_ws.close();
+                // Close existing connection if any
+                if (this.wsManager.getConnection('acquisition_status')) {
+                    this.wsManager.closeConnection('acquisition_status');
                 }
 
-                this.acquisition_status_ws = new WebSocket(
-                    `${this.server_url}/ws/acquisition/status`
-                );
+                this.acquisition_status_ws = this.wsManager.createConnection(
+                    'acquisition_status',
+                    '/ws/acquisition/status',
+                    {
+                        onMessage: (ev) => {
+                            const data = JSON.parse(ev.data);
+                            if(typeof data != "object")throw new Error(`event data has wrong type ${typeof data}`);
 
-                this.acquisition_status_ws.onmessage = (ev) => {
-                    const data = JSON.parse(ev.data);
-                    if(typeof data != "object")throw new Error(`event data has wrong type ${typeof data}`);
-                    
-                    // Store previous status to detect state changes
-                    const previousStatus = this.latest_acquisition_status;
-                    this.latest_acquisition_status = data;
-                    
-                    // Handle acquisition status changes
-                    if (data && data.acquisition_status) {
-                        // Show acquisition errors when status is CRASHED and there's a message
-                        if (data.acquisition_status === 'crashed' && data.message) {
-                            console.log(`Detected crashed acquisition with message: ${data.message}`);
-                            if (!previousStatus || previousStatus.acquisition_status !== 'crashed' || previousStatus.message !== data.message) {
-                                this.showError('Acquisition Failed', data.message);
+                            // Store previous status to detect state changes
+                            const previousStatus = this.latest_acquisition_status;
+                            this.latest_acquisition_status = data;
+
+                            // Handle acquisition status changes
+                            if (data && data.acquisition_status) {
+                                // Show acquisition errors when status is CRASHED and there's a message
+                                if (data.acquisition_status === 'crashed' && data.message) {
+                                    console.log(`Detected crashed acquisition with message: ${data.message}`);
+                                    if (!previousStatus || previousStatus.acquisition_status !== 'crashed' || previousStatus.message !== data.message) {
+                                        this.showError('Acquisition Failed', data.message);
+                                    }
+                                }
                             }
-                        }
+                        },
+                        onError: (ev) => {
+                            console.warn('Acquisition status WebSocket error:', ev);
+                            // Don't auto-reconnect for acquisition status - let the main status WebSocket handle lifecycle
+                        },
+                        onOpen: (ws) => {
+                            // Start the polling loop for this acquisition
+                            this.acquisitionStatusLoop(acquisitionId);
+                        },
+                        onClose: () => {
+                            // WebSocket closed, stop polling
+                        },
+                        autoReconnect: false,
                     }
-                };
-
-                this.acquisition_status_ws.onerror = (ev) => {
-                    console.warn('Acquisition status WebSocket error:', ev);
-                    // Don't auto-reconnect for acquisition status - let the main status WebSocket handle lifecycle
-                };
-
-                this.acquisition_status_ws.onopen = () => {
-                    // Start the polling loop for this acquisition
-                    this.acquisitionStatusLoop(acquisitionId);
-                };
-
-                this.acquisition_status_ws.onclose = () => {
-                    // WebSocket closed, stop polling
-                };
+                );
 
             } catch (error) {
                 console.warn('Failed to create acquisition status WebSocket:', error);
@@ -1604,12 +1616,12 @@ document.addEventListener("alpine:init", () => {
          */
         acquisitionStatusLoop(acquisitionId) {
             try {
-                if (!this.acquisition_status_ws || this.acquisition_status_ws.readyState !== WebSocket.OPEN) {
+                if (!this.wsManager.isConnected('acquisition_status')) {
                     return; // WebSocket closed, stop polling
                 }
 
                 // Send acquisition_id to get status update
-                this.acquisition_status_ws.send(JSON.stringify({ acquisition_id: acquisitionId }));
+                this.wsManager.send('acquisition_status', JSON.stringify({ acquisition_id: acquisitionId }));
 
                 // Schedule next update
                 setTimeout(() => this.acquisitionStatusLoop(acquisitionId), 500); // Poll every 500ms
@@ -1651,20 +1663,53 @@ document.addEventListener("alpine:init", () => {
         // which leads to a whole bunch of errors in the console and breaks
         // some functionalities that depend on fields being initialized on mounting.
         async initSelf() {
-            // Initialize API client and WebSocket manager
-            this._api = new APIClient(this.server_url, {
-                onError: (title, message) => this.showError(title, message),
-            });
+            // Test server connection and fall back to mock mode if unavailable
+            let useMockMode = false;
 
-            this._wsManager = new WebSocketManager(this.server_url, {
-                reconnectDelay: 200,
-                onError: (message) => console.warn(message),
-                onConnectionStateChange: (name, isConnected) => {
-                    if (name === 'status') {
-                        this.isConnectedToServer = isConnected;
-                    }
-                },
-            });
+            try {
+                // Quick health check to see if server is available
+                const testResponse = await fetch(`${this.server_url}/api/get_features/hardware_capabilities`, {
+                    method: 'POST',
+                    headers: [['Content-Type', 'application/json']],
+                    body: JSON.stringify({}),
+                    signal: AbortSignal.timeout(2000), // 2 second timeout
+                });
+
+                if (!testResponse.ok) {
+                    throw new Error(`Server returned ${testResponse.status}`);
+                }
+
+                // Server is available, use real API client
+                console.log('[Seafront] Server connection successful');
+                this._api = new APIClient(this.server_url, {
+                    onError: (title, message) => this.showError(title, message),
+                });
+
+                this._wsManager = new WebSocketManager(this.server_url, {
+                    reconnectDelay: 200,
+                    onError: (message) => console.warn(message),
+                    onConnectionStateChange: (name, isConnected) => {
+                        if (name === 'status') {
+                            this.isConnectedToServer = isConnected;
+                        }
+                    },
+                });
+
+                useMockMode = false;
+            } catch (error) {
+                // Server unavailable, use mock mode
+                console.warn('[Seafront] Server unavailable, using mock mode:', error.message);
+                this._api = new MockAPIClient(this.server_url, {
+                    onError: (title, message) => this.showError(title, message),
+                });
+                this._wsManager = new MockWebSocketManager();
+                useMockMode = true;
+            }
+
+            this._useMockAPI = useMockMode;
+            if (useMockMode) {
+                this.showMockModeIndicator();
+            }
 
             this._plateinfo = await this.getPlateTypes();
             this._microscope_config = await this.defaultConfig();
@@ -2254,17 +2299,9 @@ document.addEventListener("alpine:init", () => {
                     config_file: backend_config
                 };
 
-                const body_str = JSON.stringify(backend_body, null, 2);
-
-                // console.log("acquisition start body:",body_str);
-                return fetch(`${this.server_url}/api/acquisition/start`, {
-                    method: "POST",
-                    body: body_str,
-                    headers: [["Content-Type", "application/json"]],
-                }).then((v) => {
-                    /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStartResponse,AcquisitionStartError>} */
-                    const check = this.checkMapSquidRequest.bind(this);
-                    return check(v, 'Acquisition start', false); // Don't show alert - we handle it in UI
+                return this.api.post('/api/acquisition/start', backend_body, {
+                    context: 'Acquisition start',
+                    showError: false
                 }).catch((error) => {
                     // Show error in central modal
                     this.showError('Acquisition Start Failed', error.message || error.toString());
@@ -2287,15 +2324,10 @@ document.addEventListener("alpine:init", () => {
                 if (!acquisitionId) {
                     throw new Error('No active acquisition to cancel');
                 }
-                
-                return fetch(`${this.server_url}/api/acquisition/cancel`, {
-                    method: "POST",
-                    body: JSON.stringify({ acquisition_id: acquisitionId }),
-                    headers: [["Content-Type", "application/json"]],
-                }).then((v) => {
-                    /** @ts-ignore @type {CheckMapSquidRequestFn<AcquisitionStopResponse,AcquisitionStopError>} */
-                    const check = this.checkMapSquidRequest.bind(this);
-                    return check(v, 'Acquisition cancel', false); // Don't show alert for acquisition requests
+
+                return this.api.post('/api/acquisition/cancel', { acquisition_id: acquisitionId }, {
+                    context: 'Acquisition cancel',
+                    showError: false
                 }).catch((error) => {
                     // Show error in central modal
                     this.showError('Acquisition Cancel Failed', error.message || error.toString());
