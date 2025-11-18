@@ -290,6 +290,8 @@ export class PlateNavigator {
      * @returns
      */
     constructor(containerel, alpineComponent) {
+        // Store reference to container element for resize handling
+        this.containerEl = containerel;
         // Store reference to Alpine component for updating cursor position
         this.alpineComponent = alpineComponent;
         /** @type {THREE.Scene} */
@@ -331,6 +333,16 @@ export class PlateNavigator {
         /**@type {HTMLElement} */
         let el = this.renderer.domElement;
         containerel.appendChild(el);
+
+        // Set up resize observer to handle container size changes
+        const resizeObserver = new ResizeObserver(entries => {
+            for (let entry of entries) {
+                if (entry.target === containerel) {
+                    this.handleResize();
+                }
+            }
+        });
+        resizeObserver.observe(containerel);
 
         // threejs dragcontrols are only for dragging a 3d object, not for dragging the camera
         let drag = {
@@ -1683,6 +1695,40 @@ export class PlateNavigator {
         };
 
         this.onWellSelection(selectedWells, selection.mode, selectionBounds);
+    }
+
+    /**
+     * Handle container resize events
+     * Updates renderer and camera to match new container dimensions while preserving zoom and pan
+     */
+    handleResize() {
+        if (!this.containerEl || !this.renderer || !this.camera) return;
+
+        const newWidth = this.containerEl.clientWidth;
+        const newHeight = this.containerEl.clientHeight;
+
+        // Get current camera dimensions
+        const oldWidth = this.camera.right - this.camera.left;
+        const oldHeight = this.camera.top - this.camera.bottom;
+
+        // Calculate current camera center
+        const centerX = this.camera.left + oldWidth / 2;
+        const centerY = this.camera.bottom + oldHeight / 2;
+
+        // Update renderer size
+        this.renderer.setSize(newWidth, newHeight);
+
+        // Calculate new camera dimensions based on zoom level
+        const newCameraWidth = newWidth * this.cam.zoom;
+        const newCameraHeight = newHeight * this.cam.zoom;
+
+        // Update camera frustum centered on the same point
+        this.camera.left = centerX - newCameraWidth / 2;
+        this.camera.right = centerX + newCameraWidth / 2;
+        this.camera.top = centerY + newCameraHeight / 2;
+        this.camera.bottom = centerY - newCameraHeight / 2;
+
+        this.camera.updateProjectionMatrix();
     }
 
 }
