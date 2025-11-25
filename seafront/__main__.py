@@ -176,64 +176,6 @@ name_validity_regex = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
 """ name_validity_regex only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot """
 
 
-
-class CoreLock(BaseModel):
-    """
-    basic utility to generate a token that can be used to access mutating core functions (e.g. actions)
-    """
-
-    _current_key: str | None = None
-    _key_gen_time = None
-    """ timestamp when key was generated """
-    _last_key_use = None
-    """ timestamp of last key use """
-
-    def gen_key(self, invalidate_old: bool = False) -> str | None:
-        """
-        generate a new key, if there is no currently valid key
-
-        if invalidate_old is True, then the old key is discarded
-        """
-
-        if not (invalidate_old or self._current_key_is_expired()):
-            return None
-
-        # use 32 bytes (256 bits) for key, i.e. 64 hex chars
-        # length may change at any point
-        self._current_key = os.urandom(32).hex()
-        self._key_gen_time = time.time()
-        self._last_key_use = self._key_gen_time
-
-        return self._current_key
-
-    def _current_key_is_expired(self) -> bool:
-        """
-        indicates if the current key is expired (i.e. returns True if key has expired)
-
-        if no key has yet been generated, also returns True
-
-        key expires 15 minutes after last use
-        """
-
-        if not self._last_key_use:
-            return True
-        return time.time() > (self._last_key_use + 15 * 60)
-
-    def key_is_valid(self, key: str) -> bool:
-        key_is_current_key = key == self._current_key
-        if not key_is_current_key:
-            return False
-        # should be unreachable, but better here to reject than crash
-        if self._last_key_use is None:
-            return False
-
-        key_has_expired = self._current_key_is_expired()
-        if key_has_expired:
-            return False
-        self._last_key_use = time.time()
-        return True
-
-
 class CustomRoute(BaseModel):
     handler: type[BaseCommand] | tp.Callable
     tags: list[str] = Field(default_factory=list)
@@ -309,7 +251,6 @@ class Core:
     """application core, contains server capabilities and microcontroller interaction"""
 
     def __init__(self, selected_microscope: CriticalMachineConfig):
-        # self.lock=CoreLock()
 
         def make_acquisition_event_loop():
             worker_loop = asyncio.new_event_loop()
