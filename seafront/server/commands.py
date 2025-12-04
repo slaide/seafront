@@ -268,9 +268,13 @@ class CoreCurrentState(BaseModel):
 
 
 class BasicSuccessResponse(BaseModel):
-    "indicates that something has succeeded without returning any value"
+    """
+    indicates that something has succeeded without returning any (standardized) value
 
-    pass
+    msg can be anything and should not be relied upon.
+    """
+
+    msg:str|None=None
 
 
 class ConfigFetchResponse(BaseModel):
@@ -398,6 +402,16 @@ class HardwareCapabilitiesResponse(BaseModel):
     )
     "numerical limits of configurable parameters based on actual hardware capabilities"
 
+class Home(BaseModel, BaseCommand[BasicSuccessResponse]):
+    """
+    perform homing, then return to arbitrary position
+    """
+
+    x: bool = False
+    y: bool = False
+    z: bool = False
+
+    _ReturnValue: type = PrivateAttr(default=BasicSuccessResponse)
 
 class LoadingPositionEnter(BaseModel, BaseCommand[BasicSuccessResponse]):
     """

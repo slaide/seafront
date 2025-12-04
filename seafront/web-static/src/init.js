@@ -161,6 +161,10 @@ document.addEventListener("alpine:init", () => {
         /** Selection mode for plate navigator: 'wells' or 'sites' */
         plateSelectionMode: "wells",
 
+        // Command list state
+        commandlistText: "",
+        commandlistExecuting: false,
+
         // Busy indicator state
         showBusyIndicator: false,
         busyIndicatorHiding: false,
@@ -225,6 +229,23 @@ document.addEventListener("alpine:init", () => {
                         }, 200); // Match the CSS animation duration
                     }, this.busyLingerMs);
                 }
+            }
+        },
+
+        /**
+         * Execute commands from the commandlist text area
+         */
+        async executeCommands() {
+            if (this.commandlistExecuting) return;
+            this.commandlistExecuting = true;
+            try {
+                await this.api.post('/api/action/execute_commands', {
+                    commandlist: this.commandlistText
+                }, { context: 'Execute commands' });
+            } catch (e) {
+                console.error('Failed to execute commands:', e);
+            } finally {
+                this.commandlistExecuting = false;
             }
         },
 

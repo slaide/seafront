@@ -1152,6 +1152,22 @@
                 </style>
                 <div id="rightcol" style="grid-area: b">
                     <div x-init="initTabs($el)">
+                        <div tabname="Commands">
+                            <div style="padding: 1em; display: flex; flex-direction: column;">
+                                <textarea
+                                    x-model="commandlistText"
+                                    placeholder="Enter commands (one per line)..."
+                                    style="min-height: 200px; font-family: monospace; resize: vertical;"
+                                ></textarea>
+                                <div style="margin-top: 0.5em;">
+                                    <button
+                                        @click="executeCommands()"
+                                        x-bind:disabled="commandlistExecuting"
+                                        x-text="commandlistExecuting ? 'Executing...' : 'Submit'"
+                                    ></button>
+                                </div>
+                            </div>
+                        </div>
                         <div
                             id="acquisitioncontroltab"
                             tabname="Acquisition Control"

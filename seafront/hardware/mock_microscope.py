@@ -18,7 +18,6 @@ Environment Variables:
 
 import asyncio
 import os
-import threading
 import time
 import typing as tp
 from contextlib import contextmanager
@@ -102,6 +101,8 @@ class MockMicroscope(Microscope):
         self._stabilization_time_z_s = firmware_config.SCAN_STABILIZATION_TIME_MS_Z / 1000.0
         # W axis doesn't have stabilization time in firmware config - use default 50ms
         self._stabilization_time_w_s = 0.05
+
+        self.is_in_loading_position = False
 
         logger.info(f"Mock microscope initialized with firmware profile parameters - "
                    f"max velocities: X={self._max_velocity_x_mm_s}mm/s, Y={self._max_velocity_y_mm_s}mm/s, Z={self._max_velocity_z_mm_s}mm/s, W={self._max_velocity_w_mm_s}mm/s")
@@ -344,16 +345,27 @@ class MockMicroscope(Microscope):
         self.stream_callback = None
         self.is_connected = False
 
-    async def home(self) -> None:
-        """Mock homing sequence."""
+    async def home(self,x=True,y=True,z=True) -> None:
+        """
+        homing sequence.
+
+        x,y,z: home in that axis
+        """
         logger.info("Mock microscope: performing homing sequence")
 
-        # Simulate homing time
-        await asyncio.sleep(0.1)
+        await self._simulate_gradual_movement(
+            0 if x else None,
+            0 if y else None,
+            0 if z else None,
+        )
+
+        await self._simulate_gradual_movement(
+            20 if x else None,
+            20 if y else None,
+            1 if z else None,
+        )
 
         self._is_homed = True
-        self._current_position = Position(x_pos_mm=0.0, y_pos_mm=0.0, z_pos_mm=0.0)
-        self.is_in_loading_position = False
 
         logger.info("Mock microscope: homing completed")
 
@@ -999,6 +1011,11 @@ class MockMicroscope(Microscope):
                 uncompensated_offset_mm=uncompensated_offset_mm,
                 reached_threshold=reached_threshold,
             )  # type: ignore
+
+        elif isinstance(command, cmd. Home):
+            await self.home(command.x,command.y,command.z)
+
+            return cmd.BasicSuccessResponse() # type: ignore
 
         else:
             logger.warning(f"Mock microscope: unhandled command type {type(command)}")
