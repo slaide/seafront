@@ -1867,13 +1867,21 @@
 
                             <div class="section">
                                 <div>Quick Capture</div>
-                                <div>
-                                    <button 
+                                <div style="display: flex; align-items: center; gap: 0.5em;">
+                                    <label style="display: inline-flex; align-items: center;"
+                                           x-init="enabletooltip($el)"
+                                           tooltip="Laser autofocus calibration status (read-only)">
+                                        <input type="checkbox"
+                                               disabled
+                                               x-bind:checked="laserAutofocusIsCalibrated">
+                                        AF
+                                    </label>
+                                    <button
                                         @click="Actions.snapAllChannels()"
                                         x-init="enabletooltip($el)"
                                         x-bind:tooltip="`
                                             Snap all enabled channels with their configured settings.
-                                            
+
                                             This will:
                                             • Run laser autofocus if enabled and calibrated
                                             • Move to each channel's Z-offset

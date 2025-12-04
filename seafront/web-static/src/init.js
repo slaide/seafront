@@ -2486,19 +2486,46 @@ document.addEventListener("alpine:init", () => {
 
                 /**
                  * Snap all selected channels with autofocus and z-offsets
-                 * @returns {Promise<ChannelSnapSelectionResponse>}
+                 * @returns {Promise<void>}
                  */
-                snapAllChannels: () => {
-                    return this.machineConfigFlush().then(() => {
-                        // Create acquisition config with current microscope config
-                        const body = {
-                            config_file: this.microscope_config
-                        };
+                snapAllChannels: async () => {
+                    await this.machineConfigFlush();
 
-                        return this.api.post('/api/action/snap_selected_channels', body, {
-                            context: 'Snap selected channels'
-                        });
+                    // Get current z as default reference
+                    let currentState = await this.api.post('/api/get_info/current_state', {}, {
+                        context: 'Get current state'
                     });
+                    let focusedZ_mm = currentState.adapter_state.stage_position.z_pos_mm;
+
+                    // Step 1: If autofocus calibrated, focus to offset 0
+                    if (this.laserAutofocusIsCalibrated) {
+                        await this.Actions.laserAutofocusMoveToTargetOffset({
+                            config_file: this.microscope_config,
+                            target_offset_um: 0
+                        });
+
+                        // Update z position after focusing
+                        currentState = await this.api.post('/api/get_info/current_state', {}, {
+                            context: 'Get current state after autofocus'
+                        });
+                        focusedZ_mm = currentState.adapter_state.stage_position.z_pos_mm;
+                    }
+
+                    // Step 2: Snap each enabled channel with z-offset
+                    const enabledChannels = this.microscope_config.channels.filter(ch => ch.enabled);
+
+                    for (const channel of enabledChannels) {
+                        const targetZ_mm = focusedZ_mm + (channel.z_offset_um * 0.001);
+                        await this.Actions.moveTo({ z_mm: targetZ_mm });
+
+                        await this.Actions.snapChannel({
+                            channel: channel,
+                            machine_config: this.microscope_config.machine_config || []
+                        });
+                    }
+
+                    // Step 3: Return to focused z position (so live view is in focus)
+                    await this.Actions.moveTo({ z_mm: focusedZ_mm });
                 },
 
                 /**
