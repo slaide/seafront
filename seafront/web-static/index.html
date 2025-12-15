@@ -1868,14 +1868,6 @@
                             <div class="section">
                                 <div>Quick Capture</div>
                                 <div style="display: flex; align-items: center; gap: 0.5em;">
-                                    <label style="display: inline-flex; align-items: center;"
-                                           x-init="enabletooltip($el)"
-                                           tooltip="Laser autofocus calibration status (read-only)">
-                                        <input type="checkbox"
-                                               disabled
-                                               x-bind:checked="laserAutofocusIsCalibrated">
-                                        AF
-                                    </label>
                                     <button
                                         @click="Actions.snapAllChannels()"
                                         x-init="enabletooltip($el)"
@@ -1883,14 +1875,29 @@
                                             Snap all enabled channels with their configured settings.
 
                                             This will:
-                                            • Run laser autofocus if enabled and calibrated
+                                            • Run laser autofocus if AF is checked
                                             • Move to each channel's Z-offset
                                             • Capture images with the configured exposure and gain
+                                            • Return to focused Z position
                                             • Display captured images
                                         `"
                                     >
                                         Snap All Channels
                                     </button>
+                                    <label style="display: inline-flex; align-items: center;"
+                                           x-init="enabletooltip($el)"
+                                           x-bind:tooltip="`
+                                            Reflects 'Use autofocus during acquisition' setting from Laser Autofocus controls.
+
+                                            When checked, Snap All will:
+                                            • Run laser autofocus before imaging
+                                            • Apply per-channel Z-offsets relative to focused position
+                                           `">
+                                        <input type="checkbox"
+                                               disabled
+                                               x-bind:checked="microscope_config.autofocus_enabled">
+                                        AF
+                                    </label>
                                 </div>
                             </div>
 
@@ -1999,81 +2006,228 @@
                             </div>
 
                             <div class="section">
-                                <div>Laser Autofocus</div>
+                                <div>Focus & Channel Offsets</div>
                                 <div>
-                                    <div
-                                        id="laser-autofocus-controls"
-                                        class="scrolly"
-                                    >
+                                    <div id="focus-channel-offsets">
                                         <style>
-                                            #laser-autofocus-controls {
+                                            #focus-channel-offsets {
                                                 display: grid;
-                                                grid-template-columns: repeat(
-                                                    3,
-                                                    auto
-                                                );
-                                                gap: 0.3em;
+                                                grid-template-columns: auto 1fr auto;
+                                                gap: 0.4em 0.6em;
+                                                align-items: center;
+                                            }
+                                            #focus-channel-offsets .section-divider {
+                                                grid-column: span 3;
+                                                border-top: 1px solid var(--text-color);
+                                                margin: 0.3em 0;
+                                                opacity: 0.3;
+                                            }
+                                            #focus-channel-offsets .channel-table {
+                                                grid-column: span 3;
+                                                display: grid;
+                                                grid-template-columns: 1fr auto auto auto auto;
+                                                gap: 0.2em 0.5em;
+                                                align-items: center;
+                                            }
+                                            #focus-channel-offsets .offset-value {
+                                                font-family: monospace;
+                                                text-align: right;
+                                                min-width: 5em;
+                                            }
+                                            #focus-channel-offsets .live-indicator {
+                                                display: inline-block;
+                                                width: 0.7em;
+                                                height: 0.7em;
+                                                border-radius: 50%;
+                                                margin-left: 0.3em;
+                                            }
+                                            #focus-channel-offsets .live-indicator.on {
+                                                background-color: #2ecc40;
+                                                box-shadow: 0 0 4px #2ecc40;
+                                            }
+                                            #focus-channel-offsets .live-indicator.off {
+                                                background-color: #aaa;
+                                            }
+                                            #focus-channel-offsets .confirmed-indicator {
+                                                color: #2ecc40;
+                                            }
+                                            #focus-channel-offsets .unconfirmed-indicator {
+                                                color: #aaa;
                                             }
                                         </style>
-                                        <label>Reference</label>
-                                        <span
-                                            x-text="laserAutofocusReferenceText"
-                                        ></span>
-                                        <button
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`calibrate laser autofocus here, i.e. retain this level of focus on the cells.`"
-                                            @click="buttons_calibrateLaserAutofocusHere"
-                                        >
-                                            Set here
-                                        </button>
 
+                                        <!-- Row 1: LAF Reference status -->
                                         <label
-                                            >Offset from reference [um]</label
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Laser autofocus reference plane. When set, the microscope can return to this focus position.`"
+                                        >LAF Reference</label>
+                                        <span x-text="laserAutofocusReferenceText" style="grid-column: span 2;"></span>
+
+                                        <!-- Row 2: Reference channel dropdown -->
+                                        <label
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Select which channel to use for focusing and LAF calibration.`"
+                                        >Reference channel</label>
+                                        <select
+                                            x-model="focusReferenceChannelHandle"
+                                            x-init="$nextTick(() => { if (microscope_config.channels.filter(c => c.enabled).length > 0 && !focusReferenceChannelHandle) { focusReferenceChannelHandle = microscope_config.channels.filter(c => c.enabled)[0]?.handle; } })"
                                         >
-                                        <span
-                                            x-text="laserAutofocusOffsetText"
-                                        ></span>
+                                            <template x-for="channel in microscope_config.channels.filter(c => c.enabled)" :key="channel.handle">
+                                                <option x-bind:value="channel.handle" x-text="channel.name"></option>
+                                            </template>
+                                        </select>
+                                        <span></span>
+
+                                        <!-- Row 3: Actions for reference channel -->
+                                        <span></span>
+                                        <span style="display: flex; gap: 0.5em;">
+                                            <button
+                                                @click="focusReferenceChannel && focusToggleLive(focusReferenceChannel)"
+                                                x-bind:disabled="!focusReferenceChannelHandle"
+                                                x-init="enabletooltip($el)"
+                                                x-bind:tooltip="`Toggle live streaming for reference channel to check focus.`"
+                                            >Live<span
+                                                class="live-indicator"
+                                                x-bind:class="focusReferenceChannel && focusIsChannelStreaming(focusReferenceChannel) ? 'on' : 'off'"
+                                            ></span></button>
+                                            <button
+                                                @click="focusCalibrateLAFHere"
+                                                x-bind:disabled="!focusReferenceChannelHandle"
+                                                x-init="enabletooltip($el)"
+                                                x-bind:tooltip="`Calibrate laser autofocus at current Z position and set as reference for channel offsets.`"
+                                            >Calibrate LAF here</button>
+                                        </span>
+                                        <span></span>
+
+                                        <!-- Divider -->
+                                        <div class="section-divider"></div>
+
+                                        <!-- Channel offset table -->
+                                        <div class="channel-table">
+                                            <!-- Stage position row -->
+                                            <span style="font-style: italic; opacity: 0.7;"
+                                                x-init="enabletooltip($el)"
+                                                x-bind:tooltip="`Current stage Z offset relative to reference. Updates live as you jog Z.`"
+                                            >Stage offset</span>
+                                            <span class="offset-value" style="font-style: italic; opacity: 0.7;" x-text="focusLiveOffsetText"></span>
+                                            <span></span>
+                                            <span></span>
+                                            <span></span>
+
+                                            <!-- Per-channel rows (excluding reference channel) -->
+                                            <template x-for="channel in microscope_config.channels.filter(c => c.enabled && c.handle !== focusReferenceChannelHandle)" :key="channel.handle">
+                                                <div style="display: contents;">
+                                                    <span x-text="channel.name"></span>
+                                                    <span class="offset-value" x-text="focusFormatOffset(channel.z_offset_um)"></span>
+                                                    <span
+                                                        x-bind:class="focusIsOffsetConfirmed(channel) ? 'confirmed-indicator' : 'unconfirmed-indicator'"
+                                                        x-init="enabletooltip($el)"
+                                                        x-bind:tooltip="focusIsOffsetConfirmed(channel) ? 'Offset confirmed with current reference' : 'Offset not yet confirmed with current reference'"
+                                                    >●</span>
+                                                    <button
+                                                        @click="focusToggleLive(channel)"
+                                                        x-init="enabletooltip($el)"
+                                                        x-bind:tooltip="`Toggle live streaming for ${channel.name}.`"
+                                                    >Live<span
+                                                        class="live-indicator"
+                                                        x-bind:class="focusIsChannelStreaming(channel) ? 'on' : 'off'"
+                                                    ></span></button>
+                                                    <button
+                                                        @click="focusConfirmOffset(channel)"
+                                                        x-bind:disabled="focusReferenceZ == null"
+                                                        x-init="enabletooltip($el)"
+                                                        x-bind:tooltip="`Set ${channel.name} offset to current stage offset (${focusLiveOffsetText}).`"
+                                                    >Apply offset</button>
+                                                </div>
+                                            </template>
+                                        </div>
+
+                                        <!-- Divider -->
+                                        <div class="section-divider"></div>
+
+                                        <!-- Use during acquisition checkbox -->
+                                        <label
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`When enabled, the microscope will use laser autofocus to maintain focus during acquisition.
+
+The autofocus will run before each well/position to ensure the sample stays in focus throughout the experiment.`"
+                                        >Use LAF during acquisition</label>
+                                        <span style="grid-column: span 2;">
+                                            <input
+                                                type="checkbox"
+                                                x-model="microscope_config.autofocus_enabled"
+                                                x-bind:disabled="laserAutofocusReferenceValue == 0"
+                                                x-init="enabletooltip($el)"
+                                                x-bind:tooltip="`Enable/disable laser autofocus during acquisition.`"
+                                            />
+                                            <span
+                                                x-show="laserAutofocusReferenceValue == 0"
+                                                style="color: #888; font-size: 0.9em;"
+                                            >Set LAF reference first</span>
+                                            <span
+                                                x-show="laserAutofocusReferenceValue != 0"
+                                                x-text="microscope_config.autofocus_enabled ? 'Enabled' : 'Disabled'"
+                                            ></span>
+                                        </span>
+
+                                        <!-- Measure offset (accurate, stage-based) -->
+                                        <label
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Accurate offset measurement using actual stage position.
+
+How it works:
+1. Stores current Z position
+2. Moves to LAF reference (offset 0)
+3. Compares actual Z positions
+4. Returns to original position
+
+This is more accurate than the sensor estimate but takes a moment to complete.`"
+                                        >Measure offset</label>
+                                        <span class="offset-value" x-text="focusMeasuredOffsetText" style="font-family: monospace;"></span>
+                                        <button
+                                            @click="focusMeasureOffsetAccurate"
+                                            x-bind:disabled="!laserAutofocusIsCalibrated"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Accurately measure current offset by moving to reference and back.
+
+This temporarily moves to the LAF reference plane, measures the actual Z difference, then returns to your current position. Takes a few seconds but gives precise results.`"
+                                        >Measure</button>
+
+                                        <!-- Estimate offset (quick, sensor-based) -->
+                                        <label
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Quick offset estimate using the laser autofocus sensor.
+
+Reads the current displacement from the LAF sensor without moving the stage. Fast but may be less accurate than the stage-based measurement.`"
+                                        >Estimate offset</label>
+                                        <span class="offset-value" x-text="laserAutofocusOffsetText" style="font-family: monospace;"></span>
                                         <button
                                             @click="button_laserAutofocusMeasureOffset"
-                                        >
-                                            Measure
-                                        </button>
+                                            x-bind:disabled="!laserAutofocusIsCalibrated"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Quickly estimate current offset using the LAF sensor.
 
+This reads the laser reflection position without moving the stage. Instant result but may drift from the true offset over time.`"
+                                        >Estimate</button>
+
+                                        <!-- Move to target offset row -->
                                         <label
                                             x-init="enabletooltip($el)"
-                                            tooltip="target offset from reference."
-                                            >Target Offset [um]</label
-                                        >
+                                            x-bind:tooltip="`Move to a target Z offset relative to the LAF reference. The microscope will use autofocus to find the reference plane, then move by this amount.`"
+                                        >Go to offset</label>
                                         <input
                                             type="number"
                                             x-model.number="laserAutofocusTargetOffsetUM"
+                                            style="width: 6em;"
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Target offset in μm (positive = above reference, negative = below).`"
                                         />
                                         <button
                                             @click="button_laserAutofocusMoveToTargetOffset"
-                                        >
-                                            Move
-                                        </button>
-
-                                        <label
+                                            x-bind:disabled="!laserAutofocusIsCalibrated"
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Enable autofocus during acquisition. Only available when reference is calibrated (non-zero).`"
-                                            >Use during acquisition</label
-                                        >
-                                        <input
-                                            type="checkbox"
-                                            x-model="microscope_config.autofocus_enabled"
-                                            x-bind:disabled="laserAutofocusReferenceValue == 0"
-                                        />
-                                        <span
-                                            x-show="laserAutofocusReferenceValue == 0"
-                                            style="color: #888; font-size: 0.9em;"
-                                        >
-                                            Set reference first
-                                        </span>
-                                        <span
-                                            x-show="laserAutofocusReferenceValue != 0"
-                                            x-text="microscope_config.autofocus_enabled ? 'Enabled' : 'Disabled'"
-                                        ></span>
+                                            x-bind:tooltip="`Move to the target offset using laser autofocus.`"
+                                        >Move</button>
                                     </div>
                                 </div>
                             </div>

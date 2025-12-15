@@ -1203,7 +1203,6 @@ document.addEventListener("alpine:init", () => {
                         /* cached image older than latest image */ channel_info.timestamp >
                         cached_image.info.timestamp;
 
-                    //console.log(`${channel_handle} image_cache_outdated? ${image_cache_outdated} (${channel_info.timestamp} ${cached_image?.info.timestamp})`)
                     if (!image_cache_outdated) {
                         continue;
                     }
@@ -2497,8 +2496,8 @@ document.addEventListener("alpine:init", () => {
                     });
                     let focusedZ_mm = currentState.adapter_state.stage_position.z_pos_mm;
 
-                    // Step 1: If autofocus calibrated, focus to offset 0
-                    if (this.laserAutofocusIsCalibrated) {
+                    // Step 1: If autofocus enabled, focus to offset 0
+                    if (this.microscope_config.autofocus_enabled) {
                         await this.Actions.laserAutofocusMoveToTargetOffset({
                             config_file: this.microscope_config,
                             target_offset_um: 0
@@ -2911,6 +2910,160 @@ document.addEventListener("alpine:init", () => {
             }
             return this.laserAutofocusMeasuredOffset.displacement_um;
         },
+
+        // ============ Focus & Channel Offset Calibration ============
+
+        /** @type {string|null} Selected reference channel handle */
+        focusReferenceChannelHandle: null,
+
+        /** @type {number|null} Reference Z position for offset calibration (mm) */
+        focusReferenceZ: null,
+
+        /** @type {Set<string>} Channel handles with offsets confirmed using current reference */
+        focusConfirmedChannels: new Set(),
+
+        /** Get the reference channel object */
+        get focusReferenceChannel() {
+            if (!this.focusReferenceChannelHandle) return null;
+            return this.microscope_config.channels.find(
+                c => c.handle === this.focusReferenceChannelHandle
+            ) ?? null;
+        },
+
+        /** Getter: live offset relative to reference (updates with stage position) */
+        get focusLiveOffsetUM() {
+            if (this.focusReferenceZ == null) return null;
+            const current_z_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (current_z_mm == null) return null;
+            return (current_z_mm - this.focusReferenceZ) * 1000;
+        },
+
+        /** Getter: formatted live offset text */
+        get focusLiveOffsetText() {
+            const offset = this.focusLiveOffsetUM;
+            if (offset == null) return "—";
+            return `${offset >= 0 ? '+' : ''}${offset.toFixed(1)} μm`;
+        },
+
+        /** Format an offset value for display */
+        focusFormatOffset(value) {
+            const offset = value ?? 0;
+            return `${offset >= 0 ? '+' : ''}${offset.toFixed(1)} μm`;
+        },
+
+        /** Calibrate LAF at current position (uses reference channel focus) */
+        async focusCalibrateLAFHere() {
+            // Store current Z as the reference for channel offsets
+            const z_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (z_mm == null) throw new Error("No Z position available");
+            this.focusReferenceZ = z_mm;
+
+            // Clear confirmed channels since reference changed
+            this.focusConfirmedChannels = new Set();
+
+            // Calibrate LAF
+            await this.buttons_calibrateLaserAutofocusHere();
+        },
+
+        /**
+         * Toggle live streaming for a channel.
+         * Uses the same mechanism as the Live Acquisition panel.
+         * @param {AcquisitionChannelConfig} channel
+         */
+        async focusToggleLive(channel) {
+            const currentlyStreamingThis = this.isStreaming &&
+                this.actionInput.live_acquisition_channelhandle === channel.handle;
+
+            if (currentlyStreamingThis) {
+                // Stop streaming this channel
+                await this.buttons_endStreaming();
+            } else {
+                // Stop any existing stream first
+                if (this.isStreaming) {
+                    await this.buttons_endStreaming();
+                }
+                // Set the channel and start streaming
+                this.actionInput.live_acquisition_channelhandle = channel.handle;
+                await this.buttons_startStreaming();
+            }
+        },
+
+        /**
+         * Check if a channel is currently streaming
+         * @param {AcquisitionChannelConfig} channel
+         */
+        focusIsChannelStreaming(channel) {
+            return this.isStreaming &&
+                this.actionInput.live_acquisition_channelhandle === channel.handle;
+        },
+
+        /**
+         * Confirm/apply current offset to a channel
+         * @param {AcquisitionChannelConfig} channel
+         */
+        focusConfirmOffset(channel) {
+            const offset = this.focusLiveOffsetUM;
+            if (offset == null) throw new Error("No reference set - calibrate LAF first");
+
+            channel.z_offset_um = offset;
+            this.focusConfirmedChannels.add(channel.handle);
+        },
+
+        /**
+         * Check if a channel's offset has been confirmed with current reference
+         * @param {AcquisitionChannelConfig} channel
+         */
+        focusIsOffsetConfirmed(channel) {
+            return this.focusConfirmedChannels.has(channel.handle);
+        },
+
+        /** @type {number|null} Last measured offset using the accurate stage-based method (μm) */
+        focusMeasuredOffsetUM: null,
+
+        /** Getter: formatted measured offset text */
+        get focusMeasuredOffsetText() {
+            if (this.focusMeasuredOffsetUM == null) return "(not measured)";
+            const offset = this.focusMeasuredOffsetUM;
+            return `${offset >= 0 ? '+' : ''}${offset.toFixed(1)} μm`;
+        },
+
+        /**
+         * Accurate offset measurement using actual stage movement:
+         * 1. Store current Z position
+         * 2. Move to LAF reference (target offset 0)
+         * 3. Read actual Z position after move
+         * 4. Calculate offset = (start Z - reference Z)
+         * 5. Move back to original position
+         */
+        async focusMeasureOffsetAccurate() {
+            if (!this.laserAutofocusIsCalibrated) {
+                throw new Error("LAF not calibrated - calibrate first");
+            }
+
+            // 1. Store current Z
+            const startZ_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (startZ_mm == null) throw new Error("No Z position available");
+
+            // 2. Move to LAF reference (target offset 0)
+            await this.Actions.laserAutofocusMoveToTargetOffset({
+                config_file: this.microscope_config,
+                target_offset_um: 0,
+            });
+
+            // 3. Read actual Z after move
+            // Small delay to ensure position is updated
+            await new Promise(r => setTimeout(r, 100));
+            const refZ_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (refZ_mm == null) throw new Error("No Z position available after move");
+
+            // 4. Calculate offset
+            this.focusMeasuredOffsetUM = (startZ_mm - refZ_mm) * 1000;
+
+            // 5. Move back to original position
+            await this.Actions.moveTo({ z_mm: startZ_mm });
+        },
+
+        // ============ End Focus & Channel Offset Calibration ============
 
         laserAutofocusDebug_numz: 7,
         laserAutofocusDebug_totalz_um: 400,
