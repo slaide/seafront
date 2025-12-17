@@ -458,10 +458,11 @@ export class ChannelImageView {
             sceneInfo.elem = new_element
         }
 
-        // Check if we need to recreate the image due to bit depth change
-        const needsRecreation = !sceneInfo.img || 
+        // Check if we need to recreate the image due to format or dimension change
+        const needsRecreation = !sceneInfo.img ||
             (sceneInfo.img.texture.type !== datatype) ||
-            (sceneInfo.img.texture.image.data.constructor !== imgdata.constructor);
+            (sceneInfo.img.texture.image.data.constructor !== imgdata.constructor) ||
+            (sceneInfo.img.texture.image.data.length !== imgdata.length);
 
         if (needsRecreation) {
             // Remove old mesh from scene if it exists
