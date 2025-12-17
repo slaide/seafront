@@ -1030,17 +1030,18 @@ document.addEventListener("alpine:init", () => {
                         if (typeof ev.data === 'string') {
                             // Metadata message
                             const metadata = json5.parse(ev.data);
-                            // Find the matching request (FIFO queue)
-                            const nextEntry = this.pending_image_requests.entries().next().value;
-                            if (nextEntry) {
-                                const [channel_handle, request] = nextEntry;
-                                if (request) {
-                                    this._image_current_request = { channel_handle, request, metadata };
-                                    // Switch to receive ArrayBuffer for image data
-                                    const ws = this.wsManager.getConnection('image');
-                                    if (ws) ws.binaryType = "arraybuffer";
-                                }
+                            // Find the matching request by channel_handle from metadata
+                            const channel_handle = metadata.channel_handle;
+                            const request = this.pending_image_requests.get(channel_handle);
+                            if (request) {
+                                this._image_current_request = { channel_handle, request, metadata };
+                            } else {
+                                // No matching request - will discard the image data
+                                this._image_current_request = null;
                             }
+                            // Always switch to arraybuffer to receive image data (server always sends it)
+                            const ws = this.wsManager.getConnection('image');
+                            if (ws) ws.binaryType = "arraybuffer";
                         } else {
                             // Image data (ArrayBuffer)
                             if (this._image_current_request) {
@@ -1054,12 +1055,11 @@ document.addEventListener("alpine:init", () => {
 
                                 this._image_current_request.request.resolve(img);
                                 this.pending_image_requests.delete(this._image_current_request.channel_handle);
-                                this._image_current_request = null;
-
-                                // Switch back to blob for next metadata
-                                const ws = this.wsManager.getConnection('image');
-                                if (ws) ws.binaryType = "blob";
                             }
+                            // Always reset state and switch back to blob for next metadata
+                            this._image_current_request = null;
+                            const ws = this.wsManager.getConnection('image');
+                            if (ws) ws.binaryType = "blob";
                         }
                     },
                     onError: (event) => {

@@ -616,6 +616,7 @@ class Core:
 
                         await _safe_send_json(ws,
                             {
+                                "channel_handle": channel_handle,
                                 "width": img_data.shape[1],
                                 "height": img_data.shape[0],
                                 "camera_bit_depth": img.bit_depth,
