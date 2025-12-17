@@ -480,10 +480,10 @@ export class PlateNavigator {
 
             const scroll_speed = 2e-3;
 
-            // calculate zoom factor
+            // calculate zoom factor using current container dimensions (not captured frame)
             let delta_zoom = event.deltaY * scroll_speed;
-            let xratio = event.offsetX / frame.width;
-            let yratio = event.offsetY / frame.height;
+            let xratio = event.offsetX / this.containerEl.clientWidth;
+            let yratio = event.offsetY / this.containerEl.clientHeight;
 
             this.cameraApplyDeltaZoom(delta_zoom, {
                 x: xratio,
