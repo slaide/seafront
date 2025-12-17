@@ -1,0 +1,22 @@
+{
+    "port": 5002,
+    "microscopes": [
+        {
+            "microscope_name": "squid-v3",
+            "microscope_type": "squid",
+            "main_camera_model": "MER2-1220-32U3M",
+            "main_camera_driver": "galaxy",
+            "base_image_output_dir": "/home/scientist/seafront/images",
+            "calibration_offset_x_mm": 2.44,
+            "calibration_offset_y_mm": 0.44,
+            "calibration_offset_z_mm": 0.0,
+            "forbidden_areas": "[{\"name\": \"Top edge\", \"min_x_mm\": 0.0, \"max_x_mm\": 127.76, \"min_y_mm\": 0.0, \"max_y_mm\": 7.2, \"reason\": \"Plate holder interference risk\"}, {\"name\": \"Bottom edge\", \"min_x_mm\": 0.0, \"max_x_mm\": 127.76, \"min_y_mm\": 78.28, \"max_y_mm\": 85.48, \"reason\": \"Plate holder interference risk\"}, {\"name\": \"Left edge\", \"min_x_mm\": 0.0, \"max_x_mm\": 10.0, \"min_y_mm\": 0.0, \"max_y_mm\": 85.48, \"reason\": \"Plate holder interference risk\"}, {\"name\": \"Right edge\", \"min_x_mm\": 117.76, \"max_x_mm\": 127.76, \"min_y_mm\": 0.0, \"max_y_mm\": 85.48, \"reason\": \"Plate holder interference risk\"}, {\"name\": \"Corner well A01\", \"min_x_mm\": 0.0, \"max_x_mm\": 14.3, \"min_y_mm\": 0.0, \"max_y_mm\": 11.0, \"reason\": \"Corner well interference risk\"}, {\"name\": \"Corner well A24\", \"min_x_mm\": 113.0, \"max_x_mm\": 127.8, \"min_y_mm\": 0.0, \"max_y_mm\": 11.0, \"reason\": \"Corner well interference risk\"}, {\"name\": \"Corner well P01\", \"min_x_mm\": 0.0, \"max_x_mm\": 14.3, \"min_y_mm\": 74.0, \"max_y_mm\": 85.5, \"reason\": \"Corner well interference risk\"}, {\"name\": \"Corner well P24\", \"min_x_mm\": 113.0, \"max_x_mm\": 127.8, \"min_y_mm\": 74.0, \"max_y_mm\": 85.5, \"reason\": \"Corner well interference risk\"}]",
+            "laser_autofocus_available": "yes",
+            "laser_autofocus_camera_model": "MER2-630-60U3M",
+            "laser_autofocus_camera_driver": "galaxy",
+            "filter_wheel_available": "no",
+            "channels": "[{\"name\": \"Fluorescence 405 nm Ex\", \"handle\": \"fluo405\", \"source_slot\": 11, \"use_power_calibration\": false, \"power_calibration\": null}, {\"name\": \"Fluorescence 445 nm Ex\", \"handle\": \"fluo445\", \"source_slot\": 12, \"use_power_calibration\": false, \"power_calibration\": null}, {\"name\": \"Fluorescence 514 nm Ex\", \"handle\": \"fluo514\", \"source_slot\": 14, \"use_power_calibration\": false, \"power_calibration\": null}, {\"name\": \"Fluorescence 561 nm Ex\", \"handle\": \"fluo561\", \"source_slot\": 13, \"use_power_calibration\": false, \"power_calibration\": null}, {\"name\": \"Fluorescence 640 nm Ex\", \"handle\": \"fluo640\", \"source_slot\": 15, \"use_power_calibration\": false, \"power_calibration\": null}, {\"name\": \"BF LED matrix full\", \"handle\": \"bfledfull\", \"source_slot\": 0, \"use_power_calibration\": true, \"power_calibration\": {\"dac_percent\": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100], \"optical_power_mw\": [0.0, 0.2, 0.8, 1.8, 3.2, 5.0, 7.2, 9.8, 12.8, 16.2, 20.0, 24.2, 28.8, 33.8, 39.2, 45.0, 51.2, 57.8, 64.8, 72.2, 80.0]}}, {\"name\": \"BF LED matrix left half\", \"handle\": \"bfledleft\", \"source_slot\": 1, \"use_power_calibration\": true, \"power_calibration\": {\"dac_percent\": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100], \"optical_power_mw\": [0.0, 0.2, 0.8, 1.8, 3.2, 5.0, 7.2, 9.8, 12.8, 16.2, 20.0, 24.2, 28.8, 33.8, 39.2, 45.0, 51.2, 57.8, 64.8, 72.2, 80.0]}}, {\"name\": \"BF LED matrix right half\", \"handle\": \"bfledright\", \"source_slot\": 2, \"use_power_calibration\": true, \"power_calibration\": {\"dac_percent\": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100], \"optical_power_mw\": [0.0, 0.2, 0.8, 1.8, 3.2, 5.0, 7.2, 9.8, 12.8, 16.2, 20.0, 24.2, 28.8, 33.8, 39.2, 45.0, 51.2, 57.8, 64.8, 72.2, 80.0]}}]",
+            "filters": "[]"
+        }
+    ]
+}
