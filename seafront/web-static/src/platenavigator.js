@@ -344,6 +344,31 @@ export class PlateNavigator {
         });
         resizeObserver.observe(containerel);
 
+        // Set up intersection observer to handle visibility changes (e.g., tab switching)
+        // When container becomes visible after being hidden, refit the camera
+        let wasHidden = false;
+        const intersectionObserver = new IntersectionObserver(entries => {
+            for (let entry of entries) {
+                if (entry.target === containerel) {
+                    if (entry.isIntersecting && wasHidden) {
+                        // Container just became visible after being hidden - reset camera
+                        this.cam.zoom = 1;
+                        this.handleResize();
+                        if (this.plate) {
+                            this.cameraFit({
+                                ax: 0,
+                                ay: 0,
+                                bx: this.plate.Length_mm,
+                                by: this.plate.Width_mm,
+                            });
+                        }
+                    }
+                    wasHidden = !entry.isIntersecting;
+                }
+            }
+        });
+        intersectionObserver.observe(containerel);
+
         // threejs dragcontrols are only for dragging a 3d object, not for dragging the camera
         let drag = {
             active: false,
@@ -662,8 +687,14 @@ export class PlateNavigator {
             y: centery,
         });
 
-        let targetzoomx = (extentx) / (this.camera.right - this.camera.left);
-        let targetzoomy = extenty / (this.camera.top - this.camera.bottom);
+        const cameraWidth = this.camera.right - this.camera.left;
+        const cameraHeight = this.camera.top - this.camera.bottom;
+
+        // Avoid division by zero if camera has degenerate dimensions
+        if (cameraWidth <= 0 || cameraHeight <= 0) return;
+
+        let targetzoomx = extentx / cameraWidth;
+        let targetzoomy = extenty / cameraHeight;
 
         let targetzoom = Math.max(targetzoomx, targetzoomy);
         this.cameraApplyDeltaZoom(this.cameraZoomAbsoluteToRelative(targetzoom));
@@ -680,8 +711,8 @@ export class PlateNavigator {
         // reset camera zoom AND bounds together to maintain synchronization
         // (drag function uses this.cam.zoom to scale movement, but if bounds don't match the zoom level, drag will be wrong)
         const frame = {
-            width: this.renderer.domElement.clientWidth,
-            height: this.renderer.domElement.clientHeight,
+            width: this.renderer.domElement.clientWidth || 1,
+            height: this.renderer.domElement.clientHeight || 1,
         };
         this.camera.left = frame.width / -2;
         this.camera.right = frame.width / 2;
@@ -1706,6 +1737,9 @@ export class PlateNavigator {
 
         const newWidth = this.containerEl.clientWidth;
         const newHeight = this.containerEl.clientHeight;
+
+        // Skip resize if dimensions are invalid (can happen during layout transitions)
+        if (newWidth <= 0 || newHeight <= 0) return;
 
         // Get current camera dimensions
         const oldWidth = this.camera.right - this.camera.left;
