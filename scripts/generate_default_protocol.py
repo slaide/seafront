@@ -1,169 +1,104 @@
 #!/usr/bin/env python3
 """
-Generate default protocol file based on seaconfig AcquisitionConfig structure.
+Generate default protocol file for a microscope.
 
-This script creates a default.json protocol file in the acquisition_configs/ directory
-that matches the structure expected by the web interface. The generated protocol
-uses wellplate data from seaconfig's known wellplates instead of hardcoded values,
-and includes sensible defaults for all required fields.
+Creates a default.json protocol file in the microscope-specific acquisition_configs/ directory.
 """
 
 import argparse
 import json
-import os
 from pathlib import Path
 
+import json5
 import seaconfig as sc
-from seafront.config.basics import GlobalConfigHandler
+from seafront.config.basics import GlobalConfigHandler, ServerConfig
 
-def generate_plate_wells() -> list[sc.PlateWellConfig]:
-    """
-    Generate sparse plate wells data - only include selected wells.
-    
-    The plate navigator now handles sparse data gracefully, so we only
-    need to include wells that are actually selected.
-    """
-    # Only include well (0, 0) as selected by default
-    return [sc.PlateWellConfig(col=0, row=0, selected=True)]
 
-def get_default_wellplate(plate_id=None):
-    """Get default wellplate from seaconfig's known wellplates."""
-    # Use specified plate_id or default to 384-well Revvity plate
-    default_plate_id = plate_id or "revvity-384-6057800"
-    
-    # Find the plate in seaconfig's wellplate list
+def load_server_config() -> ServerConfig:
+    """Load and return server config."""
+    config_path = Path.home() / "seafront" / "config.json"
+
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found at {config_path}. See examples/ directory.")
+
+    with config_path.open("r") as f:
+        return ServerConfig(**json5.load(f))
+
+
+def get_wellplate(plate_id: str | None) -> sc.wellplates.Wellplate:
+    """Get wellplate by ID, or default to revvity-384-6057800."""
+    target_id = plate_id or "revvity-384-6057800"
+
     for plate in sc.plates.Plates:
-        if plate.Model_id == default_plate_id:
+        if plate.Model_id == target_id:
             return plate
-    
-    # If specified plate not found, print available options
-    if plate_id:
-        print(f"Error: Wellplate '{plate_id}' not found.")
+
+    available = ", ".join(p.Model_id for p in sc.plates.Plates)
+    raise ValueError(f"Wellplate '{target_id}' not found. Available: {available}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate default acquisition protocol")
+    parser.add_argument("--plate", "-p", type=str, help="Wellplate Model_id (default: revvity-384-6057800)")
+    parser.add_argument("--list", "-l", action="store_true", help="List available wellplates and exit")
+    parser.add_argument("--microscope", "-m", type=str, help="Microscope name (must exist in config)")
+
+    args = parser.parse_args()
+
+    if args.list:
         print("Available wellplates:")
         for plate in sc.plates.Plates:
-            print(f"  {plate.Model_id} - {plate.Manufacturer} {plate.Model_name} ({plate.Num_wells_x}x{plate.Num_wells_y})")
-        exit(1)
-    
-    # Fallback to first 384-well plate if default not found
-    for plate in sc.plates.Plates:
-        if plate.Num_wells_x * plate.Num_wells_y == 384:
-            return plate
-    
-    # Last resort - return first available plate
-    return sc.plates.Plates[0]
+            print(f"  {plate.Model_id:<25} - {plate.Manufacturer} {plate.Model_name} ({plate.Num_wells_x}x{plate.Num_wells_y} wells)")
+        return
 
-def list_available_wellplates():
-    """List all available wellplates in seaconfig."""
-    print("Available wellplates:")
-    for plate in sc.plates.Plates:
-        print(f"  {plate.Model_id:<25} - {plate.Manufacturer} {plate.Model_name} ({plate.Num_wells_x}x{plate.Num_wells_y} wells)")
-    print(f"\nTotal: {len(sc.plates.Plates)} wellplates")
+    if not args.microscope:
+        raise ValueError("--microscope argument is required")
 
-def generate_default_protocol(plate_id=None):
-    """Generate default acquisition protocol using seaconfig's wellplate data."""
-    
-    # Get default wellplate from seaconfig
-    default_wellplate = get_default_wellplate(plate_id)
-    
-    # Create default acquisition configuration
-    default_config = sc.AcquisitionConfig(
+    # Load config and validate microscope name
+    server_config = load_server_config()
+    available_names = [m.microscope_name for m in server_config.microscopes]
+
+    if args.microscope not in available_names:
+        raise ValueError(f"Microscope '{args.microscope}' not found. Available: {available_names}")
+
+    # Create output directory
+    safe_dir_name = GlobalConfigHandler._sanitize_microscope_name_for_directory(args.microscope)
+    config_dir = Path.home() / "seafront" / "acquisition_configs" / safe_dir_name
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate protocol
+    wellplate = get_wellplate(args.plate)
+    protocol = sc.AcquisitionConfig(
         project_name="",
         plate_name="",
         cell_line="",
-        
         autofocus_enabled=False,
-        
         grid=sc.AcquisitionWellSiteConfiguration(
             num_x=1,
             delta_x_mm=0.9,
-            num_y=1, 
+            num_y=1,
             delta_y_mm=0.9,
             num_t=1,
-            delta_t=sc.AcquisitionWellSiteConfigurationDeltaTime(
-                h=2,
-                m=1,
-                s=4
-            ),
-            mask=[sc.AcquisitionWellSiteConfigurationSiteSelectionItem(
-                row=0, 
-                col=0, 
-                selected=True
-            )]
+            delta_t=sc.AcquisitionWellSiteConfigurationDeltaTime(h=2, m=1, s=4),
+            mask=[sc.AcquisitionWellSiteConfigurationSiteSelectionItem(row=0, col=0, selected=True)],
         ),
-        
-        # Use wellplate from seaconfig
-        wellplate_type=default_wellplate,
-        
-        # Generate sparse plate wells (only selected wells)
-        plate_wells=generate_plate_wells(),
-        
-        # Channels will be populated from hardware capabilities at runtime
-        # For now, create minimal channel structure
+        wellplate_type=wellplate,
+        plate_wells=[sc.PlateWellConfig(col=0, row=0, selected=True)],
         channels=[],
-        
-        # Machine config will be populated from hardware defaults at runtime
         machine_config=[],
-        
         comment="Default protocol generated by generate_default_protocol.py",
-        
         spec_version=sc.LATEST_SPEC_VERSION,
-        timestamp=None
+        timestamp=None,
     )
-    
-    return default_config
 
-def main():
-    """Generate and save default protocol file."""
-    parser = argparse.ArgumentParser(description="Generate default acquisition protocol")
-    parser.add_argument("--plate", "-p", type=str, help="Wellplate Model_id to use (default: revvity-384-6057800)")
-    parser.add_argument("--list", "-l", action="store_true", help="List available wellplates and exit")
-    parser.add_argument("--microscope", "-m", type=str, help="Microscope name for protocol directory (required for protocol generation)")
-    
-    args = parser.parse_args()
-    
-    # List available wellplates if requested
-    if args.list:
-        list_available_wellplates()
-        return
-    
-    # Microscope name is now required
-    if not args.microscope:
-        print("Error: --microscope argument is required")
-        print("Protocol generation now requires a microscope name to create microscope-specific directories")
-        print("Usage: python scripts/generate_default_protocol.py --microscope 'Your Microscope Name'")
-        return
-    
-    # Use microscope-specific directory
-    seafront_home = Path.home() / "seafront"
-    try:
-        safe_dir_name = GlobalConfigHandler._sanitize_microscope_name_for_directory(args.microscope)
-        config_dir = seafront_home / "acquisition_configs" / safe_dir_name
-        print(f"Using microscope-specific directory: {args.microscope} -> {safe_dir_name}")
-    except ValueError as e:
-        print(f"Error: {e}")
-        print("Please provide a valid microscope name (not empty or whitespace-only)")
-        return
-    
-    # Ensure config directory exists
-    config_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Generate default protocol
-    default_protocol = generate_default_protocol(args.plate)
-    
-    # Convert to JSON-serializable dict
-    protocol_dict = default_protocol.model_dump(mode='json')
-    
-    # Write to default.json
-    default_file = config_dir / "default.json"
-    with open(default_file, 'w') as f:
-        json.dump(protocol_dict, f, indent=2)
-    
-    print(f"Generated default protocol: {default_file}")
-    print(f"Using wellplate: {default_protocol.wellplate_type.Model_id} ({default_protocol.wellplate_type.Manufacturer} {default_protocol.wellplate_type.Model_name})")
-    print(f"Plate dimensions: {default_protocol.wellplate_type.Num_wells_x}x{default_protocol.wellplate_type.Num_wells_y} wells")
-    print("Note: Channels and machine_config fields are empty and will be populated")
-    print("      from hardware capabilities and defaults at runtime.")
-    print(f"Config directory: {config_dir}")
+    # Write protocol
+    output_file = config_dir / "default.json"
+    with open(output_file, "w") as f:
+        json.dump(protocol.model_dump(mode="json"), f, indent=2)
+
+    print(f"Generated: {output_file}")
+    print(f"Wellplate: {wellplate.Model_id} ({wellplate.Num_wells_x}x{wellplate.Num_wells_y})")
+
 
 if __name__ == "__main__":
     main()
