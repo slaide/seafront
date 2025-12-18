@@ -20,6 +20,36 @@ from seafront.hardware.adapter import AdapterState
 from seafront.server import commands as cmd
 
 
+class DisconnectError(BaseException):
+    """Indicate that the hardware was disconnected."""
+
+    def __init__(self):
+        super().__init__()
+
+
+class Locked[T]:
+    """Thread-safe wrapper for a value with a reentrant lock."""
+
+    def __init__(self, t: T):
+        self.lock = threading.RLock()
+        self.t = t
+
+    @property
+    def value(self) -> T:
+        """Quick access to the wrapped value without locking (for read-only access)."""
+        return self.t
+
+    @contextmanager
+    def locked(self, blocking: bool = True) -> tp.Iterator[T | None]:
+        if self.lock.acquire(blocking=blocking):
+            try:
+                yield self.t
+            finally:
+                self.lock.release()
+        else:
+            yield None
+
+
 @dataclass(frozen=True)
 class HardwareLimits:
     """

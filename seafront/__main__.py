@@ -58,9 +58,8 @@ from seafront.config.handles import (
     LaserAutofocusConfig,
     ProtocolConfig,
 )
-from seafront.hardware.microscope import HardwareLimits, Microscope
+from seafront.hardware.microscope import DisconnectError, HardwareLimits, Microscope
 from seafront.hardware.mock_microscope import MockMicroscope
-from seafront.hardware.squid import DisconnectError, SquidAdapter
 from seafront.logger import logger
 from seafront.hardware.forbidden_areas import ForbiddenAreaList
 from seafront.server.commands import (
@@ -274,7 +273,10 @@ class Core:
             self.microscope: Microscope = MockMicroscope.make()
         else:
             logger.info("Creating SQUID microscope adapter")
-            self.microscope: Microscope = SquidAdapter.make()
+            # Deferred import: squid.py requires hardware drivers that must be externally installed.
+            # By importing here instead of at module level, mock mode works without drivers installed.
+            from seafront.hardware.squid import SquidAdapter
+            self.microscope = SquidAdapter.make()
 
         self.acquisition_map: dict[str, AcquisitionStatus] = {}
         """ map containing information on past and current acquisitions """

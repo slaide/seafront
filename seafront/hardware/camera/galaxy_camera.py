@@ -5,7 +5,6 @@ import subprocess
 import re
 
 import numpy as np
-from gxipy import gxiapi
 from seaconfig import AcquisitionChannelConfig
 
 from seafront.config.basics import GlobalConfigHandler, set_config_item_bool
@@ -14,7 +13,17 @@ from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
 
-gxiapi.gx_init_lib()
+# Galaxy camera SDK import - requires libgxiapi.so to be installed
+try:
+    from gxipy import gxiapi
+    from gxipy.gxiapi import OffLine as GalaxyCameraOffline
+    gxiapi.gx_init_lib()
+except NameError as e:
+    # gxipy throws NameError("name 'dll' is not defined") when libgxiapi.so is missing
+    raise ImportError(
+        "Galaxy camera SDK (libgxiapi.so) not found. "
+        "Install the Daheng Galaxy SDK (see https://github.com/slaide/daheng-imaging-gxipy)."
+    ) from e
 
 def _camera_operation_with_reconnect(func):
     """

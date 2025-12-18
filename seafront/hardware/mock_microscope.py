@@ -36,8 +36,7 @@ from seafront.hardware.firmware_config import (
     get_firmware_config,
 )
 from seafront.hardware.illumination import IlluminationController
-from seafront.hardware.microscope import HardwareLimits, Microscope, microscope_exclusive
-from seafront.hardware.squid import Locked
+from seafront.hardware.microscope import HardwareLimits, Locked, Microscope, microscope_exclusive
 from seafront.logger import logger
 from seafront.server import commands as cmd
 

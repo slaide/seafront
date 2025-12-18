@@ -13,8 +13,7 @@ import scipy  # to find peaks in a signal
 # import scipy.ndimage  # for guassian blur
 import seaconfig as sc
 
-# from gxipy import gxiapi
-from gxipy.gxiapi import OffLine as GalaxyCameraOffline
+from seafront.hardware.camera.galaxy_camera import GalaxyCameraOffline
 from matplotlib import pyplot as plt
 from pydantic import BaseModel
 from scipy import stats  # for linear regression
@@ -47,7 +46,7 @@ from seafront.hardware.camera import (
     get_all_cameras,
 )
 from seafront.hardware.illumination import IlluminationController
-from seafront.hardware.microscope import HardwareLimits, Microscope, microscope_exclusive
+from seafront.hardware.microscope import DisconnectError, HardwareLimits, Locked, Microscope, microscope_exclusive
 from seafront.logger import logger
 from seafront.server import commands as cmd
 from seafront.server.commands import (
@@ -60,13 +59,6 @@ from seafront.config.handles import ProtocolConfig
 from seafront.hardware.forbidden_areas import ForbiddenAreaList
 
 # utility functions
-
-
-class DisconnectError(BaseException):
-    """indicate that the hardware was disconnected"""
-
-    def __init__(self):
-        super().__init__()
 
 
 def linear_regression(
@@ -148,27 +140,6 @@ def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
             ret = ret << (bits_per_pixel - cambits)
 
     return ret, cambits
-
-
-class Locked[T]:
-    def __init__(self, t: T):
-        self.lock = threading.RLock()
-        self.t = t
-
-    @property
-    def value(self) -> T:
-        """Quick access to the wrapped value without locking (for read-only access)."""
-        return self.t
-
-    @contextmanager
-    def locked(self, blocking: bool = True) -> tp.Iterator[T | None]:
-        if self.lock.acquire(blocking=blocking):
-            try:
-                yield self.t
-            finally:
-                self.lock.release()
-        else:
-            yield None
 
 
 class SquidAdapter(Microscope):
