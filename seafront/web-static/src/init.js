@@ -142,6 +142,14 @@ document.addEventListener("alpine:init", () => {
             showReloadButton: false
         },
 
+        // Acquisition confirmation modal state
+        /** @type {{ show: boolean, estimate: AcquisitionEstimate | null, estimatedTimeString: string }} */
+        acquisitionConfirm: {
+            show: false,
+            estimate: null,
+            estimatedTimeString: '--'
+        },
+
         // Mock mode indicator
         mockModeActive: false,
 
@@ -1573,6 +1581,12 @@ document.addEventListener("alpine:init", () => {
                             const data = JSON.parse(ev.data);
                             if(typeof data != "object")throw new Error(`event data has wrong type ${typeof data}`);
 
+                            // Check for error responses from server
+                            if (data.error) {
+                                console.warn('Acquisition status error:', data.error);
+                                return; // Don't update status with error response
+                            }
+
                             // Store previous status to detect state changes
                             const previousStatus = this.latest_acquisition_status;
                             this.latest_acquisition_status = data;
@@ -2339,6 +2353,73 @@ document.addEventListener("alpine:init", () => {
                 throw error;
             }
         },
+
+        /**
+         * Format seconds into a human-readable time string
+         * @param {number} seconds
+         * @returns {string}
+         */
+        formatTimeEstimate(seconds) {
+            if (seconds == null || seconds < 0) {
+                return '0s';
+            }
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+
+            if (hours > 0) {
+                return `${hours}h ${minutes}m`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${secs}s`;
+            } else {
+                return `${secs}s`;
+            }
+        },
+
+        /**
+         * Show confirmation dialog before starting acquisition.
+         * Fetches estimates from the server first.
+         */
+        async showAcquisitionConfirmation() {
+            try {
+                await this.machineConfigFlush();
+
+                // Model is always in backend format
+                const backend_config = this.microscope_config_copy;
+
+                // mutate copy (to fix some errors we introduce in the interface)
+                // 1) remove wells that are unselected or invalid
+                backend_config.plate_wells = backend_config.plate_wells.filter(
+                    (w) => w.selected && w.col >= 0 && w.row >= 0,
+                );
+
+                // Fetch estimate from server
+                const estimate = await this.api.post('/api/acquisition/estimate', {
+                    config_file: backend_config
+                }, {
+                    context: 'Acquisition estimate',
+                    showError: true
+                });
+
+                // Update state and show dialog
+                this.acquisitionConfirm.estimate = estimate;
+                this.acquisitionConfirm.estimatedTimeString = this.formatTimeEstimate(estimate.estimated_time_s);
+                this.acquisitionConfirm.show = true;
+            } catch (error) {
+                console.error('Failed to get acquisition estimate:', error);
+                // Show error but don't block - could still proceed with acquisition
+                this.showError('Estimate Failed', error.message || error.toString());
+            }
+        },
+
+        /**
+         * Start acquisition after user confirms in the dialog.
+         */
+        async acquisitionConfirmStart() {
+            this.acquisitionConfirm.show = false;
+            await this.acquisition_start();
+        },
+
         /** @type {AcquisitionStatusOut?} */
         latest_acquisition_status: null,
         
@@ -2631,11 +2712,38 @@ document.addEventListener("alpine:init", () => {
                 config_file: this.microscope_config_copy,
                 target_offset_um: this.laserAutofocusTargetOffsetUM,
             });
-            
+
             // Automatically measure the current offset after moving to target
             await this.button_laserAutofocusMeasureOffset();
-            
+
             return res;
+        },
+        /**
+         * Focus via laser autofocus and update reference position.
+         * This runs autofocus to offset 0 and then updates the reference
+         * XY/Z so that "current offset from reference" shows 0.
+         */
+        async button_laserAutofocusFocus() {
+            // Run autofocus to offset 0
+            await this.Actions.laserAutofocusMoveToTargetOffset({
+                config_file: this.microscope_config_copy,
+                target_offset_um: 0,
+            });
+
+            // Small delay to ensure position is updated
+            await new Promise(r => setTimeout(r, 100));
+
+            // Update reference position so offset shows as 0
+            const x_mm = this.state.adapter_state?.stage_position?.x_pos_mm;
+            const y_mm = this.state.adapter_state?.stage_position?.y_pos_mm;
+            const z_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (x_mm != null && y_mm != null && z_mm != null) {
+                this.focusReferenceZ = z_mm;
+                this.focusReferenceXY = { x: x_mm, y: y_mm };
+            }
+
+            // Automatically measure the current offset after focusing
+            await this.button_laserAutofocusMeasureOffset();
         },
         /**
          * offset and position where it was measured
@@ -2908,7 +3016,8 @@ document.addEventListener("alpine:init", () => {
             if (!this.laserAutofocusMeasuredOffset) {
                 return noresult;
             }
-            return this.laserAutofocusMeasuredOffset.displacement_um;
+            const offset = this.laserAutofocusMeasuredOffset.displacement_um;
+            return `${offset >= 0 ? '+' : ''}${offset.toFixed(2)} μm`;
         },
 
         // ============ Focus & Channel Offset Calibration ============
@@ -2918,6 +3027,9 @@ document.addEventListener("alpine:init", () => {
 
         /** @type {number|null} Reference Z position for offset calibration (mm) */
         focusReferenceZ: null,
+
+        /** @type {{x: number, y: number}|null} Reference XY position where focus was calibrated (mm) */
+        focusReferenceXY: null,
 
         /** @type {Set<string>} Channel handles with offsets confirmed using current reference */
         focusConfirmedChannels: new Set(),
@@ -2930,9 +3042,23 @@ document.addEventListener("alpine:init", () => {
             ) ?? null;
         },
 
+        /** Check if current XY position matches the reference XY position */
+        get focusIsAtReferenceXY() {
+            if (this.focusReferenceXY == null) return false;
+            const current_x = this.state.adapter_state?.stage_position?.x_pos_mm;
+            const current_y = this.state.adapter_state?.stage_position?.y_pos_mm;
+            if (current_x == null || current_y == null) return false;
+            // Allow small tolerance for floating point comparison (1 μm)
+            const tolerance = 0.001;
+            return Math.abs(current_x - this.focusReferenceXY.x) < tolerance &&
+                   Math.abs(current_y - this.focusReferenceXY.y) < tolerance;
+        },
+
         /** Getter: live offset relative to reference (updates with stage position) */
         get focusLiveOffsetUM() {
             if (this.focusReferenceZ == null) return null;
+            // Only show offset if we're at the same XY position where we calibrated
+            if (!this.focusIsAtReferenceXY) return null;
             const current_z_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
             if (current_z_mm == null) return null;
             return (current_z_mm - this.focusReferenceZ) * 1000;
@@ -2953,10 +3079,15 @@ document.addEventListener("alpine:init", () => {
 
         /** Calibrate LAF at current position (uses reference channel focus) */
         async focusCalibrateLAFHere() {
-            // Store current Z as the reference for channel offsets
+            // Store current position as the reference for channel offsets
+            const x_mm = this.state.adapter_state?.stage_position?.x_pos_mm;
+            const y_mm = this.state.adapter_state?.stage_position?.y_pos_mm;
             const z_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
-            if (z_mm == null) throw new Error("No Z position available");
+            if (x_mm == null || y_mm == null || z_mm == null) {
+                throw new Error("No position available");
+            }
             this.focusReferenceZ = z_mm;
+            this.focusReferenceXY = { x: x_mm, y: y_mm };
 
             // Clear confirmed channels since reference changed
             this.focusConfirmedChannels = new Set();

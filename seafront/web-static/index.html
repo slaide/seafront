@@ -281,6 +281,78 @@
             </div>
         </div>
 
+        <!-- Acquisition Confirmation Modal -->
+        <div
+            x-show="acquisitionConfirm.show"
+            x-transition.opacity.duration.300ms
+            id="confirm-modal-overlay"
+            @click="if($event.target === $el) acquisitionConfirm.show = false"
+        >
+            <div id="confirm-modal" @click.stop>
+                <div id="confirm-modal-header">
+                    <span>Start Acquisition?</span>
+                    <button @click="acquisitionConfirm.show = false" id="confirm-modal-close">&times;</button>
+                </div>
+                <div id="confirm-modal-body">
+                    <div class="confirm-row">
+                        <span class="confirm-label">Project:</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimate?.project_name ?? '--'"></span>
+                    </div>
+                    <div class="confirm-row">
+                        <span class="confirm-label">Plate:</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimate?.plate_name ?? '--'"></span>
+                    </div>
+                    <div class="confirm-row" x-show="_microscope_config?.comment">
+                        <span class="confirm-label">Comment:</span>
+                        <span class="confirm-value confirm-comment" x-text="_microscope_config?.comment ?? ''"
+                            x-init="enabletooltip($el)" x-bind:tooltip="_microscope_config?.comment ?? ''"></span>
+                    </div>
+                    <div class="confirm-row">
+                        <span class="confirm-label">Wells:</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimate?.num_selected_wells ?? '--'"></span>
+                    </div>
+                    <div class="confirm-row">
+                        <span class="confirm-label">Sites per well:</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimate?.num_selected_sites ?? '--'"></span>
+                    </div>
+                    <div class="confirm-row">
+                        <span class="confirm-label">Channels:</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimate?.num_channels ?? '--'"></span>
+                    </div>
+                    <div class="confirm-row" x-show="acquisitionConfirm.estimate?.num_z_planes_total > acquisitionConfirm.estimate?.num_channels">
+                        <span class="confirm-label">Total Z-planes:</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimate?.num_z_planes_total ?? '--'"></span>
+                    </div>
+                    <div class="confirm-row" x-show="acquisitionConfirm.estimate?.num_timepoints > 1">
+                        <span class="confirm-label">Timepoints:</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimate?.num_timepoints ?? '--'"></span>
+                    </div>
+                    <div class="confirm-row">
+                        <span class="confirm-label">Laser autofocus:</span>
+                        <span class="confirm-value" x-text="_microscope_config?.autofocus_enabled ? 'Enabled' : 'Disabled'"></span>
+                    </div>
+                    <div class="confirm-row confirm-highlight">
+                        <span class="confirm-label">Total images:</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimate?.total_num_images?.toLocaleString() ?? '--'"></span>
+                    </div>
+                    <div class="confirm-row confirm-highlight">
+                        <span class="confirm-label">Storage (max):</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimate ? `${acquisitionConfirm.estimate.max_storage_size_GB.toFixed(2)} GB` : '--'"></span>
+                    </div>
+                    <div class="confirm-row confirm-highlight">
+                        <span class="confirm-label">Est. time:</span>
+                        <span class="confirm-value" x-text="acquisitionConfirm.estimatedTimeString"></span>
+                    </div>
+                </div>
+                <div id="confirm-modal-footer">
+                    <button @click="acquisitionConfirm.show = false" id="confirm-modal-back"
+                        x-init="enabletooltip($el)" tooltip="Go back to configuration">Back</button>
+                    <button @click="await acquisitionConfirmStart()" id="confirm-modal-start"
+                        x-init="enabletooltip($el)" tooltip="Begin the acquisition with current settings">Start Acquisition</button>
+                </div>
+            </div>
+        </div>
+
         <template x-if="initDone">
             <div id="content">
                 <!-- Mock Mode Indicator Banner -->
@@ -2012,7 +2084,7 @@
                                         <style>
                                             #focus-channel-offsets {
                                                 display: grid;
-                                                grid-template-columns: auto 1fr auto;
+                                                grid-template-columns: auto auto auto;
                                                 gap: 0.4em 0.6em;
                                                 align-items: center;
                                             }
@@ -2054,6 +2126,11 @@
                                             #focus-channel-offsets .unconfirmed-indicator {
                                                 color: #aaa;
                                             }
+                                            #focus-channel-offsets .action-buttons {
+                                                display: flex;
+                                                gap: 0.5em;
+                                                flex-wrap: wrap;
+                                            }
                                         </style>
 
                                         <!-- Row 1: LAF Reference status -->
@@ -2068,19 +2145,15 @@
                                             x-init="enabletooltip($el)"
                                             x-bind:tooltip="`Select which channel to use for focusing and LAF calibration.`"
                                         >Reference channel</label>
-                                        <select
-                                            x-model="focusReferenceChannelHandle"
-                                            x-init="$nextTick(() => { if (microscope_config.channels.filter(c => c.enabled).length > 0 && !focusReferenceChannelHandle) { focusReferenceChannelHandle = microscope_config.channels.filter(c => c.enabled)[0]?.handle; } })"
-                                        >
-                                            <template x-for="channel in microscope_config.channels.filter(c => c.enabled)" :key="channel.handle">
-                                                <option x-bind:value="channel.handle" x-text="channel.name"></option>
-                                            </template>
-                                        </select>
-                                        <span></span>
-
-                                        <!-- Row 3: Actions for reference channel -->
-                                        <span></span>
-                                        <span style="display: flex; gap: 0.5em;">
+                                        <span class="action-buttons" style="grid-column: span 2;">
+                                            <select
+                                                x-model="focusReferenceChannelHandle"
+                                                x-init="$nextTick(() => { if (microscope_config.channels.filter(c => c.enabled).length > 0 && !focusReferenceChannelHandle) { focusReferenceChannelHandle = microscope_config.channels.filter(c => c.enabled)[0]?.handle; } })"
+                                            >
+                                                <template x-for="channel in microscope_config.channels.filter(c => c.enabled)" :key="channel.handle">
+                                                    <option x-bind:value="channel.handle" x-text="channel.name"></option>
+                                                </template>
+                                            </select>
                                             <button
                                                 @click="focusReferenceChannel && focusToggleLive(focusReferenceChannel)"
                                                 x-bind:disabled="!focusReferenceChannelHandle"
@@ -2097,18 +2170,17 @@
                                                 x-bind:tooltip="`Calibrate laser autofocus at current Z position and set as reference for channel offsets.`"
                                             >Calibrate LAF here</button>
                                         </span>
-                                        <span></span>
 
                                         <!-- Divider -->
                                         <div class="section-divider"></div>
 
                                         <!-- Channel offset table -->
                                         <div class="channel-table">
-                                            <!-- Stage position row -->
+                                            <!-- Current offset row -->
                                             <span style="font-style: italic; opacity: 0.7;"
                                                 x-init="enabletooltip($el)"
-                                                x-bind:tooltip="`Current stage Z offset relative to reference. Updates live as you jog Z.`"
-                                            >Stage offset</span>
+                                                x-bind:tooltip="`Current Z offset relative to reference. Updates live as you jog Z. Only accurate if you have not moved in XY since the last focus.`"
+                                            >Current offset from reference</span>
                                             <span class="offset-value" style="font-style: italic; opacity: 0.7;" x-text="focusLiveOffsetText"></span>
                                             <span></span>
                                             <span></span>
@@ -2210,24 +2282,18 @@ Reads the current displacement from the LAF sensor without moving the stage. Fas
 This reads the laser reflection position without moving the stage. Instant result but may drift from the true offset over time.`"
                                         >Estimate</button>
 
-                                        <!-- Move to target offset row -->
+                                        <!-- Focus via laser autofocus row -->
                                         <label
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Move to a target Z offset relative to the LAF reference. The microscope will use autofocus to find the reference plane, then move by this amount.`"
-                                        >Go to offset</label>
-                                        <input
-                                            type="number"
-                                            x-model.number="laserAutofocusTargetOffsetUM"
-                                            style="width: 6em;"
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Target offset in μm (positive = above reference, negative = below).`"
-                                        />
+                                            x-bind:tooltip="`Use laser autofocus to find the reference plane and focus the microscope.`"
+                                        >Focus via laser autofocus</label>
+                                        <span></span>
                                         <button
-                                            @click="button_laserAutofocusMoveToTargetOffset"
+                                            @click="button_laserAutofocusFocus"
                                             x-bind:disabled="!laserAutofocusIsCalibrated"
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Move to the target offset using laser autofocus.`"
-                                        >Move</button>
+                                            x-bind:tooltip="`Run laser autofocus to focus the microscope at the reference plane.`"
+                                        >Run</button>
                                     </div>
                                 </div>
                             </div>
@@ -2518,6 +2584,133 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 opacity: 0.8;
                             }
 
+                            /* Acquisition Confirmation Modal Styles */
+                            #confirm-modal-overlay {
+                                position: fixed;
+                                top: 0;
+                                left: 0;
+                                width: 100vw;
+                                height: 100vh;
+                                background: rgba(0, 0, 0, 0.5);
+                                display: flex;
+                                justify-content: center;
+                                align-items: center;
+                                z-index: 10000;
+                            }
+
+                            #confirm-modal {
+                                background: var(--strong-bg-color);
+                                border: 2px solid #4488ff;
+                                border-radius: 8px;
+                                min-width: 350px;
+                                max-width: 450px;
+                                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+                            }
+
+                            #confirm-modal-header {
+                                background: #4488ff;
+                                color: white;
+                                padding: 12px 16px;
+                                display: flex;
+                                justify-content: space-between;
+                                align-items: center;
+                                font-weight: bold;
+                                font-size: 1.1em;
+                            }
+
+                            #confirm-modal-close {
+                                background: none;
+                                border: none;
+                                color: white;
+                                font-size: 24px;
+                                cursor: pointer;
+                                padding: 0;
+                                width: 30px;
+                                height: 30px;
+                                display: flex;
+                                justify-content: center;
+                                align-items: center;
+                            }
+
+                            #confirm-modal-close:hover {
+                                background: rgba(255, 255, 255, 0.2);
+                                border-radius: 4px;
+                            }
+
+                            #confirm-modal-body {
+                                padding: 20px;
+                                display: grid;
+                                grid-template-columns: auto 1fr;
+                                gap: 8px 16px;
+                            }
+
+                            .confirm-row {
+                                display: contents;
+                            }
+
+                            .confirm-row.confirm-highlight {
+                                display: grid;
+                                grid-column: 1 / -1;
+                                grid-template-columns: subgrid;
+                                background: var(--weak-bg-color);
+                                padding: 8px 12px;
+                                border-radius: 4px;
+                                margin-top: 4px;
+                            }
+
+                            .confirm-label {
+                                color: var(--text-color);
+                                opacity: 0.8;
+                            }
+
+                            .confirm-value {
+                                font-weight: bold;
+                                color: var(--text-color);
+                                text-align: right;
+                            }
+
+                            .confirm-comment {
+                                overflow: hidden;
+                                text-overflow: ellipsis;
+                                white-space: nowrap;
+                                max-width: 200px;
+                            }
+
+                            #confirm-modal-footer {
+                                padding: 12px 20px;
+                                display: flex;
+                                justify-content: flex-end;
+                                gap: 8px;
+                                border-top: 1px solid var(--highlight-color);
+                            }
+
+                            #confirm-modal-back {
+                                background: var(--weak-bg-color);
+                                color: var(--text-color);
+                                border: 1px solid var(--highlight-color);
+                                padding: 8px 20px;
+                                border-radius: 4px;
+                                cursor: pointer;
+                            }
+
+                            #confirm-modal-back:hover {
+                                background: var(--highlight-color);
+                            }
+
+                            #confirm-modal-start {
+                                background: #2ecc40;
+                                color: white;
+                                border: none;
+                                padding: 8px 20px;
+                                border-radius: 4px;
+                                cursor: pointer;
+                                font-weight: bold;
+                            }
+
+                            #confirm-modal-start:hover {
+                                opacity: 0.8;
+                            }
+
                             .cached-microscope-delete-button {
                                 padding: 0.3em 0.8em;
                                 background: #ff4444;
@@ -2676,8 +2869,10 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 </div>
                             </div>
                         </div>
-                        <button @click="await acquisition_start()" :disabled="isAcquisitionRunning">Start</button>
-                        <button @click="await acquisition_stop()" :disabled="!isAcquisitionRunning">Cancel</button>
+                        <button @click="await showAcquisitionConfirmation()" :disabled="isAcquisitionRunning"
+                            x-init="enabletooltip($el)" tooltip="Show confirmation dialog and start acquisition">Start</button>
+                        <button @click="await acquisition_stop()" :disabled="!isAcquisitionRunning"
+                            x-init="enabletooltip($el)" tooltip="Cancel the currently running acquisition">Cancel</button>
                     </div>
                 </div>
             </div>

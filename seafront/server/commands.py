@@ -337,6 +337,107 @@ class AcquisitionMetaInformation(BaseModel):
     max_storage_size_images_GB: float
 
 
+class AcquisitionMetrics(BaseModel):
+    """
+    Computed metrics for an acquisition configuration.
+
+    This is the single source of truth for acquisition size calculations,
+    used by both the estimate endpoint and the protocol runner.
+    """
+    num_wells: int
+    num_sites: int
+    num_channels: int
+    num_z_planes_total: int
+    num_timepoints: int
+    total_num_images: int
+    image_size_bytes: int
+    max_storage_size_GB: float
+
+
+def calculate_acquisition_metrics(config: sc.AcquisitionConfig) -> AcquisitionMetrics:
+    """
+    Calculate acquisition metrics from a config.
+
+    This is the single source of truth for image count and storage calculations.
+    Used by microscope.estimate_acquisition() and ProtocolGenerator.
+
+    Args:
+        config: The acquisition configuration
+
+    Returns:
+        AcquisitionMetrics with all computed values
+    """
+    from seafront.config.handles import CameraConfig
+
+    # Count selected items
+    selected_wells = [w for w in config.plate_wells if w.selected]
+    selected_sites = [s for s in config.grid.mask if s.selected]
+    enabled_channels = [c for c in config.channels if c.enabled]
+
+    num_wells = len(selected_wells)
+    num_sites = len(selected_sites)
+    num_channels = len(enabled_channels)
+    num_z_planes_total = sum(c.num_z_planes for c in enabled_channels)
+    num_timepoints = config.grid.num_t
+
+    total_num_images = num_timepoints * num_wells * num_sites * num_z_planes_total
+
+    # Calculate image size from camera config
+    cam_img_width = CameraConfig.MAIN_IMAGE_WIDTH_PX.value_item
+    cam_img_height = CameraConfig.MAIN_IMAGE_HEIGHT_PX.value_item
+    main_cam_pix_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item
+
+    assert cam_img_width is not None, "Camera width not configured"
+    assert cam_img_height is not None, "Camera height not configured"
+    assert main_cam_pix_format is not None, "Camera pixel format not configured"
+
+    target_width = cam_img_width.intvalue
+    target_height = cam_img_height.intvalue
+
+    match main_cam_pix_format.value:
+        case "mono8":
+            bytes_per_pixel = 1
+        case "mono10" | "mono12" | "mono14" | "mono16":
+            bytes_per_pixel = 2
+        case _unexpected:
+            error_internal(f"unexpected pixel format: {_unexpected}")
+
+    image_size_bytes = target_width * target_height * bytes_per_pixel
+    max_storage_size_GB = total_num_images * image_size_bytes / 1024**3
+
+    return AcquisitionMetrics(
+        num_wells=num_wells,
+        num_sites=num_sites,
+        num_channels=num_channels,
+        num_z_planes_total=num_z_planes_total,
+        num_timepoints=num_timepoints,
+        total_num_images=total_num_images,
+        image_size_bytes=image_size_bytes,
+        max_storage_size_GB=max_storage_size_GB,
+    )
+
+
+class AcquisitionEstimate(BaseModel):
+    """
+    Pre-acquisition estimate for confirmation dialog.
+
+    Provides storage and time estimates without starting an acquisition.
+    """
+    project_name: str
+    plate_name: str
+    num_selected_wells: int
+    num_selected_sites: int
+    num_channels: int
+    num_z_planes_total: int
+    "Total z-planes across all channels (sum of each channel's num_z_planes)"
+    num_timepoints: int
+    total_num_images: int
+    max_storage_size_GB: float
+    "Upper bound storage estimate (uncompressed)"
+    estimated_time_s: float | None
+    "Estimated acquisition time in seconds (None if cannot be estimated)"
+
+
 class AcquisitionStatusStage(str, Enum):
     RUNNING = "running"
     CANCELLED = "cancelled"

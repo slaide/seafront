@@ -800,13 +800,17 @@ class ProtocolGenerator(BaseModel):
 
     # pydantics version of dataclass.__post_init__
     def model_post_init(self, __context):
-        self.num_wells = len(self.plate_wells)
-        self.num_sites = len(self.well_sites)
-        self.num_channels = len(self.channels)
-        self.num_channel_z_combinations = sum(c.num_z_planes for c in self.channels)
-        self.num_timepoints = self.config_file.grid.num_t
+        # Use shared metrics calculation
+        metrics = cmds.calculate_acquisition_metrics(self.config_file)
 
-        self.num_images_total = self.num_timepoints * self.num_wells * self.num_sites * self.num_channel_z_combinations
+        self.num_wells = metrics.num_wells
+        self.num_sites = metrics.num_sites
+        self.num_channels = metrics.num_channels
+        self.num_channel_z_combinations = metrics.num_z_planes_total
+        self.num_timepoints = metrics.num_timepoints
+        self.num_images_total = metrics.total_num_images
+        self.image_size_bytes = metrics.image_size_bytes
+        self.max_storage_size_images_GB = metrics.max_storage_size_GB
 
         # the grid is centered around the center of the well
         self.site_topleft_x_mm = (
@@ -818,37 +822,6 @@ class ProtocolGenerator(BaseModel):
             self.plate.Well_size_y_mm / 2
             - ((self.config_file.grid.num_y - 1) * self.config_file.grid.delta_y_mm) / 2
         )
-        "offset of top left site from top left corner of the well, in y, in mm"
-
-        # calculate meta information about acquisition
-        cam_img_width = CameraConfig.MAIN_IMAGE_WIDTH_PX.value_item
-        assert cam_img_width is not None
-        target_width: int = cam_img_width.intvalue
-        cam_img_height = CameraConfig.MAIN_IMAGE_HEIGHT_PX.value_item
-        assert cam_img_height is not None
-        target_height: int = cam_img_height.intvalue
-        # get byte size per pixel from config main camera pixel format
-        main_cam_pix_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item
-        assert main_cam_pix_format is not None
-        match main_cam_pix_format.value:
-            case "mono8":
-                bytes_per_pixel = 1
-            case "mono10":
-                bytes_per_pixel = 2
-            case "mono12":
-                bytes_per_pixel = 2
-            case "mono14":
-                bytes_per_pixel = 2
-            case "mono16":
-                bytes_per_pixel = 2
-
-            case _unexpected:
-                cmds.error_internal(
-                    detail=f"unexpected main camera pixel format '{_unexpected}' in {main_cam_pix_format}"
-                )
-
-        self.image_size_bytes = target_width * target_height * bytes_per_pixel
-        self.max_storage_size_images_GB = self.num_images_total * self.image_size_bytes / 1024**3
 
         base_storage_path_item = StorageConfig.BASE_IMAGE_OUTPUT_DIR.value_item
         assert base_storage_path_item is not None

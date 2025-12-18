@@ -252,3 +252,71 @@ def set_firmware_config(config: FirmwareConfig) -> None:
 def get_available_profiles() -> list[str]:
     """Get list of available profile names"""
     return list(AVAILABLE_PROFILES.keys())
+
+
+def calculate_movement_time_s(
+    distance_mm: float,
+    max_velocity_mm_s: float,
+    acceleration_mm_s2: float,
+) -> float:
+    """
+    Calculate movement time for a single axis using trapezoidal motion profile.
+
+    Args:
+        distance_mm: Distance to travel in mm
+        max_velocity_mm_s: Maximum velocity in mm/s
+        acceleration_mm_s2: Acceleration in mm/s²
+
+    Returns:
+        Total movement time in seconds
+    """
+    if abs(distance_mm) < 0.001:
+        return 0.0
+
+    distance = abs(distance_mm)
+
+    # Time to reach max velocity
+    accel_time = max_velocity_mm_s / acceleration_mm_s2
+
+    # Distance covered during acceleration phase
+    accel_distance = 0.5 * acceleration_mm_s2 * accel_time**2
+
+    if distance <= 2 * accel_distance:
+        # Triangle profile - never reach max velocity
+        accel_time_actual = (distance / acceleration_mm_s2) ** 0.5
+        return 2 * accel_time_actual
+    else:
+        # Trapezoid profile - accelerate, constant velocity, decelerate
+        const_vel_distance = distance - 2 * accel_distance
+        const_vel_time = const_vel_distance / max_velocity_mm_s
+        return 2 * accel_time + const_vel_time
+
+
+def estimate_xy_movement_time_s(distance_x_mm: float, distance_y_mm: float) -> float:
+    """
+    Estimate movement time for simultaneous X and Y axis movement.
+
+    Since axes move in parallel, total time is the max of both axes.
+    Uses current firmware config for velocity/acceleration parameters.
+
+    Args:
+        distance_x_mm: X distance in mm
+        distance_y_mm: Y distance in mm
+
+    Returns:
+        Movement time in seconds
+    """
+    config = get_firmware_config()
+
+    time_x = calculate_movement_time_s(
+        distance_x_mm,
+        config.MAX_VELOCITY_X_mm,
+        config.MAX_ACCELERATION_X_mm,
+    )
+    time_y = calculate_movement_time_s(
+        distance_y_mm,
+        config.MAX_VELOCITY_Y_mm,
+        config.MAX_ACCELERATION_Y_mm,
+    )
+
+    return max(time_x, time_y)
