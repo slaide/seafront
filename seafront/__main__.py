@@ -553,13 +553,13 @@ class Core:
             try:
                 await ws.send_json(payload)
             except Exception as exc:
-                logger.debug("websocket send_json failed: %s", exc)
+                logger.debug(f"websocket send_json failed: {exc}")
 
         async def _safe_send_bytes(ws: WebSocket, payload: bytes) -> None:
             try:
                 await ws.send_bytes(payload)
             except Exception as exc:
-                logger.debug("websocket send_bytes failed: %s", exc)
+                logger.debug(f"websocket send_bytes failed: {exc}")
 
         @app.websocket("/ws/get_info/current_state")
         async def ws_get_info_current_state(ws: WebSocket):
