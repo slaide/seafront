@@ -340,7 +340,7 @@
                         <span class="confirm-value" x-text="acquisitionConfirm.estimate ? `${acquisitionConfirm.estimate.max_storage_size_GB.toFixed(2)} GB` : '--'"></span>
                     </div>
                     <div class="confirm-row confirm-highlight">
-                        <span class="confirm-label">Est. time:</span>
+                        <span class="confirm-label" x-init="enabletooltip($el)" tooltip="this is super rough estimate, usually (!) 50-200% of the actual time.">Est. time:</span>
                         <span class="confirm-value" x-text="acquisitionConfirm.estimatedTimeString"></span>
                     </div>
                 </div>
@@ -2136,8 +2136,8 @@
                                         <!-- Row 1: LAF Reference status -->
                                         <label
                                             x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Laser autofocus reference plane. When set, the microscope can return to this focus position.`"
-                                        >LAF Reference</label>
+                                            x-bind:tooltip="`Laser autofocus reference plane (i.e. z position).`"
+                                        >LAF Reference z pos.</label>
                                         <span x-text="laserAutofocusReferenceText" style="grid-column: span 2;"></span>
 
                                         <!-- Row 2: Reference channel dropdown -->
