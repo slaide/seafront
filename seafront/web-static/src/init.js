@@ -3099,7 +3099,10 @@ document.addEventListener("alpine:init", () => {
             return `${offset >= 0 ? '+' : ''}${offset.toFixed(1)} μm`;
         },
 
-        /** Format an offset value for display */
+        /**
+         * Format an offset value for display
+         * @param {number} value 
+         * */
         focusFormatOffset(value) {
             const offset = value ?? 0;
             return `${offset >= 0 ? '+' : ''}${offset.toFixed(1)} μm`;

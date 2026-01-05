@@ -438,6 +438,23 @@ declare global {
     type AcquisitionStatusResponse = AcquisitionStatusOut;
     type AcquisitionStartError = InternalErrorModel;
 
+    /** Pre-acquisition estimate for confirmation dialog */
+    type AcquisitionEstimate = {
+        project_name: string;
+        plate_name: string;
+        num_selected_wells: int;
+        num_selected_sites: int;
+        num_channels: int;
+        /** Total z-planes across all channels (sum of each channel's num_z_planes) */
+        num_z_planes_total: int;
+        num_timepoints: int;
+        total_num_images: int;
+        /** Upper bound storage estimate (uncompressed) */
+        max_storage_size_GB: float;
+        /** Estimated acquisition time in seconds (null if cannot be estimated) */
+        estimated_time_s: float | null;
+    };
+
     type LaserAutofocusCalibrateRequest = {};
     type LaserAutofocusCalibrateResponse = {
         calibration_data: {
