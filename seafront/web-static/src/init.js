@@ -2961,7 +2961,7 @@ document.addEventListener("alpine:init", () => {
             const laser_autofocus_calibration_refzmm =
                 this.getMachineConfigItem("laser.autofocus.calibration.ref_z_mm");
             if (!is_calibrated || !laser_autofocus_calibration_refzmm) {
-                return "(none set)";
+                return "(not set yet)";
             }
 
             if (laser_autofocus_calibration_refzmm.value_kind != "float") {

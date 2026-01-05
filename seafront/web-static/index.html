@@ -2133,14 +2133,7 @@
                                             }
                                         </style>
 
-                                        <!-- Row 1: LAF Reference status -->
-                                        <label
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Laser autofocus reference plane (i.e. z position).`"
-                                        >LAF Reference z pos.</label>
-                                        <span x-text="laserAutofocusReferenceText" style="grid-column: span 2;"></span>
-
-                                        <!-- Row 2: Reference channel dropdown -->
+                                        <!-- Row 1: Reference channel dropdown -->
                                         <label
                                             x-init="enabletooltip($el)"
                                             x-bind:tooltip="`Select which channel to use for focusing and LAF calibration.`"
@@ -2170,6 +2163,16 @@
                                                 x-bind:tooltip="`Calibrate laser autofocus at current Z position and set as reference for channel offsets.`"
                                             >Calibrate LAF here</button>
                                         </span>
+
+                                        <!-- Divider -->
+                                        <div class="section-divider"></div>
+
+                                        <!-- Row 2: LAF Reference status -->
+                                        <label
+                                            x-init="enabletooltip($el)"
+                                            x-bind:tooltip="`Laser autofocus reference plane (i.e. z position).`"
+                                        >LAF Reference z pos.</label>
+                                        <span x-text="laserAutofocusReferenceText" style="grid-column: span 2;"></span>
 
                                         <!-- Divider -->
                                         <div class="section-divider"></div>
