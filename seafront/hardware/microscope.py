@@ -323,6 +323,22 @@ class Microscope(BaseModel, abc.ABC):
         """
         pass
 
+    @abc.abstractmethod
+    def estimate_acquisition(self, config: sc.AcquisitionConfig) -> cmd.AcquisitionEstimate:
+        """
+        Estimate storage and time requirements for an acquisition.
+
+        Each microscope implementation can provide its own estimates based on
+        its hardware characteristics (stage speed, camera frame rate, etc.).
+
+        Args:
+            config: The acquisition configuration to estimate
+
+        Returns:
+            AcquisitionEstimate with storage and time estimates
+        """
+        pass
+
 
 def microscope_exclusive(f):
     """

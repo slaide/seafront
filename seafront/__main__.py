@@ -64,6 +64,9 @@ from seafront.logger import logger
 from seafront.hardware.forbidden_areas import ForbiddenAreaList
 from seafront.server.commands import (
     AcquisitionCommand,
+    AcquisitionEstimate,
+    AcquisitionMetaInformation,
+    AcquisitionProgressStatus,
     AcquisitionStartResponse,
     AcquisitionStatus,
     AcquisitionStatusOut,
@@ -552,13 +555,13 @@ class Core:
             try:
                 await ws.send_json(payload)
             except Exception as exc:
-                logger.debug("websocket send_json failed: %s", exc)
+                logger.debug(f"websocket send_json failed: {exc}")
 
         async def _safe_send_bytes(ws: WebSocket, payload: bytes) -> None:
             try:
                 await ws.send_bytes(payload)
             except Exception as exc:
-                logger.debug("websocket send_bytes failed: %s", exc)
+                logger.debug(f"websocket send_bytes failed: {exc}")
 
         @app.websocket("/ws/get_info/current_state")
         async def ws_get_info_current_state(ws: WebSocket):
@@ -690,6 +693,16 @@ class Core:
             methods=["POST"],
         )
 
+        # Register URL for get_acquisition_estimate
+        route_wrapper(
+            "/api/acquisition/estimate",
+            CustomRoute(
+                handler=self.get_acquisition_estimate,
+                tags=[RouteTag.ACQUISITION_CONTROLS.value],
+            ),
+            methods=["POST"],
+        )
+
         @app.websocket("/ws/acquisition/status")
         async def ws_acquisition_status(ws: WebSocket):
             await ws.accept()
@@ -697,7 +710,15 @@ class Core:
                 while True:
                     # await message, but ignore its contents
                     args = await ws.receive_json()
-                    await _safe_send_json(ws, (await self.get_acquisition_status(**args)).model_dump())
+                    try:
+                        status = await self.get_acquisition_status(**args)
+                        await _safe_send_json(ws, status.model_dump())
+                    except HTTPException as e:
+                        # Send error as JSON instead of crashing the WebSocket
+                        await _safe_send_json(ws, {"error": str(e.detail)})
+                    except Exception as e:
+                        logger.warning(f"Error getting acquisition status: {e}")
+                        await _safe_send_json(ws, {"error": str(e)})
             except WebSocketDisconnect:
                 pass
 
@@ -1742,6 +1763,15 @@ class Core:
             error_internal(detail="no status available")
         else:
             return acq_res.last_status
+
+    async def get_acquisition_estimate(self, config_file: sc.AcquisitionConfig) -> AcquisitionEstimate:
+        """
+        Get storage and time estimates for an acquisition without starting it.
+
+        This endpoint allows the frontend to show a confirmation dialog with
+        estimates before the user commits to starting an acquisition.
+        """
+        return self.microscope.estimate_acquisition(config_file)
 
     async def start_progressive_channel_snap(
         self, config_file: sc.AcquisitionConfig, callback_id: str

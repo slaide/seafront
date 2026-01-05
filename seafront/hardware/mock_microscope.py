@@ -737,6 +737,104 @@ class MockMicroscope(Microscope):
         # Mock microscope has no real hardware, so no extension needed
         pass
 
+    def estimate_acquisition(self, config: sc.AcquisitionConfig) -> cmd.AcquisitionEstimate:
+        """
+        Estimate storage and time requirements for a mock acquisition.
+
+        Uses simulated movement parameters from firmware config.
+        """
+        from seafront.hardware.firmware_config import (
+            calculate_movement_time_s,
+            estimate_xy_movement_time_s,
+            get_firmware_config,
+        )
+
+        metrics = cmd.calculate_acquisition_metrics(config)
+        firmware_config = get_firmware_config()
+
+        # Calculate time per site: sum of exposure times for all enabled channels/z-planes
+        enabled_channels = [c for c in config.channels if c.enabled]
+        exposure_time_per_site_ms = sum(
+            c.exposure_time_ms * c.num_z_planes for c in enabled_channels
+        )
+
+        num_sites_total = metrics.num_wells * metrics.num_sites * metrics.num_timepoints
+
+        if self._realistic_delays_enabled:
+            # Mock adds 10ms overhead per image for readout/processing
+            num_images_per_site = sum(c.num_z_planes for c in enabled_channels)
+            overhead_per_site_ms = num_images_per_site * 10.0
+            estimated_time_s = num_sites_total * (exposure_time_per_site_ms + overhead_per_site_ms) / 1000
+
+            # XY stabilization time after each XY move
+            xy_stabilization_time_s = max(
+                firmware_config.SCAN_STABILIZATION_TIME_MS_X,
+                firmware_config.SCAN_STABILIZATION_TIME_MS_Y,
+            ) / 1000.0
+
+            # Z stabilization time after each Z move
+            z_stabilization_time_s = firmware_config.SCAN_STABILIZATION_TIME_MS_Z / 1000.0
+
+            # Z movement time per image (protocol moves Z for each image)
+            # Estimate typical Z move distance as ~10um between adjacent z-positions
+            typical_z_move_mm = 0.01
+            z_move_time_s = calculate_movement_time_s(
+                typical_z_move_mm,
+                firmware_config.MAX_VELOCITY_Z_mm,
+                firmware_config.MAX_ACCELERATION_Z_mm,
+            )
+            # Add Z overhead for each image (movement + stabilization)
+            estimated_time_s += metrics.total_num_images * (z_move_time_s + z_stabilization_time_s)
+
+            # Backlash compensation: 2 extra Z moves of 40um per site
+            backlash_move_mm = 0.04
+            backlash_move_time_s = calculate_movement_time_s(
+                backlash_move_mm,
+                firmware_config.MAX_VELOCITY_Z_mm,
+                firmware_config.MAX_ACCELERATION_Z_mm,
+            )
+            estimated_time_s += num_sites_total * 2 * (backlash_move_time_s + z_stabilization_time_s)
+
+            # Inter-well movement time (movement + stabilization)
+            if metrics.num_wells > 1:
+                plate = config.wellplate_type
+                typical_move_x = plate.Well_distance_x_mm * 2
+                typical_move_y = plate.Well_distance_y_mm * 2
+                time_per_well_move_s = estimate_xy_movement_time_s(typical_move_x, typical_move_y)
+                num_well_moves = (metrics.num_wells - 1) * metrics.num_timepoints
+                estimated_time_s += num_well_moves * (time_per_well_move_s + xy_stabilization_time_s)
+
+            # Intra-well site-to-site movement (if multiple sites per well)
+            if metrics.num_sites > 1:
+                # Estimate typical site spacing based on grid
+                site_spacing_mm = 1.0  # Conservative estimate for site spacing
+                time_per_site_move_s = estimate_xy_movement_time_s(site_spacing_mm, site_spacing_mm)
+                num_site_moves = metrics.num_wells * (metrics.num_sites - 1) * metrics.num_timepoints
+                estimated_time_s += num_site_moves * (time_per_site_move_s + xy_stabilization_time_s)
+        else:
+            # No delays - just exposure time
+            estimated_time_s = (num_sites_total * exposure_time_per_site_ms) / 1000
+
+        # Add time between timepoints for time series
+        if metrics.num_timepoints > 1:
+            delta_t_s = config.grid.delta_t.h * 3600 + config.grid.delta_t.m * 60 + config.grid.delta_t.s
+            imaging_time_per_timepoint = estimated_time_s / metrics.num_timepoints
+            wait_per_timepoint = max(0, delta_t_s - imaging_time_per_timepoint)
+            estimated_time_s += wait_per_timepoint * (metrics.num_timepoints - 1)
+
+        return cmd.AcquisitionEstimate(
+            project_name=config.project_name,
+            plate_name=config.plate_name,
+            num_selected_wells=metrics.num_wells,
+            num_selected_sites=metrics.num_sites,
+            num_channels=metrics.num_channels,
+            num_z_planes_total=metrics.num_z_planes_total,
+            num_timepoints=metrics.num_timepoints,
+            total_num_images=metrics.total_num_images,
+            max_storage_size_GB=metrics.max_storage_size_GB,
+            estimated_time_s=estimated_time_s,
+        )
+
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         """Execute mock commands."""
 

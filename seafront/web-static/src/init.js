@@ -146,6 +146,14 @@ document.addEventListener("alpine:init", () => {
         /** @type {string|null} */
         _deltaTWarningShownForAcquisition: null,
 
+        // Acquisition confirmation modal state
+        /** @type {{ show: boolean, estimate: AcquisitionEstimate | null, estimatedTimeString: string }} */
+        acquisitionConfirm: {
+            show: false,
+            estimate: null,
+            estimatedTimeString: '--'
+        },
+
         // Mock mode indicator
         mockModeActive: false,
 
@@ -1207,7 +1215,6 @@ document.addEventListener("alpine:init", () => {
                         /* cached image older than latest image */ channel_info.timestamp >
                         cached_image.info.timestamp;
 
-                    //console.log(`${channel_handle} image_cache_outdated? ${image_cache_outdated} (${channel_info.timestamp} ${cached_image?.info.timestamp})`)
                     if (!image_cache_outdated) {
                         continue;
                     }
@@ -1577,6 +1584,12 @@ document.addEventListener("alpine:init", () => {
                         onMessage: (ev) => {
                             const data = JSON.parse(ev.data);
                             if(typeof data != "object")throw new Error(`event data has wrong type ${typeof data}`);
+
+                            // Check for error responses from server
+                            if (data.error) {
+                                console.warn('Acquisition status error:', data.error);
+                                return; // Don't update status with error response
+                            }
 
                             // Store previous status to detect state changes
                             const previousStatus = this.latest_acquisition_status;
@@ -2368,6 +2381,73 @@ document.addEventListener("alpine:init", () => {
                 throw error;
             }
         },
+
+        /**
+         * Format seconds into a human-readable time string
+         * @param {number} seconds
+         * @returns {string}
+         */
+        formatTimeEstimate(seconds) {
+            if (seconds == null || seconds < 0) {
+                return '0s';
+            }
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+
+            if (hours > 0) {
+                return `${hours}h ${minutes}m`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${secs}s`;
+            } else {
+                return `${secs}s`;
+            }
+        },
+
+        /**
+         * Show confirmation dialog before starting acquisition.
+         * Fetches estimates from the server first.
+         */
+        async showAcquisitionConfirmation() {
+            try {
+                await this.machineConfigFlush();
+
+                // Model is always in backend format
+                const backend_config = this.microscope_config_copy;
+
+                // mutate copy (to fix some errors we introduce in the interface)
+                // 1) remove wells that are unselected or invalid
+                backend_config.plate_wells = backend_config.plate_wells.filter(
+                    (w) => w.selected && w.col >= 0 && w.row >= 0,
+                );
+
+                // Fetch estimate from server
+                const estimate = await this.api.post('/api/acquisition/estimate', {
+                    config_file: backend_config
+                }, {
+                    context: 'Acquisition estimate',
+                    showError: true
+                });
+
+                // Update state and show dialog
+                this.acquisitionConfirm.estimate = estimate;
+                this.acquisitionConfirm.estimatedTimeString = this.formatTimeEstimate(estimate.estimated_time_s);
+                this.acquisitionConfirm.show = true;
+            } catch (error) {
+                console.error('Failed to get acquisition estimate:', error);
+                // Show error but don't block - could still proceed with acquisition
+                this.showError('Estimate Failed', error.message || error.toString());
+            }
+        },
+
+        /**
+         * Start acquisition after user confirms in the dialog.
+         */
+        async acquisitionConfirmStart() {
+            this.acquisitionConfirm.show = false;
+            await this.acquisition_start();
+        },
+
         /** @type {AcquisitionStatusOut?} */
         latest_acquisition_status: null,
         
@@ -2514,19 +2594,46 @@ document.addEventListener("alpine:init", () => {
 
                 /**
                  * Snap all selected channels with autofocus and z-offsets
-                 * @returns {Promise<ChannelSnapSelectionResponse>}
+                 * @returns {Promise<void>}
                  */
-                snapAllChannels: () => {
-                    return this.machineConfigFlush().then(() => {
-                        // Create acquisition config with current microscope config
-                        const body = {
-                            config_file: this.microscope_config
-                        };
+                snapAllChannels: async () => {
+                    await this.machineConfigFlush();
 
-                        return this.api.post('/api/action/snap_selected_channels', body, {
-                            context: 'Snap selected channels'
-                        });
+                    // Get current z as default reference
+                    let currentState = await this.api.post('/api/get_info/current_state', {}, {
+                        context: 'Get current state'
                     });
+                    let focusedZ_mm = currentState.adapter_state.stage_position.z_pos_mm;
+
+                    // Step 1: If autofocus enabled, focus to offset 0
+                    if (this.microscope_config.autofocus_enabled) {
+                        await this.Actions.laserAutofocusMoveToTargetOffset({
+                            config_file: this.microscope_config,
+                            target_offset_um: 0
+                        });
+
+                        // Update z position after focusing
+                        currentState = await this.api.post('/api/get_info/current_state', {}, {
+                            context: 'Get current state after autofocus'
+                        });
+                        focusedZ_mm = currentState.adapter_state.stage_position.z_pos_mm;
+                    }
+
+                    // Step 2: Snap each enabled channel with z-offset
+                    const enabledChannels = this.microscope_config.channels.filter(ch => ch.enabled);
+
+                    for (const channel of enabledChannels) {
+                        const targetZ_mm = focusedZ_mm + (channel.z_offset_um * 0.001);
+                        await this.Actions.moveTo({ z_mm: targetZ_mm });
+
+                        await this.Actions.snapChannel({
+                            channel: channel,
+                            machine_config: this.microscope_config.machine_config || []
+                        });
+                    }
+
+                    // Step 3: Return to focused z position (so live view is in focus)
+                    await this.Actions.moveTo({ z_mm: focusedZ_mm });
                 },
 
                 /**
@@ -2633,11 +2740,38 @@ document.addEventListener("alpine:init", () => {
                 config_file: this.microscope_config_copy,
                 target_offset_um: this.laserAutofocusTargetOffsetUM,
             });
-            
+
             // Automatically measure the current offset after moving to target
             await this.button_laserAutofocusMeasureOffset();
-            
+
             return res;
+        },
+        /**
+         * Focus via laser autofocus and update reference position.
+         * This runs autofocus to offset 0 and then updates the reference
+         * XY/Z so that "current offset from reference" shows 0.
+         */
+        async button_laserAutofocusFocus() {
+            // Run autofocus to offset 0
+            await this.Actions.laserAutofocusMoveToTargetOffset({
+                config_file: this.microscope_config_copy,
+                target_offset_um: 0,
+            });
+
+            // Small delay to ensure position is updated
+            await new Promise(r => setTimeout(r, 100));
+
+            // Update reference position so offset shows as 0
+            const x_mm = this.state.adapter_state?.stage_position?.x_pos_mm;
+            const y_mm = this.state.adapter_state?.stage_position?.y_pos_mm;
+            const z_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (x_mm != null && y_mm != null && z_mm != null) {
+                this.focusReferenceZ = z_mm;
+                this.focusReferenceXY = { x: x_mm, y: y_mm };
+            }
+
+            // Automatically measure the current offset after focusing
+            await this.button_laserAutofocusMeasureOffset();
         },
         /**
          * offset and position where it was measured
@@ -2910,8 +3044,185 @@ document.addEventListener("alpine:init", () => {
             if (!this.laserAutofocusMeasuredOffset) {
                 return noresult;
             }
-            return this.laserAutofocusMeasuredOffset.displacement_um;
+            const offset = this.laserAutofocusMeasuredOffset.displacement_um;
+            return `${offset >= 0 ? '+' : ''}${offset.toFixed(2)} μm`;
         },
+
+        // ============ Focus & Channel Offset Calibration ============
+
+        /** @type {string|null} Selected reference channel handle */
+        focusReferenceChannelHandle: null,
+
+        /** @type {number|null} Reference Z position for offset calibration (mm) */
+        focusReferenceZ: null,
+
+        /** @type {{x: number, y: number}|null} Reference XY position where focus was calibrated (mm) */
+        focusReferenceXY: null,
+
+        /** @type {Set<string>} Channel handles with offsets confirmed using current reference */
+        focusConfirmedChannels: new Set(),
+
+        /** Get the reference channel object */
+        get focusReferenceChannel() {
+            if (!this.focusReferenceChannelHandle) return null;
+            return this.microscope_config.channels.find(
+                c => c.handle === this.focusReferenceChannelHandle
+            ) ?? null;
+        },
+
+        /** Check if current XY position matches the reference XY position */
+        get focusIsAtReferenceXY() {
+            if (this.focusReferenceXY == null) return false;
+            const current_x = this.state.adapter_state?.stage_position?.x_pos_mm;
+            const current_y = this.state.adapter_state?.stage_position?.y_pos_mm;
+            if (current_x == null || current_y == null) return false;
+            // Allow small tolerance for floating point comparison (1 μm)
+            const tolerance = 0.001;
+            return Math.abs(current_x - this.focusReferenceXY.x) < tolerance &&
+                   Math.abs(current_y - this.focusReferenceXY.y) < tolerance;
+        },
+
+        /** Getter: live offset relative to reference (updates with stage position) */
+        get focusLiveOffsetUM() {
+            if (this.focusReferenceZ == null) return null;
+            // Only show offset if we're at the same XY position where we calibrated
+            if (!this.focusIsAtReferenceXY) return null;
+            const current_z_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (current_z_mm == null) return null;
+            return (current_z_mm - this.focusReferenceZ) * 1000;
+        },
+
+        /** Getter: formatted live offset text */
+        get focusLiveOffsetText() {
+            const offset = this.focusLiveOffsetUM;
+            if (offset == null) return "—";
+            return `${offset >= 0 ? '+' : ''}${offset.toFixed(1)} μm`;
+        },
+
+        /** Format an offset value for display */
+        focusFormatOffset(value) {
+            const offset = value ?? 0;
+            return `${offset >= 0 ? '+' : ''}${offset.toFixed(1)} μm`;
+        },
+
+        /** Calibrate LAF at current position (uses reference channel focus) */
+        async focusCalibrateLAFHere() {
+            // Store current position as the reference for channel offsets
+            const x_mm = this.state.adapter_state?.stage_position?.x_pos_mm;
+            const y_mm = this.state.adapter_state?.stage_position?.y_pos_mm;
+            const z_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (x_mm == null || y_mm == null || z_mm == null) {
+                throw new Error("No position available");
+            }
+            this.focusReferenceZ = z_mm;
+            this.focusReferenceXY = { x: x_mm, y: y_mm };
+
+            // Clear confirmed channels since reference changed
+            this.focusConfirmedChannels = new Set();
+
+            // Calibrate LAF
+            await this.buttons_calibrateLaserAutofocusHere();
+        },
+
+        /**
+         * Toggle live streaming for a channel.
+         * Uses the same mechanism as the Live Acquisition panel.
+         * @param {AcquisitionChannelConfig} channel
+         */
+        async focusToggleLive(channel) {
+            const currentlyStreamingThis = this.isStreaming &&
+                this.actionInput.live_acquisition_channelhandle === channel.handle;
+
+            if (currentlyStreamingThis) {
+                // Stop streaming this channel
+                await this.buttons_endStreaming();
+            } else {
+                // Stop any existing stream first
+                if (this.isStreaming) {
+                    await this.buttons_endStreaming();
+                }
+                // Set the channel and start streaming
+                this.actionInput.live_acquisition_channelhandle = channel.handle;
+                await this.buttons_startStreaming();
+            }
+        },
+
+        /**
+         * Check if a channel is currently streaming
+         * @param {AcquisitionChannelConfig} channel
+         */
+        focusIsChannelStreaming(channel) {
+            return this.isStreaming &&
+                this.actionInput.live_acquisition_channelhandle === channel.handle;
+        },
+
+        /**
+         * Confirm/apply current offset to a channel
+         * @param {AcquisitionChannelConfig} channel
+         */
+        focusConfirmOffset(channel) {
+            const offset = this.focusLiveOffsetUM;
+            if (offset == null) throw new Error("No reference set - calibrate LAF first");
+
+            channel.z_offset_um = offset;
+            this.focusConfirmedChannels.add(channel.handle);
+        },
+
+        /**
+         * Check if a channel's offset has been confirmed with current reference
+         * @param {AcquisitionChannelConfig} channel
+         */
+        focusIsOffsetConfirmed(channel) {
+            return this.focusConfirmedChannels.has(channel.handle);
+        },
+
+        /** @type {number|null} Last measured offset using the accurate stage-based method (μm) */
+        focusMeasuredOffsetUM: null,
+
+        /** Getter: formatted measured offset text */
+        get focusMeasuredOffsetText() {
+            if (this.focusMeasuredOffsetUM == null) return "(not measured)";
+            const offset = this.focusMeasuredOffsetUM;
+            return `${offset >= 0 ? '+' : ''}${offset.toFixed(1)} μm`;
+        },
+
+        /**
+         * Accurate offset measurement using actual stage movement:
+         * 1. Store current Z position
+         * 2. Move to LAF reference (target offset 0)
+         * 3. Read actual Z position after move
+         * 4. Calculate offset = (start Z - reference Z)
+         * 5. Move back to original position
+         */
+        async focusMeasureOffsetAccurate() {
+            if (!this.laserAutofocusIsCalibrated) {
+                throw new Error("LAF not calibrated - calibrate first");
+            }
+
+            // 1. Store current Z
+            const startZ_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (startZ_mm == null) throw new Error("No Z position available");
+
+            // 2. Move to LAF reference (target offset 0)
+            await this.Actions.laserAutofocusMoveToTargetOffset({
+                config_file: this.microscope_config,
+                target_offset_um: 0,
+            });
+
+            // 3. Read actual Z after move
+            // Small delay to ensure position is updated
+            await new Promise(r => setTimeout(r, 100));
+            const refZ_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
+            if (refZ_mm == null) throw new Error("No Z position available after move");
+
+            // 4. Calculate offset
+            this.focusMeasuredOffsetUM = (startZ_mm - refZ_mm) * 1000;
+
+            // 5. Move back to original position
+            await this.Actions.moveTo({ z_mm: startZ_mm });
+        },
+
+        // ============ End Focus & Channel Offset Calibration ============
 
         laserAutofocusDebug_numz: 7,
         laserAutofocusDebug_totalz_um: 400,
