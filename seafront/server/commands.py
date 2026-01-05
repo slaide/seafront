@@ -331,6 +331,13 @@ class AcquisitionProgressStatus(BaseModel):
     # last image that was acquired
     last_image: ImageStoreInfo | None
 
+    # per-timepoint timing (for time series acquisitions)
+    # frontend can compare estimated_timepoint_duration_s against delta_t from config
+    # to warn user if imaging takes longer than the scheduled interval
+    current_timepoint: int | None = None
+    total_timepoints: int | None = None
+    estimated_timepoint_duration_s: float | None = None
+
 
 class AcquisitionMetaInformation(BaseModel):
     total_num_images: int

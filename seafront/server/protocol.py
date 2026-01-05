@@ -896,6 +896,9 @@ class ProtocolGenerator(BaseModel):
         estimated_remaining_time_s: float | None,
         last_image_information: cmds.ImageStoreInfo | None,
         message: str,
+        current_timepoint: int | None = None,
+        total_timepoints: int | None = None,
+        estimated_timepoint_duration_s: float | None = None,
     ) -> None:
         """Update acquisition status with current progress"""
         self.acquisition_status.last_status = cmds.AcquisitionStatusOut(
@@ -908,6 +911,9 @@ class ProtocolGenerator(BaseModel):
                 current_storage_usage_GB=storage_usage_bytes / (1024**3),
                 estimated_remaining_time_s=estimated_remaining_time_s,
                 last_image=last_image_information,
+                current_timepoint=current_timepoint,
+                total_timepoints=total_timepoints,
+                estimated_timepoint_duration_s=estimated_timepoint_duration_s,
             ),
             acquisition_meta_information=cmds.AcquisitionMetaInformation(
                 total_num_images=self.num_images_total,
@@ -1350,6 +1356,7 @@ class ProtocolGenerator(BaseModel):
                         time_since_start_s = time.time() - start_time
 
                         # Estimate remaining time from imaging progress
+                        est_imaging_per_tp: float | None = None
                         if num_images_acquired > 0:
                             images_remaining = self.num_images_total - num_images_acquired
 
@@ -1398,6 +1405,9 @@ class ProtocolGenerator(BaseModel):
                             estimated_remaining_time_s=estimated_remaining_time_s,
                             last_image_information=last_image_information,
                             message=f"Acquisition is {(100 * num_images_acquired / self.num_images_total):.2f}% complete",
+                            current_timepoint=timepoint if self.num_timepoints > 1 else None,
+                            total_timepoints=self.num_timepoints if self.num_timepoints > 1 else None,
+                            estimated_timepoint_duration_s=est_imaging_per_tp,
                         )
 
             # sleep for additional time, maybe
@@ -1428,6 +1438,8 @@ class ProtocolGenerator(BaseModel):
                     # Current wait + remaining timepoints
                     remaining_full_cycles = self.num_timepoints - timepoint - 1
                     estimated_remaining_during_wait = time_remaining + (remaining_full_cycles * time_per_timepoint) + time_elapsed_s
+                    # Use average of completed timepoint times for the estimate
+                    avg_timepoint_duration = sum(self.completed_timepoint_imaging_times) / len(self.completed_timepoint_imaging_times)
                     self._update_acquisition_status(
                         status=cmds.AcquisitionStatusStage.RUNNING,
                         current_num_images=num_images_acquired,
@@ -1437,6 +1449,9 @@ class ProtocolGenerator(BaseModel):
                         estimated_remaining_time_s=estimated_remaining_during_wait,
                         last_image_information=last_image_information,
                         message=f"Waiting for next timepoint ({time_remaining:.1f}s remaining)...",
+                        current_timepoint=timepoint,
+                        total_timepoints=self.num_timepoints,
+                        estimated_timepoint_duration_s=avg_timepoint_duration,
                     )
 
                     await asyncio.sleep(min(time_remaining,timeslice_s))

@@ -411,6 +411,11 @@ declare global {
         estimated_remaining_time_s: float | null;
 
         last_image: ImageStoreInfo | null;
+
+        // per-timepoint timing (for time series acquisitions)
+        current_timepoint: int | null;
+        total_timepoints: int | null;
+        estimated_timepoint_duration_s: float | null;
     };
     type AcquisitionMetaInformation = {
         total_num_images: int;

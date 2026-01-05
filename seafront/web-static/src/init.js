@@ -142,6 +142,10 @@ document.addEventListener("alpine:init", () => {
             showReloadButton: false
         },
 
+        // Track if Delta-T warning has been shown for current acquisition (to avoid spamming)
+        /** @type {string|null} */
+        _deltaTWarningShownForAcquisition: null,
+
         // Mock mode indicator
         mockModeActive: false,
 
@@ -1585,6 +1589,30 @@ document.addEventListener("alpine:init", () => {
                                     console.log(`Detected crashed acquisition with message: ${data.message}`);
                                     if (!previousStatus || previousStatus.acquisition_status !== 'crashed' || previousStatus.message !== data.message) {
                                         this.showError('Acquisition Failed', data.message);
+                                    }
+                                }
+
+                                // Check for Delta-T warning (timepoint duration exceeds scheduled interval)
+                                // Only check after 10 seconds have elapsed so the estimate has some accuracy
+                                const progress = data.acquisition_progress;
+                                const config = data.acquisition_config;
+                                const elapsedTime = progress?.time_since_start_s ?? 0;
+                                if (elapsedTime >= 10 && progress?.current_timepoint && progress?.total_timepoints > 1 && progress?.estimated_timepoint_duration_s != null) {
+                                    const deltaT = config?.grid?.delta_t;
+                                    if (deltaT) {
+                                        const scheduledDeltaT = (deltaT.h || 0) * 3600 + (deltaT.m || 0) * 60 + (deltaT.s || 0);
+                                        const estimatedDuration = progress.estimated_timepoint_duration_s;
+
+                                        // Show warning once per acquisition if imaging exceeds delta-t
+                                        if (estimatedDuration > scheduledDeltaT && this._deltaTWarningShownForAcquisition !== data.acquisition_id) {
+                                            this._deltaTWarningShownForAcquisition = data.acquisition_id;
+                                            this.showError(
+                                                'Time Series Interval Warning',
+                                                `The actual time between timepoints in the acquisition is longer than configured, due to physical constraints.`
+												+ `\n\nEach timepoint takes approximately ${estimatedDuration.toFixed(1)} seconds to acquire, though the configured interval between timepoints is ${scheduledDeltaT.toFixed(1)} seconds.`
+                                                + `\n\nAcquisition will continue but the actual time between timepoints will be longer than configured!`
+                                            );
+                                        }
                                     }
                                 }
                             }
