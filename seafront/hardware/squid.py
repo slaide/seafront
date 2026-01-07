@@ -44,12 +44,14 @@ from seafront.hardware.camera import (
     camera_open,
 )
 from seafront.hardware.illumination import IlluminationController
+from seafront.hardware.adapter import DeviceAlreadyInUseError
 from seafront.hardware.microscope import DisconnectError, HardwareLimits, Locked, Microscope, microscope_exclusive
 from seafront.logger import logger
 from seafront.server import commands as cmd
 from seafront.server.commands import (
     BasicSuccessResponse,
     IlluminationEndAll,
+    error_device_in_use,
     error_internal,
 )
 
@@ -269,6 +271,9 @@ class SquidAdapter(Microscope):
                 logger.debug("startup - connected to focus cam")
                 mc.open()
                 logger.debug("startup - connected to microcontroller")
+            except DeviceAlreadyInUseError:
+                # Don't convert to DisconnectError - let it propagate for specific handling
+                raise
             except GalaxyCameraOffline as e:
                 logger.critical("startup - camera offline")
                 raise DisconnectError() from e
@@ -1108,6 +1113,10 @@ class SquidAdapter(Microscope):
 
                 logger.info("squid - connect - calibrated stage")
 
+            except DeviceAlreadyInUseError as e:
+                logger.critical(f"squid - connect - {e}")
+                logger.critical("Please close any other instances of Seafront before starting a new one.")
+                error_device_in_use(e.device_type, e.device_id)
             except DisconnectError:
                 error_message = "hardware connection could not be established"
                 logger.critical(f"squid - connect - {error_message}")

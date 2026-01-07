@@ -85,6 +85,22 @@ def error_microscope_busy(busy_reasons: list[str]) -> tp.NoReturn:
     )
 
 
+def error_device_in_use(device_type: str, device_id: str) -> tp.NoReturn:
+    """raise an HTTPException when a device is already in use by another process"""
+    message = f"{device_type} '{device_id}' is already in use by another process"
+    logger.critical(f"error_device_in_use - {message}")
+
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "message": message,
+            "error_type": "device_in_use",
+            "device_type": device_type,
+            "device_id": device_id,
+        }
+    )
+
+
 def positionIsForbidden(
     x_mm: float,
     y_mm: float,

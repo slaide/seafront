@@ -2249,10 +2249,10 @@ def main():
 
     # Define hardware connection function (but don't start it yet)
     def establish_hardware_connection():
-        try:
-            import urllib.error
-            import urllib.request
+        import urllib.error
+        import urllib.request
 
+        try:
             server_base_url=f"http://127.0.0.1:{server_config.port}"
 
             # Wait for server to be ready by polling a simple endpoint
@@ -2303,6 +2303,20 @@ def main():
                         logger.warning(f"failed to initialize hardware limits cache: {e_limits}")
                 else:
                     logger.warning(f"hardware connection failed: {response.status}")
+        except urllib.error.HTTPError as e:
+            if e.code == 503:
+                # Device is already in use by another process - must exit
+                logger.critical(f"hardware connection failed: {e}")
+                logger.critical("A hardware device is already in use by another process.")
+                logger.critical("Shutting down server...")
+                # Send SIGINT to gracefully shut down uvicorn
+                os.kill(os.getpid(), signal.SIGINT)
+            elif e.code == 500:
+                # General hardware error - log but don't exit (user can retry via UI)
+                logger.warning(f"hardware connection failed: {e}")
+                logger.warning("Hardware connection could not be established. You may retry via the UI.")
+            else:
+                logger.warning(f"failed to establish hardware connection at startup: {e}")
         except Exception as e:
             logger.warning(f"failed to establish hardware connection at startup: {e}")
 

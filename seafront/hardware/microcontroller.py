@@ -17,7 +17,7 @@ import serial.tools.list_ports
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from seafront.config.basics import GlobalConfigHandler
-from seafront.hardware.adapter import Position as AdapterPosition
+from seafront.hardware.adapter import DeviceAlreadyInUseError, Position as AdapterPosition
 from seafront.hardware.firmware_config import get_firmware_config
 from seafront.logger import logger
 
@@ -1319,6 +1319,24 @@ class Microcontroller(BaseModel):
         )
         return None
 
+    @staticmethod
+    def _is_device_busy_error(e: IOError) -> bool:
+        """Check if an IOError indicates the device is already in use."""
+        import errno
+        # Check for common "device busy" error codes
+        if hasattr(e, 'errno'):
+            if e.errno == errno.EBUSY:  # 16: Device or resource busy
+                return True
+            if e.errno == errno.EACCES:  # 13: Permission denied (can indicate locked device)
+                return True
+        # Check error message for common patterns
+        error_msg = str(e).lower()
+        if "resource busy" in error_msg or "device or resource busy" in error_msg:
+            return True
+        if "could not exclusively lock" in error_msg:
+            return True
+        return False
+
     @microcontroller_exclusive
     def open(self):
         "open connection to device"
@@ -1332,6 +1350,11 @@ class Microcontroller(BaseModel):
             self.handle = serial.Serial(self.device_info.device, self.baudrate)
             logger.debug(f"open(): successfully opened {self.device_info.device}")
         except IOError as e:
+            # Check if device is already in use by another process
+            if self._is_device_busy_error(e):
+                device_id = self._usb_serial_number or self.device_info.device
+                raise DeviceAlreadyInUseError("Microcontroller", device_id) from e
+
             logger.error(
                 f"open(): IOError when opening {self.device_info.device}: "
                 f"type={type(e).__name__}, message='{e}'"
@@ -1357,6 +1380,10 @@ class Microcontroller(BaseModel):
                         f"open(): successfully opened at new device path {new_device_info.device}"
                     )
                 except IOError as e2:
+                    # Check if the new path is also busy
+                    if self._is_device_busy_error(e2):
+                        device_id = self._usb_serial_number or new_device_info.device
+                        raise DeviceAlreadyInUseError("Microcontroller", device_id) from e2
                     logger.error(
                         f"open(): IOError when opening device at new path {new_device_info.device}: "
                         f"type={type(e2).__name__}, message='{e2}' - re-raising"

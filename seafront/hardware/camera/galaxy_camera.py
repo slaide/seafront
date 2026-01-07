@@ -10,6 +10,7 @@ from seaconfig import AcquisitionChannelConfig
 from seafront.config.basics import GlobalConfigHandler, set_config_item_bool
 from seafront.config.basics import ConfigItem, ConfigItemOption
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
+from seafront.hardware.adapter import DeviceAlreadyInUseError
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
 
@@ -17,6 +18,7 @@ from seafront.logger import logger
 try:
     from gxipy import gxiapi
     from gxipy.gxiapi import OffLine as GalaxyCameraOffline
+    GalaxyCameraInvalidAccess: type[Exception] = gxiapi.InvalidAccess  # type: ignore[attr-defined]
     gxiapi.gx_init_lib()
 except NameError as e:
     # gxipy throws NameError("name 'dll' is not defined") when libgxiapi.so is missing
@@ -243,6 +245,19 @@ class GalaxyCamera(Camera):
         for i in range(5):
             try:
                 self.handle = GalaxyCamera.device_manager.open_device_by_sn(self.sn)
+            except GalaxyCameraInvalidAccess as e:
+                # Check if error indicates device is already open by another process
+                error_msg = str(e)
+                if "device has been open" in error_msg.lower() or "has been open" in error_msg.lower():
+                    raise DeviceAlreadyInUseError("Camera", self.sn) from e
+                # Other InvalidAccess errors - log and retry
+                logger.debug(f"camera - opening failed {i+1} times {e=}")
+                try:
+                    self.close()
+                except Exception:
+                    pass
+                time.sleep(2)
+                continue
             except Exception as e:
                 logger.debug(f"camera - opening failed {i+1} times {e=}")
 
