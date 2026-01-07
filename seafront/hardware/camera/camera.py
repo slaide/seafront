@@ -39,29 +39,15 @@ class AcquisitionMode(str, Enum):
     CONTINUOUS = "continuous"
 
 
-@dataclass
-class GalaxyCameraIdentifier:
-    """Galaxy camera identification fields."""
+CameraDriver = tp.Literal["galaxy", "toupcam"]
 
-    sn: str  # Serial number - primary identifier for Galaxy cameras
-    vendor_name: str | None = None  # Optional vendor name filter
-    model_name: str | None = None  # Optional model name filter
-
-
-@dataclass
-class ToupCamIdentifier:
-    """ToupCam camera identification fields (placeholder for future implementation)."""
-
-    id: str  # ToupCam uses ID strings
-    # Add other ToupCam-specific fields as needed when implementing
 
 @dataclass
 class CameraOpenRequest:
-    """Request structure for opening a camera."""
+    """Request structure for opening a camera by USB ID."""
 
-    driver: tp.Literal["galaxy", "toupcam"]
-    galaxy: GalaxyCameraIdentifier | None = None
-    toupcam: ToupCamIdentifier | None = None
+    driver: CameraDriver
+    usb_id: str  # USB device ID (serial number for Galaxy, device ID for ToupCam)
 
 class Camera(ABC):
     """
@@ -208,37 +194,31 @@ def get_all_cameras() -> list[Camera]:
 
 def camera_open(request: CameraOpenRequest) -> Camera:
     """
-    Get a camera instance for the specified request (does not open the connection).
+    Get a camera instance for the specified USB ID (does not open the connection).
 
     Args:
-        request: Camera opening request with driver and vendor-specific identifiers
+        request: Camera opening request with driver and USB ID
 
     Returns:
         Camera: Camera instance ready to be opened
 
     Raises:
-        ValueError: If driver is unsupported or required identifiers are missing
+        ValueError: If driver is unsupported
         RuntimeError: If no matching camera is found
     """
     match request.driver:
         case "galaxy":
-            if request.galaxy is None:
-                raise ValueError("galaxy identifier required for galaxy driver")
-
-            return _get_galaxy_camera(request.galaxy)
+            return _get_galaxy_camera(request.usb_id)
 
         case "toupcam":
-            if request.toupcam is None:
-                raise ValueError("toupcam identifier required for toupcam driver")
-
-            return _get_toupcam_camera(request.toupcam)
+            return _get_toupcam_camera(request.usb_id)
 
         case _:
             raise ValueError(f"unsupported driver: {request.driver}")
 
 
-def _get_galaxy_camera(identifier: GalaxyCameraIdentifier) -> Camera:
-    """Get a Galaxy camera instance with the specified identifier (unopened)."""
+def _get_galaxy_camera(usb_id: str) -> Camera:
+    """Get a Galaxy camera instance with the specified USB ID (unopened)."""
     from .galaxy_camera import GalaxyCamera
 
     available_cameras = GalaxyCamera.get_all()
@@ -246,30 +226,19 @@ def _get_galaxy_camera(identifier: GalaxyCameraIdentifier) -> Camera:
     if not available_cameras:
         raise RuntimeError("no galaxy cameras found")
 
-    # Find camera matching the identifier
-    matching_camera = None
+    # Find camera matching the USB ID (serial number)
     for camera in available_cameras:
-        if camera.sn == identifier.sn:
-            # Check optional filters if provided
-            if identifier.vendor_name is not None and camera.vendor_name != identifier.vendor_name:
-                continue
-            if identifier.model_name is not None and camera.model_name != identifier.model_name:
-                continue
-            matching_camera = camera
-            break
+        if camera.sn == usb_id:
+            return camera
 
-    if matching_camera is None:
-        available_sns = [cam.sn for cam in available_cameras]
-        raise RuntimeError(
-            f"galaxy camera with sn='{identifier.sn}' not found. available cameras: {available_sns}"
-        )
-
-    # Return the unopened camera
-    return matching_camera
+    available_sns = [cam.sn for cam in available_cameras]
+    raise RuntimeError(
+        f"galaxy camera with usb_id='{usb_id}' not found. available: {available_sns}"
+    )
 
 
-def _get_toupcam_camera(identifier: ToupCamIdentifier) -> Camera:
-    """Get a ToupCam camera instance with the specified identifier (unopened)."""
+def _get_toupcam_camera(usb_id: str) -> Camera:
+    """Get a ToupCam camera instance with the specified USB ID (unopened)."""
     from .toupcam_camera import ToupCamCamera
 
     available_cameras = ToupCamCamera.get_all()
@@ -277,19 +246,12 @@ def _get_toupcam_camera(identifier: ToupCamIdentifier) -> Camera:
     if not available_cameras:
         raise RuntimeError("no toupcam cameras found")
 
-    # Find camera matching the identifier
-    matching_camera = None
+    # Find camera matching the USB ID
     for camera in available_cameras:
-        if camera.sn == identifier.id:  # ToupCam uses ID strings as serial numbers
-            matching_camera = camera
-            break
+        if camera.sn == usb_id:
+            return camera
 
-    if matching_camera is None:
-        available_ids = [cam.sn for cam in available_cameras]
-        raise RuntimeError(
-            f"toupcam camera with id='{identifier.id}' not found. "
-            f"available cameras: {available_ids}"
-        )
-
-    # Return the unopened camera
-    return matching_camera
+    available_ids = [cam.sn for cam in available_cameras]
+    raise RuntimeError(
+        f"toupcam camera with usb_id='{usb_id}' not found. available: {available_ids}"
+    )

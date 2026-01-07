@@ -2216,9 +2216,9 @@ def main():
 
     # Log startup information
     logger.info(f"🔬 Selected microscope: {selected_microscope.microscope_name}")
-    logger.info(f"📷 Main camera: {selected_microscope.main_camera_model} (driver: {selected_microscope.main_camera_driver})")
-    if selected_microscope.laser_autofocus_available == "yes" and selected_microscope.laser_autofocus_camera_model:
-        logger.info(f"🎯 Autofocus camera: {selected_microscope.laser_autofocus_camera_model} (driver: {selected_microscope.laser_autofocus_camera_driver})")
+    logger.info(f"📷 Main camera: {selected_microscope.main_camera_id} (driver: {selected_microscope.main_camera_driver})")
+    if selected_microscope.laser_autofocus_available == "yes" and selected_microscope.laser_autofocus_camera_id:
+        logger.info(f"🎯 Autofocus camera: {selected_microscope.laser_autofocus_camera_id} (driver: {selected_microscope.laser_autofocus_camera_driver})")
     logger.info(f"🌐 Server port: {server_config.port}")
 
     logger.info(f"initializing core server with microscope: {selected_microscope.microscope_name}")

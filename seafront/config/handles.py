@@ -37,7 +37,7 @@ class CameraConfig(ConfigHandle):
     """Camera-related configuration handles."""
 
     # Main camera configuration
-    MAIN_MODEL = "camera.main.model"
+    MAIN_ID = "camera.main.id"
     MAIN_DRIVER = "camera.main.driver"
     MAIN_OBJECTIVE = "camera.main.objective"
     MAIN_TRIGGER = "camera.main.trigger"
@@ -58,6 +58,9 @@ class CameraConfig(ConfigHandle):
 class MicrocontrollerConfig(ConfigHandle):
     """Microcontroller communication and retry configuration handles."""
 
+    # Device identification
+    ID = "microcontroller.id"
+
     # Connection grace period and retry settings
     RECONNECTION_GRACE_PERIOD_MS = "microcontroller.reconnection_grace_period_ms"
     RECONNECTION_ATTEMPTS = "microcontroller.reconnection_attempts"
@@ -77,7 +80,7 @@ class LaserAutofocusConfig(ConfigHandle):
     OFFSET_UM = "laser.autofocus.offset_um"
 
     # Camera configuration
-    CAMERA_MODEL = "laser.autofocus.camera.model"
+    CAMERA_ID = "laser.autofocus.camera.id"
     CAMERA_DRIVER = "laser.autofocus.camera.driver"
     CAMERA_ANALOG_GAIN = "laser.autofocus.camera.analog_gain"
     CAMERA_PIXEL_FORMAT = "laser.autofocus.camera.pixel_format"

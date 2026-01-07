@@ -263,8 +263,11 @@ class CriticalMachineConfig(BaseModel):
     microscope_name: str
     microscope_type: MicroscopeType
 
-    main_camera_model: str
+    main_camera_id: str
     main_camera_driver: CameraDriver = "galaxy"
+
+    microcontroller_id: str | None = None
+    "USB serial number for the microcontroller (required for squid microscope type)"
 
     base_image_output_dir: str
     calibration_offset_x_mm: float
@@ -275,7 +278,7 @@ class CriticalMachineConfig(BaseModel):
     "JSON string defining forbidden areas as AABBs in physical coordinates (mm)"
 
     laser_autofocus_available: tp.Literal["yes", "no"] | None = None
-    laser_autofocus_camera_model: str | None = None
+    laser_autofocus_camera_id: str | None = None
     "if laser_autofocus_available is yes, then this must be present"
     laser_autofocus_camera_driver: CameraDriver = "galaxy"
 
@@ -380,6 +383,7 @@ class GlobalConfigHandler:
             FilterWheelConfig,
             ImagingConfig,
             LaserAutofocusConfig,
+            MicrocontrollerConfig,
             ProtocolConfig,
             StorageConfig,
             SystemConfig,
@@ -387,14 +391,15 @@ class GlobalConfigHandler:
 
         handle_lookup: dict[str, str] = {
             "microscope_name": SystemConfig.MICROSCOPE_NAME.value,
-            "main_camera_model": CameraConfig.MAIN_MODEL.value,
+            "main_camera_id": CameraConfig.MAIN_ID.value,
             "main_camera_driver": CameraConfig.MAIN_DRIVER.value,
+            "microcontroller_id": MicrocontrollerConfig.ID.value,
             "base_image_output_dir": StorageConfig.BASE_IMAGE_OUTPUT_DIR.value,
             "calibration_offset_x_mm": CalibrationConfig.OFFSET_X_MM.value,
             "calibration_offset_y_mm": CalibrationConfig.OFFSET_Y_MM.value,
             "calibration_offset_z_mm": CalibrationConfig.OFFSET_Z_MM.value,
             "laser_autofocus_available": LaserAutofocusConfig.AVAILABLE.value,
-            "laser_autofocus_camera_model": LaserAutofocusConfig.CAMERA_MODEL.value,
+            "laser_autofocus_camera_id": LaserAutofocusConfig.CAMERA_ID.value,
             "laser_autofocus_camera_driver": LaserAutofocusConfig.CAMERA_DRIVER.value,
             "filter_wheel_available": FilterWheelConfig.AVAILABLE.value,
             "filters": FilterWheelConfig.CONFIGURATION.value,
@@ -594,8 +599,9 @@ class GlobalConfigHandler:
         forbidden_areas_json = json.dumps(default_forbidden_areas)
 
         return CriticalMachineConfig(
-            main_camera_model="MER2-1220-32U3M",
-            laser_autofocus_camera_model="MER2-630-60U3M",
+            main_camera_id="CHANGE_ME",
+            laser_autofocus_camera_id="CHANGE_ME",
+            microcontroller_id="CHANGE_ME",
             microscope_name="squid",
             microscope_type="squid",
             base_image_output_dir=str(GlobalConfigHandler.home() / "images"),
@@ -640,10 +646,10 @@ class GlobalConfigHandler:
 
         main_camera_attributes = [
             ConfigItem(
-                name="main camera model",
-                handle=CameraConfig.MAIN_MODEL.value,
+                name="main camera USB ID",
+                handle=CameraConfig.MAIN_ID.value,
                 value_kind="text",
-                value=critical_machine_config.main_camera_model,
+                value=critical_machine_config.main_camera_id,
                 frozen=True,
             ),
             ConfigItem(
@@ -777,15 +783,15 @@ class GlobalConfigHandler:
         )
 
         if laser_autofocus_system_available_attribute.boolvalue:
-            if critical_machine_config.laser_autofocus_camera_model is None:
-                raise ValueError("laser autofocus available but no autofocus camera model provided")
+            if critical_machine_config.laser_autofocus_camera_id is None:
+                raise ValueError("laser autofocus available but no autofocus camera USB ID provided")
 
             laser_autofocus_system_attributes = [
                 ConfigItem(
-                    name="laser autofocus camera model",
-                    handle=LaserAutofocusConfig.CAMERA_MODEL.value,
+                    name="laser autofocus camera USB ID",
+                    handle=LaserAutofocusConfig.CAMERA_ID.value,
                     value_kind="text",
-                    value=critical_machine_config.laser_autofocus_camera_model,
+                    value=critical_machine_config.laser_autofocus_camera_id,
                     frozen=True,
                 ),
                 ConfigItem(
@@ -1035,6 +1041,13 @@ class GlobalConfigHandler:
                         handle="wavelength_order",
                     ),
                 ],
+            ),
+            ConfigItem(
+                name="microcontroller USB ID",
+                handle=MicrocontrollerConfig.ID.value,
+                value_kind="text",
+                value=critical_machine_config.microcontroller_id or "",
+                frozen=True,
             ),
             ConfigItem(
                 name="microcontroller reconnection grace period [ms]",

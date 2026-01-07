@@ -33,17 +33,15 @@ from seafront.config.handles import (
     ImageConfig,
     ImagingConfig,
     LaserAutofocusConfig,
+    MicrocontrollerConfig,
 )
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState
 from seafront.hardware.camera import (
     Camera,
     CameraOpenRequest,
-    GalaxyCameraIdentifier,
     HardwareLimitValue,
-    ToupCamIdentifier,
     camera_open,
-    get_all_cameras,
 )
 from seafront.hardware.illumination import IlluminationController
 from seafront.hardware.microscope import DisconnectError, HardwareLimits, Locked, Microscope, microscope_exclusive
@@ -173,27 +171,12 @@ class SquidAdapter(Microscope):
     def make(cls) -> "SquidAdapter":
         g_dict = GlobalConfigHandler.get_dict()
 
-        microcontrollers = mc.Microcontroller.get_all()
-        cams = get_all_cameras()
-
-        abort_startup = False
-        if len(microcontrollers) == 0:
-            logger.critical("startup - no microcontrollers found.")
-            abort_startup = True
-        if len(cams) < 2:
-            logger.critical(f"startup - found less than two cameras (found {len(cams)})")
-            abort_startup = True
-
-        if abort_startup:
-            error_msg = "did not find microscope hardware"
-            logger.critical(f"startup - {error_msg}")
-            raise RuntimeError(error_msg)
-
-        # Get camera configuration
-        main_camera_model_name = g_dict[CameraConfig.MAIN_MODEL.value].strvalue
+        # Get device configuration (USB IDs)
+        main_camera_id = g_dict[CameraConfig.MAIN_ID.value].strvalue
         main_camera_driver = g_dict[CameraConfig.MAIN_DRIVER.value].strvalue
-        focus_camera_model_name = g_dict[LaserAutofocusConfig.CAMERA_MODEL.value].strvalue
+        focus_camera_id = g_dict[LaserAutofocusConfig.CAMERA_ID.value].strvalue
         focus_camera_driver = g_dict[LaserAutofocusConfig.CAMERA_DRIVER.value].strvalue
+        microcontroller_id = g_dict[MicrocontrollerConfig.ID.value].strvalue
 
         # Validate camera drivers
         valid_drivers = tp.get_args(CameraDriver)  # Get valid values from the Literal type
@@ -207,49 +190,13 @@ class SquidAdapter(Microscope):
             logger.critical(f"startup - {error_msg}")
             cmd.error_internal(detail=error_msg)
 
-        # Find cameras matching the model names to get their serial numbers
-        _main_cameras = [c for c in cams if c.model_name == main_camera_model_name]
-        if len(_main_cameras) == 0:
-            error_msg = f"no camera with model name {main_camera_model_name} found"
-            logger.critical(f"startup - {error_msg}")
-            cmd.error_internal(detail=error_msg)
+        # Find devices by USB ID
+        main_camera_request = CameraOpenRequest(driver=main_camera_driver, usb_id=main_camera_id)  # type: ignore
+        focus_camera_request = CameraOpenRequest(driver=focus_camera_driver, usb_id=focus_camera_id)  # type: ignore
 
-        _focus_cameras = [c for c in cams if c.model_name == focus_camera_model_name]
-        if len(_focus_cameras) == 0:
-            error_msg = f"no camera with model name {focus_camera_model_name} found"
-            logger.critical(f"startup - {error_msg}")
-            cmd.error_internal(detail=error_msg)
-
-        # Create camera opening requests with driver information
-        main_camera_request = CameraOpenRequest(
-            driver=main_camera_driver, # type: ignore
-            galaxy=GalaxyCameraIdentifier(
-                sn=_main_cameras[0].sn,
-                vendor_name=_main_cameras[0].vendor_name,
-                model_name=_main_cameras[0].model_name
-            ) if main_camera_driver == "galaxy" else None,
-            toupcam=ToupCamIdentifier(
-                id=_main_cameras[0].sn  # Use SN as ID for now
-            ) if main_camera_driver == "toupcam" else None
-        )
-
-        focus_camera_request = CameraOpenRequest(
-            driver=focus_camera_driver, # type: ignore
-            galaxy=GalaxyCameraIdentifier(
-                sn=_focus_cameras[0].sn,
-                vendor_name=_focus_cameras[0].vendor_name,
-                model_name=_focus_cameras[0].model_name
-            ) if focus_camera_driver == "galaxy" else None,
-            toupcam=ToupCamIdentifier(
-                id=_focus_cameras[0].sn  # Use SN as ID for now
-            ) if focus_camera_driver == "toupcam" else None
-        )
-
-        microcontroller = microcontrollers[0]
-
-        # Get camera instances using the new system (unopened)
         main_camera = camera_open(main_camera_request)
         focus_camera = camera_open(focus_camera_request)
+        microcontroller = mc.Microcontroller.find_by_usb_id(microcontroller_id)
 
         # Extract and parse channel and filter configurations (JSON-encoded strings)
         channels_json = g_dict["imaging.channels"].strvalue

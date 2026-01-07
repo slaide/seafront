@@ -1509,3 +1509,36 @@ class Microcontroller(BaseModel):
             ret.append(Microcontroller(device_info=device_info))
 
         return ret
+
+    @staticmethod
+    def find_by_usb_id(usb_id: str) -> "Microcontroller":
+        """
+        Find a microcontroller by its USB serial number.
+
+        Args:
+            usb_id: The USB serial number to search for
+
+        Returns:
+            Microcontroller instance for the matching device
+
+        Raises:
+            RuntimeError: If no microcontroller with the given USB ID is found
+        """
+        for p in serial.tools.list_ports.comports():
+            # Only consider valid microcontroller devices
+            if p.description != "Arduino Due" and p.manufacturer != "Teensyduino":
+                continue
+
+            if p.serial_number == usb_id:
+                return Microcontroller(device_info=p)
+
+        # Collect available USB IDs for error message
+        available_ids = []
+        for p in serial.tools.list_ports.comports():
+            if p.description == "Arduino Due" or p.manufacturer == "Teensyduino":
+                if p.serial_number:
+                    available_ids.append(p.serial_number)
+
+        raise RuntimeError(
+            f"microcontroller with usb_id='{usb_id}' not found. available: {available_ids}"
+        )
