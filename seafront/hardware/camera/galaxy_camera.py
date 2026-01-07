@@ -383,10 +383,13 @@ class GalaxyCamera(Camera):
         self.handle.TriggerSoftware.send_command()
 
     @_camera_operation_with_reconnect
-    def _api_get_image(self) -> gxiapi.RawImage | None:
+    def _api_get_image(self, timeout: int | None = None) -> gxiapi.RawImage | None:
         """
         Retrieve image from camera after trigger.
         Decorated with nested retry logic for connection resilience.
+
+        Args:
+            timeout: Timeout in milliseconds. Defaults to 1000ms if None.
 
         Returns:
             RawImage object or None if no image available
@@ -396,7 +399,7 @@ class GalaxyCamera(Camera):
         """
         if self.handle is None:
             raise RuntimeError("Camera handle is None - not connected")
-        return self.handle.data_stream[0].get_image()
+        return self.handle.data_stream[0].get_image(timeout=timeout if timeout is not None else 1000)
 
     @_camera_operation_with_reconnect
     def _api_stream_on(self) -> None:
@@ -629,7 +632,8 @@ class GalaxyCamera(Camera):
             self._api_trigger()
 
             # wait for image to arrive (with retry logic)
-            img: gxiapi.RawImage | None = self._api_get_image()
+            timeout_ms = int(config.exposure_time_ms) + 2000
+            img: gxiapi.RawImage | None = self._api_get_image(timeout=timeout_ms)
 
             if img is None:
                 raise RuntimeError("failed to acquire image")
