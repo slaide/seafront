@@ -2194,7 +2194,16 @@ def main():
         type=str,
         help=f"Name of microscope configuration to use. Available: {microscope_list} (defaults to first)"
     )
+    parser.add_argument(
+        "--port",
+        type=int,
+        help=f"Port to run the server on (default: {server_config.port} from config)"
+    )
     args = parser.parse_args()
+
+    # Override port from config if specified on command line
+    if args.port:
+        server_config.port = args.port
 
     if len(server_config.microscopes) == 0:
         logger.critical("No microscope configurations found in config file")
