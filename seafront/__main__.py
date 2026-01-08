@@ -137,6 +137,7 @@ class RouteTag(str, Enum):
     ACTIONS = "Microscope Actions"
     ACQUISITION_CONTROLS = "Acquisition Controls"
     DOCUMENTATION = "Documentation"
+    INFO = "Server Info"
 
 
 openapi_tags = [
@@ -155,6 +156,10 @@ openapi_tags = [
     {
         "name": RouteTag.DOCUMENTATION.value,
         "description": "documentation on software and api",
+    },
+    {
+        "name": RouteTag.INFO.value,
+        "description": "server health and status information",
     },
 ]
 
@@ -194,6 +199,9 @@ class CustomRoute(BaseModel):
 
     e.g. streamend (just sets a flag)
     """
+
+    # Set by route_wrapper - the dynamically created Pydantic model for request parameters
+    request_model: type[BaseModel] | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -267,6 +275,9 @@ class Core:
 
         # Store microscope name for status reporting
         self.microscope_name = selected_microscope.microscope_name
+
+        # Track time of last processed request for health monitoring
+        self.last_request_time: float | None = None
 
         # Use the passed microscope configuration
         microscope_type = selected_microscope.microscope_type
@@ -459,6 +470,9 @@ class Core:
                 RequestModel = create_model(model_name, **model_fields, __base__=BaseModel)
                 request_models[model_name] = RequestModel
 
+            # Store the RequestModel on the route for OpenAPI schema generation
+            route.request_model = RequestModel
+
             async def handler_logic_post(request_body: RequestModel):  # type:ignore
                 # Perform verification
                 error_response = check_operation_allowed(allow_while_acquisition_is_running, allow_while_streaming)
@@ -490,6 +504,10 @@ class Core:
                 logger.debug(f"about to start thread to generate answer {callfunc}")
                 result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
                 logger.debug("answer thread done")
+
+                # Record last request time for health monitoring
+                self.last_request_time = time.time()
+
                 return result
 
             # copy annotation and fix return type
@@ -552,6 +570,30 @@ class Core:
             CustomRoute(handler=self.get_machine_defaults),
             methods=["POST"],
         )
+
+        # Health check endpoint - doesn't require target_device or hardware interaction
+        @app.get("/api/health", tags=[RouteTag.INFO.value])
+        async def health_check():
+            """
+            Health check endpoint for monitoring.
+
+            Returns basic health information without requiring hardware interaction
+            or target_device authentication. Always available.
+            """
+            now = time.time()
+            time_since_last_request: float | None = None
+            if self.last_request_time is not None:
+                time_since_last_request = now - self.last_request_time
+
+            # Update last request time (health checks count as requests)
+            self.last_request_time = now
+
+            return {
+                "status": "ok",
+                "microscope_name": self.microscope_name,
+                "time_since_last_request_s": time_since_last_request,
+                "server_time": now,
+            }
 
         async def _safe_send_json(ws: WebSocket, payload: tp.Any) -> None:
             try:
@@ -2117,52 +2159,27 @@ def custom_openapi():
         }
 
         parameters = []
-
+        customroute = custom_route_handlers.get(route_path)
         endpoint = route.endpoint  # type:ignore
-        if customroute := custom_route_handlers.get(route_path):
-            if inspect.isclass(customroute.handler) and issubclass(
-                customroute.handler, BaseCommand
-            ):  # type:ignore
-                assert issubclass(customroute.handler, BaseModel), (
-                    f"{customroute.handler.__name__} does not inherit from basemodel, even though it inherits from basecommand"
+
+        # Extract parameters from the RequestModel (set by route_wrapper, includes target_device)
+        if customroute and customroute.request_model:
+            for name, field in customroute.request_model.model_fields.items():
+                parameters.append(
+                    {
+                        "name": name,
+                        "in": "query",
+                        "required": field.is_required(),
+                        "schema": type_to_schema(field),
+                    }
                 )
-
-                # register
-                type_to_schema(customroute.handler)
-
-                responses["200"]["content"]["application/json"]["schema"] = type_to_schema(
-                    customroute.handler.__private_attributes__["_ReturnValue"].default
-                )  # type:ignore
-
-                for name, field in customroute.handler.model_fields.items():
-                    parameters.append(
-                        {
-                            "name": name,
-                            "in": "query",
-                            "required": field.is_required(),
-                            "schema": type_to_schema(field),
-                        }
-                    )
-
-        if responses["200"]["content"]["application/json"]["schema"] is None:
-            if customroute := custom_route_handlers.get(route_path):
-                endpoint = customroute.handler
-
+        else:
+            # Fallback for routes not using route_wrapper (e.g., /api/health, /docs)
             sig = inspect.signature(endpoint)
             hints = tp.get_type_hints(endpoint)
 
             for name, param in sig.parameters.items():
                 if name in {"request", "background_tasks"}:
-                    continue
-
-                if (
-                    inspect.isclass(endpoint)
-                    and issubclass(endpoint, BaseModel)
-                    and (
-                        (not endpoint.model_fields[name].repr)
-                        or (endpoint.model_fields[name].exclude)
-                    )
-                ):
                     continue
 
                 param_schema = {
@@ -2176,9 +2193,23 @@ def custom_openapi():
 
                 parameters.append(param_schema)
 
-            ret = sig.return_annotation
-            if ret is not inspect.Signature.empty:
-                responses["200"]["content"]["application/json"]["schema"] = type_to_schema(ret)
+        # Extract response schema
+        if customroute:
+            if inspect.isclass(customroute.handler) and issubclass(customroute.handler, BaseCommand):
+                # BaseCommand: response type is in _ReturnValue
+                assert issubclass(customroute.handler, BaseModel), (
+                    f"{customroute.handler.__name__} does not inherit from BaseModel"
+                )
+                type_to_schema(customroute.handler)  # register the command schema
+                responses["200"]["content"]["application/json"]["schema"] = type_to_schema(
+                    customroute.handler.__private_attributes__["_ReturnValue"].default
+                )
+            elif callable(customroute.handler):
+                # Regular function: response type is return annotation
+                sig = inspect.signature(customroute.handler)
+                ret = sig.return_annotation
+                if ret is not inspect.Signature.empty:
+                    responses["200"]["content"]["application/json"]["schema"] = type_to_schema(ret)
 
         doc = endpoint.__doc__ or ""
         doc_lines = [docline.strip() for docline in doc.splitlines() if docline.strip()]

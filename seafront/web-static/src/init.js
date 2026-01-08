@@ -1709,12 +1709,9 @@ document.addEventListener("alpine:init", () => {
 
             try {
                 // Quick health check to see if server is available
-                // Note: target_device is required but we don't know it yet, so use empty string
-                // which bypasses validation (we just want to test connectivity)
-                const testResponse = await fetch(`${this.server_url}/api/get_features/hardware_capabilities`, {
-                    method: 'POST',
-                    headers: [['Content-Type', 'application/json']],
-                    body: JSON.stringify({ target_device: '' }),
+                // Uses dedicated health endpoint that doesn't require target_device or hardware
+                const testResponse = await fetch(`${this.server_url}/api/health`, {
+                    method: 'GET',
                     signal: AbortSignal.timeout(2000), // 2 second timeout
                 });
 
