@@ -22,6 +22,13 @@ declare global {
         };
     };
 
+    /**
+     * All API requests must include target_device for routing validation
+     */
+    type TargetDeviceRequest = {
+        target_device: string;
+    };
+
     // Channel configuration
     type AcquisitionChannelConfig = {
         name: string;
@@ -203,7 +210,9 @@ declare global {
         plates: Wellplate[];
     };
 
-    type BasicSuccessResponse = {};
+    type BasicSuccessResponse = {
+        microscope_name: string;
+    };
 
     type MoveToRequest = {
         x_mm?: number;
@@ -218,6 +227,7 @@ declare global {
     type MoveByResult = {
         axis: string;
         moved_by_mm: float;
+        microscope_name: string;
     };
     // truly empty
     type MoveToWellRequest = {
@@ -249,6 +259,7 @@ declare global {
     };
     type StreamingStartedResponse = {
         channel: AcquisitionChannelConfig;
+        microscope_name: string;
     };
     type StreamBeginResponse = StreamingStartedResponse;
 
@@ -282,6 +293,7 @@ declare global {
         main_camera_imaging_channels: AcquisitionChannelConfig[];
         wellplate_types: Wellplate[];
         hardware_limits: HardwareLimits;
+        microscope_name: string;
     };
 
     type ConfigItemOption = {
@@ -340,7 +352,10 @@ declare global {
         plate_type: Wellplate;
     };
     type ConfigListEntry = ConfigListInfo;
-    type ConfigListResponse = { configs: ConfigListEntry[] };
+    type ConfigListResponse = {
+        configs: ConfigListEntry[];
+        microscope_name: string;
+    };
 
     type StoreConfigRequest = {
         filename: string;
@@ -355,6 +370,7 @@ declare global {
     };
     type LoadConfigResponse = {
         file: AcquisitionConfig;
+        microscope_name: string;
     };
 
     type AcquisitionStartRequest = {
@@ -362,6 +378,7 @@ declare global {
     };
     type AcquisitionStartResponse = {
         acquisition_id: string;
+        microscope_name: string;
     };
     type AcquisitionStopRequest = {
         acquisition_id: string;
@@ -431,6 +448,7 @@ declare global {
         acquisition_config: AcquisitionConfig;
 
         message: string;
+        microscope_name: string;
     };
     type AcquisitionStatusRequest = {
         acquisition_id: string;
@@ -453,6 +471,7 @@ declare global {
         max_storage_size_GB: float;
         /** Estimated acquisition time in seconds (null if cannot be estimated) */
         estimated_time_s: float | null;
+        microscope_name: string;
     };
 
     type LaserAutofocusCalibrateRequest = {};
@@ -462,6 +481,7 @@ declare global {
             x_reference: float;
             calibration_position: AdapterPosition;
         };
+        microscope_name: string;
     };
     type LaserAutofocusMoveToTargetOffsetRequest = {
         target_offset_um: float;
@@ -471,6 +491,7 @@ declare global {
         num_compensating_moves: int;
         uncompensated_offset_mm: float;
         reached_threshold: boolean;
+        microscope_name: string;
     };
     type LaserAutofocusMeasureDisplacementRequest = {
         config_file: AcquisitionConfig;
@@ -478,6 +499,7 @@ declare global {
     };
     type LaserAutofocusMeasureDisplacementResponse = {
         displacement_um: float;
+        microscope_name: string;
     };
 
     type LaserAutofocusSnapRequest = {
@@ -487,6 +509,7 @@ declare global {
     type LaserAutofocusSnapResponse = {
         width_px: int;
         height_px: int;
+        microscope_name: string;
     };
 }
 

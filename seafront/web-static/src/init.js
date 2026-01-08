@@ -1709,10 +1709,12 @@ document.addEventListener("alpine:init", () => {
 
             try {
                 // Quick health check to see if server is available
+                // Note: target_device is required but we don't know it yet, so use empty string
+                // which bypasses validation (we just want to test connectivity)
                 const testResponse = await fetch(`${this.server_url}/api/get_features/hardware_capabilities`, {
                     method: 'POST',
                     headers: [['Content-Type', 'application/json']],
-                    body: JSON.stringify({}),
+                    body: JSON.stringify({ target_device: '' }),
                     signal: AbortSignal.timeout(2000), // 2 second timeout
                 });
 
@@ -1724,6 +1726,7 @@ document.addEventListener("alpine:init", () => {
                 console.log('[Seafront] Server connection successful');
                 this._api = new APIClient(this.server_url, {
                     onError: (title, message) => this.showError(title, message),
+                    getTargetDevice: () => this.getMicroscopeName() || '',
                 });
 
                 this._wsManager = new WebSocketManager(this.server_url, {
@@ -1734,6 +1737,7 @@ document.addEventListener("alpine:init", () => {
                             this.isConnectedToServer = isConnected;
                         }
                     },
+                    getTargetDevice: () => this.getMicroscopeName() || '',
                 });
 
                 useMockMode = false;
@@ -1742,6 +1746,7 @@ document.addEventListener("alpine:init", () => {
                 console.warn('[Seafront] Server unavailable, using mock mode:', error.message);
                 this._api = new MockAPIClient(this.server_url, {
                     onError: (title, message) => this.showError(title, message),
+                    getTargetDevice: () => this.getMicroscopeName() || 'Mock Microscope (Offline)',
                 });
                 this._wsManager = new MockWebSocketManager();
                 useMockMode = true;

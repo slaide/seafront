@@ -3,6 +3,7 @@
 /**
  * @typedef {Object} APIClientOptions
  * @property {(title: string, message: string) => void} [onError] - Error callback
+ * @property {() => string} [getTargetDevice] - Function that returns the target device name for request routing
  */
 
 /**
@@ -21,6 +22,7 @@
  * @property {number} [reconnectDelay=200] - Delay (ms) before reconnecting
  * @property {(message: string) => void} [onError] - Error callback
  * @property {(name: string, isConnected: boolean) => void} [onConnectionStateChange] - Connection state change callback
+ * @property {() => string} [getTargetDevice] - Function that returns the target device name for request routing
  */
 
 /**
@@ -59,6 +61,7 @@ class APIClient {
     constructor(baseURL, options = {}) {
         this.baseURL = baseURL;
         this.onError = options.onError || (() => {});
+        this.getTargetDevice = options.getTargetDevice || (() => '');
     }
 
     /**
@@ -143,10 +146,16 @@ class APIClient {
             showError = true,
         } = options;
 
+        // Inject target_device into every request for device routing
+        const requestBody = {
+            ...body,
+            target_device: this.getTargetDevice(),
+        };
+
         const url = this.buildUrl(endpoint);
         const response = await fetch(url, {
             method: 'POST',
-            body: JSON.stringify(body),
+            body: JSON.stringify(requestBody),
             headers: [['Content-Type', 'application/json']],
         });
 
@@ -192,6 +201,7 @@ class WebSocketManager {
         this.reconnectDelay = options.reconnectDelay || 200;
         this.onError = options.onError || (() => {});
         this.onConnectionStateChange = options.onConnectionStateChange || (() => {});
+        this.getTargetDevice = options.getTargetDevice || (() => '');
 
         /** @type {Map<string, WebSocketConnectionData>} */
         this.connections = new Map();
@@ -255,6 +265,9 @@ class WebSocketManager {
             ws.onopen = () => {
                 connectionData.reconnectAttempts = 0;
                 this.onConnectionStateChange(name, true);
+                // Send target_device as first message for routing validation
+                const targetDevice = this.getTargetDevice();
+                ws.send(JSON.stringify({ target_device: targetDevice }));
                 onOpen(ws);
             };
 

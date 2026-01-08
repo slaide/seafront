@@ -263,6 +263,8 @@ class ConfigFileInfo(BaseModel):
 
 class ConfigListResponse(BaseModel):
     configs: list[ConfigFileInfo]
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class CoreCurrentState(BaseModel):
@@ -286,11 +288,14 @@ class CoreCurrentState(BaseModel):
 class BasicSuccessResponse(BaseModel):
     "indicates that something has succeeded without returning any value"
 
-    pass
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class ConfigFetchResponse(BaseModel):
     file: sc.AcquisitionConfig
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class LaserAutofocusCalibrationData(BaseModel):
@@ -302,6 +307,8 @@ class LaserAutofocusCalibrationData(BaseModel):
 
 class LaserAutofocusCalibrationResponse(BaseModel):
     calibration_data: LaserAutofocusCalibrationData
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class LaserAutofocusCalibrate(BaseModel, BaseCommand[LaserAutofocusCalibrationResponse]):
@@ -331,6 +338,8 @@ class AcquisitionStartResponse(BaseModel):
     "indicates that an acquisition has been started"
 
     acquisition_id: str
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class AcquisitionProgressStatus(BaseModel):
@@ -459,6 +468,8 @@ class AcquisitionEstimate(BaseModel):
     "Upper bound storage estimate (uncompressed)"
     estimated_time_s: float | None
     "Estimated acquisition time in seconds (None if cannot be estimated)"
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class AcquisitionStatusStage(str, Enum):
@@ -483,6 +494,9 @@ class AcquisitionStatusOut(BaseModel):
     acquisition_config: sc.AcquisitionConfig
 
     message: str
+
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class AcquisitionStatus(BaseModel):
@@ -521,6 +535,8 @@ class HardwareCapabilitiesResponse(BaseModel):
         description="numerical limits of configurable parameters based on actual hardware capabilities",
     )
     "numerical limits of configurable parameters based on actual hardware capabilities"
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class LoadingPositionEnter(BaseModel, BaseCommand[BasicSuccessResponse]):
@@ -561,6 +577,8 @@ class StreamingStartedResponse(BaseModel):
         ..., title="Channel", description="contains channel configuration used to start a stream"
     )
     "contains channel configuration used to start a stream"
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class ChannelStreamBegin(BaseModel, BaseCommand[StreamingStartedResponse]):
@@ -612,11 +630,15 @@ class ChannelSnapProgressiveStatus(BaseModel):
     completed_channels: int
     message: str = ""
     error_detail: str | None = None
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class MoveByResult(BaseModel):
     axis: str
     moved_by_mm: float
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class MoveBy(BaseModel, BaseCommand[MoveByResult]):
@@ -663,6 +685,8 @@ class MoveToWell(BaseModel, BaseCommand[BasicSuccessResponse]):
 
 class AutofocusMeasureDisplacementResult(BaseModel):
     displacement_um: float
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class AutofocusMeasureDisplacement(BaseModel, BaseCommand[AutofocusMeasureDisplacementResult]):
@@ -691,6 +715,8 @@ class AutofocusSnapResult(BaseModel):
         ..., title="Image Height [pixels]", description="image height, in pixels"
     )
     "image height, in pixels"
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
     _img: np.ndarray = PrivateAttr(...)
     "image that was snapped"
@@ -749,6 +775,8 @@ class AutofocusApproachTargetDisplacementResult(BaseModel):
     num_compensating_moves: int
     uncompensated_offset_mm: float
     reached_threshold: bool
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class AutofocusApproachTargetDisplacement(

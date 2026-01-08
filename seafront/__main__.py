@@ -385,6 +385,10 @@ class Core:
                     else:
                         route.callback(arg, result)
 
+                # Inject microscope_name into response if it has that field
+                if isinstance(result, BaseModel) and hasattr(result, "microscope_name"):
+                    result = result.model_copy(update={"microscope_name": self.microscope_name})
+
                 return result
 
             def get_return_type():
@@ -445,50 +449,48 @@ class Core:
                             Field(default=default_value),
                         )
 
-            RequestModel = None
-            if model_fields:
-                # Dynamically create the Pydantic model
-                model_name = f"{target_func.__name__.capitalize()}RequestModel"
-                RequestModel = request_models.get(model_name)
-                if RequestModel is None:
-                    RequestModel = create_model(model_name, **model_fields, __base__=BaseModel)
-                    request_models[model_name] = RequestModel
+            # Add target_device to all requests for device routing/validation
+            model_fields["target_device"] = (str, Field(..., description="Target device name for request routing"))
 
-                async def handler_logic_post(request_body: RequestModel):  # type:ignore
-                    # Perform verification
-                    error_response = check_operation_allowed(allow_while_acquisition_is_running, allow_while_streaming)
-                    if error_response is not None:
-                        return error_response
+            # Dynamically create the Pydantic model (model_fields is always non-empty due to target_device)
+            model_name = f"{target_func.__name__.capitalize()}RequestModel"
+            RequestModel = request_models.get(model_name)
+            if RequestModel is None:
+                RequestModel = create_model(model_name, **model_fields, __base__=BaseModel)
+                request_models[model_name] = RequestModel
 
-                    request_data = kwargs_static.copy()
-                    if RequestModel and request_body:
-                        request_body_as_toplevel_dict = {}
-                        for key in request_body.dict(exclude_unset=True).keys():
-                            request_body_as_toplevel_dict[key] = getattr(request_body, key)
-                        request_data.update(request_body_as_toplevel_dict)
+            async def handler_logic_post(request_body: RequestModel):  # type:ignore
+                # Perform verification
+                error_response = check_operation_allowed(allow_while_acquisition_is_running, allow_while_streaming)
+                if error_response is not None:
+                    return error_response
 
-                    # microscope code expects rlock to function as expected, but fastapi serving two requests in parallel
-                    # through async will technically run in the same thread, so rlock will function improperly.
-                    # we start a new thread just to run this async code in it, to work around this issue.
-                    logger.debug(f"about to start thread to generate answer {callfunc}")
-                    result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
-                    logger.debug("answer thread done")
-                    return result
-            else:
+                request_data = kwargs_static.copy()
+                if RequestModel and request_body:
+                    request_body_as_toplevel_dict = {}
+                    for key in request_body.dict(exclude_unset=True).keys():
+                        request_body_as_toplevel_dict[key] = getattr(request_body, key)
+                    request_data.update(request_body_as_toplevel_dict)
 
-                async def handler_logic_post():  # type:ignore
-                    # Perform verification
-                    error_response = check_operation_allowed(allow_while_acquisition_is_running, allow_while_streaming)
-                    if error_response is not None:
-                        return error_response
+                # Validate and remove target_device from request_data (handlers don't expect it)
+                # Empty string is allowed as a bypass for initial health checks when client doesn't know the device name yet
+                target_device = request_data.pop("target_device", None)
+                if target_device and target_device != self.microscope_name:
+                    return JSONResponse(
+                        content={
+                            "status": "error",
+                            "message": f"target_device mismatch: request targets '{target_device}' but this server is '{self.microscope_name}'",
+                        },
+                        status_code=421,  # Misdirected Request
+                    )
 
-                    request_data = kwargs_static.copy()
-
-                    # microscope code expects rlock to function as expected, but fastapi serving two requests in parallel
-                    # through async will technically run in the same thread, so rlock will function improperly.
-                    # we start a new thread just to run this async code in it, to work around this issue.
-                    result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
-                    return result
+                # microscope code expects rlock to function as expected, but fastapi serving two requests in parallel
+                # through async will technically run in the same thread, so rlock will function improperly.
+                # we start a new thread just to run this async code in it, to work around this issue.
+                logger.debug(f"about to start thread to generate answer {callfunc}")
+                result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
+                logger.debug("answer thread done")
+                return result
 
             # copy annotation and fix return type
             handler_logic_post.__doc__ = target_func.__doc__
@@ -568,11 +570,24 @@ class Core:
             """
             get current state of the microscope
 
-            whenever any message is sent to this websocket it returns a currentstate object.
+            first message must be JSON with target_device field for routing validation.
+            subsequent messages trigger a currentstate response.
             simple websocket wrapper around repeated calls to /api/get_info/current_state.
             """
             await ws.accept()
             try:
+                # First message must contain target_device for validation
+                # Empty string is allowed as a bypass for initial connections when client doesn't know the device name yet
+                init_msg = await ws.receive_json()
+                target_device = init_msg.get("target_device")
+                if target_device and target_device != self.microscope_name:
+                    await _safe_send_json(ws, {
+                        "error": "target_device_mismatch",
+                        "message": f"target_device mismatch: request targets '{target_device}' but this server is '{self.microscope_name}'",
+                    })
+                    await ws.close(code=4421)  # Custom close code for misdirected request
+                    return
+
                 while True:
                     # await message, but ignore its contents
                     message = await ws.receive()
@@ -601,7 +616,8 @@ class Core:
             """
             get acquired image data
 
-            interaction takes multiple stages:
+            first message must be JSON with target_device field for routing validation.
+            subsequent interaction takes multiple stages:
              - user send channel handle to request image
              - (if there is no image data for this channel, returns empty object)
              - 1) sends object with image metadata {width:number,height:number,bit_depth:number}
@@ -609,6 +625,17 @@ class Core:
             """
             await ws.accept()
             try:
+                # First message must contain target_device for validation
+                init_msg = await ws.receive_json()
+                target_device = init_msg.get("target_device")
+                if target_device and target_device != self.microscope_name:
+                    await _safe_send_json(ws, {
+                        "error": "target_device_mismatch",
+                        "message": f"target_device mismatch: request targets '{target_device}' but this server is '{self.microscope_name}'",
+                    })
+                    await ws.close(code=4421)  # Custom close code for misdirected request
+                    return
+
                 while True:
                     channel_handle = await ws.receive_text()
 
@@ -705,10 +732,25 @@ class Core:
 
         @app.websocket("/ws/acquisition/status")
         async def ws_acquisition_status(ws: WebSocket):
+            """
+            first message must be JSON with target_device field for routing validation.
+            subsequent messages should contain acquisition_id to get status.
+            """
             await ws.accept()
             try:
+                # First message must contain target_device for validation
+                init_msg = await ws.receive_json()
+                target_device = init_msg.get("target_device")
+                if target_device and target_device != self.microscope_name:
+                    await _safe_send_json(ws, {
+                        "error": "target_device_mismatch",
+                        "message": f"target_device mismatch: request targets '{target_device}' but this server is '{self.microscope_name}'",
+                    })
+                    await ws.close(code=4421)  # Custom close code for misdirected request
+                    return
+
                 while True:
-                    # await message, but ignore its contents
+                    # await message with acquisition_id
                     args = await ws.receive_json()
                     try:
                         status = await self.get_acquisition_status(**args)
@@ -726,8 +768,9 @@ class Core:
         async def ws_snap_selected_channels_progressive(ws: WebSocket):
             """
             Progressive channel snapping with real-time updates.
-            
-            Client sends AcquisitionConfig, server responds with status updates
+
+            First message must be JSON with target_device field for routing validation.
+            Second message should be AcquisitionConfig, server responds with status updates
             as each channel completes. Each completed channel image is immediately
             available via the normal image retrieval endpoints.
             """
@@ -735,6 +778,17 @@ class Core:
             callback_id = make_unique_acquisition_id()  # Define outside try block
 
             try:
+                # First message must contain target_device for validation
+                init_msg = await ws.receive_json()
+                target_device = init_msg.get("target_device")
+                if target_device and target_device != self.microscope_name:
+                    await _safe_send_json(ws, {
+                        "error": "target_device_mismatch",
+                        "message": f"target_device mismatch: request targets '{target_device}' but this server is '{self.microscope_name}'",
+                    })
+                    await ws.close(code=4421)  # Custom close code for misdirected request
+                    return
+
                 # Receive the configuration
                 config_data = await ws.receive_json()
                 config_file = sc.AcquisitionConfig(**config_data)
@@ -2273,9 +2327,10 @@ def main():
                 return
 
             logger.info("establishing hardware connection at startup")
+            request_body = json.dumps({"target_device": core.microscope_name}).encode('utf-8')
             req = urllib.request.Request(
                 server_base_url + "/api/action/establish_hardware_connection",
-                data=b'{}',
+                data=request_body,
                 headers={'Content-Type': 'application/json'},
                 method='POST'
             )
@@ -2289,7 +2344,7 @@ def main():
                         logger.info("initializing hardware limits cache")
                         req_limits = urllib.request.Request(
                             server_base_url + "/api/get_features/hardware_capabilities",
-                            data=b'{}',
+                            data=request_body,  # reuse the same body with target_device
                             headers={'Content-Type': 'application/json'},
                             method='POST'
                         )

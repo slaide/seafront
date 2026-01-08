@@ -392,6 +392,7 @@ class MockAPIClient {
         this.mockState = sharedMockState;
         this.baseURL = baseURL || '';
         this.onError = options.onError || (() => {});
+        this.getTargetDevice = options.getTargetDevice || (() => 'Mock Microscope (Offline)');
     }
 
     /**
