@@ -36,7 +36,16 @@ from seafront.config.handles import (
     LaserAutofocusConfig,
     MicrocontrollerConfig,
 )
-from seafront.hardware import microcontroller as mc
+from seafront.hardware.microcontroller import (
+    Microcontroller,
+    MicrocontrollerDriver,
+    MicrocontrollerOpenRequest,
+    microcontroller_open,
+)
+from seafront.hardware.microcontroller.teensy_microcontroller import (
+    ILLUMINATION_CODE,
+    MicrocontrollerTimeout,
+)
 from seafront.hardware.adapter import AdapterState
 from seafront.hardware.camera import (
     Camera,
@@ -77,11 +86,11 @@ def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
     also pad so that top bits are used. e.g. if imaging bit depth is 12, top 12 bits will be set.
     """
 
-    cam_img_width = CameraConfig.MAIN_IMAGE_WIDTH_PX.value_item
+    cam_img_width = ConfigRegistry.get(CameraConfig.MAIN_IMAGE_WIDTH_PX)
     assert cam_img_width is not None
     target_width: int = cam_img_width.intvalue
     assert isinstance(target_width, int), f"{type(target_width) = }"
-    cam_img_height = CameraConfig.MAIN_IMAGE_HEIGHT_PX.value_item
+    cam_img_height = ConfigRegistry.get(CameraConfig.MAIN_IMAGE_HEIGHT_PX)
     assert cam_img_height is not None
     target_height: int = cam_img_height.intvalue
     assert isinstance(target_height, int), f"{type(target_height) = }"
@@ -105,17 +114,17 @@ def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
     # seemingly swap x and y because of numpy's row-major order
     ret = img[y_offset : y_offset + target_height, x_offset : x_offset + target_width]
 
-    flip_img_horizontal = CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value_item
+    flip_img_horizontal = ConfigRegistry.get(CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL)
     assert flip_img_horizontal is not None
     if flip_img_horizontal.boolvalue:
         ret = np.flip(ret, axis=1)
 
-    flip_img_vertical = CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value_item
+    flip_img_vertical = ConfigRegistry.get(CameraConfig.MAIN_IMAGE_FLIP_VERTICAL)
     assert flip_img_vertical is not None
     if flip_img_vertical.boolvalue:
         ret = np.flip(ret, axis=0)
 
-    image_file_pad_low = ImageConfig.FILE_PAD_LOW.value_item
+    image_file_pad_low = ConfigRegistry.get(ImageConfig.FILE_PAD_LOW)
     assert image_file_pad_low is not None
     cambits = 0
 
@@ -149,7 +158,7 @@ class SquidAdapter(Microscope):
     # SQUID-specific hardware components
     main_camera: Locked[Camera]
     focus_camera: Locked[Camera]
-    microcontroller: mc.Microcontroller
+    microcontroller: Microcontroller
     illumination_controller: IlluminationController
 
     @contextmanager
@@ -172,43 +181,50 @@ class SquidAdapter(Microscope):
 
     @classmethod
     def make(cls) -> "SquidAdapter":
-        g_dict = GlobalConfigHandler.get_dict()
-
-        # Get device configuration (USB IDs)
-        main_camera_id = g_dict[CameraConfig.MAIN_ID.value].strvalue
-        main_camera_driver = g_dict[CameraConfig.MAIN_DRIVER.value].strvalue
-        focus_camera_id = g_dict[LaserAutofocusConfig.CAMERA_ID.value].strvalue
-        focus_camera_driver = g_dict[LaserAutofocusConfig.CAMERA_DRIVER.value].strvalue
-        microcontroller_id = g_dict[MicrocontrollerConfig.ID.value].strvalue
+        # Get device configuration (USB IDs and drivers)
+        main_camera_id = ConfigRegistry.get(CameraConfig.MAIN_ID).strvalue
+        main_camera_driver = ConfigRegistry.get(CameraConfig.MAIN_DRIVER).strvalue
+        focus_camera_id = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_ID).strvalue
+        focus_camera_driver = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_DRIVER).strvalue
+        microcontroller_id = ConfigRegistry.get(MicrocontrollerConfig.ID).strvalue
+        microcontroller_driver = ConfigRegistry.get(MicrocontrollerConfig.DRIVER).strvalue
 
         # Validate camera drivers
-        valid_drivers = tp.get_args(CameraDriver)  # Get valid values from the Literal type
-        if main_camera_driver not in valid_drivers:
-            error_msg = f"invalid main camera driver '{main_camera_driver}'. Valid drivers: {valid_drivers}"
+        valid_camera_drivers = tp.get_args(CameraDriver)  # Get valid values from the Literal type
+        if main_camera_driver not in valid_camera_drivers:
+            error_msg = f"invalid main camera driver '{main_camera_driver}'. Valid drivers: {valid_camera_drivers}"
             logger.critical(f"startup - {error_msg}")
             cmd.error_internal(detail=error_msg)
 
-        if focus_camera_driver not in valid_drivers:
-            error_msg = f"invalid focus camera driver '{focus_camera_driver}'. Valid drivers: {valid_drivers}"
+        if focus_camera_driver not in valid_camera_drivers:
+            error_msg = f"invalid focus camera driver '{focus_camera_driver}'. Valid drivers: {valid_camera_drivers}"
+            logger.critical(f"startup - {error_msg}")
+            cmd.error_internal(detail=error_msg)
+
+        # Validate microcontroller driver
+        valid_mc_drivers = tp.get_args(MicrocontrollerDriver)
+        if microcontroller_driver not in valid_mc_drivers:
+            error_msg = f"invalid microcontroller driver '{microcontroller_driver}'. Valid drivers: {valid_mc_drivers}"
             logger.critical(f"startup - {error_msg}")
             cmd.error_internal(detail=error_msg)
 
         # Find devices by USB ID
         main_camera_request = CameraOpenRequest(driver=main_camera_driver, usb_id=main_camera_id)  # type: ignore
         focus_camera_request = CameraOpenRequest(driver=focus_camera_driver, usb_id=focus_camera_id)  # type: ignore
+        mc_request = MicrocontrollerOpenRequest(driver=microcontroller_driver, usb_id=microcontroller_id)  # type: ignore
 
         main_camera = camera_open(main_camera_request)
         focus_camera = camera_open(focus_camera_request)
-        microcontroller = mc.Microcontroller.find_by_usb_id(microcontroller_id)
+        microcontroller = microcontroller_open(mc_request)
 
         # Extract channel and filter configurations (native objects from config)
-        channels_data = ConfigRegistry.get(ImagingConfig.CHANNELS.value).objectvalue
+        channels_data = ConfigRegistry.get(ImagingConfig.CHANNELS).objectvalue
         channel_configs = [ChannelConfig(**ch) for ch in channels_data] #type: ignore
 
         # Only process filters if filter wheel is available
-        filter_wheel_available = g_dict.get(FilterWheelConfig.AVAILABLE.value)
+        filter_wheel_available = ConfigRegistry.get(FilterWheelConfig.AVAILABLE)
         if filter_wheel_available and filter_wheel_available.boolvalue:
-            filters_data = ConfigRegistry.get(FilterWheelConfig.CONFIGURATION.value).objectvalue
+            filters_data = ConfigRegistry.get(FilterWheelConfig.CONFIGURATION).objectvalue
             filter_configs = [FilterConfig(**f) for f in filters_data] #type: ignore
         else:
             filter_configs = []
@@ -345,68 +361,67 @@ class SquidAdapter(Microscope):
 
                 # reset the MCU
                 logger.debug("resetting mcu")
-                await qmc.send_cmd(mc.Command.reset())
+                await qmc.reset()
                 logger.debug("done")
 
                 # reinitialize motor drivers and DAC
                 logger.debug("initializing microcontroller")
-                await qmc.send_cmd(mc.Command.initialize())
+                await qmc.initialize()
                 logger.debug("done initializing microcontroller")
 
                 if True:
                     # disable for testing (new firmware should have better defaults)
                     logger.debug("configure_actuators")
-                    await qmc.send_cmd(mc.Command.configure_actuators())
+                    await qmc.configure_actuators()
                     logger.debug("done configuring actuators")
 
                 logger.info("ensuring illumination is off")
                 # make sure all illumination is off
                 for illum_src in [
                     # turn off all fluorescence LEDs
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT11,
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT12,
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT13,
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT14,
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT15,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT11,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT12,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT13,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT14,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_FLUOSLOT15,
                     # this will turn off the led matrix
-                    mc.ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL,
+                    ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL,
                 ]:
-                    await qmc.send_cmd(mc.Command.illumination_end(illum_src))
+                    await qmc.illumination_end(illum_src.value)
 
                 logger.debug("calibrating xy stage")
 
                 # when starting up the microscope, the initial position is considered (0,0,0)
                 # even homing considers the limits, so before homing, we need to disable the limits
-                await qmc.send_cmd(mc.Command.set_limit_mm("z", -10.0, "lower"))
-                await qmc.send_cmd(mc.Command.set_limit_mm("z", 10.0, "upper"))
+                await qmc.set_limit_mm("z", -10.0, "lower")
+                await qmc.set_limit_mm("z", 10.0, "upper")
 
                 # move objective out of the way
-                await qmc.send_cmd(mc.Command.home("z"))
-                await qmc.send_cmd(mc.Command.set_zero("z"))
+                await qmc.home("z")
+                await qmc.set_zero("z")
                 # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
-                await qmc.send_cmd(mc.Command.set_limit_mm("z", 0.0, "lower"))
-                await qmc.send_cmd(mc.Command.set_limit_mm("z", 6.7, "upper"))
+                await qmc.set_limit_mm("z", 0.0, "lower")
+                await qmc.set_limit_mm("z", 6.7, "upper")
                 # home x to set x reference
-                await qmc.send_cmd(mc.Command.home("x"))
-                await qmc.send_cmd(mc.Command.set_zero("x"))
+                await qmc.home("x")
+                await qmc.set_zero("x")
                 # clear clamp in x
-                await qmc.send_cmd(mc.Command.move_by_mm("x", 30))
+                await qmc.move_by_mm("x", 30)
                 # then move in position to properly apply clamp
-                await qmc.send_cmd(mc.Command.home("y"))
-                await qmc.send_cmd(mc.Command.set_zero("y"))
+                await qmc.home("y")
+                await qmc.set_zero("y")
                 # home x again to engage clamp
-                await qmc.send_cmd(mc.Command.home("x"))
+                await qmc.home("x")
 
                 # move to an arbitrary position to disengage the clamp
-                await qmc.send_cmd(mc.Command.move_by_mm("x", 30))
-                await qmc.send_cmd(mc.Command.move_by_mm("y", 30))
+                await qmc.move_by_mm("x", 30)
+                await qmc.move_by_mm("y", 30)
 
                 # and move objective up, slightly
-                await qmc.send_cmd(mc.Command.move_by_mm("z", 1))
+                await qmc.move_by_mm("z", 1)
 
                 # Only initialize filter wheel if it's available
-                g_dict = GlobalConfigHandler.get_dict()
-                filter_wheel_available = g_dict.get(FilterWheelConfig.AVAILABLE.value)
+                filter_wheel_available = ConfigRegistry.get(FilterWheelConfig.AVAILABLE)
                 if filter_wheel_available and filter_wheel_available.boolvalue:
                     # Initialize filter wheel with homing sequence (matching Squid behavior)
                     logger.info("initializing filter wheel...")
@@ -667,11 +682,11 @@ class SquidAdapter(Microscope):
             _leftmostxinsteadofestimatedz: if True, return the coordinate of the leftmost dot in the laser autofocus signal instead of the estimated z value that is based on this coordinate
         """
 
-        conf_af_exp_ms_item = LaserAutofocusConfig.EXPOSURE_TIME_MS.value_item
+        conf_af_exp_ms_item = ConfigRegistry.get(LaserAutofocusConfig.EXPOSURE_TIME_MS)
         assert conf_af_exp_ms_item is not None
         conf_af_exp_ms = conf_af_exp_ms_item.floatvalue
 
-        conf_af_exp_ag_item = LaserAutofocusConfig.CAMERA_ANALOG_GAIN.value_item
+        conf_af_exp_ag_item = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_ANALOG_GAIN)
         assert conf_af_exp_ag_item is not None
         conf_af_exp_ag = conf_af_exp_ag_item.floatvalue
 
@@ -703,7 +718,7 @@ class SquidAdapter(Microscope):
 
     async def _execute_LaserAutofocusCalibrate(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.LaserAutofocusCalibrate,
     ) -> cmd.LaserAutofocusCalibrationResponse:
     
@@ -714,7 +729,7 @@ class SquidAdapter(Microscope):
         DEBUG_LASER_AF_SHOW_EVAL_FIT = os.getenv("DEBUG_LASER_AF_SHOW_EVAL_FIT", "true").lower() == "true"
 
         # Read number of z steps from machine config
-        conf_num_steps_item = LaserAutofocusConfig.CALIBRATION_NUM_Z_STEPS.value_item
+        conf_num_steps_item = ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_NUM_Z_STEPS)
         assert conf_num_steps_item is not None
         num_z_steps_calibrate = conf_num_steps_item.intvalue
 
@@ -722,16 +737,16 @@ class SquidAdapter(Microscope):
             cmd.error_internal(detail="now allowed while in loading position")
 
         # Read z_span from machine config
-        conf_z_span_item = LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM.value_item
+        conf_z_span_item = ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM)
         assert conf_z_span_item is not None
         z_mm_movement_range = conf_z_span_item.floatvalue
         logger.debug(f"laser autofocus calibration: z_span={z_mm_movement_range}mm, num_steps={num_z_steps_calibrate}")
 
-        conf_af_exp_ms_item = LaserAutofocusConfig.EXPOSURE_TIME_MS.value_item
+        conf_af_exp_ms_item = ConfigRegistry.get(LaserAutofocusConfig.EXPOSURE_TIME_MS)
         assert conf_af_exp_ms_item is not None
         conf_af_exp_ms = conf_af_exp_ms_item.floatvalue
 
-        conf_af_exp_ag_item = LaserAutofocusConfig.CAMERA_ANALOG_GAIN.value_item
+        conf_af_exp_ag_item = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_ANALOG_GAIN)
         assert conf_af_exp_ag_item is not None
         conf_af_exp_ag = conf_af_exp_ag_item.floatvalue
 
@@ -744,12 +759,10 @@ class SquidAdapter(Microscope):
 
             # move down by half z range
             if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
-                await qmc.send_cmd(
-                    mc.Command.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
-                )
-                await qmc.send_cmd(mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER))
+                await qmc.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
+                await qmc.move_by_mm("z", Z_MM_BACKLASH_COUNTER)
             else:
-                await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
+                await qmc.move_by_mm("z", -half_z_mm)
         except IOError as e:
             self.close()
             raise DisconnectError() from e
@@ -774,7 +787,7 @@ class SquidAdapter(Microscope):
             if i > 0:
                 # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
                 try:
-                    await qmc.send_cmd(mc.Command.move_by_mm("z", z_step_mm))
+                    await qmc.move_by_mm("z", z_step_mm)
                 except IOError as e:
                     self.close()
                     raise DisconnectError() from e
@@ -785,7 +798,7 @@ class SquidAdapter(Microscope):
 
         # move to original position
         try:
-            await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
+            await qmc.move_by_mm("z", -half_z_mm)
         except IOError as e:
             self.close()
             raise DisconnectError() from e
@@ -917,18 +930,16 @@ class SquidAdapter(Microscope):
             z_step_mm = z_mm_movement_range / (num_z_steps_eval - 1)
 
             if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
-                await qmc.send_cmd(
-                    mc.Command.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
-                )
-                await qmc.send_cmd(mc.Command.move_by_mm("z", Z_MM_BACKLASH_COUNTER))
+                await qmc.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
+                await qmc.move_by_mm("z", Z_MM_BACKLASH_COUNTER)
             else:
-                await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
+                await qmc.move_by_mm("z", -half_z_mm)
 
             approximated_z: list[tuple[float, float]] = []
             for i in range(num_z_steps_eval):
                 if i > 0:
                     # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                    await qmc.send_cmd(mc.Command.move_by_mm("z", z_step_mm))
+                    await qmc.move_by_mm("z", z_step_mm)
 
                 approx = await self._approximate_laser_af_z_offset_mm(
                     cmd.LaserAutofocusCalibrationData(
@@ -942,7 +953,7 @@ class SquidAdapter(Microscope):
                 approximated_z.append((current_z_mm - start_z, approx))
 
             # move to original position
-            await qmc.send_cmd(mc.Command.move_by_mm("z", -half_z_mm))
+            await qmc.move_by_mm("z", -half_z_mm)
 
             plt.figure(figsize=(8, 6))
             plt.scatter(
@@ -989,7 +1000,7 @@ class SquidAdapter(Microscope):
             um_per_px=um_per_px,
             # set reference position
             x_reference=x_reference,
-            calibration_position=calibration_position.pos,
+            calibration_position=calibration_position,
         )
 
         logger.debug(f"laser autofocus calibration result: um_per_px={um_per_px:.4f}, x_reference={x_reference:.1f}")
@@ -1062,7 +1073,7 @@ class SquidAdapter(Microscope):
         """
 
         try:
-            data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
+            data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue
         except KeyError:
             # No forbidden areas configured - position is allowed
             return False, ""
@@ -1080,7 +1091,7 @@ class SquidAdapter(Microscope):
 
     async def _execute_EstablishHardwareConnection(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.EstablishHardwareConnection,
     ):
         if not self.is_connected:
@@ -1116,23 +1127,23 @@ class SquidAdapter(Microscope):
 
     async def _execute_LoadingPositionEnter(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.LoadingPositionEnter
     ):
         if self.is_in_loading_position:
             cmd.error_internal(detail="already in loading position")
 
         # home z
-        await qmc.send_cmd(mc.Command.home("z"))
+        await qmc.home("z")
 
         # clear clamp in y first
-        await qmc.send_cmd(mc.Command.move_to_mm("y", 30))
+        await qmc.move_to_mm("y", 30)
         # then clear clamp in x
-        await qmc.send_cmd(mc.Command.move_to_mm("x", 30))
+        await qmc.move_to_mm("x", 30)
 
         # then home y, x
-        await qmc.send_cmd(mc.Command.home("y"))
-        await qmc.send_cmd(mc.Command.home("x"))
+        await qmc.home("y")
+        await qmc.home("x")
 
         self.is_in_loading_position = True
 
@@ -1143,15 +1154,15 @@ class SquidAdapter(Microscope):
 
     async def _execute_LoadingPositionLeave(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.LoadingPositionLeave
     ):
         if not self.is_in_loading_position:
             cmd.error_internal(detail="not in loading position")
 
-        await qmc.send_cmd(mc.Command.move_to_mm("x", 30))
-        await qmc.send_cmd(mc.Command.move_to_mm("y", 30))
-        await qmc.send_cmd(mc.Command.move_to_mm("z", 1))
+        await qmc.move_to_mm("x", 30)
+        await qmc.move_to_mm("y", 30)
+        await qmc.move_to_mm("z", 1)
 
         self.is_in_loading_position = False
 
@@ -1162,7 +1173,7 @@ class SquidAdapter(Microscope):
 
     async def _execute_MoveBy(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.MoveBy
     ):
         if self.is_in_loading_position:
@@ -1195,7 +1206,7 @@ class SquidAdapter(Microscope):
         if is_forbidden:
             cmd.error_internal(detail=error_message)
 
-        await qmc.send_cmd(mc.Command.move_by_mm(command.axis, command.distance_mm))
+        await qmc.move_by_mm(command.axis, command.distance_mm)
 
         logger.debug("squid - moved by")
 
@@ -1204,7 +1215,7 @@ class SquidAdapter(Microscope):
 
     async def _execute_MoveTo(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.MoveTo
     ):
         if self.is_in_loading_position:
@@ -1258,7 +1269,7 @@ class SquidAdapter(Microscope):
                     cmd.error_internal(
                         detail=f"calibrated x coordinate out of bounds {x_mm = }"
                     )
-                await qmc.send_cmd(mc.Command.move_to_mm("x", x_mm))
+                await qmc.move_to_mm("x", x_mm)
 
             if command.y_mm is not None:
                 y_mm = self._pos_y_real_to_measured(command.y_mm)
@@ -1266,7 +1277,7 @@ class SquidAdapter(Microscope):
                     cmd.error_internal(
                         detail=f"calibrated y coordinate out of bounds {y_mm = }"
                     )
-                await qmc.send_cmd(mc.Command.move_to_mm("y", y_mm))
+                await qmc.move_to_mm("y", y_mm)
         else:
             if command.y_mm is not None:
                 y_mm = self._pos_y_real_to_measured(command.y_mm)
@@ -1274,7 +1285,7 @@ class SquidAdapter(Microscope):
                     cmd.error_internal(
                         detail=f"calibrated y coordinate out of bounds {y_mm = }"
                     )
-                await qmc.send_cmd(mc.Command.move_to_mm("y", y_mm))
+                await qmc.move_to_mm("y", y_mm)
 
             if command.x_mm is not None:
                 x_mm = self._pos_x_real_to_measured(command.x_mm)
@@ -1282,7 +1293,7 @@ class SquidAdapter(Microscope):
                     cmd.error_internal(
                         detail=f"calibrated x coordinate out of bounds {x_mm = }"
                     )
-                await qmc.send_cmd(mc.Command.move_to_mm("x", x_mm))
+                await qmc.move_to_mm("x", x_mm)
 
         if command.z_mm is not None:
             z_mm = self._pos_z_real_to_measured(command.z_mm)
@@ -1290,7 +1301,7 @@ class SquidAdapter(Microscope):
                 cmd.error_internal(
                     detail=f"calibrated z coordinate out of bounds {z_mm = }"
                 )
-            await qmc.send_cmd(mc.Command.move_to_mm("z", z_mm))
+            await qmc.move_to_mm("z", z_mm)
 
         logger.debug("squid - moved to")
 
@@ -1299,7 +1310,7 @@ class SquidAdapter(Microscope):
 
     async def _execute_MoveToWell(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.MoveToWell
     ):
         if self.is_in_loading_position:
@@ -1360,12 +1371,12 @@ class SquidAdapter(Microscope):
 
             if channel_config is not None:
                 try:
-                    illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+                    illum_code = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
                     with self.microcontroller.locked() as qmc:
                         if qmc is None:
                             logger.debug("failed to acquire microcontroller locl to turn off illumination!!")
                         else:
-                            await qmc.send_cmd(mc.Command.illumination_end(illum_code))
+                            await qmc.illumination_end(illum_code.value)
                             logger.debug(f"squid - forced illumination cleanup for channel {command.channel.handle}")
                 except Exception as e:
                     logger.warning(f"squid - failed to force illumination cleanup: {e}")
@@ -1379,7 +1390,7 @@ class SquidAdapter(Microscope):
 
     async def _execute_ChannelSnapshot(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.ChannelSnapshot
     ):
         # Find channel config by handle and get illumination code from source slot
@@ -1395,7 +1406,7 @@ class SquidAdapter(Microscope):
             )
 
         try:
-            illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+            illum_code = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
         except Exception as e:
             cmd.error_internal(
                 detail=f"Invalid illumination source slot {channel_config.source_slot} for channel {command.channel.handle}: {e}"
@@ -1446,20 +1457,14 @@ class SquidAdapter(Microscope):
         if illum_code.is_led_matrix:
             # Convert calibrated intensity to RGB brightness (0-1 range)
             rgb_brightness = calibrated_intensity / 100.0
-            await qmc.send_cmd(
-                mc.Command.illumination_begin(
-                    illum_code,
-                    100.0,  # intensity_percent is ignored for LED matrix
-                    rgb_brightness,  # R
-                    rgb_brightness,  # G
-                    rgb_brightness   # B
-                )
+            await qmc.illumination_begin(
+                illum_code.value,
+                100.0,  # intensity_percent is ignored for LED matrix
+                (rgb_brightness, rgb_brightness, rgb_brightness)
             )
         else:
             # For regular sources (lasers), use intensity directly
-            await qmc.send_cmd(
-                mc.Command.illumination_begin(illum_code, calibrated_intensity)
-            )
+            await qmc.illumination_begin(illum_code.value, calibrated_intensity)
 
         with self.main_camera.locked() as main_camera:
             if main_camera is None:
@@ -1473,7 +1478,7 @@ class SquidAdapter(Microscope):
             finally:
                 logger.debug("channel snap - after acq")
 
-                await qmc.send_cmd(mc.Command.illumination_end(illum_code))
+                await qmc.illumination_end(illum_code.value)
                 logger.debug("channel snap - after illum off")
 
             img, cambits = _process_image(img, camera=main_camera)
@@ -1487,7 +1492,7 @@ class SquidAdapter(Microscope):
 
     async def _execute_ChannelStreamBegin(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.ChannelStreamBegin
     ):
         if self.stream_callback is not None:
@@ -1506,7 +1511,7 @@ class SquidAdapter(Microscope):
             )
 
         try:
-            illum_code = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+            illum_code = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
         except Exception as e:
             cmd.error_internal(
                 detail=f"Invalid illumination source slot {channel_config.source_slot} for channel {command.channel.handle}: {e}"
@@ -1548,20 +1553,14 @@ class SquidAdapter(Microscope):
         if illum_code.is_led_matrix:
             # Convert calibrated intensity to RGB brightness (0-1 range)
             rgb_brightness = calibrated_intensity / 100.0
-            await qmc.send_cmd(
-                mc.Command.illumination_begin(
-                    illum_code,
-                    100.0,  # intensity_percent is ignored for LED matrix
-                    rgb_brightness,  # R
-                    rgb_brightness,  # G
-                    rgb_brightness   # B
-                )
+            await qmc.illumination_begin(
+                illum_code.value,
+                100.0,  # intensity_percent is ignored for LED matrix
+                (rgb_brightness, rgb_brightness, rgb_brightness)
             )
         else:
             # For regular sources (lasers), use intensity directly
-            await qmc.send_cmd(
-                mc.Command.illumination_begin(illum_code, calibrated_intensity)
-            )
+            await qmc.illumination_begin(illum_code.value, calibrated_intensity)
 
         def forward_image(img: np.ndarray) -> None:
             if self.stream_callback is None:
@@ -1594,7 +1593,7 @@ class SquidAdapter(Microscope):
 
     async def _execute_AutofocusApproachTargetDisplacement(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.AutofocusApproachTargetDisplacement
     ):
         # Extract values from command for use in nested function
@@ -1615,8 +1614,8 @@ class SquidAdapter(Microscope):
             cmd.error_internal(detail="now allowed while in loading position")
 
         # get autofocus calibration data
-        conf_af_calib_x = LaserAutofocusConfig.CALIBRATION_X_PEAK_POS.value_item.floatvalue
-        conf_af_calib_umpx = LaserAutofocusConfig.CALIBRATION_UM_PER_PX.value_item.floatvalue
+        conf_af_calib_x = ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_X_PEAK_POS).floatvalue
+        conf_af_calib_umpx = ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_UM_PER_PX).floatvalue
         # autofocus_calib=LaserAutofocusCalibrationData(um_per_px=conf_af_calib_umpx,x_reference=conf_af_calib_x,calibration_position=Position.zero())
 
         # we are looking for a z coordinate where the measured dot_x is equal to this target_x.
@@ -1637,7 +1636,7 @@ class SquidAdapter(Microscope):
         if command.pre_approach_refz:
             refz_item = None
             try:
-                refz_item = LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value_item
+                refz_item = ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_REF_Z_MM)
             except KeyError:
                 cmd.error_internal(
                     detail="laser.autofocus.calibration.ref_z_mm is not available when AutofocusApproachTargetDisplacement had pre_approach_refz set"
@@ -1686,27 +1685,27 @@ class SquidAdapter(Microscope):
                     distance_estimate_mm
                 ):
                     # move back to last z, since that seemed like the better position to be in
-                    await qmc.send_cmd(mc.Command.move_to_mm("z", last_z_mm))
+                    await qmc.move_to_mm("z", last_z_mm)
                     logger.debug("autofocus - reset z to known good position")
                     # TODO unsure if this is the best approach. we cannot do better, but we also have not actually gotten close to the offset
                     reached_threshold = True
                     break
 
                 last_distance_estimate_mm = distance_estimate_mm
-                last_z_mm = (await qmc.get_last_position()).z_pos_mm
+                last_z_mm = (await qmc.get_position()).z_pos_mm
 
                 # if movement distance is not worth compensating, stop
                 if math.fabs(distance_estimate_mm) < OFFSET_MOVEMENT_THRESHOLD_MM:
                     reached_threshold = True
                     break
 
-                await qmc.send_cmd(mc.Command.move_by_mm("z", distance_estimate_mm))
+                await qmc.move_by_mm("z", distance_estimate_mm)
                 num_compensating_moves += 1
                 logger.debug("autofocus - refined z")
 
         except Exception:
             # if any interaction failed, attempt to reset z position to known somewhat-good position
-            await qmc.send_cmd(mc.Command.move_to_mm("z", initial_z))
+            await qmc.move_to_mm("z", initial_z)
             logger.debug("autofocus - reset z position")
 
         logger.debug("squid - used autofocus to approach target displacement")
@@ -1720,11 +1719,11 @@ class SquidAdapter(Microscope):
 
     async def _execute_AutofocusSnap(
         self,
-        qmc:mc.Microcontroller,
+        qmc: Microcontroller,
         command:cmd.AutofocusSnap
     ):
         if command.turn_laser_on:
-            await qmc.send_cmd(mc.Command.af_laser_illum_begin())
+            await qmc.af_laser_on()
             logger.debug("squid - autofocus - turned laser on")
 
         channel_config = sc.AcquisitionChannelConfig(
@@ -1746,7 +1745,7 @@ class SquidAdapter(Microscope):
         logger.debug("squid - autofocus - acquired image")
 
         if command.turn_laser_off:
-            await qmc.send_cmd(mc.Command.af_laser_illum_end())
+            await qmc.af_laser_off()
             logger.debug("squid - autofocus - turned laser off")
 
         result = cmd.AutofocusSnapResult(
@@ -1809,28 +1808,21 @@ class SquidAdapter(Microscope):
                     if command.config_file.machine_config is not None:
                         GlobalConfigHandler.override(command.config_file.machine_config)
 
-                    g_config = LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.get_dict()
-
-                    conf_af_if_calibrated = g_config.get(str(LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED))
-                    conf_af_calib_x = g_config.get(str(LaserAutofocusConfig.CALIBRATION_X_PEAK_POS))
-                    conf_af_calib_umpx = g_config.get(str(LaserAutofocusConfig.CALIBRATION_UM_PER_PX))
-                    if (
-                        conf_af_if_calibrated is None
-                        or conf_af_calib_x is None
-                        or conf_af_calib_umpx is None
-                        or not conf_af_if_calibrated.boolvalue
-                    ):
+                    conf_af_if_calibrated = ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED)
+                    conf_af_calib_x = ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_X_PEAK_POS)
+                    conf_af_calib_umpx = ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_UM_PER_PX)
+                    if not conf_af_if_calibrated.boolvalue:
                         cmd.error_internal(detail="laser autofocus not calibrated")
 
                     # get laser spot location
                     # sometimes one of the two expected dots cannot be found in _get_laser_spot_centroid because the plate is so far off the focus plane though, catch that case
+                    displacement_um = 0
                     try:
                         calib_params = cmd.LaserAutofocusCalibrationData(
                             um_per_px=conf_af_calib_umpx.floatvalue,
                             x_reference=conf_af_calib_x.floatvalue,
                             calibration_position=cmd.Position.zero(),
                         )
-                        displacement_um = 0
 
                         num_images = 3 or command.override_num_images
                         for _ in range(num_images):
@@ -1847,10 +1839,10 @@ class SquidAdapter(Microscope):
                     logger.debug("squid - used autofocus to measure displacement")
 
                     # Apply configured offset to the measured displacement
-                    conf_af_offset_um = g_config.get(str(LaserAutofocusConfig.OFFSET_UM))
-                    if conf_af_offset_um is not None:
-                        logger.debug(f"adding {conf_af_offset_um.floatvalue} to measured offset {displacement_um} for result {displacement_um+conf_af_offset_um.floatvalue}")
-                        displacement_um += conf_af_offset_um.floatvalue
+                    conf_af_offset_um = ConfigRegistry.get(LaserAutofocusConfig.OFFSET_UM).floatvalue
+                    if conf_af_offset_um != 0.0:
+                        logger.debug(f"adding {conf_af_offset_um} to measured offset {displacement_um} for result {displacement_um+conf_af_offset_um}")
+                        displacement_um += conf_af_offset_um
 
                     result = cmd.AutofocusMeasureDisplacementResult(displacement_um=displacement_um)
                     return result # type: ignore[no-any-return]
@@ -1860,12 +1852,12 @@ class SquidAdapter(Microscope):
                     return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusLaserWarmup):
-                    await qmc.send_cmd(mc.Command.af_laser_illum_begin())
+                    await qmc.af_laser_on()
 
                     # wait for the laser to warm up
                     await asyncio.sleep(command.warmup_time_s)
 
-                    await qmc.send_cmd(mc.Command.af_laser_illum_end())
+                    await qmc.af_laser_off()
 
                     logger.debug("squid - warmed up autofocus laser")
 
@@ -1876,8 +1868,8 @@ class SquidAdapter(Microscope):
                     # Turn off all configured illumination sources
                     for channel_config in self.channels:
                         try:
-                            illum_src = mc.ILLUMINATION_CODE.from_slot(channel_config.source_slot)
-                            await qmc.send_cmd(mc.Command.illumination_end(illum_src))
+                            illum_src = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+                            await qmc.illumination_end(illum_src.value)
                             logger.debug(
                                 f"squid - illumination end all - turned off illumination for {channel_config.name} (slot {channel_config.source_slot})"
                             )

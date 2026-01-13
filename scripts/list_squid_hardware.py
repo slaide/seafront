@@ -47,8 +47,8 @@ def scan_microcontrollers() -> tuple[list, str | None]:
         tuple: (list of microcontrollers, error_message or None)
     """
     try:
-        from seafront.hardware.microcontroller import Microcontroller
-        return Microcontroller.get_all(), None
+        from seafront.hardware.microcontroller import get_all_microcontrollers
+        return get_all_microcontrollers(), None
     except ImportError as e:
         return [], f"Microcontroller driver not available (import error: {e})"
     except Exception as e:

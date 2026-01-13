@@ -45,7 +45,7 @@ from seafront.config import basics
 from seafront.config.basics import ImagingOrder
 from seafront.config.handles import CameraConfig, ImagingConfig, LaserAutofocusConfig, StorageConfig
 from seafront.config.registry import ConfigRegistry
-from seafront.hardware import microcontroller as mc
+from seafront.hardware.adapter import Position as McPosition
 from seafront.logger import logger
 
 
@@ -824,7 +824,7 @@ class ProtocolGenerator(BaseModel):
             - ((self.config_file.grid.num_y - 1) * self.config_file.grid.delta_y_mm) / 2
         )
 
-        base_storage_path_item = StorageConfig.BASE_IMAGE_OUTPUT_DIR.value_item
+        base_storage_path_item = ConfigRegistry.get(StorageConfig.BASE_IMAGE_OUTPUT_DIR)
         assert base_storage_path_item is not None
         assert type(base_storage_path_item.value) is str
         base_storage_path = path.Path(base_storage_path_item.value)
@@ -926,7 +926,7 @@ class ProtocolGenerator(BaseModel):
 
     def iter_channels(self) -> tp.Iterator[ChannelInfo]:
         """Iterator over channels with imaging order applied"""
-        imaging_order_item = ImagingConfig.ORDER.value_item
+        imaging_order_item = ConfigRegistry.get(ImagingConfig.ORDER)
         assert imaging_order_item is not None
         imaging_order = tp.cast(ImagingOrder, imaging_order_item.value)
 
@@ -1010,7 +1010,7 @@ class ProtocolGenerator(BaseModel):
         logger.info("protocol - performing pre-flight forbidden area validation")
         # Parse forbidden areas once and pass to positionIsForbidden to avoid repeated parsing
         try:
-            data = ConfigRegistry.get(cmds.ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
+            data = ConfigRegistry.get(cmds.ProtocolConfig.FORBIDDEN_AREAS).objectvalue
             forbidden_areas = cmds.ForbiddenAreaList.model_validate({"areas": data})
         except KeyError:
             forbidden_areas = None
@@ -1048,7 +1048,7 @@ class ProtocolGenerator(BaseModel):
 
         # get current z coordinate as z reference
         last_position = yield cmds.MC_getLastPosition()
-        assert isinstance(last_position, mc.Position), f"{type(last_position)=}"
+        assert isinstance(last_position, McPosition), f"{type(last_position)=}"
         reference_z_mm = last_position.z_pos_mm
 
         # if laser autofocus is enabled, use autofocus z reference as initial z reference
@@ -1160,7 +1160,7 @@ class ProtocolGenerator(BaseModel):
 
                         # reference for channel z offsets
                         last_position = yield cmds.MC_getLastPosition()
-                        assert isinstance(last_position, mc.Position), f"{type(last_position)=}"
+                        assert isinstance(last_position, McPosition), f"{type(last_position)=}"
                         reference_z_mm = last_position.z_pos_mm
 
                         logger.debug("autofocus performed")
@@ -1206,7 +1206,7 @@ class ProtocolGenerator(BaseModel):
 
                         # move to channel offset
                         last_position = yield cmds.MC_getLastPosition()
-                        assert isinstance(last_position, mc.Position), f"{type(last_position)=}"
+                        assert isinstance(last_position, McPosition), f"{type(last_position)=}"
                         current_z_mm = last_position.z_pos_mm
 
                         distance_z_to_move_mm = channel_z_mm - current_z_mm
@@ -1215,7 +1215,7 @@ class ProtocolGenerator(BaseModel):
                             assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
 
                         last_position = yield cmds.MC_getLastPosition()
-                        assert isinstance(last_position, mc.Position), f"{type(last_position)=}"
+                        assert isinstance(last_position, McPosition), f"{type(last_position)=}"
 
                         logger.debug(
                             f"protocol - moved to channel z (should be {channel_z_mm:.4f}mm, is {last_position.z_pos_mm:.4f}mm)"
@@ -1275,7 +1275,7 @@ class ProtocolGenerator(BaseModel):
                             image_storage_path = f"{self.project_output_path!s}/{image_filename}"
 
                         image_store_entry = cmds.ImageStoreEntry(
-                            pixel_format=CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue,
+                            pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
                             info=cmds.ImageStoreInfo(
                                 channel=channel,
                                 width_px=res._img.shape[1],
@@ -1289,7 +1289,7 @@ class ProtocolGenerator(BaseModel):
                                     x_offset_mm=0,
                                     y_offset_mm=0,
                                     z_offset_mm=0,
-                                    position=last_position.pos,
+                                    position=last_position,
                                 ),
                                 storage_path=str(image_storage_path),
                             ),

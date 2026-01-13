@@ -10,6 +10,7 @@ from seaconfig import AcquisitionChannelConfig
 
 from seafront.config.basics import GlobalConfigHandler, set_config_item_bool, ConfigItem, ConfigItemOption
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
+from seafront.config.registry import ConfigRegistry
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
 
@@ -699,15 +700,14 @@ class ToupCamCamera(Camera):
         if pixel_format is None:
             match self.device_type:
                 case "main":
-                    pixel_format_item = CameraConfig.MAIN_PIXEL_FORMAT.value_item
+                    pixel_format_item = ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT)
                 case "autofocus":
-                    pixel_format_item = LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value_item
+                    pixel_format_item = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_PIXEL_FORMAT)
                 case _:
                     raise RuntimeError(f"unsupported device type {self.device_type}")
 
             assert pixel_format_item is not None
-            pixel_format = pixel_format_item.value
-            assert isinstance(pixel_format, str)
+            pixel_format = pixel_format_item.strvalue
 
         # Map pixel format names to ToupCam constants
         pixel_format = pixel_format.lower()

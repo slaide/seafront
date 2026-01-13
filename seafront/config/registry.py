@@ -7,30 +7,28 @@ The startup config file can override any of these values.
 Usage in a component file (e.g., kiri_camera.py):
 
     from seafront.config.registry import ConfigRegistry, config_item
+    from seafront.config.handles import CameraConfig
 
-    # Define handles as module constants
-    KIRI_EXPOSURE_COMP = "camera.kiri.exposure_compensation"
-    KIRI_COLOR_TEMP = "camera.kiri.color_temperature"
+    # Get a config item using the handle enum directly
+    camera_id = ConfigRegistry.get(CameraConfig.MAIN_ID).strvalue
 
     # Register config items - values from config file automatically override defaults
     ConfigRegistry.register(
         config_item(
-            handle=KIRI_EXPOSURE_COMP,
+            handle="camera.kiri.exposure_compensation",
             name="Kiri exposure compensation",
             value_kind="float",
             default=0.0,
             persistent=True,  # will be saved to config file
         ),
-        config_item(
-            handle=KIRI_COLOR_TEMP,
-            name="Kiri color temperature",
-            value_kind="int",
-            default=5500,
-        ),
     )
 """
 
+from __future__ import annotations
+
 import typing as tp
+from enum import Enum
+
 from seaconfig import ConfigItem, ConfigItemOption
 
 # Value kinds supported by the config system
@@ -97,14 +95,16 @@ class ConfigRegistry:
                 cls._persistent_handles.add(spec.handle)
 
     @classmethod
-    def get(cls, handle: str) -> ConfigItem:
-        """Get a config item by handle."""
-        return cls._items[handle]
+    def get(cls, handle: str | Enum) -> ConfigItem:
+        """Get a config item by handle (string or ConfigHandle enum)."""
+        key = handle.value if isinstance(handle, Enum) else handle
+        return cls._items[key]
 
     @classmethod
-    def get_value(cls, handle: str) -> tp.Any:
+    def get_value(cls, handle: str | Enum) -> tp.Any:
         """Get just the value of a config item."""
-        return cls._items[handle].value
+        key = handle.value if isinstance(handle, Enum) else handle
+        return cls._items[key].value
 
     @classmethod
     def get_all(cls) -> list[ConfigItem]:

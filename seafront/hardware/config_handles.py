@@ -43,14 +43,3 @@ class ToupCamConfig(ConfigHandle):
     TOUPCAM_GAIN = "camera.toupcam.gain"
     TOUPCAM_GAMMA = "camera.toupcam.gamma"
     TOUPCAM_CONTRAST = "camera.toupcam.contrast"
-
-
-# Hardware-specific convenience functions
-def get_squid_config_item(handle: SquidConfig):
-    """Get SQUID-specific config item."""
-    return handle.get_item()
-
-
-def get_camera_config_item(handle):
-    """Get camera-specific config item (works with Galaxy or ToupCam)."""
-    return handle.get_item()

@@ -917,7 +917,7 @@ class Core:
         async def write_image_laseraf(cmd: AutofocusSnap, res: AutofocusSnapResult):
             "store new laser autofocus image"
 
-            pixel_format = LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value_item.strvalue
+            pixel_format = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_PIXEL_FORMAT).strvalue
 
             await self._store_new_image(
                 img=res._img, pixel_format=pixel_format, channel_config=res._channel
@@ -926,7 +926,7 @@ class Core:
         async def write_image(cmd: ChannelSnapshot, res: ImageAcquiredResponse):
             "store new regular image"
 
-            pixel_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue
+            pixel_format = ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue
 
             logger.debug(f"storing new image for {cmd.channel.handle}")
 
@@ -972,7 +972,7 @@ class Core:
                 self.image_store_threadpool.run(
                     self._store_new_image(
                         img=img,
-                        pixel_format=CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue,
+                        pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
                         channel_config=stream_info["channel"],
                     )
                 )
@@ -1222,9 +1222,9 @@ class Core:
 
         # real/should position = measured/is position + calibrated offset
         # i.e. calibrated offset = real/should position - measured/is position
-        old_x_mm=CalibrationConfig.OFFSET_X_MM.get_item().floatvalue
-        old_y_mm=CalibrationConfig.OFFSET_Y_MM.get_item().floatvalue
-        old_z_mm=CalibrationConfig.OFFSET_Z_MM.get_item().floatvalue
+        old_x_mm=ConfigRegistry.get(CalibrationConfig.OFFSET_X_MM).floatvalue
+        old_y_mm=ConfigRegistry.get(CalibrationConfig.OFFSET_Y_MM).floatvalue
+        old_z_mm=ConfigRegistry.get(CalibrationConfig.OFFSET_Z_MM).floatvalue
         # new offset is relative to existing calibration, hence add old to new offsets for new reference
         ref_x_mm = old_x_mm + plate.get_well_offset_x("B02") - current_pos.x_pos_mm
         ref_y_mm = old_y_mm + plate.get_well_offset_y("B02") - current_pos.y_pos_mm
@@ -1307,7 +1307,7 @@ class Core:
         to be stored and displayed as soon as it's acquired, rather than waiting
         for all channels to complete.
         """
-        pixel_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue
+        pixel_format = ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue
 
         try:
             with self.microscope.lock(blocking=False, reason="snapping all selected channels") as microscope:
@@ -1451,7 +1451,7 @@ class Core:
         Get hardware capabilities including real hardware limits from the microscope.
         """
         # Get channels config (native list, .objectvalue asserts type)
-        channels_data = ConfigRegistry.get(ImagingConfig.CHANNELS.value).objectvalue
+        channels_data = ConfigRegistry.get(ImagingConfig.CHANNELS).objectvalue
 
         # Convert to ChannelConfig objects
         channel_configs = [ChannelConfig(**ch) for ch in channels_data]  # type: ignore
@@ -1662,7 +1662,7 @@ class Core:
         # This catches forbidden positions during preparation instead of during execution
         # Parse forbidden areas once and reuse for all positions to avoid repeated parsing
         try:
-            forbidden_areas_data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
+            forbidden_areas_data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue
             forbidden_areas = ForbiddenAreaList.model_validate({"areas": forbidden_areas_data})
         except KeyError:
             forbidden_areas = None
@@ -1737,7 +1737,7 @@ class Core:
                                 if result is not None and isinstance(next_step, ChannelSnapshot):
                                     await self._store_new_image(
                                         img=result._img,
-                                        pixel_format=CameraConfig.MAIN_PIXEL_FORMAT.value_item.strvalue,
+                                        pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
                                         channel_config=next_step.channel,
                                     )
 

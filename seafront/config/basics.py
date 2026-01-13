@@ -529,6 +529,7 @@ class GlobalConfigHandler:
             CameraConfig.MAIN_ID.value: "CHANGE_ME",
             CameraConfig.MAIN_DRIVER.value: "galaxy",
             MicrocontrollerConfig.ID.value: "CHANGE_ME",
+            MicrocontrollerConfig.DRIVER.value: "teensy",
             StorageConfig.BASE_IMAGE_OUTPUT_DIR.value: str(GlobalConfigHandler.home() / "images"),
             CalibrationConfig.OFFSET_X_MM.value: 0.0,
             CalibrationConfig.OFFSET_Y_MM.value: 0.0,
@@ -668,8 +669,8 @@ class GlobalConfigHandler:
         register_core_config(default_image_dir, default_channels, default_forbidden_areas)
 
         # Register optional subsystem configs based on availability
-        if ConfigRegistry.get(LaserAutofocusConfig.AVAILABLE.value).boolvalue:
+        if ConfigRegistry.get(LaserAutofocusConfig.AVAILABLE).boolvalue:
             register_laser_autofocus_config()
 
-        if ConfigRegistry.get(FilterWheelConfig.AVAILABLE.value).boolvalue:
+        if ConfigRegistry.get(FilterWheelConfig.AVAILABLE).boolvalue:
             register_filter_wheel_config()

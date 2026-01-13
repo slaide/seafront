@@ -124,7 +124,7 @@ class MockMicroscope(Microscope):
         """
 
         try:
-            forbidden_areas_data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
+            forbidden_areas_data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue
         except KeyError:
             # No forbidden areas configured - allow the movement
             return False, ""
@@ -282,13 +282,13 @@ class MockMicroscope(Microscope):
         logger.info("Creating mock microscope instance")
 
         # Parse channels from configuration (.objectvalue asserts type)
-        channels_data = ConfigRegistry.get(ImagingConfig.CHANNELS.value).objectvalue
+        channels_data = ConfigRegistry.get(ImagingConfig.CHANNELS).objectvalue
         channel_configs = [ChannelConfig(**ch) for ch in channels_data]  # type: ignore
 
         # Parse filters from configuration (optional - may not be registered if filter wheel unavailable)
         filter_configs = []
         try:
-            filters_data = ConfigRegistry.get(FilterWheelConfig.CONFIGURATION.value).objectvalue
+            filters_data = ConfigRegistry.get(FilterWheelConfig.CONFIGURATION).objectvalue
             filter_configs = [FilterConfig(**f) for f in filters_data]  # type: ignore
         except KeyError:
             pass  # Filter wheel config not registered (filter wheel not available)
@@ -956,18 +956,7 @@ class MockMicroscope(Microscope):
             return result  # type: ignore
 
         elif isinstance(command, cmd.MC_getLastPosition):
-            # Convert adapter.Position to microcontroller.Position
-            from seafront.hardware.firmware_config import get_firmware_config
-            from seafront.hardware.microcontroller import Position as McPosition
-
-            firmware_config = get_firmware_config()
-
-            # Convert mm to micro-steps
-            x_usteps = int(self._current_position.x_pos_mm / firmware_config.mm_per_ustep_x)
-            y_usteps = int(self._current_position.y_pos_mm / firmware_config.mm_per_ustep_y)
-            z_usteps = int(self._current_position.z_pos_mm / firmware_config.mm_per_ustep_z)
-
-            return McPosition(x_usteps=x_usteps, y_usteps=y_usteps, z_usteps=z_usteps)  # type: ignore
+            return self._current_position  # type: ignore
 
         elif isinstance(command, cmd.IlluminationEndAll):
             logger.info("Mock microscope: turning off all illumination")
@@ -1043,7 +1032,7 @@ class MockMicroscope(Microscope):
         elif isinstance(command, cmd.LaserAutofocusCalibrate):
             logger.info("Mock microscope: calibrating laser autofocus")
             # Read z_span from machine config
-            conf_z_span_item = LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM.value_item
+            conf_z_span_item = ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM)
             assert conf_z_span_item is not None
             z_span = conf_z_span_item.floatvalue
             logger.debug(f"Using z_span_mm={z_span} for autofocus calibration")

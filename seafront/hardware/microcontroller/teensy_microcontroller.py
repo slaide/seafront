@@ -5,6 +5,7 @@ import dataclasses
 import threading
 import time
 import typing as tp
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -19,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from seafront.config.basics import GlobalConfigHandler
 from seafront.hardware.adapter import DeviceAlreadyInUseError, Position as AdapterPosition
 from seafront.hardware.firmware_config import get_firmware_config
+from seafront.hardware.microcontroller.microcontroller import Microcontroller
 from seafront.logger import logger
 
 # Global firmware configuration instance
@@ -105,10 +107,6 @@ class LIMIT_SWITCH_POLARITY:
     ACTIVE_LOW: int = 0
     ACTIVE_HIGH: int = 1
     DISABLED: int = 2
-
-
-# Global firmware configuration instance - this replaces the old static FirmwareDefinitions class
-firmware_config = get_firmware_config()
 
 
 @dataclass(init=False)
@@ -256,17 +254,17 @@ class ILLUMINATION_CODE(int, Enum):
     def from_slot(slot: int) -> "ILLUMINATION_CODE":
         """
         Convert a hardware light source ID to ILLUMINATION_CODE enum for type safety.
-        
+
         The slot parameter corresponds to the physical hardware light source identifier
         that the microcontroller uses to control illumination. This method provides
         type-safe mapping from integer slot IDs to the ILLUMINATION_CODE enum.
-        
+
         Args:
             slot: Hardware light source ID (e.g. 11 for 405nm laser, 0 for LED array full)
-            
+
         Returns:
             ILLUMINATION_CODE enum value corresponding to the hardware slot
-            
+
         Raises:
             ValueError: If slot is not a valid ILLUMINATION_CODE value
         """
@@ -882,7 +880,7 @@ def _usb_operation_with_reconnect(func):
                 time.sleep(reconnect_delay_ms / 1000.0)
 
                 try:
-                    self.open()
+                    self._open_connection()
                     logger.info(
                         f"{func.__name__}: successfully reconnected, retrying operation"
                     )
@@ -901,7 +899,14 @@ def _usb_operation_with_reconnect(func):
     return wrapper
 
 
-class Microcontroller(BaseModel):
+class TeensyMicrocontroller(Microcontroller, BaseModel):
+    """
+    Teensy/Arduino microcontroller implementation.
+
+    This implementation supports Arduino Due and Teensyduino microcontrollers
+    running the octopi-research firmware.
+    """
+
     device_info: SerialDeviceInfo
 
     handle: serial.Serial | None = None
@@ -944,6 +949,21 @@ class Microcontroller(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    # ==================== Abstract Interface Implementation ====================
+
+    # Device info properties (from abstract class)
+    @property
+    def vendor_name(self) -> str:
+        return self.device_info.manufacturer or "Unknown"
+
+    @property
+    def model_name(self) -> str:
+        return self.device_info.description or "Unknown"
+
+    @property
+    def sn(self) -> str:
+        return self.device_info.serial_number or ""
+
     @contextmanager
     def locked(self, blocking: bool = True) -> "tp.Iterator[tp.Self|None]":
         "convenience function to lock self for multiple function calls. yields none is lock cannot be acquired"
@@ -954,6 +974,80 @@ class Microcontroller(BaseModel):
                 self._lock.release()
         else:
             yield None
+
+    # High-level interface methods (implementing abstract class)
+
+    async def reset(self) -> None:
+        """Reset the microcontroller."""
+        await self.send_cmd(Command.reset())
+
+    async def initialize(self) -> None:
+        """Initialize the microcontroller (motor drivers, DAC, etc.)."""
+        await self.send_cmd(Command.initialize())
+
+    async def configure_actuators(self) -> None:
+        """Configure motor drivers, leadscrew pitch, velocity/acceleration limits."""
+        await self.send_cmd(Command.configure_actuators())
+
+    async def home(self, axis: tp.Literal["x", "y", "z"]) -> None:
+        """Home the specified axis."""
+        await self.send_cmd(Command.home(axis))
+
+    async def move_to_mm(self, axis: tp.Literal["x", "y", "z"], position_mm: float) -> None:
+        """Move to an absolute position on the specified axis."""
+        await self.send_cmd(Command.move_to_mm(axis, position_mm))
+
+    async def move_by_mm(self, axis: tp.Literal["x", "y", "z"], distance_mm: float) -> None:
+        """Move by a relative distance on the specified axis."""
+        await self.send_cmd(Command.move_by_mm(axis, distance_mm))
+
+    async def set_zero(self, axis: tp.Literal["x", "y", "z"]) -> None:
+        """Set the current position as zero for the specified axis."""
+        await self.send_cmd(Command.set_zero(axis))
+
+    async def set_limit_mm(
+        self,
+        axis: tp.Literal["x", "y", "z"],
+        coord: float,
+        bound: tp.Literal["upper", "lower"],
+    ) -> None:
+        """Set a software limit on the specified axis."""
+        await self.send_cmd(Command.set_limit_mm(axis, coord, bound))
+
+    async def get_position(self) -> AdapterPosition:
+        """Get the current stage position."""
+        return await self.get_last_position()
+
+    async def illumination_begin(
+        self,
+        source: int,
+        intensity_percent: float,
+        rgb: tuple[float, float, float] | None = None,
+    ) -> None:
+        """Turn on illumination."""
+        illum_source = ILLUMINATION_CODE(source)
+        if rgb is not None:
+            await self.send_cmd(Command.illumination_begin(illum_source, intensity_percent, rgb[0], rgb[1], rgb[2]))
+        else:
+            await self.send_cmd(Command.illumination_begin(illum_source, intensity_percent))
+
+    async def illumination_end(self, source: int | None = None) -> None:
+        """Turn off illumination."""
+        if source is not None:
+            illum_source = ILLUMINATION_CODE(source)
+            await self.send_cmd(Command.illumination_end(illum_source))
+        else:
+            await self.send_cmd(Command.illumination_end(None))
+
+    async def af_laser_on(self) -> None:
+        """Turn on the autofocus laser."""
+        await self.send_cmd(Command.af_laser_illum_begin())
+
+    async def af_laser_off(self) -> None:
+        """Turn off the autofocus laser."""
+        await self.send_cmd(Command.af_laser_illum_end())
+
+    # ==================== Internal Implementation ====================
 
     async def _wait_until_cmd_is_finished(
         self,
@@ -1107,7 +1201,7 @@ class Microcontroller(BaseModel):
 
             self.terminate_reading_received_packet_thread = should_terminate
 
-    async def get_last_position(self) -> Position:
+    async def get_last_position(self) -> AdapterPosition:
         """
         get last known position of the stage
 
@@ -1127,7 +1221,12 @@ class Microcontroller(BaseModel):
             finally:
                 self._lock.release()
 
-        return self.last_position
+        # Convert internal Position to adapter Position
+        return AdapterPosition(
+            x_pos_mm=self.last_position.x_pos_mm,
+            y_pos_mm=self.last_position.y_pos_mm,
+            z_pos_mm=self.last_position.z_pos_mm,
+        )
 
     def _get_next_cmd_id(self) -> int:
         """
@@ -1337,18 +1436,17 @@ class Microcontroller(BaseModel):
             return True
         return False
 
-    @microcontroller_exclusive
-    def open(self):
-        "open connection to device"
-        logger.debug(f"open(): attempting to open device at {self.device_info.device}")
+    def _open_connection(self):
+        """Internal method to open the serial connection (without lock)."""
+        logger.debug(f"_open_connection(): attempting to open device at {self.device_info.device}")
         try:
             # Try to open at the stored device path first
             logger.debug(
-                f"open(): opening serial port {self.device_info.device} "
+                f"_open_connection(): opening serial port {self.device_info.device} "
                 f"at {self.baudrate} baud"
             )
             self.handle = serial.Serial(self.device_info.device, self.baudrate)
-            logger.debug(f"open(): successfully opened {self.device_info.device}")
+            logger.debug(f"_open_connection(): successfully opened {self.device_info.device}")
         except IOError as e:
             # Check if device is already in use by another process
             if self._is_device_busy_error(e):
@@ -1356,13 +1454,13 @@ class Microcontroller(BaseModel):
                 raise DeviceAlreadyInUseError("Microcontroller", device_id) from e
 
             logger.error(
-                f"open(): IOError when opening {self.device_info.device}: "
+                f"_open_connection(): IOError when opening {self.device_info.device}: "
                 f"type={type(e).__name__}, message='{e}'"
             )
 
             # Try to find device by USB identifiers in case path changed
             logger.debug(
-                f"open(): device path failed, searching by USB identifiers "
+                f"_open_connection(): device path failed, searching by USB identifiers "
                 f"(sn={self._usb_serial_number})"
             )
             new_device_info = self._find_device_by_usb_ids()
@@ -1371,13 +1469,13 @@ class Microcontroller(BaseModel):
                 old_path = self.device_info.device
                 self.device_info = new_device_info
                 logger.warning(
-                    f"open(): device path changed from {old_path} to {new_device_info.device} "
+                    f"_open_connection(): device path changed from {old_path} to {new_device_info.device} "
                     f"- attempting to open at new path"
                 )
                 try:
                     self.handle = serial.Serial(new_device_info.device, self.baudrate)
                     logger.info(
-                        f"open(): successfully opened at new device path {new_device_info.device}"
+                        f"_open_connection(): successfully opened at new device path {new_device_info.device}"
                     )
                 except IOError as e2:
                     # Check if the new path is also busy
@@ -1385,14 +1483,14 @@ class Microcontroller(BaseModel):
                         device_id = self._usb_serial_number or new_device_info.device
                         raise DeviceAlreadyInUseError("Microcontroller", device_id) from e2
                     logger.error(
-                        f"open(): IOError when opening device at new path {new_device_info.device}: "
+                        f"_open_connection(): IOError when opening device at new path {new_device_info.device}: "
                         f"type={type(e2).__name__}, message='{e2}' - re-raising"
                     )
                     raise
             else:
                 # No matching device found, re-raise the original error
                 logger.error(
-                    f"open(): could not find device by USB identifiers - re-raising original IOError"
+                    f"_open_connection(): could not find device by USB identifiers - re-raising original IOError"
                 )
                 raise
 
@@ -1406,14 +1504,19 @@ class Microcontroller(BaseModel):
             self._usb_pid = self.device_info.pid
             self._usb_manufacturer = self.device_info.manufacturer
             logger.debug(
-                f"open(): stored USB identifiers for future reconnections: "
+                f"_open_connection(): stored USB identifiers for future reconnections: "
                 f"sn={self._usb_serial_number}, vid=0x{self._usb_vid:04x}, "
                 f"pid=0x{self._usb_pid:04x}, mfg={self._usb_manufacturer}"
             )
         else:
             logger.debug(
-                f"open(): USB identifiers already stored or device has no serial number"
+                f"_open_connection(): USB identifiers already stored or device has no serial number"
             )
+
+    @microcontroller_exclusive
+    def open(self):
+        "open connection to device"
+        self._open_connection()
 
     @microcontroller_exclusive
     def close(self):
@@ -1494,12 +1597,12 @@ class Microcontroller(BaseModel):
     async def filter_wheel_home(self):
         """
         Home the filter wheel to establish reference position.
-        
+
         This performs the complete homing sequence similar to Squid:
         1. Home the W axis using limit switches
-        2. Apply small offset to move away from limit 
+        2. Apply small offset to move away from limit
         3. Reset position tracking to minimum index
-        
+
         The send_cmd() method automatically waits for completion with appropriate timeout.
         """
         # Home the W axis - this moves to the physical limit switch
@@ -1520,7 +1623,7 @@ class Microcontroller(BaseModel):
         return self.filter_wheel_position
 
     @staticmethod
-    def get_all() -> list["Microcontroller"]:
+    def get_all() -> Sequence["TeensyMicrocontroller"]:
         "get all available devices"
 
         ret = []
@@ -1533,12 +1636,12 @@ class Microcontroller(BaseModel):
                 # we dont care about other devices
                 continue
 
-            ret.append(Microcontroller(device_info=device_info))
+            ret.append(TeensyMicrocontroller(device_info=device_info))
 
         return ret
 
     @staticmethod
-    def find_by_usb_id(usb_id: str) -> "Microcontroller":
+    def find_by_usb_id(usb_id: str) -> "TeensyMicrocontroller":
         """
         Find a microcontroller by its USB serial number.
 
@@ -1546,7 +1649,7 @@ class Microcontroller(BaseModel):
             usb_id: The USB serial number to search for
 
         Returns:
-            Microcontroller instance for the matching device
+            TeensyMicrocontroller instance for the matching device
 
         Raises:
             RuntimeError: If no microcontroller with the given USB ID is found
@@ -1557,7 +1660,7 @@ class Microcontroller(BaseModel):
                 continue
 
             if p.serial_number == usb_id:
-                return Microcontroller(device_info=p)
+                return TeensyMicrocontroller(device_info=p)
 
         # Collect available USB IDs for error message
         available_ids = []

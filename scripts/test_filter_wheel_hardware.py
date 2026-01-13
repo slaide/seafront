@@ -10,7 +10,8 @@ import sys
 import time
 sys.path.insert(0, '.')
 
-from seafront.hardware.microcontroller import Microcontroller, Command
+from seafront.hardware.microcontroller import Microcontroller, get_all_microcontrollers
+from seafront.hardware.microcontroller.teensy_microcontroller import TeensyMicrocontroller
 from seafront.logger import logger
 
 async def initialize_microcontroller(mc: Microcontroller) -> bool:
@@ -21,15 +22,15 @@ async def initialize_microcontroller(mc: Microcontroller) -> bool:
     try:
         logger.info("Opening microcontroller connection...")
         mc.open()
-        
+
         logger.info("Sending reset command...")
-        await mc.send_cmd(Command.reset())
-        
+        await mc.reset()
+
         logger.info("Sending initialize command...")
-        await mc.send_cmd(Command.initialize())
-        
+        await mc.initialize()
+
         logger.info("Configuring actuators...")
-        await mc.send_cmd(Command.configure_actuators())
+        await mc.configure_actuators()
             
         logger.info("Initializing filter wheel...")
         try:
@@ -67,50 +68,55 @@ async def test_filter_wheel_positions(mc: Microcontroller):
     """
     Test filter wheel by cycling through all positions with delays.
     """
-    from seafront.hardware.microcontroller import FirmwareDefinitions, Command
-    
     positions = list(range(1, 9))  # 1 through 8
-    
+
     logger.info("Starting filter wheel position test...")
     logger.info(f"Will test positions: {positions}")
-    
-    # Debug: Print configuration
-    logger.info(f"Filter wheel configuration:")
-    logger.info(f"  SCREW_PITCH_W_MM: {FirmwareDefinitions.SCREW_PITCH_W_MM}")
-    logger.info(f"  MICROSTEPPING_DEFAULT_W: {FirmwareDefinitions.MICROSTEPPING_DEFAULT_W}")
-    logger.info(f"  FULLSTEPS_PER_REV_W: {FirmwareDefinitions.FULLSTEPS_PER_REV_W}")
-    logger.info(f"  STAGE_MOVEMENT_SIGN_W: {FirmwareDefinitions.STAGE_MOVEMENT_SIGN_W}")
-    logger.info(f"  mm_per_ustep_w: {FirmwareDefinitions.mm_per_ustep_w()}")
-    
-    distance_per_position = FirmwareDefinitions.SCREW_PITCH_W_MM / (
-        FirmwareDefinitions.FILTERWHEEL_MAX_INDEX - FirmwareDefinitions.FILTERWHEEL_MIN_INDEX + 1
-    )
-    logger.info(f"  Distance per position: {distance_per_position} mm")
-    
+
+    # Debug: Print Teensy-specific configuration if applicable
+    if isinstance(mc, TeensyMicrocontroller):
+        from seafront.hardware.microcontroller.teensy_microcontroller import FirmwareDefinitions, Command, CommandName
+
+        logger.info(f"Filter wheel configuration (Teensy-specific):")
+        logger.info(f"  SCREW_PITCH_W_MM: {FirmwareDefinitions.SCREW_PITCH_W_MM}")
+        logger.info(f"  MICROSTEPPING_DEFAULT_W: {FirmwareDefinitions.MICROSTEPPING_DEFAULT_W}")
+        logger.info(f"  FULLSTEPS_PER_REV_W: {FirmwareDefinitions.FULLSTEPS_PER_REV_W}")
+        logger.info(f"  STAGE_MOVEMENT_SIGN_W: {FirmwareDefinitions.STAGE_MOVEMENT_SIGN_W}")
+        logger.info(f"  mm_per_ustep_w: {FirmwareDefinitions.mm_per_ustep_w()}")
+
+        distance_per_position = FirmwareDefinitions.SCREW_PITCH_W_MM / (
+            FirmwareDefinitions.FILTERWHEEL_MAX_INDEX - FirmwareDefinitions.FILTERWHEEL_MIN_INDEX + 1
+        )
+        logger.info(f"  Distance per position: {distance_per_position} mm")
+
     try:
         # Move to each position in sequence
         for position in positions:
             current_pos = mc.filter_wheel_get_position()
             logger.info(f"Current position: {current_pos}, Moving to position {position}...")
-            
-            # Debug: Calculate what movement should happen
-            if position != current_pos:
+
+            # Debug: Calculate what movement should happen (Teensy-specific)
+            if isinstance(mc, TeensyMicrocontroller) and position != current_pos:
+                from seafront.hardware.microcontroller.teensy_microcontroller import FirmwareDefinitions, Command, CommandName
+
                 delta_positions = position - current_pos
+                distance_per_position = FirmwareDefinitions.SCREW_PITCH_W_MM / (
+                    FirmwareDefinitions.FILTERWHEEL_MAX_INDEX - FirmwareDefinitions.FILTERWHEEL_MIN_INDEX + 1
+                )
                 distance_mm = delta_positions * distance_per_position
                 usteps = FirmwareDefinitions.mm_to_ustep_w(distance_mm)
-                
+
                 logger.info(f"  Movement calculation:")
                 logger.info(f"    Delta positions: {delta_positions}")
                 logger.info(f"    Distance: {distance_mm} mm")
                 logger.info(f"    Microsteps: {usteps}")
-                
+
                 # Generate the commands manually to see what they look like
                 move_commands = Command.move_w_usteps(usteps)
                 logger.info(f"    Generated {len(move_commands)} command(s)")
                 for i, cmd in enumerate(move_commands):
-                    from seafront.hardware.microcontroller import CommandName
                     logger.info(f"    Command {i}: [1]={cmd[1]} (MOVE_W={CommandName.MOVE_W.value})")
-            
+
             await mc.filter_wheel_set_position(position)
             
             new_pos = mc.filter_wheel_get_position()
@@ -141,20 +147,20 @@ async def main():
     
     # Find available microcontrollers
     logger.info("Searching for microcontrollers...")
-    microcontrollers = Microcontroller.get_all()
-    
+    microcontrollers = get_all_microcontrollers()
+
     if not microcontrollers:
         logger.error("❌ No microcontrollers found!")
         logger.info("Make sure the microcontroller is connected and recognized by the system.")
         return 1
-    
+
     logger.info(f"Found {len(microcontrollers)} microcontroller(s)")
-    for i, mc in enumerate(microcontrollers):
-        logger.info(f"  {i+1}. {mc.device_info.description} at {mc.device_info.device}")
-    
+    for i, mc_found in enumerate(microcontrollers):
+        logger.info(f"  {i+1}. {mc_found.vendor_name} {mc_found.model_name} (SN: {mc_found.sn})")
+
     # Use the first available microcontroller
     mc = microcontrollers[0]
-    logger.info(f"Using microcontroller: {mc.device_info.description}")
+    logger.info(f"Using microcontroller: {mc.vendor_name} {mc.model_name}")
     
     try:
         # Initialize the microcontroller

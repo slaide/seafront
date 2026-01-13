@@ -3,34 +3,24 @@ Config handle enums for type-safe, organized access to machine configuration.
 
 This module provides domain-specific enums for config handles, replacing hard-coded strings
 throughout the codebase with organized, type-safe enum values.
+
+Usage:
+    from seafront.config.registry import ConfigRegistry
+    from seafront.config.handles import CameraConfig
+
+    # Get a config item
+    camera_id = ConfigRegistry.get(CameraConfig.MAIN_ID).strvalue
 """
 
 from enum import Enum
-from typing import Any
 
 
 class ConfigHandle(Enum):
-    """Base class for config handle enums with utility methods."""
+    """Base class for config handle enums."""
 
     def __str__(self) -> str:
         """Return the handle string value."""
         return self.value
-
-    @classmethod
-    def get_dict(cls) -> dict[str, Any]:
-        """Get the global config dict for convenient access."""
-        from seafront.config.basics import GlobalConfigHandler
-        return GlobalConfigHandler.get_dict()
-
-    def get_item(self) -> Any:
-        """Get the config item for this handle."""
-        g_config = self.get_dict()
-        return g_config[self.value]
-
-    @property
-    def value_item(self) -> Any:
-        """Convenient property to get the config item."""
-        return self.get_item()
 
 
 class CameraConfig(ConfigHandle):
@@ -60,6 +50,7 @@ class MicrocontrollerConfig(ConfigHandle):
 
     # Device identification
     ID = "microcontroller.id"
+    DRIVER = "microcontroller.driver"
 
     # Connection grace period and retry settings
     RECONNECTION_GRACE_PERIOD_MS = "microcontroller.reconnection_grace_period_ms"

@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from seafront.config.basics import GlobalConfigHandler
 from seafront.config.handles import ProtocolConfig
 from seafront.config.registry import ConfigRegistry
-from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, Position
 from seafront.hardware.forbidden_areas import ForbiddenAreaList
 
@@ -121,7 +120,7 @@ def positionIsForbidden(
     # Use provided forbidden areas or parse from config
     if forbidden_areas is None:
         try:
-            data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
+            data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue
         except KeyError:
             # No forbidden areas configured - allow the movement
             return False, ""
@@ -172,10 +171,10 @@ class BaseCommand[T]:
 # input and output parameter models (for server i/o and internal use)
 
 
-class MC_getLastPosition(BaseModel, BaseCommand[mc.Position]):
+class MC_getLastPosition(BaseModel, BaseCommand[Position]):
     """command class to retrieve core.mc.get_last_position"""
 
-    _ReturnValue: type = PrivateAttr(default=mc.Position)
+    _ReturnValue: type = PrivateAttr(default=Position)
 
 
 class SitePosition(BaseModel):
@@ -409,9 +408,9 @@ def calculate_acquisition_metrics(config: sc.AcquisitionConfig) -> AcquisitionMe
     total_num_images = num_timepoints * num_wells * num_sites * num_z_planes_total
 
     # Calculate image size from camera config
-    cam_img_width = CameraConfig.MAIN_IMAGE_WIDTH_PX.value_item
-    cam_img_height = CameraConfig.MAIN_IMAGE_HEIGHT_PX.value_item
-    main_cam_pix_format = CameraConfig.MAIN_PIXEL_FORMAT.value_item
+    cam_img_width = ConfigRegistry.get(CameraConfig.MAIN_IMAGE_WIDTH_PX)
+    cam_img_height = ConfigRegistry.get(CameraConfig.MAIN_IMAGE_HEIGHT_PX)
+    main_cam_pix_format = ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT)
 
     assert cam_img_width is not None, "Camera width not configured"
     assert cam_img_height is not None, "Camera height not configured"

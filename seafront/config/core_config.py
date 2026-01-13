@@ -163,6 +163,17 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             persistent=True,
         ),
         config_item(
+            handle=MicrocontrollerConfig.DRIVER.value,
+            name="microcontroller driver",
+            value_kind="option",
+            default="teensy",
+            options=[
+                ConfigItemOption(name="Teensy/Arduino", handle="teensy"),
+            ],
+            frozen=True,
+            persistent=True,
+        ),
+        config_item(
             handle=MicrocontrollerConfig.RECONNECTION_GRACE_PERIOD_MS.value,
             name="microcontroller reconnection grace period [ms]",
             value_kind="float",
