@@ -1336,9 +1336,8 @@ export class PlateNavigator {
                 return [];
             }
 
-            // Parse the JSON configuration (array of forbidden area objects)
-            const forbiddenAreasConfig = JSON.parse(forbiddenAreasItem.value);
-            return forbiddenAreasConfig || [];
+            // Get the forbidden areas config (native array from server)
+            return forbiddenAreasItem.value || [];
 
         } catch (error) {
             console.warn('Error fetching forbidden areas:', error);

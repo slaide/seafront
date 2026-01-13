@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from seafront.config.basics import GlobalConfigHandler
 from seafront.config.handles import ProtocolConfig
+from seafront.config.registry import ConfigRegistry
 from seafront.hardware import microcontroller as mc
 from seafront.hardware.adapter import AdapterState, Position
 from seafront.hardware.forbidden_areas import ForbiddenAreaList
@@ -119,19 +120,12 @@ def positionIsForbidden(
     """
     # Use provided forbidden areas or parse from config
     if forbidden_areas is None:
-        g_config = GlobalConfigHandler.get_dict()
-        forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
-
-        # If no forbidden areas config is found, allow the movement
-        if forbidden_areas_entry is None:
+        try:
+            data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
+        except KeyError:
+            # No forbidden areas configured - allow the movement
             return False, ""
 
-        forbidden_areas_str = forbidden_areas_entry.value
-        if not isinstance(forbidden_areas_str, str):
-            logger.warning("forbidden_areas entry is not a string, allowing movement")
-            return False, ""
-
-        data = json5.loads(forbidden_areas_str)
         forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
 
     # Check if movement is safe

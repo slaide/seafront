@@ -29,7 +29,8 @@ import seaconfig as sc
 from pydantic import PrivateAttr
 
 from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, GlobalConfigHandler, ImagingOrder
-from seafront.config.handles import ImagingConfig, LaserAutofocusConfig
+from seafront.config.handles import FilterWheelConfig, ImagingConfig, LaserAutofocusConfig
+from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import AdapterState, Position
 from seafront.hardware.camera import Camera, HardwareLimitValue, MockCamera
 from seafront.hardware.firmware_config import (
@@ -122,20 +123,13 @@ class MockMicroscope(Microscope):
             Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
         """
 
-        g_config = GlobalConfigHandler.get_dict()
-        forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
-
-        # If no forbidden areas config is found, allow the movement
-        if forbidden_areas_entry is None:
+        try:
+            forbidden_areas_data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
+        except KeyError:
+            # No forbidden areas configured - allow the movement
             return False, ""
 
-        forbidden_areas_str = forbidden_areas_entry.value
-        if not isinstance(forbidden_areas_str, str):
-            logger.warning("forbidden_areas entry is not a string, allowing movement")
-            return False, ""
-
-        data = json5.loads(forbidden_areas_str)
-        forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
+        forbidden_areas = ForbiddenAreaList.model_validate({"areas": forbidden_areas_data})
 
         # Check if position is forbidden
         is_forbidden, conflicting_area = forbidden_areas.is_position_forbidden(x_mm, y_mm)
@@ -287,28 +281,17 @@ class MockMicroscope(Microscope):
 
         logger.info("Creating mock microscope instance")
 
-        # Parse channels from configuration
-        channels_json = g_dict["imaging.channels"].strvalue
-        channels_data = json5.loads(channels_json)
-        if not isinstance(channels_data, list):
-            raise ValueError("Invalid channels configuration: expected list")
-        channel_configs = []
-        for ch in channels_data:
-            if not isinstance(ch, dict):
-                raise ValueError("Each channel configuration must be a dictionary")
-            channel_configs.append(ChannelConfig(**ch))
+        # Parse channels from configuration (.objectvalue asserts type)
+        channels_data = ConfigRegistry.get(ImagingConfig.CHANNELS.value).objectvalue
+        channel_configs = [ChannelConfig(**ch) for ch in channels_data]  # type: ignore
 
-        # Parse filters from configuration (may not exist in global config)
+        # Parse filters from configuration (optional - may not be registered if filter wheel unavailable)
         filter_configs = []
-        if "filter.wheel.configuration" in g_dict:
-            filters_json = g_dict["filter.wheel.configuration"].strvalue
-            filters_data = json5.loads(filters_json)
-            if not isinstance(filters_data, list):
-                raise ValueError("Invalid filters configuration: expected list")
-            for f in filters_data:
-                if not isinstance(f, dict):
-                    raise ValueError("Each filter configuration must be a dictionary")
-                filter_configs.append(FilterConfig(**f))
+        try:
+            filters_data = ConfigRegistry.get(FilterWheelConfig.CONFIGURATION.value).objectvalue
+            filter_configs = [FilterConfig(**f) for f in filters_data]  # type: ignore
+        except KeyError:
+            pass  # Filter wheel config not registered (filter wheel not available)
 
         # Create illumination controller
         illumination_controller = IlluminationController(channel_configs)

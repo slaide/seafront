@@ -30,12 +30,10 @@ Usage in a component file (e.g., kiri_camera.py):
     )
 """
 
-import json
 import typing as tp
 from seaconfig import ConfigItem, ConfigItemOption
 
 # Value kinds supported by the config system
-# "object" stores dicts/lists as JSON strings internally but allows native JSON in config files
 ValueKind = tp.Literal["text", "int", "float", "option", "action", "object"]
 
 
@@ -51,7 +49,6 @@ class ConfigRegistry:
 
     _items: dict[str, ConfigItem] = {}
     _persistent_handles: set[str] = set()
-    _object_handles: set[str] = set()  # Handles that should be saved as native JSON objects
     _file_values: dict[str, tp.Any] = {}
     _initialized: bool = False
 
@@ -75,22 +72,20 @@ class ConfigRegistry:
             # Get value from file or use default
             value = cls._file_values.get(spec.handle, spec.default)
 
-            # For "object" type, convert dict/list to JSON string
-            # This allows native JSON in config files while maintaining compatibility
-            # with seaconfig's ConfigItem which only supports int/float/str values
+            # For "object" type, validate it's actually a dict or list
             if spec.value_kind == "object":
-                if isinstance(value, (dict, list)):
-                    value = json.dumps(value)
-                # seaconfig uses "text" for string values
-                seaconfig_value_kind: tp.Literal["text", "int", "float", "option", "action"] = "text"
-            else:
-                seaconfig_value_kind = spec.value_kind
+                if not isinstance(value, (dict, list)):
+                    raise TypeError(
+                        f"Config item '{spec.handle}' has value_kind='object' but got {type(value).__name__}. "
+                        f"Object types require a dict or list, not a string. "
+                        f"Update your config file to use native JSON instead of a JSON string."
+                    )
 
             # Create the ConfigItem
             item = ConfigItem(
                 handle=spec.handle,
                 name=spec.name,
-                value_kind=seaconfig_value_kind,
+                value_kind=spec.value_kind,
                 value=value,
                 options=spec.options,
                 frozen=spec.frozen,
@@ -100,9 +95,6 @@ class ConfigRegistry:
 
             if spec.persistent:
                 cls._persistent_handles.add(spec.handle)
-
-            if spec.value_kind == "object":
-                cls._object_handles.add(spec.handle)
 
     @classmethod
     def get(cls, handle: str) -> ConfigItem:
@@ -130,11 +122,6 @@ class ConfigRegistry:
         return set(cls._persistent_handles)
 
     @classmethod
-    def get_object_handles(cls) -> set[str]:
-        """Get handles that store object values (should be saved as native JSON)."""
-        return set(cls._object_handles)
-
-    @classmethod
     def set_value(cls, handle: str, value: tp.Any) -> None:
         """Update a config item's value at runtime."""
         if handle in cls._items:
@@ -145,7 +132,6 @@ class ConfigRegistry:
         """Clear all registered items. Used for testing."""
         cls._items.clear()
         cls._persistent_handles.clear()
-        cls._object_handles.clear()
         cls._file_values.clear()
         cls._initialized = False
 

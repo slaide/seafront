@@ -26,6 +26,7 @@ from seafront.config.basics import (
     GlobalConfigHandler,
     ImagingOrder,
 )
+from seafront.config.registry import ConfigRegistry
 from seafront.config.handles import (
     CalibrationConfig,
     CameraConfig,
@@ -200,24 +201,14 @@ class SquidAdapter(Microscope):
         focus_camera = camera_open(focus_camera_request)
         microcontroller = mc.Microcontroller.find_by_usb_id(microcontroller_id)
 
-        # Extract and parse channel and filter configurations (JSON-encoded strings)
-        channels_json = g_dict["imaging.channels"].strvalue
-        channels_data = json5.loads(channels_json)
-
-        if channels_data is None:
-            raise ValueError("Parsed channels configuration is None - invalid JSON structure")
-
+        # Extract channel and filter configurations (native objects from config)
+        channels_data = ConfigRegistry.get(ImagingConfig.CHANNELS.value).objectvalue
         channel_configs = [ChannelConfig(**ch) for ch in channels_data] #type: ignore
 
         # Only process filters if filter wheel is available
         filter_wheel_available = g_dict.get(FilterWheelConfig.AVAILABLE.value)
         if filter_wheel_available and filter_wheel_available.boolvalue:
-            filters_json = g_dict["filter.wheel.configuration"].strvalue
-            filters_data = json5.loads(filters_json)
-
-            if filters_data is None:
-                raise ValueError("Parsed filters configuration is None - invalid JSON structure")
-
+            filters_data = ConfigRegistry.get(FilterWheelConfig.CONFIGURATION.value).objectvalue
             filter_configs = [FilterConfig(**f) for f in filters_data] #type: ignore
         else:
             filter_configs = []
@@ -1070,16 +1061,12 @@ class SquidAdapter(Microscope):
         returns (<position is forbidden?>, <forbidden reason>)
         """
 
-        g_config = GlobalConfigHandler.get_dict()
-        forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
-
-        if forbidden_areas_entry is None:
+        try:
+            data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
+        except KeyError:
             # No forbidden areas configured - position is allowed
             return False, ""
 
-        forbidden_areas_str = forbidden_areas_entry.strvalue
-
-        data = json5.loads(forbidden_areas_str)
         forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
         # Check if position is forbidden
         is_forbidden, conflicting_area = forbidden_areas.is_position_forbidden(x_mm, y_mm)

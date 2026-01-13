@@ -347,14 +347,9 @@ class GlobalConfigHandler:
 
         # Build new microscope config from persistent handles
         new_microscope_config: MicroscopeConfig = dict(existing_microscope_config)
-        object_handles = ConfigRegistry.get_object_handles()
         for handle in ConfigRegistry.get_persistent_handles():
-            if handle in current_config:
-                value = current_config[handle].value
-                # Convert object-type values back to native JSON objects
-                if handle in object_handles and isinstance(value, str):
-                    value = json.loads(value)
-                new_microscope_config[handle] = value
+            # get_value returns the correct type (objects for object types, primitives otherwise)
+            new_microscope_config[handle] = ConfigRegistry.get_value(handle)
 
         # Update or append microscope config
         if existing_index is not None:
@@ -678,8 +673,8 @@ class GlobalConfigHandler:
         register_core_config(default_image_dir, default_channels, default_forbidden_areas)
 
         # Register optional subsystem configs based on availability
-        if ConfigRegistry.get_value(LASER_AUTOFOCUS_AVAILABLE) == "yes":
+        if ConfigRegistry.get(LASER_AUTOFOCUS_AVAILABLE).boolvalue:
             register_laser_autofocus_config()
 
-        if ConfigRegistry.get_value(FILTER_WHEEL_AVAILABLE) == "yes":
+        if ConfigRegistry.get(FILTER_WHEEL_AVAILABLE).boolvalue:
             register_filter_wheel_config()

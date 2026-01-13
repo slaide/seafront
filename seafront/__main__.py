@@ -51,6 +51,7 @@ from seafront.config.basics import (
     MicroscopeConfig,
     ServerConfig,
 )
+from seafront.config.registry import ConfigRegistry
 from seafront.config.handles import (
     CalibrationConfig,
     CameraConfig,
@@ -1449,25 +1450,11 @@ class Core:
         """
         Get hardware capabilities including real hardware limits from the microscope.
         """
-        # Access global configuration
-        g_dict = GlobalConfigHandler.get_dict()
-
-        # Get channels JSON string and parse it
-        channels_json = g_dict["imaging.channels"].strvalue
-        channels_data = json5.loads(channels_json)
-
-        if channels_data is None:
-            raise ValueError("Parsed channels configuration is None - invalid JSON structure")
-
-        if not isinstance(channels_data, list):
-            raise ValueError("Parsed channels configuration must be a list")
+        # Get channels config (native list, .objectvalue asserts type)
+        channels_data = ConfigRegistry.get(ImagingConfig.CHANNELS.value).objectvalue
 
         # Convert to ChannelConfig objects
-        channel_configs = []
-        for ch in channels_data:
-            if not isinstance(ch, dict):
-                raise ValueError("Each channel configuration must be a dictionary")
-            channel_configs.append(ChannelConfig(**ch))
+        channel_configs = [ChannelConfig(**ch) for ch in channels_data]  # type: ignore
 
         # Convert ChannelConfig to AcquisitionChannelConfig with sensible defaults
         acquisition_channels = []
@@ -1521,17 +1508,6 @@ class Core:
         except Exception as e:
             logger.debug(f"Could not extend machine config from microscope: {e}")
             # Continue with default options if hardware unavailable
-
-        # Convert JSON5 strings to standard JSON for browser compatibility
-        for item in config_items:
-            if item.handle in ['channels', 'filters'] and item.value_kind == 'text':
-                try:
-                    # Parse JSON5 and re-serialize as standard JSON
-                    parsed_data = json5.loads(item.strvalue)
-                    item.value = json.dumps(parsed_data)
-                except Exception as e:
-                    # If parsing fails, leave the original value
-                    print(f"Warning: Failed to convert {item.handle} from JSON5 to JSON: {e}")
 
         return config_items
 
@@ -1685,12 +1661,11 @@ class Core:
         # Validate that no site positions fall within forbidden areas
         # This catches forbidden positions during preparation instead of during execution
         # Parse forbidden areas once and reuse for all positions to avoid repeated parsing
-        g_config = GlobalConfigHandler.get_dict()
-        forbidden_areas_entry = g_config.get(ProtocolConfig.FORBIDDEN_AREAS.value)
-        forbidden_areas = None
-        if forbidden_areas_entry is not None and isinstance(forbidden_areas_entry.value, str):
-            data = json5.loads(forbidden_areas_entry.value)
-            forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
+        try:
+            forbidden_areas_data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
+            forbidden_areas = ForbiddenAreaList.model_validate({"areas": forbidden_areas_data})
+        except KeyError:
+            forbidden_areas = None
 
         for position_info in protocol.iter_positions():
             site_x_mm, site_y_mm = position_info.physical_position

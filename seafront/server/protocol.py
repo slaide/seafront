@@ -44,6 +44,7 @@ import seafront.server.commands as cmds
 from seafront.config import basics
 from seafront.config.basics import ImagingOrder
 from seafront.config.handles import CameraConfig, ImagingConfig, LaserAutofocusConfig, StorageConfig
+from seafront.config.registry import ConfigRegistry
 from seafront.hardware import microcontroller as mc
 from seafront.logger import logger
 
@@ -1008,12 +1009,11 @@ class ProtocolGenerator(BaseModel):
         # Pre-flight validation: check all planned positions against forbidden areas
         logger.info("protocol - performing pre-flight forbidden area validation")
         # Parse forbidden areas once and pass to positionIsForbidden to avoid repeated parsing
-        g_config = cmds.GlobalConfigHandler.get_dict()
-        forbidden_areas_entry = g_config.get(cmds.ProtocolConfig.FORBIDDEN_AREAS.value)
-        forbidden_areas = None
-        if forbidden_areas_entry is not None and isinstance(forbidden_areas_entry.value, str):
-            data = json5.loads(forbidden_areas_entry.value)
+        try:
+            data = ConfigRegistry.get(cmds.ProtocolConfig.FORBIDDEN_AREAS.value).objectvalue
             forbidden_areas = cmds.ForbiddenAreaList.model_validate({"areas": data})
+        except KeyError:
+            forbidden_areas = None
 
         forbidden_positions = []
         for pos_info in self.iter_positions():
