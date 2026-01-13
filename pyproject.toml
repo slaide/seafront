@@ -93,6 +93,7 @@ known-first-party = ["seafront"]
 [dependency-groups]
 dev = [
     "pyright>=1.1.402",
+    "pytest>=9.0.2",
 ]
 
 [tool.setuptools.package-data]

@@ -446,6 +446,12 @@ runs type checking (pyright) and linting (ruff) on the codebase. use this before
 uv run python3 ./scripts/check.py
 ```
 
+## running tests
+runs the test suite including config registry tests and example config validation.
+```bash
+uv run pytest tests/ -v --tb=short
+```
+
 ## scripts/list_squid_hardware.py  
 comprehensive hardware listing script that shows all available SQUID microscope hardware including cameras, microcontrollers, and other peripherals. provides detailed information needed for configuration.
 ```bash
