@@ -9,24 +9,14 @@ import json5
 from pydantic import BaseModel, Field
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
-# Import handle enums for config defaults
-from seafront.config.handles import (
-    CameraConfig,
-    CalibrationConfig,
-    FilterWheelConfig,
-    ImagingConfig,
-    ImageConfig,
-    IlluminationConfig,
-    LaserAutofocusConfig,
-    MicrocontrollerConfig,
-    ProtocolConfig,
-    StorageConfig,
-    SystemConfig,
-)
+from seafront.config.registry import ConfigRegistry
 
 CameraDriver = tp.Literal["galaxy", "toupcam"]
 MicroscopeType = tp.Literal["squid", "mock"]
 ImagingOrder = tp.Literal["z_order", "wavelength_order", "protocol_order"]
+
+# Type alias for microscope config - a flat dict of handle -> value
+MicroscopeConfig = dict[str, tp.Any]
 
 
 def set_config_item_int(
@@ -259,42 +249,10 @@ class FilterConfig(BaseModel):
     "Filter wheel slot position (1-8)"
 
 
-class CriticalMachineConfig(BaseModel):
-    microscope_name: str
-    microscope_type: MicroscopeType
-
-    main_camera_id: str
-    main_camera_driver: CameraDriver = "galaxy"
-
-    microcontroller_id: str | None = None
-    "USB serial number for the microcontroller (required for squid microscope type)"
-
-    base_image_output_dir: str
-    calibration_offset_x_mm: float
-    calibration_offset_y_mm: float
-    calibration_offset_z_mm: float
-
-    forbidden_areas: str | None = None
-    "JSON string defining forbidden areas as AABBs in physical coordinates (mm)"
-
-    laser_autofocus_available: tp.Literal["yes", "no"] | None = None
-    laser_autofocus_camera_id: str | None = None
-    "if laser_autofocus_available is yes, then this must be present"
-    laser_autofocus_camera_driver: CameraDriver = "galaxy"
-
-    filter_wheel_available: tp.Literal["yes", "no"] | None = None
-
-    channels: str = Field(default="[]")
-    "Available imaging channels with their illumination source slots (JSON-encoded string)"
-
-    filters: str = Field(default="[]")
-    "Available filters with their wheel positions (JSON-encoded string)"
-
-
 class ServerConfig(BaseModel):
     port: int = 5000
-    microscopes: list[CriticalMachineConfig] = Field(
-        default_factory=lambda: [GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS()]
+    microscopes: list[MicroscopeConfig] = Field(
+        default_factory=lambda: [GlobalConfigHandler.DEFAULT_MICROSCOPE_CONFIG()]
     )
 
 
@@ -361,85 +319,48 @@ class GlobalConfigHandler:
     @staticmethod
     def store():
         """
-        write current global config to disk
+        Write current global config to disk.
+
+        Uses handle keys directly - no mapping needed.
         """
+        from seafront.config.core_config import MICROSCOPE_NAME
 
         CONFIG_FILE_PATH = GlobalConfigHandler.home_config()
-
-        assert GlobalConfigHandler._config_list is not None
-        critical_machine_config = GlobalConfigHandler.CRITICAL_MACHINE_DEFAULTS().model_dump()
 
         with CONFIG_FILE_PATH.open("r") as config_file:
             current_file_contents = json5.load(config_file)
             server_config = ServerConfig(**current_file_contents)
 
-        # store critical config items from current config
-        store_dict = {}
-        current_config = GlobalConfigHandler.get_dict()
+        current_config = ConfigRegistry.get_dict()
 
-        from seafront.config.handles import (
-            CalibrationConfig,
-            CameraConfig,
-            FilterWheelConfig,
-            ImagingConfig,
-            LaserAutofocusConfig,
-            MicrocontrollerConfig,
-            ProtocolConfig,
-            StorageConfig,
-            SystemConfig,
-        )
+        # Get current microscope name
+        current_microscope_name = current_config[MICROSCOPE_NAME].value
 
-        handle_lookup: dict[str, str] = {
-            "microscope_name": SystemConfig.MICROSCOPE_NAME.value,
-            "main_camera_id": CameraConfig.MAIN_ID.value,
-            "main_camera_driver": CameraConfig.MAIN_DRIVER.value,
-            "microcontroller_id": MicrocontrollerConfig.ID.value,
-            "base_image_output_dir": StorageConfig.BASE_IMAGE_OUTPUT_DIR.value,
-            "calibration_offset_x_mm": CalibrationConfig.OFFSET_X_MM.value,
-            "calibration_offset_y_mm": CalibrationConfig.OFFSET_Y_MM.value,
-            "calibration_offset_z_mm": CalibrationConfig.OFFSET_Z_MM.value,
-            "laser_autofocus_available": LaserAutofocusConfig.AVAILABLE.value,
-            "laser_autofocus_camera_id": LaserAutofocusConfig.CAMERA_ID.value,
-            "laser_autofocus_camera_driver": LaserAutofocusConfig.CAMERA_DRIVER.value,
-            "filter_wheel_available": FilterWheelConfig.AVAILABLE.value,
-            "filters": FilterWheelConfig.CONFIGURATION.value,
-            "channels": ImagingConfig.CHANNELS.value,
-            "forbidden_areas": ProtocolConfig.FORBIDDEN_AREAS.value,
-        }
-
-        def _get_config_item(handle_key: str):
-            lookup_key = handle_lookup.get(handle_key, handle_key)
-            return current_config.get(lookup_key)
-
-        # Find the existing microscope config to use as fallback
-        current_microscope_name_item = _get_config_item("microscope_name")
-        current_microscope_name = (
-            current_microscope_name_item.value if current_microscope_name_item else None
-        )
-        existing_microscope_config = None
-        if current_microscope_name:
-            for microscope_config in server_config.microscopes:
-                if microscope_config.microscope_name == current_microscope_name:
-                    existing_microscope_config = microscope_config
-                    break
-
-        for key in critical_machine_config.keys():
-            config_item = _get_config_item(key)
-            if config_item is not None:
-                store_dict[key] = config_item.value
-            elif existing_microscope_config and hasattr(existing_microscope_config, key):
-                # Fallback to existing config value for missing keys
-                store_dict[key] = getattr(existing_microscope_config, key)
-            else:
-                store_dict[key] = critical_machine_config[key]
-
-        store_config = CriticalMachineConfig(**store_dict)
-
-        # update target microscope config
-        for microscope_i, microscope_config in enumerate(server_config.microscopes):
-            if microscope_config.microscope_name == store_config.microscope_name:
-                server_config.microscopes[microscope_i] = store_config
+        # Find existing microscope config to preserve non-persistent values
+        existing_microscope_config: MicroscopeConfig = {}
+        existing_index: int | None = None
+        for i, m in enumerate(server_config.microscopes):
+            if m.get(MICROSCOPE_NAME) == current_microscope_name:
+                existing_microscope_config = m
+                existing_index = i
                 break
+
+        # Build new microscope config from persistent handles
+        new_microscope_config: MicroscopeConfig = dict(existing_microscope_config)
+        object_handles = ConfigRegistry.get_object_handles()
+        for handle in ConfigRegistry.get_persistent_handles():
+            if handle in current_config:
+                value = current_config[handle].value
+                # Convert object-type values back to native JSON objects
+                if handle in object_handles and isinstance(value, str):
+                    value = json.loads(value)
+                new_microscope_config[handle] = value
+
+        # Update or append microscope config
+        if existing_index is not None:
+            server_config.microscopes[existing_index] = new_microscope_config
+        else:
+            server_config.microscopes.append(new_microscope_config)
 
         with CONFIG_FILE_PATH.open("w") as f:
             json.dump(server_config.model_dump(), f, indent=4)
@@ -534,7 +455,8 @@ class GlobalConfigHandler:
         return config_dir
 
     @staticmethod
-    def CRITICAL_MACHINE_DEFAULTS() -> CriticalMachineConfig:
+    def DEFAULT_MICROSCOPE_CONFIG() -> MicroscopeConfig:
+        """Generate default microscope config using handle keys."""
         # Example power calibration for brightfield LED - non-linear response
         bfled_calibration = PowerCalibration(
             dac_percent=[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
@@ -555,7 +477,7 @@ class GlobalConfigHandler:
         ]
 
         # Default filter configuration - empty by default since filter wheel is optional
-        default_filters = []
+        default_filters: list[FilterConfig] = []
 
         # Default forbidden areas - typical problematic areas for SQUID microscope
         default_forbidden_areas = [
@@ -593,585 +515,59 @@ class GlobalConfigHandler:
             }
         ]
 
-        # Convert to JSON strings for storage
-        channels_json = json.dumps([ch.model_dump() for ch in default_channels])
-        filters_json = json.dumps([f.model_dump() for f in default_filters])
-        forbidden_areas_json = json.dumps(default_forbidden_areas)
-
-        return CriticalMachineConfig(
-            main_camera_id="CHANGE_ME",
-            laser_autofocus_camera_id="CHANGE_ME",
-            microcontroller_id="CHANGE_ME",
-            microscope_name="squid",
-            microscope_type="squid",
-            base_image_output_dir=str(GlobalConfigHandler.home() / "images"),
-            laser_autofocus_available="yes",
-            filter_wheel_available="no",
-            calibration_offset_x_mm=0.0,
-            calibration_offset_y_mm=0.0,
-            calibration_offset_z_mm=0.0,
-            forbidden_areas=forbidden_areas_json,
-            channels=channels_json,
-            filters=filters_json,
+        # Use handle constants from core_config
+        from seafront.config.core_config import (
+            MICROSCOPE_NAME, MICROSCOPE_TYPE,
+            CAMERA_MAIN_ID, CAMERA_MAIN_DRIVER,
+            MICROCONTROLLER_ID,
+            STORAGE_BASE_IMAGE_OUTPUT_DIR,
+            CALIBRATION_OFFSET_X_MM, CALIBRATION_OFFSET_Y_MM, CALIBRATION_OFFSET_Z_MM,
+            LASER_AUTOFOCUS_AVAILABLE, LASER_AUTOFOCUS_CAMERA_ID, LASER_AUTOFOCUS_CAMERA_DRIVER,
+            FILTER_WHEEL_AVAILABLE, FILTER_WHEEL_CONFIGURATION,
+            IMAGING_CHANNELS,
+            PROTOCOL_FORBIDDEN_AREAS,
         )
 
-    @staticmethod
-    def _defaults(microscope_name: str | None = None) -> list[ConfigItem]:
-        """
-        get a list of all the low level machine settings
-
-        these settings may be changed on the client side, for individual acquisitions
-        (though clearly, this is highly advanced stuff, and may cause irreperable hardware damage!)
-        """
-
-        # load config file
-        with GlobalConfigHandler.home_config().open("r") as f:
-            server_config_json=json5.load(f)
-            server_config = ServerConfig(**server_config_json)
-            if len(server_config.microscopes)==0:
-                raise ValueError("no microscope found in server config")
-
-            # Select microscope by name or default to first
-            critical_machine_config: CriticalMachineConfig
-            if microscope_name is not None:
-                # Find microscope by name
-                matching_microscopes = [m for m in server_config.microscopes if m.microscope_name == microscope_name]
-                if len(matching_microscopes) == 0:
-                    available_names = [m.microscope_name for m in server_config.microscopes]
-                    raise ValueError(f"microscope '{microscope_name}' not found. Available: {available_names}")
-                critical_machine_config = matching_microscopes[0]
-            else:
-                # Default to first microscope
-                critical_machine_config = server_config.microscopes[0]
-
-        main_camera_attributes = [
-            ConfigItem(
-                name="main camera USB ID",
-                handle=CameraConfig.MAIN_ID.value,
-                value_kind="text",
-                value=critical_machine_config.main_camera_id,
-                frozen=True,
-            ),
-            ConfigItem(
-                name="main camera driver",
-                handle=CameraConfig.MAIN_DRIVER.value,
-                value_kind="option",
-                value=critical_machine_config.main_camera_driver,
-                options=[
-                    ConfigItemOption(
-                        name="Galaxy (Daheng)",
-                        handle="galaxy",
-                    ),
-                    ConfigItemOption(
-                        name="ToupCam",
-                        handle="toupcam",
-                    ),
-                ],
-                frozen=True,
-            ),
-            ConfigItem(
-                name="main camera objective",
-                handle=CameraConfig.MAIN_OBJECTIVE.value,
-                value_kind="option",
-                value="20xolympus",
-                options=[
-                    ConfigItemOption(
-                        name="4x Olympus",
-                        handle="4xolympus",
-                        info={
-                            "magnification": 4,
-                        },
-                    ),
-                    ConfigItemOption(
-                        name="10x Olympus",
-                        handle="10xolympus",
-                        info={
-                            "magnification": 10,
-                        },
-                    ),
-                    ConfigItemOption(
-                        name="20x Olympus",
-                        handle="20xolympus",
-                        info={
-                            "magnification": 20,
-                        },
-                    ),
-                ],
-            ),
-            ConfigItem(
-                name="main camera trigger",
-                handle=CameraConfig.MAIN_TRIGGER.value,
-                value_kind="option",
-                value="software",
-                options=[
-                    ConfigItemOption(
-                        name="Software",
-                        handle="software",
-                    ),
-                    ConfigItemOption(
-                        name="Hardware",
-                        handle="hardware",
-                    ),
-                ],
-            ),
-            ConfigItem(
-                name="main camera pixel format",
-                handle=CameraConfig.MAIN_PIXEL_FORMAT.value,
-                value_kind="option",
-                value="mono8",
-                options=[
-                    ConfigItemOption(
-                        name="8 Bit",
-                        handle="mono8",
-                    ),
-                    ConfigItemOption(
-                        name="12 Bit",
-                        handle="mono12",
-                    ),
-                    ConfigItemOption(
-                        name="16 Bit",
-                        handle="mono16",
-                    ),
-                ],
-            ),
-            ConfigItem(
-                name="main camera image width [px]",
-                handle=CameraConfig.MAIN_IMAGE_WIDTH_PX.value,
-                value_kind="int",
-                value=2500,
-            ),
-            ConfigItem(
-                name="main camera image height [px]",
-                handle=CameraConfig.MAIN_IMAGE_HEIGHT_PX.value,
-                value_kind="int",
-                value=2500,
-            ),
-            ConfigItem(
-                name="main camera flip image horizontally",
-                handle=CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value,
-                value_kind="option",
-                value="no",
-                options=ConfigItemOption.get_bool_options(),
-                frozen=True,
-            ),
-            ConfigItem(
-                name="main camera flip image vertically",
-                handle=CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value,
-                value_kind="option",
-                value="yes",
-                options=ConfigItemOption.get_bool_options(),
-                frozen=True,
-            ),
-        ]
-
-        laser_autofocus_system_available_attribute = ConfigItem(
-            name="laser autofocus system available",
-            handle=LaserAutofocusConfig.AVAILABLE.value,
-            value_kind="option",
-            value=critical_machine_config.laser_autofocus_available or "no",
-            options=ConfigItemOption.get_bool_options(),
-            frozen=True,
-        )
-
-        filter_wheel_system_available_attribute = ConfigItem(
-            name="filter wheel system available",
-            handle=FilterWheelConfig.AVAILABLE.value,
-            value_kind="option",
-            value=critical_machine_config.filter_wheel_available or "no",
-            options=ConfigItemOption.get_bool_options(),
-            frozen=True,
-        )
-
-        if laser_autofocus_system_available_attribute.boolvalue:
-            if critical_machine_config.laser_autofocus_camera_id is None:
-                raise ValueError("laser autofocus available but no autofocus camera USB ID provided")
-
-            laser_autofocus_system_attributes = [
-                ConfigItem(
-                    name="laser autofocus camera USB ID",
-                    handle=LaserAutofocusConfig.CAMERA_ID.value,
-                    value_kind="text",
-                    value=critical_machine_config.laser_autofocus_camera_id,
-                    frozen=True,
-                ),
-                ConfigItem(
-                    name="laser autofocus camera driver",
-                    handle=LaserAutofocusConfig.CAMERA_DRIVER.value,
-                    value_kind="option",
-                    value=critical_machine_config.laser_autofocus_camera_driver,
-                    options=[
-                        ConfigItemOption(
-                            name="Galaxy (Daheng)",
-                            handle="galaxy",
-                        ),
-                        ConfigItemOption(
-                            name="ToupCam",
-                            handle="toupcam",
-                        ),
-                    ],
-                    frozen=True,
-                ),
-                ConfigItem(
-                    name="laser autofocus exposure time [ms]",
-                    handle=LaserAutofocusConfig.EXPOSURE_TIME_MS.value,
-                    value_kind="float",
-                    value=5.0,
-                ),
-                ConfigItem(
-                    name="laser autofocus camera analog gain",
-                    handle=LaserAutofocusConfig.CAMERA_ANALOG_GAIN.value,
-                    value_kind="float",
-                    value=0.0,
-                ),
-                ConfigItem(
-                    name="laser autofocus use glass top",
-                    handle=LaserAutofocusConfig.USE_GLASS_TOP.value,
-                    value_kind="option",
-                    value="no",
-                    options=ConfigItemOption.get_bool_options(),
-                ),
-                ConfigItem(
-                    name="laser autofocus camera pixel format",
-                    handle=LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value,
-                    value_kind="option",
-                    value="mono8",
-                    options=[
-                        ConfigItemOption(
-                            name="8 Bit",
-                            handle="mono8",
-                        ),
-                        ConfigItemOption(
-                            name="10 Bit",
-                            handle="mono10",
-                        ),
-                    ],
-                ),
-                ConfigItem(
-                    name="laser autofocus warm up laser",
-                    handle=LaserAutofocusConfig.WARM_UP_LASER.value,
-                    value_kind="action",
-                    value="/api/action/laser_autofocus_warm_up_laser",
-                ),
-                # offset added to measured z displacement
-                ConfigItem(
-                    name="laser autofocus offset [um]",
-                    handle=LaserAutofocusConfig.OFFSET_UM.value,
-                    value_kind="float",
-                    value=0.0,
-                ),
-                # calibration z span
-                ConfigItem(
-                    name="laser autofocus calibration z span [mm]",
-                    handle=LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM.value,
-                    value_kind="float",
-                    value=0.3,
-                ),
-                # calibration number of z steps
-                ConfigItem(
-                    name="laser autofocus calibration number of z steps",
-                    handle=LaserAutofocusConfig.CALIBRATION_NUM_Z_STEPS.value,
-                    value_kind="int",
-                    value=7,
-                ),
-                # is calibrated flag
-                ConfigItem(
-                    name="laser autofocus is calibrated",
-                    handle=LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.value,
-                    value_kind="option",
-                    value="no",
-                    options=ConfigItemOption.get_bool_options(),
-                ),
-                # calibrated x on sensor
-                ConfigItem(
-                    name="laser autofocus calibration: x peak pos",
-                    handle=LaserAutofocusConfig.CALIBRATION_X_PEAK_POS.value,
-                    value_kind="float",
-                    value=0.0,
-                ),
-                # calibrated um/px on sensor
-                ConfigItem(
-                    name="laser autofocus calibration: um per px",
-                    handle=LaserAutofocusConfig.CALIBRATION_UM_PER_PX.value,
-                    value_kind="float",
-                    value=0.0,
-                ),
-                # z coordinate at time of calibration
-                ConfigItem(
-                    name="laser autofocus calibration: ref z in mm",
-                    handle=LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value,
-                    value_kind="float",
-                    value=0.0,
-                ),
-            ]
-        else:
-            laser_autofocus_system_attributes = []
-
-        if filter_wheel_system_available_attribute.boolvalue:
-            filter_wheel_system_attributes = [
-                ConfigItem(
-                    name="filter wheel configuration",
-                    handle=FilterWheelConfig.CONFIGURATION.value,
-                    value_kind="text",
-                    value=critical_machine_config.filters,
-                    frozen=True,
-                ),
-            ]
-        else:
-            filter_wheel_system_attributes = []
-
-        ret = [
-            ConfigItem(
-                name="microscope name",
-                handle=SystemConfig.MICROSCOPE_NAME.value,
-                value_kind="text",
-                value=critical_machine_config.microscope_name,
-                frozen=True,
-            ),
-            ConfigItem(
-                name="calibrate top left of B2 here",
-                handle=CalibrationConfig.CALIBRATE_B2_HERE.value,
-                value_kind="action",
-                value="/api/action/calibrate_stage_xy_here",
-            ),
-            ConfigItem(
-                name="calibration offset x [mm]",
-                handle=CalibrationConfig.OFFSET_X_MM.value,
-                value_kind="float",
-                value=critical_machine_config.calibration_offset_x_mm,
-            ),
-            ConfigItem(
-                name="calibration offset y [mm]",
-                handle=CalibrationConfig.OFFSET_Y_MM.value,
-                value_kind="float",
-                value=critical_machine_config.calibration_offset_y_mm,
-            ),
-            ConfigItem(
-                name="calibration offset z [mm]",
-                handle=CalibrationConfig.OFFSET_Z_MM.value,
-                value_kind="float",
-                value=critical_machine_config.calibration_offset_z_mm,
-            ),
-            ConfigItem(
-                name="turn off all illumination",
-                handle=IlluminationConfig.TURN_OFF_ALL.value,
-                value_kind="action",
-                value="/api/action/turn_off_all_illumination",
-            ),
-            ConfigItem(
-                name="base output storage directory",
-                handle=StorageConfig.BASE_IMAGE_OUTPUT_DIR.value,
-                value_kind="text",
-                value=critical_machine_config.base_image_output_dir,
-            ),
-            # images with bit depth not a multiple of 8 (e.g. 12) use the lowest n bits of the bytes used to store them, which is an issue, because
-            # most image file formats cannot handle bit depth that is not a multiple of 8. padding that data to preserve correct interpretation requires
-            # padding the lowest bits of the next largest multiple of 8 with zeros, e.g. 12 bits -> shift 12 actual bits left to occupy top 12 bits,
-            # then set lowest (2*8)-12=4 bits to zero.
-            # this flag indicates if the lower bits should be padded (and value bits shifted into upper bits)
-            ConfigItem(
-                name="image file pad low",
-                handle=ImageConfig.FILE_PAD_LOW.value,
-                value_kind="option",
-                value="yes",
-                options=ConfigItemOption.get_bool_options(),
-            ),
-            ConfigItem(
-                name="image filename use channel name",
-                handle=ImageConfig.FILENAME_USE_CHANNEL_NAME.value,
-                value_kind="option",
-                value="yes",
-                options=ConfigItemOption.get_bool_options(),
-            ),
-            ConfigItem(
-                name="image filename xy index start",
-                handle=ImageConfig.FILENAME_XY_INDEX_START.value,
-                value_kind="int",
-                value=0,
-            ),
-            ConfigItem(
-                name="image filename z index start",
-                handle=ImageConfig.FILENAME_Z_INDEX_START.value,
-                value_kind="int",
-                value=0,
-            ),
-            ConfigItem(
-                name="image filename site index start",
-                handle=ImageConfig.FILENAME_SITE_INDEX_START.value,
-                value_kind="int",
-                value=1,
-            ),
-            ConfigItem(
-                name="image filename zero pad column index",
-                handle=ImageConfig.FILENAME_ZERO_PAD_COLUMN.value,
-                value_kind="option",
-                value="yes",
-                options=ConfigItemOption.get_bool_options(),
-            ),
-            ConfigItem(
-                name="forbidden areas",
-                handle=ProtocolConfig.FORBIDDEN_AREAS.value,
-                value_kind="text",
-                value=critical_machine_config.forbidden_areas or '{"forbidden_areas":[]}',
-            ),
-            ConfigItem(
-                name="imaging channels configuration",
-                handle=ImagingConfig.CHANNELS.value,
-                value_kind="text",
-                value=critical_machine_config.channels,
-                frozen=True,
-            ),
-            laser_autofocus_system_available_attribute,
-            filter_wheel_system_available_attribute,
-            ConfigItem(
-                name="imaging order",
-                handle=ImagingConfig.ORDER.value,
-                value_kind="option",
-                value="protocol_order",
-                options=[
-                    ConfigItemOption(
-                        name="Protocol Order (config file order)",
-                        handle="protocol_order",
-                    ),
-                    ConfigItemOption(
-                        name="Z-Order (bottom to top)",
-                        handle="z_order",
-                    ),
-                    ConfigItemOption(
-                        name="Wavelength Order (high to low, then brightfield)",
-                        handle="wavelength_order",
-                    ),
-                ],
-            ),
-            ConfigItem(
-                name="microcontroller USB ID",
-                handle=MicrocontrollerConfig.ID.value,
-                value_kind="text",
-                value=critical_machine_config.microcontroller_id or "",
-                frozen=True,
-            ),
-            ConfigItem(
-                name="microcontroller reconnection grace period [ms]",
-                handle=MicrocontrollerConfig.RECONNECTION_GRACE_PERIOD_MS.value,
-                value_kind="float",
-                value=200.0,
-            ),
-            ConfigItem(
-                name="microcontroller reconnection attempts",
-                handle=MicrocontrollerConfig.RECONNECTION_ATTEMPTS.value,
-                value_kind="int",
-                value=5,
-            ),
-            ConfigItem(
-                name="microcontroller reconnection delay [ms]",
-                handle=MicrocontrollerConfig.RECONNECTION_DELAY_MS.value,
-                value_kind="float",
-                value=1000.0,
-            ),
-            ConfigItem(
-                name="microcontroller operation retry attempts",
-                handle=MicrocontrollerConfig.OPERATION_RETRY_ATTEMPTS.value,
-                value_kind="int",
-                value=5,
-            ),
-            ConfigItem(
-                name="microcontroller operation retry delay [ms]",
-                handle=MicrocontrollerConfig.OPERATION_RETRY_DELAY_MS.value,
-                value_kind="float",
-                value=5.0,
-            ),
-            ConfigItem(
-                name="camera reconnection attempts",
-                handle=CameraConfig.RECONNECTION_ATTEMPTS.value,
-                value_kind="int",
-                value=5,
-            ),
-            ConfigItem(
-                name="camera reconnection delay [ms]",
-                handle=CameraConfig.RECONNECTION_DELAY_MS.value,
-                value_kind="float",
-                value=1000.0,
-            ),
-            ConfigItem(
-                name="camera operation retry attempts",
-                handle=CameraConfig.OPERATION_RETRY_ATTEMPTS.value,
-                value_kind="int",
-                value=5,
-            ),
-            *laser_autofocus_system_attributes,
-            *filter_wheel_system_attributes,
-            *main_camera_attributes,
-        ]
-
-        return ret
+        return {
+            MICROSCOPE_NAME: "squid",
+            MICROSCOPE_TYPE: "squid",
+            CAMERA_MAIN_ID: "CHANGE_ME",
+            CAMERA_MAIN_DRIVER: "galaxy",
+            MICROCONTROLLER_ID: "CHANGE_ME",
+            STORAGE_BASE_IMAGE_OUTPUT_DIR: str(GlobalConfigHandler.home() / "images"),
+            CALIBRATION_OFFSET_X_MM: 0.0,
+            CALIBRATION_OFFSET_Y_MM: 0.0,
+            CALIBRATION_OFFSET_Z_MM: 0.0,
+            LASER_AUTOFOCUS_AVAILABLE: "yes",
+            LASER_AUTOFOCUS_CAMERA_ID: "CHANGE_ME",
+            LASER_AUTOFOCUS_CAMERA_DRIVER: "galaxy",
+            FILTER_WHEEL_AVAILABLE: "no",
+            # Native objects for "object" type configs
+            FILTER_WHEEL_CONFIGURATION: [f.model_dump() for f in default_filters],
+            IMAGING_CHANNELS: [ch.model_dump() for ch in default_channels],
+            PROTOCOL_FORBIDDEN_AREAS: default_forbidden_areas,
+        }
 
     @staticmethod
     def get(microscope_name: str | None = None) -> list[ConfigItem]:
-        """
-        get list of all global config items
-        """
-
-        if GlobalConfigHandler._config_list is None:
-            GlobalConfigHandler.reset(microscope_name)
-        ret = GlobalConfigHandler._config_list
-        assert ret is not None
-
-        return ret
-
+        """Get list of all global config items."""
+        # Delegate to ConfigRegistry
+        return ConfigRegistry.get_all()
 
     @staticmethod
     def override(new_config_items: dict[str, ConfigItem] | list[ConfigItem]):
-        g_list = GlobalConfigHandler.get()
-
-        def get_index(handle: str) -> int | None:
-            """
-            get index of the item in the existing configs with input handle as handle
-
-            returns None of no such item exists
-            """
-
-            for i, item in enumerate(g_list):
-                assert isinstance(item, ConfigItem)
-
-                if item.handle == handle:
-                    return i
-
-            return None
-
-        assert GlobalConfigHandler._config_list is not None
-
+        """Override config items with new values."""
         if isinstance(new_config_items, dict):
             for handle, item in new_config_items.items():
-                index = get_index(handle)
-
-                if index is None:
-                    GlobalConfigHandler._config_list.append(item)
-                else:
-                    GlobalConfigHandler._config_list[index].override(item)
-
+                ConfigRegistry.set_value(handle, item.value)
         else:
             for item in new_config_items:
-                handle = item.handle
-
-                index = get_index(handle)
-
-                if index is None:
-                    GlobalConfigHandler._config_list.append(item)
-                else:
-                    GlobalConfigHandler._config_list[index].override(item)
+                ConfigRegistry.set_value(item.handle, item.value)
 
     @staticmethod
     def get_dict() -> dict[str, ConfigItem]:
-        ret = {}
-        for c in GlobalConfigHandler.get():
-            assert isinstance(c, ConfigItem)
-
-            # make sure it does not exist already
-            if c.handle in ret:
-                raise ValueError("duplicate handle found in config list")
-
-            ret[c.handle] = c
-
-        return ret
+        """Get all config items as a dict."""
+        return ConfigRegistry.get_dict()
 
     @staticmethod
     def update_pixel_format_options(
@@ -1188,10 +584,15 @@ class GlobalConfigHandler:
             main_camera_formats: List of supported formats from main camera (e.g., ["mono8", "mono10", "mono12"])
             autofocus_camera_formats: List of supported formats from autofocus camera, or None if autofocus unavailable
         """
+        from seafront.config.core_config import (
+            CAMERA_MAIN_PIXEL_FORMAT,
+            LASER_AUTOFOCUS_CAMERA_PIXEL_FORMAT,
+        )
+
         config_dict = GlobalConfigHandler.get_dict()
 
         # Update main camera pixel format options
-        main_format_item = config_dict.get(CameraConfig.MAIN_PIXEL_FORMAT.value)
+        main_format_item = config_dict.get(CAMERA_MAIN_PIXEL_FORMAT)
         if main_format_item is not None:
             # Create new options list from actual camera capabilities
             new_options = [
@@ -1206,7 +607,7 @@ class GlobalConfigHandler:
 
         # Update autofocus camera pixel format options if available
         if autofocus_camera_formats is not None:
-            autofocus_format_item = config_dict.get(LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value)
+            autofocus_format_item = config_dict.get(LASER_AUTOFOCUS_CAMERA_PIXEL_FORMAT)
             if autofocus_format_item is not None:
                 # Create new options list from actual camera capabilities
                 new_options = [
@@ -1221,5 +622,64 @@ class GlobalConfigHandler:
 
     @staticmethod
     def reset(microscope_name: str | None = None):
+        """
+        Initialize config with values from config file for the selected microscope.
+
+        This loads the config file, finds the selected microscope's config,
+        and registers all config items with values from the file overriding defaults.
+        """
+        from seafront.config.core_config import (
+            MICROSCOPE_NAME,
+            LASER_AUTOFOCUS_AVAILABLE,
+            FILTER_WHEEL_AVAILABLE,
+            register_core_config,
+            register_laser_autofocus_config,
+            register_filter_wheel_config,
+        )
+
         GlobalConfigHandler._current_microscope_name = microscope_name
-        GlobalConfigHandler._config_list = GlobalConfigHandler._defaults(microscope_name)
+
+        # Reset the registry
+        ConfigRegistry.reset()
+
+        # Load config file and find target microscope
+        with GlobalConfigHandler.home_config().open("r") as f:
+            server_config_json = json5.load(f)
+            server_config = ServerConfig(**server_config_json)
+            if len(server_config.microscopes) == 0:
+                raise ValueError("no microscope found in server config")
+
+            # Select microscope by name or default to first
+            microscope_config: MicroscopeConfig = {}
+            if microscope_name is not None:
+                for m in server_config.microscopes:
+                    if m.get(MICROSCOPE_NAME) == microscope_name:
+                        microscope_config = m
+                        break
+                if not microscope_config:
+                    available_names = [
+                        m.get(MICROSCOPE_NAME, "<unnamed>")
+                        for m in server_config.microscopes
+                    ]
+                    raise ValueError(f"microscope '{microscope_name}' not found. Available: {available_names}")
+            else:
+                microscope_config = server_config.microscopes[0]
+
+        # Initialize registry with config file values
+        ConfigRegistry.init(microscope_config)
+
+        # Get default values for complex configs
+        default_config = GlobalConfigHandler.DEFAULT_MICROSCOPE_CONFIG()
+        default_image_dir = str(GlobalConfigHandler.home() / "images")
+        default_channels = default_config.get("imaging.channels", [])
+        default_forbidden_areas = default_config.get("protocol.forbidden_areas", [])
+
+        # Register core config items
+        register_core_config(default_image_dir, default_channels, default_forbidden_areas)
+
+        # Register optional subsystem configs based on availability
+        if ConfigRegistry.get_value(LASER_AUTOFOCUS_AVAILABLE) == "yes":
+            register_laser_autofocus_config()
+
+        if ConfigRegistry.get_value(FILTER_WHEEL_AVAILABLE) == "yes":
+            register_filter_wheel_config()

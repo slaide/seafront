@@ -46,9 +46,9 @@ from seaconfig.acquisition import AcquisitionConfig
 from seafront.config.basics import (
     ChannelConfig,
     ConfigItem,
-    CriticalMachineConfig,
     GlobalConfigHandler,
     ImagingOrder,
+    MicroscopeConfig,
     ServerConfig,
 )
 from seafront.config.handles import (
@@ -57,6 +57,7 @@ from seafront.config.handles import (
     ImagingConfig,
     LaserAutofocusConfig,
     ProtocolConfig,
+    SystemConfig,
 )
 from seafront.hardware.microscope import DisconnectError, HardwareLimits, Microscope
 from seafront.hardware.mock_microscope import MockMicroscope
@@ -260,7 +261,7 @@ def filename_check(name: str) -> str | None:
 class Core:
     """application core, contains server capabilities and microcontroller interaction"""
 
-    def __init__(self, selected_microscope: CriticalMachineConfig):
+    def __init__(self, selected_microscope: MicroscopeConfig):
 
         def make_acquisition_event_loop():
             worker_loop = asyncio.new_event_loop()
@@ -274,13 +275,13 @@ class Core:
         self.acqusition_eventloop = make_acquisition_event_loop()
 
         # Store microscope name for status reporting
-        self.microscope_name = selected_microscope.microscope_name
+        self.microscope_name: str = selected_microscope.get(SystemConfig.MICROSCOPE_NAME.value, "unknown")
 
         # Track time of last processed request for health monitoring
         self.last_request_time: float | None = None
 
         # Use the passed microscope configuration
-        microscope_type = selected_microscope.microscope_type
+        microscope_type = selected_microscope.get(SystemConfig.MICROSCOPE_TYPE.value, "squid")
 
         if microscope_type == "mock":
             logger.info("Creating mock microscope adapter")
@@ -2269,7 +2270,7 @@ def main():
     with GlobalConfigHandler.home_config().open("r") as f:
         server_config = ServerConfig(**json5.load(f))
 
-    available_microscopes = [m.microscope_name for m in server_config.microscopes]
+    available_microscopes = [m.get(SystemConfig.MICROSCOPE_NAME.value, "<unnamed>") for m in server_config.microscopes]
     microscope_list = ", ".join(f'"{name}"' for name in available_microscopes)
 
     # Parse command line arguments
@@ -2295,37 +2296,44 @@ def main():
         return
 
     # Determine which microscope to use
-    selected_microscope = None
+    selected_microscope: MicroscopeConfig | None = None
     if args.microscope:
-        # Find microscope by name
-        matching_microscopes = [m for m in server_config.microscopes if m.microscope_name == args.microscope]
-        if len(matching_microscopes) == 0:
-            available_names = [m.microscope_name for m in server_config.microscopes]
+        # Find microscope by name (using handle key)
+        for m in server_config.microscopes:
+            if m.get(SystemConfig.MICROSCOPE_NAME.value) == args.microscope:
+                selected_microscope = m
+                break
+        if selected_microscope is None:
+            available_names = [m.get(SystemConfig.MICROSCOPE_NAME.value, "<unnamed>") for m in server_config.microscopes]
             logger.critical(f"Microscope '{args.microscope}' not found. Available: {available_names}")
             return
-        selected_microscope = matching_microscopes[0]
     else:
         # Default to first microscope
         selected_microscope = server_config.microscopes[0]
 
     # Log startup information
-    logger.info(f"🔬 Selected microscope: {selected_microscope.microscope_name}")
-    logger.info(f"📷 Main camera: {selected_microscope.main_camera_id} (driver: {selected_microscope.main_camera_driver})")
-    if selected_microscope.laser_autofocus_available == "yes" and selected_microscope.laser_autofocus_camera_id:
-        logger.info(f"🎯 Autofocus camera: {selected_microscope.laser_autofocus_camera_id} (driver: {selected_microscope.laser_autofocus_camera_driver})")
+    microscope_name = selected_microscope.get(SystemConfig.MICROSCOPE_NAME.value, "unknown")
+    main_camera_id = selected_microscope.get(CameraConfig.MAIN_ID.value, "unknown")
+    main_camera_driver = selected_microscope.get(CameraConfig.MAIN_DRIVER.value, "unknown")
+    logger.info(f"🔬 Selected microscope: {microscope_name}")
+    logger.info(f"📷 Main camera: {main_camera_id} (driver: {main_camera_driver})")
+    if selected_microscope.get(LaserAutofocusConfig.AVAILABLE.value) == "yes":
+        laf_camera_id = selected_microscope.get(LaserAutofocusConfig.CAMERA_ID.value, "unknown")
+        laf_camera_driver = selected_microscope.get(LaserAutofocusConfig.CAMERA_DRIVER.value, "unknown")
+        logger.info(f"🎯 Autofocus camera: {laf_camera_id} (driver: {laf_camera_driver})")
     logger.info(f"🌐 Server port: {server_config.port}")
 
-    logger.info(f"initializing core server with microscope: {selected_microscope.microscope_name}")
+    logger.info(f"initializing core server with microscope: {microscope_name}")
 
     # Initialize global config with selected microscope
-    GlobalConfigHandler.reset(selected_microscope.microscope_name)
+    GlobalConfigHandler.reset(microscope_name)
 
     # Check for default protocol file
     default_protocol_file = GlobalConfigHandler.home_acquisition_config_dir() / "default.json"
 
     if not default_protocol_file.exists():
         logger.critical(f"Default protocol file not found: {default_protocol_file}")
-        logger.critical(f"Please run: uv run python scripts/generate_default_protocol.py --microscope \"{selected_microscope.microscope_name}\"")
+        logger.critical(f"Please run: uv run python scripts/generate_default_protocol.py --microscope \"{microscope_name}\"")
         return
 
     logger.info(f"✓ Default protocol found: {default_protocol_file}")
@@ -2407,8 +2415,6 @@ def main():
             logger.warning(f"failed to establish hardware connection at startup: {e}")
 
     logger.info("starting http server")
-    logger.info("Starting Uvicorn server")
-    logger.info("🧵 Request handlers run via asyncio.to_thread for real threading!")
 
     # Test if port is available before starting uvicorn
     try:

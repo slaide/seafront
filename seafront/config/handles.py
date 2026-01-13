@@ -144,6 +144,7 @@ class SystemConfig(ConfigHandle):
     """System-level configuration handles."""
 
     MICROSCOPE_NAME = "system.microscope_name"
+    MICROSCOPE_TYPE = "system.microscope_type"
 
 
 class IlluminationConfig(ConfigHandle):
