@@ -152,22 +152,3 @@ class IlluminationConfig(ConfigHandle):
 
     TURN_OFF_ALL = "illumination.turn_off_all"
 
-
-# Convenience function to get config item by enum
-def get_config_item(handle: ConfigHandle | str) -> Any:
-    """
-    Get a config item by handle enum or string.
-
-    Args:
-        handle: ConfigHandle enum or string handle
-
-    Returns:
-        The config item
-    """
-    from seafront.config.basics import GlobalConfigHandler
-    g_config = GlobalConfigHandler.get_dict()
-
-    if isinstance(handle, ConfigHandle):
-        return g_config[handle.value]
-
-    return g_config[handle]

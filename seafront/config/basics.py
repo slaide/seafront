@@ -323,7 +323,7 @@ class GlobalConfigHandler:
 
         Uses handle keys directly - no mapping needed.
         """
-        from seafront.config.core_config import MICROSCOPE_NAME
+        from seafront.config.handles import SystemConfig
 
         CONFIG_FILE_PATH = GlobalConfigHandler.home_config()
 
@@ -334,13 +334,13 @@ class GlobalConfigHandler:
         current_config = ConfigRegistry.get_dict()
 
         # Get current microscope name
-        current_microscope_name = current_config[MICROSCOPE_NAME].value
+        current_microscope_name = current_config[SystemConfig.MICROSCOPE_NAME.value].value
 
         # Find existing microscope config to preserve non-persistent values
         existing_microscope_config: MicroscopeConfig = {}
         existing_index: int | None = None
         for i, m in enumerate(server_config.microscopes):
-            if m.get(MICROSCOPE_NAME) == current_microscope_name:
+            if m.get(SystemConfig.MICROSCOPE_NAME.value) == current_microscope_name:
                 existing_microscope_config = m
                 existing_index = i
                 break
@@ -510,37 +510,37 @@ class GlobalConfigHandler:
             }
         ]
 
-        # Use handle constants from core_config
-        from seafront.config.core_config import (
-            MICROSCOPE_NAME, MICROSCOPE_TYPE,
-            CAMERA_MAIN_ID, CAMERA_MAIN_DRIVER,
-            MICROCONTROLLER_ID,
-            STORAGE_BASE_IMAGE_OUTPUT_DIR,
-            CALIBRATION_OFFSET_X_MM, CALIBRATION_OFFSET_Y_MM, CALIBRATION_OFFSET_Z_MM,
-            LASER_AUTOFOCUS_AVAILABLE, LASER_AUTOFOCUS_CAMERA_ID, LASER_AUTOFOCUS_CAMERA_DRIVER,
-            FILTER_WHEEL_AVAILABLE, FILTER_WHEEL_CONFIGURATION,
-            IMAGING_CHANNELS,
-            PROTOCOL_FORBIDDEN_AREAS,
+        # Use handle enums from handles module
+        from seafront.config.handles import (
+            SystemConfig,
+            CameraConfig,
+            MicrocontrollerConfig,
+            StorageConfig,
+            CalibrationConfig,
+            LaserAutofocusConfig,
+            FilterWheelConfig,
+            ImagingConfig,
+            ProtocolConfig,
         )
 
         return {
-            MICROSCOPE_NAME: "squid",
-            MICROSCOPE_TYPE: "squid",
-            CAMERA_MAIN_ID: "CHANGE_ME",
-            CAMERA_MAIN_DRIVER: "galaxy",
-            MICROCONTROLLER_ID: "CHANGE_ME",
-            STORAGE_BASE_IMAGE_OUTPUT_DIR: str(GlobalConfigHandler.home() / "images"),
-            CALIBRATION_OFFSET_X_MM: 0.0,
-            CALIBRATION_OFFSET_Y_MM: 0.0,
-            CALIBRATION_OFFSET_Z_MM: 0.0,
-            LASER_AUTOFOCUS_AVAILABLE: "yes",
-            LASER_AUTOFOCUS_CAMERA_ID: "CHANGE_ME",
-            LASER_AUTOFOCUS_CAMERA_DRIVER: "galaxy",
-            FILTER_WHEEL_AVAILABLE: "no",
+            SystemConfig.MICROSCOPE_NAME.value: "squid",
+            SystemConfig.MICROSCOPE_TYPE.value: "squid",
+            CameraConfig.MAIN_ID.value: "CHANGE_ME",
+            CameraConfig.MAIN_DRIVER.value: "galaxy",
+            MicrocontrollerConfig.ID.value: "CHANGE_ME",
+            StorageConfig.BASE_IMAGE_OUTPUT_DIR.value: str(GlobalConfigHandler.home() / "images"),
+            CalibrationConfig.OFFSET_X_MM.value: 0.0,
+            CalibrationConfig.OFFSET_Y_MM.value: 0.0,
+            CalibrationConfig.OFFSET_Z_MM.value: 0.0,
+            LaserAutofocusConfig.AVAILABLE.value: "yes",
+            LaserAutofocusConfig.CAMERA_ID.value: "CHANGE_ME",
+            LaserAutofocusConfig.CAMERA_DRIVER.value: "galaxy",
+            FilterWheelConfig.AVAILABLE.value: "no",
             # Native objects for "object" type configs
-            FILTER_WHEEL_CONFIGURATION: [f.model_dump() for f in default_filters],
-            IMAGING_CHANNELS: [ch.model_dump() for ch in default_channels],
-            PROTOCOL_FORBIDDEN_AREAS: default_forbidden_areas,
+            FilterWheelConfig.CONFIGURATION.value: [f.model_dump() for f in default_filters],
+            ImagingConfig.CHANNELS.value: [ch.model_dump() for ch in default_channels],
+            ProtocolConfig.FORBIDDEN_AREAS.value: default_forbidden_areas,
         }
 
     @staticmethod
@@ -579,15 +579,12 @@ class GlobalConfigHandler:
             main_camera_formats: List of supported formats from main camera (e.g., ["mono8", "mono10", "mono12"])
             autofocus_camera_formats: List of supported formats from autofocus camera, or None if autofocus unavailable
         """
-        from seafront.config.core_config import (
-            CAMERA_MAIN_PIXEL_FORMAT,
-            LASER_AUTOFOCUS_CAMERA_PIXEL_FORMAT,
-        )
+        from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 
         config_dict = GlobalConfigHandler.get_dict()
 
         # Update main camera pixel format options
-        main_format_item = config_dict.get(CAMERA_MAIN_PIXEL_FORMAT)
+        main_format_item = config_dict.get(CameraConfig.MAIN_PIXEL_FORMAT.value)
         if main_format_item is not None:
             # Create new options list from actual camera capabilities
             new_options = [
@@ -602,7 +599,7 @@ class GlobalConfigHandler:
 
         # Update autofocus camera pixel format options if available
         if autofocus_camera_formats is not None:
-            autofocus_format_item = config_dict.get(LASER_AUTOFOCUS_CAMERA_PIXEL_FORMAT)
+            autofocus_format_item = config_dict.get(LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value)
             if autofocus_format_item is not None:
                 # Create new options list from actual camera capabilities
                 new_options = [
@@ -623,10 +620,8 @@ class GlobalConfigHandler:
         This loads the config file, finds the selected microscope's config,
         and registers all config items with values from the file overriding defaults.
         """
+        from seafront.config.handles import SystemConfig, LaserAutofocusConfig, FilterWheelConfig
         from seafront.config.core_config import (
-            MICROSCOPE_NAME,
-            LASER_AUTOFOCUS_AVAILABLE,
-            FILTER_WHEEL_AVAILABLE,
             register_core_config,
             register_laser_autofocus_config,
             register_filter_wheel_config,
@@ -648,12 +643,12 @@ class GlobalConfigHandler:
             microscope_config: MicroscopeConfig = {}
             if microscope_name is not None:
                 for m in server_config.microscopes:
-                    if m.get(MICROSCOPE_NAME) == microscope_name:
+                    if m.get(SystemConfig.MICROSCOPE_NAME.value) == microscope_name:
                         microscope_config = m
                         break
                 if not microscope_config:
                     available_names = [
-                        m.get(MICROSCOPE_NAME, "<unnamed>")
+                        m.get(SystemConfig.MICROSCOPE_NAME.value, "<unnamed>")
                         for m in server_config.microscopes
                     ]
                     raise ValueError(f"microscope '{microscope_name}' not found. Available: {available_names}")
@@ -673,8 +668,8 @@ class GlobalConfigHandler:
         register_core_config(default_image_dir, default_channels, default_forbidden_areas)
 
         # Register optional subsystem configs based on availability
-        if ConfigRegistry.get(LASER_AUTOFOCUS_AVAILABLE).boolvalue:
+        if ConfigRegistry.get(LaserAutofocusConfig.AVAILABLE.value).boolvalue:
             register_laser_autofocus_config()
 
-        if ConfigRegistry.get(FILTER_WHEEL_AVAILABLE).boolvalue:
+        if ConfigRegistry.get(FilterWheelConfig.AVAILABLE.value).boolvalue:
             register_filter_wheel_config()
