@@ -94,6 +94,7 @@ known-first-party = ["seafront"]
 dev = [
     "pyright>=1.1.402",
     "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
 ]
 
 [tool.setuptools.package-data]

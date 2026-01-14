@@ -5,7 +5,8 @@ This module provides AABB (Axis-Aligned Bounding Box) based forbidden area check
 to prevent the microscope stage from moving to physically dangerous locations.
 """
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator
+from typing import Self
 
 
 class ForbiddenArea(BaseModel):
@@ -22,19 +23,14 @@ class ForbiddenArea(BaseModel):
     max_y_mm: float = Field(..., description="Maximum Y coordinate (top edge) in mm")
     reason: str = Field(default="", description="Optional reason why this area is forbidden")
 
-    @validator('max_x_mm')
-    def validate_x_bounds(cls, v, values):
-        """Ensure max_x_mm >= min_x_mm"""
-        if 'min_x_mm' in values and v < values['min_x_mm']:
-            raise ValueError(f"max_x_mm ({v}) must be >= min_x_mm ({values['min_x_mm']})")
-        return v
-
-    @validator('max_y_mm')
-    def validate_y_bounds(cls, v, values):
-        """Ensure max_y_mm >= min_y_mm"""
-        if 'min_y_mm' in values and v < values['min_y_mm']:
-            raise ValueError(f"max_y_mm ({v}) must be >= min_y_mm ({values['min_y_mm']})")
-        return v
+    @model_validator(mode='after')
+    def validate_bounds(self) -> Self:
+        """Ensure max coordinates >= min coordinates"""
+        if self.max_x_mm < self.min_x_mm:
+            raise ValueError(f"max_x_mm ({self.max_x_mm}) must be >= min_x_mm ({self.min_x_mm})")
+        if self.max_y_mm < self.min_y_mm:
+            raise ValueError(f"max_y_mm ({self.max_y_mm}) must be >= min_y_mm ({self.min_y_mm})")
+        return self
 
     def contains_point(self, x_mm: float, y_mm: float) -> bool:
         """

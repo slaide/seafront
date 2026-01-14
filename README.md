@@ -452,6 +452,11 @@ runs the test suite including config registry tests and example config validatio
 uv run pytest tests/ -v --tb=short
 ```
 
+to measure test coverage:
+```bash
+uv run pytest tests/ --cov=seafront --cov-report=term-missing
+```
+
 ## scripts/list_squid_hardware.py  
 comprehensive hardware listing script that shows all available SQUID microscope hardware including cameras, microcontrollers, and other peripherals. provides detailed information needed for configuration.
 ```bash
