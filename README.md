@@ -20,7 +20,7 @@ note: issues encountered during operation or installation should be reported in 
    ```
 3. **Configure microscope** - Copy example config and adjust for your hardware ([details](#configuration))
    ```bash
-   cp examples/squid_config.json ~/seafront/config.json
+   cp examples/squid-v1.json ~/seafront/config.json
    # Edit ~/seafront/config.json with your camera models and settings
    ```
 4. **Generate default protocol** - Create required startup configuration
@@ -77,13 +77,12 @@ The `install/all.sh` script automatically:
 ### example configurations
 
 See `examples/` directory for complete configuration examples:
-- **`examples/squid_config.json`**: Standard SQUID microscope with Daheng Galaxy cameras for both main and autofocus imaging. Use this as a starting point for most SQUID setups.
-- **`examples/squid+_config.json`**: SQUID+ microscope with ToupCam main camera and filter wheel. Use this if your microscope has a ToupTek ToupCam main camera.
+- **`examples/squid-v1.json`** through **`examples/squid-v4.json`**: SQUID microscope configurations for different hardware revisions. Use the version matching your microscope.
 - **`examples/mock_config.json`**: Mock microscope for development and testing without physical hardware. Use this for testing the software or learning the interface.
 
 Copy the appropriate example to `~/seafront/config.json` and customize it for your hardware:
 ```bash
-cp examples/squid_config.json ~/seafront/config.json
+cp examples/squid-v1.json ~/seafront/config.json
 # Edit ~/seafront/config.json with your specific settings
 ```
 
@@ -95,44 +94,52 @@ Place your configuration file at `~/seafront/config.json` (JSON5 format supporte
     "port": 5002,
     "microscopes": [
         {
-            "microscope_name": "squid",
-            "main_camera_model": "MER2-1220-32U3M", 
-            "main_camera_driver": "galaxy",
-            "base_image_output_dir": "/home/scientist/seafront/images",
-            
-            "laser_autofocus_available": "yes",
-            "laser_autofocus_camera_model": "MER2-630-60U3M",
-            "laser_autofocus_camera_driver": "galaxy",
-            
-            "filter_wheel_available": "no",
-            "calibration_offset_x_mm": 0.0,
-            "calibration_offset_y_mm": 0.0, 
-            "calibration_offset_z_mm": 0.0,
-            
-            "channels": "[{\"name\": \"BF LED matrix full\", \"handle\": \"bfledfull\", \"source_slot\": 0}]",
-            "filters": "[]"
+            "system.microscope_name": "squid",
+            "system.microscope_type": "squid",
+            "camera.main.id": "ABC12345678",
+            "camera.main.driver": "galaxy",
+            "microcontroller.id": "DEF98765432",
+            "storage.base_image_output_dir": "/home/scientist/seafront/images",
+
+            "calibration.offset.x_mm": 0.0,
+            "calibration.offset.y_mm": 0.0,
+            "calibration.offset.z_mm": 0.0,
+
+            "laser.autofocus.available": "yes",
+            "laser.autofocus.camera.id": "GHI11223344",
+            "laser.autofocus.camera.driver": "galaxy",
+
+            "filter.wheel.available": "no",
+            "filter.wheel.configuration": [],
+
+            "imaging.channels": [
+                {"name": "BF LED matrix full", "handle": "bfledfull", "source_slot": 0}
+            ],
+
+            "protocol.forbidden_areas": []
         }
     ]
 }
 ```
 ### configuration parameters
 
-- **`"<x>_camera_model"`**: Camera model identifier - **must be exact!** Use `scripts/list_squid_hardware.py` to find correct model names:
-  - For **Galaxy cameras** (Daheng): Use the `Model` field from hardware listing output (e.g., `"MER2-1220-32U3M"`)
-  - For **ToupCam cameras** (ToupTek): Use the `Display Name` field from hardware listing output (e.g., `"ITR3CMOS26000KMA"`)
-  - See [development scripts](#development-scripts) section for more details
-- **`"<x>_camera_driver"`**: Camera API to use (`"galaxy"` for Daheng cameras, `"toupcam"` for ToupTek cameras).
-- **`"microscope_name"`**: Any string, used as metadata.
-- **`"microscope_type"`**: Hardware implementation (`"squid"` for real hardware, `"mock"` for simulation). Defaults to `"squid"`.
-- **`"base_image_output_dir"`**: Parent directory for image storage.
-- **`"channels"`**: JSON string defining available imaging channels (see [Channel Configuration](#channel-configuration)).
-- **`"filters"`**: JSON string defining filter wheel configuration. Use empty array `"[]"` when `filter_wheel_available` is `"no"`.
+Configuration keys use a dotted path syntax (e.g., `camera.main.id` instead of `main_camera_id`).
+
+- **`"camera.main.id"`**: USB serial number of the main camera. Use `scripts/list_squid_hardware.py` to find this value (shown as `Serial` in the output).
+- **`"camera.main.driver"`**: Camera API to use (`"galaxy"` for Daheng cameras, `"toupcam"` for ToupTek cameras).
+- **`"microcontroller.id"`**: USB serial number of the microcontroller. Use `scripts/list_squid_hardware.py` to find this.
+- **`"system.microscope_name"`**: Any string, used as metadata.
+- **`"system.microscope_type"`**: Hardware implementation (`"squid"` for real hardware, `"mock"` for simulation). Defaults to `"squid"`.
+- **`"storage.base_image_output_dir"`**: Parent directory for image storage.
+- **`"imaging.channels"`**: Array of channel configurations (see [Channel Configuration](#channel-configuration)).
+- **`"filter.wheel.configuration"`**: Array of filter configurations. Use empty array `[]` when `filter.wheel.available` is `"no"`.
+- **`"protocol.forbidden_areas"`**: Array of forbidden area definitions for stage safety.
 
 Image storage path format: `<base_image_output_dir>/<project name>/<plate name>/<unique acquisition id>_<acquisition start timestamp>`
 
 ### channel configuration
 
-Channels define the available imaging modalities and their illumination sources. Each channel in the `"channels"` JSON string has these properties:
+Channels define the available imaging modalities and their illumination sources. Each channel in the `"imaging.channels"` array has these properties:
 
 ```json
 {
@@ -172,27 +179,35 @@ Features:
 
 #### enabling mock mode
 
-Add `"microscope_type": "mock"` to your microscope configuration:
+Set `"system.microscope_type": "mock"` in your microscope configuration:
 
 ```json
 {
     "port": 5002,
     "microscopes": [
         {
-            "microscope_name": "Mock SQUID for Testing",
-            "microscope_type": "mock",
-            "base_image_output_dir": "/home/scientist/seafront/images",
-            "calibration_offset_x_mm": 0.0,
-            "calibration_offset_y_mm": 0.0,
-            "calibration_offset_z_mm": 0.0,
-            "channels": "[{\"name\": \"BF LED matrix full\", \"handle\": \"bfledfull\", \"source_slot\": 0}]",
-            "filters": "[]"
+            "system.microscope_name": "Mock SQUID for Testing",
+            "system.microscope_type": "mock",
+            "camera.main.id": "PLACEHOLDER",
+            "camera.main.driver": "galaxy",
+            "microcontroller.id": "PLACEHOLDER",
+            "storage.base_image_output_dir": "/home/scientist/seafront/images",
+            "calibration.offset.x_mm": 0.0,
+            "calibration.offset.y_mm": 0.0,
+            "calibration.offset.z_mm": 0.0,
+            "laser.autofocus.available": "no",
+            "filter.wheel.available": "no",
+            "filter.wheel.configuration": [],
+            "imaging.channels": [
+                {"name": "BF LED matrix full", "handle": "bfledfull", "source_slot": 0}
+            ],
+            "protocol.forbidden_areas": []
         }
     ]
 }
 ```
 
-Camera and microcontroller fields are ignored in mock mode.
+Camera and microcontroller ID fields can be placeholders in mock mode as they are not used.
 
 #### timing control
 
@@ -206,15 +221,15 @@ The mock microscope can simulate realistic timing or run with instant operations
 
 ```bash
 # Instant operations - useful for rapid testing
-MOCK_NO_DELAYS=1 uv run python -m seafront --microscope "Mock SQUID for Testing"
+MOCK_NO_DELAYS=1 uv run python -m seafront --microscope "mocroscope"
 
 # Realistic timing (default) - simulates actual hardware behavior
-uv run python -m seafront --microscope "Mock SQUID for Testing"
+uv run python -m seafront --microscope "mocroscope"
 ```
 
 ### additional parameters
 
-- **`"calibration_offset_<x|y|z>"`**: Should be _mostly_ correct. Minor deviations between microscope restarts can be fine-tuned in the web interface during acquisition.
+- **`"calibration.offset.<x|y|z>_mm"`**: Should be _mostly_ correct. Minor deviations between microscope restarts can be fine-tuned in the web interface during acquisition.
 
 ## power calibration for illumination sources
 
@@ -303,8 +318,11 @@ A default protocol must be present before starting the software. Protocols are s
 # Generate with default 384-well plate for your microscope (REQUIRED)
 uv run python scripts/generate_default_protocol.py --microscope "your-microscope-name"
 
+# List available microscopes from config
+uv run python scripts/generate_default_protocol.py --list-microscopes
+
 # List available wellplate types
-uv run python scripts/generate_default_protocol.py --list
+uv run python scripts/generate_default_protocol.py --list-wellplates
 
 # Generate with specific wellplate type and microscope
 uv run python scripts/generate_default_protocol.py --plate revvity-384-6057800 --microscope "your-microscope-name"
@@ -457,15 +475,13 @@ to measure test coverage:
 uv run pytest tests/ --cov=seafront --cov-report=term-missing
 ```
 
-## scripts/list_squid_hardware.py  
+## scripts/list_squid_hardware.py
 comprehensive hardware listing script that shows all available SQUID microscope hardware including cameras, microcontrollers, and other peripherals. provides detailed information needed for configuration.
 ```bash
 uv run python3 ./scripts/list_squid_hardware.py
 ```
 
-**Important**: when configuring camera models in your `~/seafront/config.json`:
-- **Galaxy cameras**: use the `Model` field from the hardware listing output
-- **ToupCam cameras**: use the `Display Name` field from the hardware listing output
+**Important**: when configuring devices in your `~/seafront/config.json`, use the `Serial` field from the hardware listing output for all device IDs.
 
 For example, if the hardware listing shows:
 ```
@@ -478,24 +494,15 @@ For example, if the hardware listing shows:
    Vendor: ToupTek
    Display Name: ITR3CMOS26000KMA
    Serial: DEF456
+
+3. Microcontroller
+   Serial: GHI789
 ```
 
 Then your config should use:
-- `"main_camera_model": "MER2-1220-32U3M"` for Galaxy cameras  
-- `"main_camera_model": "ITR3CMOS26000KMA"` for ToupCam cameras
-
-## scripts/test_filter_wheel_hardware.py
-hardware test script specifically for filter wheel functionality. performs complete microcontroller initialization and cycles through all filter wheel positions (1-8) to verify proper operation.
-```bash
-uv run python3 ./scripts/test_filter_wheel_hardware.py
-```
-useful for:
-- verifying filter wheel hardware after installation
-- diagnosing filter wheel positioning issues
-- testing microcontroller communication
-- validating filter wheel initialization sequence
-
-the script provides detailed logging of each step including movement calculations, command generation, and position verification.
+- `"camera.main.id": "ABC123"` (the Serial, not the Model)
+- `"camera.main.driver": "galaxy"` (or `"toupcam"` depending on camera type)
+- `"microcontroller.id": "GHI789"`
 
 # notes
 
@@ -524,7 +531,7 @@ To adjust it temporarily (until next reboot):
 echo 1000 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 ```
 
-To adjust it permanently, add this line to `/etc/rc.local`:
+To adjust it permanently, add this line to `/etc/rc.local` (or directly change to the kernel parameters):
 ```bash
 echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb
 ```
@@ -604,7 +611,7 @@ If you change the `microscope_name` in your configuration:
 **Error:** Browser shows blank page or slow response
 
 **Steps to check:**
-1. Verify the server is running and check the console for errors
+1. Verify the server is running and check the terminal for errors
 2. Check the server URL is correct (default: `http://localhost:5002`)
 3. Try opening `/docs` or `/redoc` to verify API is responding
 4. Clear browser cache and reload the page (F5)

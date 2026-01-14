@@ -40,15 +40,27 @@ def get_wellplate(plate_id: str | None) -> sc.wellplates.Wellplate:
 def main():
     parser = argparse.ArgumentParser(description="Generate default acquisition protocol")
     parser.add_argument("--plate", "-p", type=str, help="Wellplate Model_id (default: revvity-384-6057800)")
-    parser.add_argument("--list", "-l", action="store_true", help="List available wellplates and exit")
+    parser.add_argument("--list-wellplates", action="store_true", help="List available wellplates and exit")
+    parser.add_argument("--list-microscopes", action="store_true", help="List available microscopes from config and exit")
     parser.add_argument("--microscope", "-m", type=str, help="Microscope name (must exist in config)")
 
     args = parser.parse_args()
 
-    if args.list:
+    if args.list_wellplates:
         print("Available wellplates:")
         for plate in sc.plates.Plates:
             print(f"  {plate.Model_id:<25} - {plate.Manufacturer} {plate.Model_name} ({plate.Num_wells_x}x{plate.Num_wells_y} wells)")
+        return
+
+    if args.list_microscopes:
+        try:
+            server_config = load_server_config()
+            print("Available microscopes (from ~/seafront/config.json):")
+            for m in server_config.microscopes:
+                name = m.get("system.microscope_name", "<unnamed>")
+                print(f"  {name}")
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
         return
 
     if not args.microscope:
@@ -56,7 +68,7 @@ def main():
 
     # Load config and validate microscope name
     server_config = load_server_config()
-    available_names = [m.microscope_name for m in server_config.microscopes]
+    available_names = [m.get("system.microscope_name", "<unnamed>") for m in server_config.microscopes]
 
     if args.microscope not in available_names:
         raise ValueError(f"Microscope '{args.microscope}' not found. Available: {available_names}")
