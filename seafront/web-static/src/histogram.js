@@ -1,5 +1,7 @@
 "use strict";
 
+/** @typedef {import('./init.js').AlpineMicroscopeState} AlpineMicroscopeState */
+
 /**@type {PlotlyLayout} */
 export const histogramLayout = {
     autosize: true,
@@ -74,4 +76,62 @@ export function makeHistogram(el){
         // @ts-ignore
         Plotly.relayout(el, { autosize: true });
     }).observe(el)
+}
+
+/**
+ * Update histogram display with cached channel image data.
+ * Builds histogram traces for each enabled channel and renders with Plotly.
+ * @this {AlpineMicroscopeState}
+ * @param {HTMLElement} el - The element to render the histogram into
+ */
+export function updateHistogram(el) {
+    /** @type {PlotlyTrace[]} */
+    const data = [];
+    const xvalues = new Uint16Array(257).map((v, i) => i);
+
+    for (const [key, value] of Array.from(
+        this.cached_channel_image.entries(),
+    ).toSorted((l, r) => {
+        return l[0] > r[0] ? 1 : -1;
+    })) {
+        // key is handle, i.e. key===value.info.channel.handle (which is not terribly useful for displaying)
+        const name = value.info.channel.name;
+
+        // skip channels that are not enabled
+        if (
+            !(
+                this.microscope_config.channels.find(
+                    (c) => c.handle == key,
+                )?.enabled ?? false
+            )
+        ) {
+            continue;
+        }
+
+        const y = new Float32Array(xvalues.length);
+
+        const rawdata = (() => {
+            switch (value.bit_depth) {
+                case 8:
+                    return new Uint8Array(value.data);
+                case 16:
+                    return new Uint16Array(value.data).map(
+                        (v) => v >> 8,
+                    );
+                default:
+                    throw new Error(``);
+            }
+        })();
+        for (const val of rawdata) {
+            y[val]++;
+        }
+        data.push({
+            name,
+            // @ts-ignore
+            x: xvalues,
+            // @ts-ignore
+            y,
+        });
+    }
+    Plotly.react(el, data, histogramLayout, histogramConfig);
 }
