@@ -481,28 +481,44 @@ comprehensive hardware listing script that shows all available SQUID microscope 
 uv run python3 ./scripts/list_squid_hardware.py
 ```
 
-**Important**: when configuring devices in your `~/seafront/config.json`, use the `Serial` field from the hardware listing output for all device IDs.
+**Important**: when configuring devices in your `~/seafront/config.json`, use the `USB Device ID` field from the hardware listing output for all device IDs.
 
-For example, if the hardware listing shows:
+Example output:
 ```
-1. Driver: galaxy
-   Vendor: Daheng Imaging
-   Model: MER2-1220-32U3M
-   Serial: ABC123
+📷 SQUID Cameras:
 
-2. Driver: toupcam
-   Vendor: ToupTek
-   Display Name: ITR3CMOS26000KMA
-   Serial: DEF456
+  1. Driver: galaxy
+     USB Manufacturer: Daheng Imaging
+     USB Model: MER2-630-60U3M
+     USB Device ID: FCS22111429
+     USB VID:PID: 2ba2:4d55
 
-3. Microcontroller
-   Serial: GHI789
+  2. Driver: galaxy
+     USB Manufacturer: Daheng Imaging
+     USB Model: MER2-1220-32U3M
+     USB Device ID: FCW23020121
+     USB VID:PID: 2ba2:4d55
+
+🔌 SQUID Microcontrollers:
+
+  1. USB Serial
+     Device: /dev/ttyACM0
+     USB Manufacturer: Teensyduino
+     USB Model: USB Serial
+     USB Device ID: 12769440
+     USB VID:PID: 16c0:0483
+
+Driver status:
+  📷 Galaxy: ✅ OK (2 cameras)
+  📷 ToupCam: ✅ OK (0 cameras)
+  🔌 Microcontroller: ✅ OK (1 device)
 ```
 
 Then your config should use:
-- `"camera.main.id": "ABC123"` (the Serial, not the Model)
+- `"camera.main.id": "FCW23020121"` (the USB Device ID for main camera)
 - `"camera.main.driver": "galaxy"` (or `"toupcam"` depending on camera type)
-- `"microcontroller.id": "GHI789"`
+- `"laser.autofocus.camera.id": "FCS22111429"` (the USB Device ID for autofocus camera)
+- `"microcontroller.id": "12769440"`
 
 # notes
 
