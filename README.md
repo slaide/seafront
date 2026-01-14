@@ -1,15 +1,16 @@
 # seafront
-microscope software stack
 
-this software is mainly intended as an open-source interface for the [Cephla SQUID](https://cephla.com/product/squid/) microscope, specifically the HCS version.
+A headless-first microscope control framework for the [Cephla SQUID](https://cephla.com/product/squid/) microscope.
 
-The latest official interface is written in python with Qt GUI, which suffers from a few drawbacks (like no builtin scaling 
-for different display resolutions, display code integrated into low level code, etc.).
+**Key features:**
+- **Headless operation** - Full programmatic control via REST API, no GUI required
+- **Optional web interface** - Browser-based GUI for interactive use
+- **Network-accessible** - Control microscopes remotely over the network
+- **Linux only** - Tested on Ubuntu 22.04+ (Windows support possible if needed, file an issue)
 
-This new interface has a backend in python, with a web interface on top. This allows microscope interaction over a network, 
-and more fundamental separation of low level control from display functionality.
+The architecture cleanly separates hardware control from display, enabling automation pipelines, remote operation, and custom integrations.
 
-note: issues encountered during operation or installation should be reported in this repository.
+Report issues at: https://github.com/slaide/seafront/issues
 
 # setup workflow
 
