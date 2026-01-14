@@ -31,6 +31,7 @@ def temp_config_dir(tmp_path):
                 "camera.main.id": "test-camera-id",
                 "camera.main.driver": "galaxy",
                 "microcontroller.id": "test-mc-id",
+                "microcontroller.driver": "teensy",
                 "storage.base_image_output_dir": str(tmp_path / "images"),
                 "calibration.offset.x_mm": 1.0,
                 "calibration.offset.y_mm": 2.0,
@@ -53,6 +54,7 @@ def temp_config_dir(tmp_path):
                 "camera.main.id": "second-camera",
                 "camera.main.driver": "toupcam",
                 "microcontroller.id": "",
+                "microcontroller.driver": "teensy",
                 "storage.base_image_output_dir": str(tmp_path / "images2"),
                 "calibration.offset.x_mm": 0.0,
                 "calibration.offset.y_mm": 0.0,
@@ -346,3 +348,39 @@ class TestObjectTypeEnforcement:
         error_msg = str(exc_info.value)
         assert "test.object" in error_msg
         assert "native JSON" in error_msg
+
+
+class TestMicrocontrollerDriverConfig:
+    """Tests for microcontroller driver configuration."""
+
+    def setup_method(self):
+        ConfigRegistry.reset()
+
+    def teardown_method(self):
+        ConfigRegistry.reset()
+
+    def test_microcontroller_driver_is_loaded(self, temp_config_dir):
+        """reset() should load microcontroller.driver from config."""
+        tmp_path, config_file = temp_config_dir
+
+        with patch.object(GlobalConfigHandler, 'home_config', return_value=config_file):
+            GlobalConfigHandler.reset("test-microscope")
+
+        driver = ConfigRegistry.get_value("microcontroller.driver")
+        assert driver == "teensy"
+
+    def test_microcontroller_driver_works_with_enum(self, temp_config_dir):
+        """Microcontroller driver config should work with ConfigHandle enum."""
+        from seafront.config.handles import MicrocontrollerConfig
+
+        tmp_path, config_file = temp_config_dir
+
+        with patch.object(GlobalConfigHandler, 'home_config', return_value=config_file):
+            GlobalConfigHandler.reset("test-microscope")
+
+        # Access via enum
+        driver = ConfigRegistry.get(MicrocontrollerConfig.DRIVER).strvalue
+        mc_id = ConfigRegistry.get(MicrocontrollerConfig.ID).strvalue
+
+        assert driver == "teensy"
+        assert mc_id == "test-mc-id"

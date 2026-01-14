@@ -355,3 +355,80 @@ class TestConfigItemSpec:
         assert spec.options is None
         assert spec.frozen is False
         assert spec.persistent is False
+
+
+class TestConfigHandleEnumAccess:
+    """Tests for accessing config via Enum handles."""
+
+    def setup_method(self):
+        ConfigRegistry.reset()
+
+    def teardown_method(self):
+        ConfigRegistry.reset()
+
+    def test_get_accepts_string(self):
+        """get() should accept string handles."""
+        ConfigRegistry.init({})
+        ConfigRegistry.register(
+            config_item(handle="test.item", name="Test", value_kind="text", default="value"),
+        )
+
+        item = ConfigRegistry.get("test.item")
+        assert item.value == "value"
+
+    def test_get_accepts_enum(self):
+        """get() should accept ConfigHandle enum values."""
+        from enum import Enum
+
+        class TestHandle(Enum):
+            ITEM = "test.item"
+
+        ConfigRegistry.init({})
+        ConfigRegistry.register(
+            config_item(handle="test.item", name="Test", value_kind="text", default="enum_value"),
+        )
+
+        item = ConfigRegistry.get(TestHandle.ITEM)
+        assert item.value == "enum_value"
+
+    def test_get_value_accepts_enum(self):
+        """get_value() should also accept ConfigHandle enum values."""
+        from enum import Enum
+
+        class TestHandle(Enum):
+            ITEM = "test.item"
+
+        ConfigRegistry.init({})
+        ConfigRegistry.register(
+            config_item(handle="test.item", name="Test", value_kind="int", default=42),
+        )
+
+        value = ConfigRegistry.get_value(TestHandle.ITEM)
+        assert value == 42
+
+    def test_real_config_handle_enum_works(self):
+        """Real ConfigHandle enums from handles.py should work."""
+        from seafront.config.handles import MicrocontrollerConfig
+
+        ConfigRegistry.init({})
+        ConfigRegistry.register(
+            config_item(
+                handle=MicrocontrollerConfig.ID.value,
+                name="Microcontroller ID",
+                value_kind="text",
+                default="test-mc-id",
+            ),
+            config_item(
+                handle=MicrocontrollerConfig.DRIVER.value,
+                name="Microcontroller Driver",
+                value_kind="text",
+                default="teensy",
+            ),
+        )
+
+        # Access via enum
+        mc_id = ConfigRegistry.get(MicrocontrollerConfig.ID).strvalue
+        mc_driver = ConfigRegistry.get(MicrocontrollerConfig.DRIVER).strvalue
+
+        assert mc_id == "test-mc-id"
+        assert mc_driver == "teensy"
