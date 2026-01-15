@@ -476,6 +476,31 @@ to measure test coverage:
 uv run pytest tests/ --cov=seafront --cov-report=term-missing
 ```
 
+## scripts/search_logs.py
+search through log files (including compressed rotated logs) in chronological order. handles multiline log entries like tracebacks.
+```bash
+# show help
+uv run scripts/search_logs.py
+
+# last 10 log entries
+uv run scripts/search_logs.py --last 10
+
+# warnings and above from last 72 hours
+uv run scripts/search_logs.py --level warning+ --since 72h
+
+# only critical (startup issues)
+uv run scripts/search_logs.py --level critical --last 10
+
+# only errors (runtime issues, not critical)
+uv run scripts/search_logs.py --level error --since 7d
+
+# warnings and critical, but not errors
+uv run scripts/search_logs.py --level warning,critical --last 20
+
+# search for pattern
+uv run scripts/search_logs.py --pattern "camera" --last 20
+```
+
 ## scripts/list_squid_hardware.py
 comprehensive hardware listing script that shows all available SQUID microscope hardware including cameras, microcontrollers, and other peripherals. provides detailed information needed for configuration.
 ```bash
