@@ -1051,46 +1051,77 @@
                                 </template>
                             </table>
                         </div>
-                        <div tabname="LAF Debug">
-                            <div>
-                                <label>num steps</label
-                                ><input
-                                    type="number"
-                                    x-model.number="laserAutofocusDebug_numz"
-                                    step="2"
-                                    min="3"
-                                    max="99"
-                                />
-                                <label>delta z [um]</label
-                                ><input
-                                    type="number"
-                                    x-model.number="laserAutofocusDebug_totalz_um"
-                                    step="10"
-                                    min="20"
-                                    max="500"
-                                />
-                                <button
-                                    @click="buttons_laserAutofocusDebugMeasurement"
-                                >
-                                    measure
-                                </button>
+                        <div tabname="LAF Debug" style="overflow-x: hidden;">
+                            <div style="display: flex; flex-direction: column; gap: 1em;">
+                                <!-- Camera Settings & Image Controls -->
+                                <div class="section">
+                                    <div style="display: flex; flex-wrap: wrap; gap: 1em; align-items: center;">
+                                        <label>exposure [ms]</label
+                                        ><input
+                                            type="number"
+                                            x-model.number="lafExposureTimeMs"
+                                            step="1"
+                                            min="1"
+                                            style="width: 5em;"
+                                        />
+                                        <label>analog gain</label
+                                        ><input
+                                            type="number"
+                                            x-model.number="lafAnalogGain"
+                                            step="0.1"
+                                            min="0"
+                                            style="width: 5em;"
+                                        />
+                                        <button
+                                            @click="button_laserAutofocusGetLatestImage"
+                                        >
+                                            fetch
+                                        </button>
+                                        <button
+                                            @click="toggleLafImageLiveMode"
+                                            x-bind:class="lafImageLiveMode ? 'active' : ''"
+                                        >
+                                            <span x-text="lafImageLiveMode ? 'stop live' : 'live'"></span>
+                                        </button>
+                                    </div>
+                                    <img
+                                        style="width: 100%; max-height: 70vh; object-fit: contain; margin-top: 0.5em;"
+                                        x-init="lafImageElement=$el"
+                                    />
+                                </div>
 
-                                <div
-                                    style="width: 100%"
-                                    x-effect="updateLaserAutofocusDebugMeasurementDisplay($el)"
-                                    x-init="initLaserAutofocusDebugMeasurementDisplay($el)"
-                                ></div>
-
-                                <div>
-                                    <button
-                                        @click="button_laserAutofocusGetLatestImage"
-                                    >
-                                        fetch laser autofocus image
-                                    </button>
-                                    <canvas
-                                        style="width: 100%"
-                                        x-init="latestLaserAutofocusImageCanvas=$el"
-                                    ></canvas>
+                                <!-- Measurement Controls -->
+                                <div class="section">
+                                    <div style="display: flex; flex-wrap: wrap; gap: 1em; align-items: center;">
+                                        <label>num steps</label
+                                        ><input
+                                            type="number"
+                                            x-model.number="laserAutofocusDebug_numz"
+                                            step="2"
+                                            min="3"
+                                            max="99"
+                                            style="width: 5em;"
+                                        />
+                                        <label>delta z [um]</label
+                                        ><input
+                                            type="number"
+                                            x-model.number="laserAutofocusDebug_totalz_um"
+                                            step="10"
+                                            min="20"
+                                            max="500"
+                                            style="width: 5em;"
+                                        />
+                                        <button
+                                            @click="buttons_laserAutofocusDebugMeasurement"
+                                        >
+                                            measure
+                                        </button>
+                                    </div>
+                                    <div
+                                        style="width: 100%; max-width: 100%; overflow: hidden;"
+                                        x-effect="updateLaserAutofocusDebugMeasurementDisplay($el)"
+                                        x-init="initLaserAutofocusDebugMeasurementDisplay($el)"
+                                    ></div>
                                 </div>
                             </div>
                         </div>

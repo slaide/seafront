@@ -982,10 +982,23 @@ class MockMicroscope(Microscope):
             # Simulate imaging delay (autofocus typically uses shorter exposure ~5ms)
             await self._delay_for_imaging(5.0)
 
+            # Create channel config for the autofocus snap
+            channel_config = sc.AcquisitionChannelConfig(
+                name="Laser Autofocus",
+                handle="laser_autofocus",
+                illum_perc=100,
+                exposure_time_ms=command.exposure_time_ms,
+                analog_gain=command.analog_gain,
+                z_offset_um=0,
+                num_z_planes=0,
+                delta_z_um=0,
+            )
+
             # Generate mock autofocus image (smaller, grayscale)
             synthetic_img = np.random.randint(0, 65536, (256, 256), dtype=np.uint16)
             result = cmd.AutofocusSnapResult(width_px=256, height_px=256)
             result._img = synthetic_img
+            result._channel = channel_config
             return result  # type: ignore
 
         elif isinstance(command, cmd.ChannelStreamBegin):

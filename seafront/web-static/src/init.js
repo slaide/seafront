@@ -2846,10 +2846,13 @@ const generate_alpine_object=() => ({
         // nop
     },
 
-    /** @type {HTMLCanvasElement|null} */
-    latestLaserAutofocusImageCanvas: null,
+    /** @type {HTMLImageElement|null} */
+    lafImageElement: null,
+    /** @type {string|null} Previous blob URL to revoke */
+    _lafImageBlobUrl: null,
+
     async button_laserAutofocusGetLatestImage() {
-        if (!this.latestLaserAutofocusImageCanvas) return;
+        if (!this.lafImageElement) return;
 
         const lafSnapRes = await this.Actions.laserAutofocusSnap({
             // @ts-ignore
@@ -2879,6 +2882,8 @@ const generate_alpine_object=() => ({
             position: { x_pos_mm: 0, y_pos_mm: 0, z_pos_mm: 0 },
             timestamp: 0,
         });
+
+        // Create ImageData from raw grayscale data
         const imgdata = new ImageData(img.width, img.height);
         const rawimgdata = new Uint8ClampedArray(img.data);
         for (let i = 0; i < img.width * img.height; i++) {
@@ -2889,11 +2894,81 @@ const generate_alpine_object=() => ({
             imgdata.data[i * 4 + 3] = 255;
         }
 
-        this.latestLaserAutofocusImageCanvas.width = img.width;
-        this.latestLaserAutofocusImageCanvas.height = img.height;
-        let ctx = this.latestLaserAutofocusImageCanvas.getContext("2d");
+        // Draw to temporary canvas and convert to blob URL
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        const ctx = tempCanvas.getContext('2d');
         if (!ctx) return;
         ctx.putImageData(imgdata, 0, 0);
+
+        // Revoke previous blob URL to prevent memory leak
+        if (this._lafImageBlobUrl) {
+            URL.revokeObjectURL(this._lafImageBlobUrl);
+        }
+
+        // Convert canvas to blob and set as img src
+        const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png'));
+        if (!blob) return;
+        this._lafImageBlobUrl = URL.createObjectURL(blob);
+        this.lafImageElement.src = this._lafImageBlobUrl;
+    },
+
+    /** Whether LAF image live mode is active */
+    lafImageLiveMode: false,
+    /** @type {number|null} Interval ID for live mode */
+    lafImageLiveInterval: null,
+
+    /** Getter for LAF exposure time from machine config */
+    get lafExposureTimeMs() {
+        const item = this.getMachineConfigItem("laser.autofocus.exposure_time_ms");
+        return item?.value ?? 0;
+    },
+    /** Setter for LAF exposure time - updates machine config */
+    set lafExposureTimeMs(value) {
+        const item = this.getMachineConfigItem("laser.autofocus.exposure_time_ms");
+        if (item) item.value = value;
+    },
+
+    /** Getter for LAF analog gain from machine config */
+    get lafAnalogGain() {
+        const item = this.getMachineConfigItem("laser.autofocus.camera.analog_gain");
+        return item?.value ?? 0;
+    },
+    /** Setter for LAF analog gain - updates machine config */
+    set lafAnalogGain(value) {
+        const item = this.getMachineConfigItem("laser.autofocus.camera.analog_gain");
+        if (item) item.value = value;
+    },
+
+    /**
+     * Toggle live mode for LAF image fetching
+     */
+    async toggleLafImageLiveMode() {
+        if (this.lafImageLiveMode) {
+            // Stop live mode
+            if (this.lafImageLiveInterval !== null) {
+                clearInterval(this.lafImageLiveInterval);
+                this.lafImageLiveInterval = null;
+            }
+            this.lafImageLiveMode = false;
+        } else {
+            // Start live mode
+            this.lafImageLiveMode = true;
+            // Fetch immediately
+            await this.button_laserAutofocusGetLatestImage();
+            // Then set interval for continuous fetching
+            this.lafImageLiveInterval = setInterval(async () => {
+                if (!this.lafImageLiveMode) {
+                    if (this.lafImageLiveInterval !== null) {
+                        clearInterval(this.lafImageLiveInterval);
+                        this.lafImageLiveInterval = null;
+                    }
+                    return;
+                }
+                await this.button_laserAutofocusGetLatestImage();
+            }, 200); // ~5 fps
+        }
     },
 
     /**
