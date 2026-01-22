@@ -412,12 +412,26 @@ const generate_alpine_object=() => ({
 
         // apply new theme
         el.classList.add(`theme-${this.theme}`);
-        
+
         // update channel view theme if it exists
         if (this.view) {
             this.view.updateTheme();
         }
-        
+
+        // update LAF debug plot theme if it exists
+        if (this._lafDebugPlotElement) {
+            const isDark = this.theme === "dark";
+            Plotly.relayout(this._lafDebugPlotElement, {
+                paper_bgcolor: isDark ? "#1a1a1a" : "#ffffff",
+                plot_bgcolor: isDark ? "#1a1a1a" : "#ffffff",
+                "font.color": isDark ? "#e0e0e0" : "#000000",
+                "xaxis.gridcolor": isDark ? "#444444" : "#e0e0e0",
+                "xaxis.zerolinecolor": isDark ? "#666666" : "#cccccc",
+                "yaxis.gridcolor": isDark ? "#444444" : "#e0e0e0",
+                "yaxis.zerolinecolor": isDark ? "#666666" : "#cccccc",
+            });
+        }
+
         // save theme to microscope-specific interface settings
         this.saveInterfaceSettings();
     },
@@ -682,13 +696,27 @@ const generate_alpine_object=() => ({
                     existingSite.selected = savedSite.selected;
                 }
             }
-            
+
             this._savedSiteSelections = undefined; // Clean up
-            
+
             // Update the visual display to show restored selections
             if (this.plateNavigator) {
                 this.plateNavigator.refreshWellColors(this.microscope_config);
             }
+        }
+
+        // Update LAF debug plot theme after all init is complete
+        if (this._lafDebugPlotElement) {
+            const isDark = this.theme === "dark";
+            Plotly.relayout(this._lafDebugPlotElement, {
+                paper_bgcolor: isDark ? "#1a1a1a" : "#ffffff",
+                plot_bgcolor: isDark ? "#1a1a1a" : "#ffffff",
+                "font.color": isDark ? "#e0e0e0" : "#000000",
+                "xaxis.gridcolor": isDark ? "#444444" : "#e0e0e0",
+                "xaxis.zerolinecolor": isDark ? "#666666" : "#cccccc",
+                "yaxis.gridcolor": isDark ? "#444444" : "#e0e0e0",
+                "yaxis.zerolinecolor": isDark ? "#666666" : "#cccccc",
+            });
         }
     },
     /** @type {boolean|undefined} */
@@ -2801,6 +2829,8 @@ const generate_alpine_object=() => ({
     laserAutofocusDebug_totalz_um: 400,
     /** @type {{realz_um:number,measuredz_um:number}[]} */
     laserAutofocusDebug_measurements: [],
+    /** @type {HTMLElement|null} Reference to the LAF debug plot element */
+    _lafDebugPlotElement: null,
     async buttons_laserAutofocusDebugMeasurement() {
         this.laserAutofocusDebug_measurements.length = 0;
         if (!this.laserAutofocusIsCalibrated)
@@ -3023,6 +3053,9 @@ const generate_alpine_object=() => ({
             layout: {
                 autosize: true,
                 showlegend: true,
+                paper_bgcolor: this.theme === "dark" ? "#1a1a1a" : "#ffffff",
+                plot_bgcolor: this.theme === "dark" ? "#1a1a1a" : "#ffffff",
+                font: { color: this.theme === "dark" ? "#e0e0e0" : "#000000" },
                 xaxis: {
                     title: { text: "z offset from reference [um]" },
                     range: [
@@ -3030,9 +3063,13 @@ const generate_alpine_object=() => ({
                         -10 - this.laserAutofocusDebug_totalz_um / 2,
                         10 + this.laserAutofocusDebug_totalz_um / 2,
                     ],
+                    gridcolor: this.theme === "dark" ? "#444444" : "#e0e0e0",
+                    zerolinecolor: this.theme === "dark" ? "#666666" : "#cccccc",
                 },
                 yaxis: {
                     title: { text: "measured offset [um]" },
+                    gridcolor: this.theme === "dark" ? "#444444" : "#e0e0e0",
+                    zerolinecolor: this.theme === "dark" ? "#666666" : "#cccccc",
                 },
                 margin: {
                     t: 20, // top margin for pan/zoom buttons
@@ -3065,6 +3102,7 @@ const generate_alpine_object=() => ({
      * @param {HTMLElement} el
      */
     initLaserAutofocusDebugMeasurementDisplay(el) {
+        this._lafDebugPlotElement = el;
         const { data, layout, config } =
             this._getLaserAutofocusDebugMeasurementPlotData();
         Plotly.newPlot(el, data, layout, config);

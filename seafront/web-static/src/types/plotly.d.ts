@@ -371,6 +371,19 @@ declare global{
         static purge(
             plot:PlotlyPlot,
         ):void;
+        /**
+         * An efficient means of updating just the layout of a plot.
+         *
+         * Uses the same layout object format as Plotly.newPlot and Plotly.react.
+         * Supports partial updates - only specify the properties you want to change.
+         * Use dot notation for nested properties, e.g. "xaxis.title" or "font.color".
+         * @param plot The plot element to update
+         * @param layoutUpdate Partial layout object with properties to update
+         */
+        static relayout(
+            plot:PlotlyPlot|HTMLElement,
+            layoutUpdate:Partial<PlotlyLayout>|Record<string, unknown>,
+        ):void;
     }
 }
 
