@@ -1074,19 +1074,7 @@ const generate_alpine_object=() => ({
         if (!filtersConfigItem || !filtersConfigItem.value) {
             return [];
         }
-        
-        try {
-            if(!(typeof filtersConfigItem.value == "string")){
-                throw new Error(`invalid type of filter config`);
-            }
-            const filtersData = json5.parse(filtersConfigItem.value);
-
-            const ret=Array.isArray(filtersData) ? filtersData : [];
-            return ret;
-        } catch (error) {
-            console.warn('Failed to parse filters configuration:', error);
-            return [];
-        }
+        return Array.isArray(filtersConfigItem.value) ? filtersConfigItem.value : [];
     },
 
     /**
