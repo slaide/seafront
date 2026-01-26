@@ -2222,7 +2222,7 @@
 
                                             <!-- Per-channel rows (excluding reference channel) -->
                                             <template x-for="channel in microscope_config.channels.filter(c => c.enabled && c.handle !== focusReferenceChannelHandle)" :key="channel.handle">
-                                                <div style="display: contents;">
+                                                <div style="display: contents;" @mouseenter="channel_makeVisible(channel.handle)">
                                                     <span x-text="channel.name"></span>
                                                     <span class="offset-value" x-text="focusFormatOffset(channel.z_offset_um)"></span>
                                                     <span
