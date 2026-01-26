@@ -597,17 +597,21 @@ class Core:
                 "server_time": now,
             }
 
-        async def _safe_send_json(ws: WebSocket, payload: tp.Any) -> None:
+        async def _safe_send_json(ws: WebSocket, payload: tp.Any) -> bool:
             try:
                 await ws.send_json(payload)
+                return True
             except Exception as exc:
                 logger.debug(f"websocket send_json failed: {exc}")
+                return False
 
-        async def _safe_send_bytes(ws: WebSocket, payload: bytes) -> None:
+        async def _safe_send_bytes(ws: WebSocket, payload: bytes) -> bool:
             try:
                 await ws.send_bytes(payload)
+                return True
             except Exception as exc:
                 logger.debug(f"websocket send_bytes failed: {exc}")
+                return False
 
         @app.websocket("/ws/get_info/current_state")
         async def ws_get_info_current_state(ws: WebSocket):
@@ -685,12 +689,13 @@ class Core:
 
                     img = self.latest_images.get(channel_handle)
                     if img is None:
-                        await _safe_send_json(ws, {})
+                        if not await _safe_send_json(ws, {}):
+                            break
                     else:
                         # downsample image for preview
                         img_data = img._img
 
-                        await _safe_send_json(ws,
+                        if not await _safe_send_json(ws,
                             {
                                 "channel_handle": channel_handle,
                                 "width": img_data.shape[1],
@@ -698,14 +703,16 @@ class Core:
                                 "camera_bit_depth": img.bit_depth,
                                 "bit_depth": img_data.dtype.itemsize * 8,
                             }
-                        )
+                        ):
+                            break
 
                         # await downsample factor
                         factor = int(await ws.receive_text())
 
                         img_bytes = np.ascontiguousarray(img_data[::factor, ::factor]).tobytes()
 
-                        await _safe_send_bytes(ws, img_bytes)
+                        if not await _safe_send_bytes(ws, img_bytes):
+                            break
 
             except WebSocketDisconnect:
                 pass

@@ -126,8 +126,13 @@ export async function updateMicroscopeStatus(data) {
                 continue;
             }
 
-            const img = await this.fetch_image(channel_info, 2);
-            this.cached_channel_image.set(channel_handle, img);
+            try {
+                const img = await this.fetch_image(channel_info, 2);
+                this.cached_channel_image.set(channel_handle, img);
+            } catch (err) {
+                // Image fetch failed (e.g., WebSocket error) - will retry on next status update
+                console.debug(`Failed to fetch image for ${channel_handle}:`, err);
+            }
         }
     }
 

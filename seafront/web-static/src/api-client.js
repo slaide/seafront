@@ -40,6 +40,7 @@
  * @property {string} endpoint - The WebSocket endpoint path
  * @property {WebSocketConnectionOptions} options - Connection options
  * @property {number} reconnectAttempts - Number of reconnection attempts made
+ * @property {boolean} reconnectScheduled - Whether a reconnect is already scheduled
  */
 
 /**
@@ -258,12 +259,14 @@ class WebSocketManager {
                     autoReconnect,
                 },
                 reconnectAttempts: 0,
+                reconnectScheduled: false,
             };
 
             this.connections.set(name, connectionData);
 
             ws.onopen = () => {
                 connectionData.reconnectAttempts = 0;
+                connectionData.reconnectScheduled = false;
                 this.onConnectionStateChange(name, true);
                 // Send target_device as first message for routing validation
                 const targetDevice = this.getTargetDevice();
@@ -279,9 +282,9 @@ class WebSocketManager {
                 this.onConnectionStateChange(name, false);
                 onError(event);
 
-                // Only schedule reconnect if this is still the current connection
+                // Only schedule reconnect if this is still the current connection and not already scheduled
                 const currentConn = this.connections.get(name);
-                if (autoReconnect && currentConn && currentConn.ws === ws) {
+                if (autoReconnect && currentConn && currentConn.ws === ws && !currentConn.reconnectScheduled) {
                     this.scheduleReconnect(name);
                 }
             };
@@ -290,9 +293,9 @@ class WebSocketManager {
                 this.onConnectionStateChange(name, false);
                 onClose();
 
-                // Only schedule reconnect if this is still the current connection
+                // Only schedule reconnect if this is still the current connection and not already scheduled
                 const currentConn = this.connections.get(name);
-                if (autoReconnect && currentConn && currentConn.ws === ws) {
+                if (autoReconnect && currentConn && currentConn.ws === ws && !currentConn.reconnectScheduled) {
                     this.scheduleReconnect(name);
                 }
             };
@@ -378,6 +381,7 @@ class WebSocketManager {
         const connectionData = this.connections.get(name);
         if (!connectionData) return;
 
+        connectionData.reconnectScheduled = true;
         connectionData.reconnectAttempts++;
 
         setTimeout(() => {
