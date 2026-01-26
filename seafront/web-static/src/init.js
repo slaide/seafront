@@ -2818,7 +2818,9 @@ const generate_alpine_object=() => ({
     /** @type {HTMLElement|null} Reference to the LAF debug plot element */
     _lafDebugPlotElement: null,
     async buttons_laserAutofocusDebugMeasurement() {
-        this.laserAutofocusDebug_measurements.length = 0;
+        // Clear measurements (assign new array for reactivity)
+        this.laserAutofocusDebug_measurements = [];
+
         if (!this.laserAutofocusIsCalibrated)
             throw new Error(`in buttons_laserAutofocusDebugMeasurement: laser autofocus is not calibrated`);
 
@@ -2838,6 +2840,8 @@ const generate_alpine_object=() => ({
         await this.Actions.moveTo({ z_mm: refz_mm });
 
         // 2) move in steps, measure at each
+        /** @type {{realz_um:number,measuredz_um:number}[]} */
+        const measurements = [];
         for (let i = 0; i < this.laserAutofocusDebug_numz; i++) {
             const current_real_offset_mm = -halfz_mm + i * stepDelta_mm;
 
@@ -2849,17 +2853,18 @@ const generate_alpine_object=() => ({
                     await this.Actions.laserAutofocusMeasureDisplacement({
                         config_file: this.microscope_config_copy,
                     });
-                this.laserAutofocusDebug_measurements.push({
+                measurements.push({
                     realz_um: current_real_offset_mm * 1e3,
                     measuredz_um: res.displacement_um,
                 });
             } catch (e) { }
         }
+
         // 3) restore z (by moving to ref)
         await this.Actions.moveTo({ z_mm: refz_mm });
 
-        // 4) flush results
-        // nop
+        // 4) Assign results (triggers reactivity for x-effect)
+        this.laserAutofocusDebug_measurements = measurements;
     },
 
     /** @type {HTMLImageElement|null} */
@@ -3103,6 +3108,9 @@ const generate_alpine_object=() => ({
      * @param {HTMLElement} el
      */
     updateLaserAutofocusDebugMeasurementDisplay(el) {
+        // Access reactive property to establish dependency tracking
+        // (the length read ensures Alpine tracks this array)
+        void this.laserAutofocusDebug_measurements.length;
         const { data, layout, config } =
             this._getLaserAutofocusDebugMeasurementPlotData();
         Plotly.react(el, data, layout, config);
