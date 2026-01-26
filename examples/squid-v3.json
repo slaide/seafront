@@ -24,7 +24,7 @@
             "laser.autofocus.available": "yes",
             "laser.autofocus.camera.id": "PLACEHOLDER_USB_ID",
             "laser.autofocus.camera.driver": "galaxy",
-            "filter.wheel.available": "no",
+            "filter.wheel.available": "yes",
             "imaging.channels": [
                 {"name": "Fluorescence 405 nm Ex", "handle": "fluo405", "source_slot": 11, "use_power_calibration": false, "power_calibration": null},
                 {"name": "Fluorescence 445 nm Ex", "handle": "fluo445", "source_slot": 12, "use_power_calibration": false, "power_calibration": null},
@@ -35,7 +35,13 @@
                 {"name": "BF LED matrix left half", "handle": "bfledleft", "source_slot": 1, "use_power_calibration": true, "power_calibration": {"dac_percent": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100], "optical_power_mw": [0.0, 0.2, 0.8, 1.8, 3.2, 5.0, 7.2, 9.8, 12.8, 16.2, 20.0, 24.2, 28.8, 33.8, 39.2, 45.0, 51.2, 57.8, 64.8, 72.2, 80.0]}},
                 {"name": "BF LED matrix right half", "handle": "bfledright", "source_slot": 2, "use_power_calibration": true, "power_calibration": {"dac_percent": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100], "optical_power_mw": [0.0, 0.2, 0.8, 1.8, 3.2, 5.0, 7.2, 9.8, 12.8, 16.2, 20.0, 24.2, 28.8, 33.8, 39.2, 45.0, 51.2, 57.8, 64.8, 72.2, 80.0]}}
             ],
-            "filter.wheel.configuration": []
+            "filter.wheel.configuration": [
+                {"name": "Chroma ZET405/445/514/561/640m", "handle": "em_multiband", "slot": 1},
+                {"name": "Chroma ET609/34m", "handle": "em_609_34", "slot": 2},
+                {"name": "Chroma ET540/30m", "handle": "em_540_30", "slot": 3},
+                {"name": "Chroma ET434/32m", "handle": "em_434_32", "slot": 4},
+                {"name": "Chroma ET700/75m", "handle": "em_700_75", "slot": 5}
+            ]
         }
     ]
 }
