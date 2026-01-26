@@ -44,6 +44,114 @@ from seafront.server import commands as cmd
 from seafront.config.handles import ProtocolConfig
 from seafront.hardware.forbidden_areas import ForbiddenAreaList
 
+def _simulate_laf_image(
+    z_um: float,
+    image_size: tuple[int, int] = (256, 256),
+    separation: float = 60.0,
+    saturation_level: float = 4000,
+    fadeout_z: float = 50.0,
+    fadeout_sharpness: float = 3.0,
+    noise_level: float | None = None,
+) -> np.ndarray:
+    import os
+
+    # Allow noise level override via environment variable (for reproducible benchmarks)
+    if noise_level is None:
+        noise_level = float(os.environ.get("MOCK_LAF_NOISE", "1.0"))
+    """
+    Simulate a realistic dual-dot laser autofocus image.
+
+    Based on laser_autofocus_playground simulation. Creates two Gaussian spots
+    whose positions shift with Z, with realistic aberrations and noise.
+
+    Args:
+        z_um: Z position in micrometers (relative to reference/focus)
+        image_size: Image dimensions (height, width)
+        separation: Distance between dots in pixels
+        saturation_level: Max pixel value (saturation)
+        fadeout_z: Z position (um) where second dot starts fading
+        fadeout_sharpness: How abruptly the dot fades (higher = sharper)
+        noise_level: Multiplier for noise intensity
+
+    Returns:
+        Simulated LAF image as uint16 numpy array
+    """
+    img = np.zeros(image_size, dtype=np.float64)
+
+    # Position varies with Z (slightly non-linear)
+    # Scale factor converts um to pixel shift (calibration-like behavior)
+    z_scale = 0.5  # pixels per um
+    base_x = image_size[1] / 2 + z_um * z_scale + 0.0001 * z_um**2
+    base_y = image_size[0] / 2 + z_um * 0.02
+
+    y, x = np.ogrid[: image_size[0], : image_size[1]]
+
+    # Two dots with separation (simulating air-glass and glass-media reflections)
+    for i, offset in enumerate([-separation / 2, separation / 2]):
+        cx = base_x + offset
+        cy = base_y
+
+        # Aberration varies with Z and position
+        sigma_x = 6 + abs(z_um) * 0.03
+        sigma_y = 5 + abs(z_um) * 0.02
+        # Coma-like asymmetry
+        coma = 0.003 * z_um
+        # Astigmatism varies with Z
+        astig_angle = z_um * 0.005
+
+        # Rotated Gaussian with aberrations
+        cos_a, sin_a = np.cos(astig_angle), np.sin(astig_angle)
+        dx = x - cx
+        dy = y - cy - coma * dx  # Coma shifts y based on x
+
+        # Rotate
+        dx_rot = cos_a * dx - sin_a * dy
+        dy_rot = sin_a * dx + cos_a * dy
+
+        dist = (dx_rot / sigma_x) ** 2 + (dy_rot / sigma_y) ** 2
+
+        # Intensity model:
+        # Dot 0 (air-glass interface): visible across full range
+        # Dot 1 (glass-media interface): fades out at high Z
+        if i == 0:
+            # First dot: always visible, mild intensity variation
+            intensity = 900 + 200 * np.tanh(-z_um / 25)
+        else:
+            # Second dot: fades out sharply beyond fadeout_z
+            fade_factor = 1.0 / (1.0 + np.exp(fadeout_sharpness * (z_um - fadeout_z)))
+            base_intensity = 900 + 200 * np.tanh(z_um / 25)
+            intensity = base_intensity * fade_factor
+            intensity = max(intensity, 5)
+
+        img += intensity * np.exp(-dist)
+
+    # Background pedestal (DC offset from sensor)
+    background_level = 150
+    img += background_level
+
+    # Per-pixel Gaussian noise
+    pixel_noise_std = 80 * noise_level
+    img += np.random.normal(0, pixel_noise_std, image_size)
+
+    # Shot noise (Poisson - signal dependent)
+    photon_scale = 5.0
+    img_photons = np.maximum(img * photon_scale, 0)
+    shot_noise = (np.random.poisson(img_photons) - img_photons) / photon_scale
+    img += shot_noise * 0.5 * noise_level
+
+    # Subtle background gradient
+    bg_gradient_x = np.linspace(0, 30, image_size[1])
+    img += bg_gradient_x
+
+    # Clip to valid range and convert to uint16
+    img = np.clip(img, 0, saturation_level)
+
+    # Scale to uint16 range (0-65535)
+    img = (img / saturation_level * 65535).astype(np.uint16)
+
+    return img
+
+
 class MockMicroscope(Microscope):
     """
     Mock microscope implementation for testing and development.
@@ -994,8 +1102,18 @@ class MockMicroscope(Microscope):
                 delta_z_um=0,
             )
 
-            # Generate mock autofocus image (smaller, grayscale)
-            synthetic_img = np.random.randint(0, 65536, (256, 256), dtype=np.uint16)
+            # Generate realistic LAF image based on current Z position
+            # Use Z position in um relative to 1mm reference (typical focus plane)
+            current_z_mm = self._pos_z_measured_to_real(self._current_position.z_pos_mm)
+            z_offset_um = (current_z_mm - 1.0) * 1000  # Reference at Z=1mm
+
+            synthetic_img = _simulate_laf_image(
+                z_um=z_offset_um,
+                image_size=(256, 256),
+                separation=60.0,
+                # noise_level controlled by MOCK_LAF_NOISE env var (default 1.0)
+            )
+
             result = cmd.AutofocusSnapResult(width_px=256, height_px=256)
             result._img = synthetic_img
             result._channel = channel_config
