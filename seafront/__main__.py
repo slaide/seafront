@@ -2303,13 +2303,32 @@ def main():
     # Initialize global config with selected microscope
     GlobalConfigHandler.reset(microscope_name)
 
-    # Check for default protocol file
+    # Check for default protocol file, generate if missing
     default_protocol_file = GlobalConfigHandler.home_acquisition_config_dir() / "default.json"
 
     if not default_protocol_file.exists():
-        logger.critical(f"Default protocol file not found: {default_protocol_file}")
-        logger.critical(f"Please run: uv run python scripts/generate_default_protocol.py --microscope \"{microscope_name}\"")
-        return
+        logger.info(f"Default protocol file not found: {default_protocol_file}")
+        logger.info(f"Generating default protocol for microscope '{microscope_name}'...")
+        try:
+            import subprocess
+            import sys
+            result = subprocess.run(
+                [sys.executable, "scripts/generate_default_protocol.py", "--microscope", microscope_name],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                logger.critical(f"Failed to generate default protocol: {result.stderr}")
+                return
+            logger.info(result.stdout.strip())
+        except Exception as e:
+            logger.critical(f"Failed to generate default protocol: {e}")
+            return
+
+        # Re-check that file was created
+        if not default_protocol_file.exists():
+            logger.critical(f"Default protocol file still not found after generation: {default_protocol_file}")
+            return
 
     logger.info(f"✓ Default protocol found: {default_protocol_file}")
 
