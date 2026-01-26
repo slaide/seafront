@@ -159,6 +159,9 @@ class ImageContext(BaseModel):
     pullimage_pix_format:tp.Literal[24,32,48,8,16,64]=8
     dtype:type=np.uint8
 
+    # Trigger timestamp to track when trigger was sent (for discarding stale frames)
+    trigger_timestamp:float=0.0
+
 def pullmode_callback(event_type: int, ctx: ImageContext) -> None:
     if event_type != tc.TOUPCAM_EVENT_IMAGE:
         return
@@ -796,7 +799,7 @@ class ToupCamCamera(Camera):
 
     def snap(self, config: AcquisitionChannelConfig) -> np.ndarray:
         """
-        Acquire a single image in trigger mode.
+        Acquire a single image in trigger mode using TriggerSyncV4.
 
         Args:
             config: Acquisition configuration (exposure time, gain, pixel format, etc.)
@@ -825,9 +828,17 @@ class ToupCamCamera(Camera):
             self.ctx.mode = "once"
             self.acq_mode = AcquisitionMode.ON_TRIGGER
 
+            # Verify settings
+            actual_exposure_us = self.handle.get_ExpoTime()
+            real_exposure_us = self.handle.get_RealExpoTime()
+            actual_gain = self.handle.get_ExpoAGain()
+            logger.debug(
+                f"toupcam snap - settings: exposure={actual_exposure_us}us (real={real_exposure_us}us, target={config.exposure_time_ms}ms), gain={actual_gain}%"
+            )
+
             img_bytes = bytes(self.height * self.width * bytes_per_pixel)
 
-            # lower overhead than regular trigger for single acquisition (with retry logic)
+            # Synchronous trigger - blocks until image is ready
             self._api_trigger_sync(
                 pullimage_pix_format,  # type: ignore[arg-type]
                 img_bytes,
@@ -871,26 +882,53 @@ class ToupCamCamera(Camera):
         self._set_exposure_time(config.exposure_time_ms)
         self._set_analog_gain(config.analog_gain)
 
+        # Verify settings are applied (same as snap)
+        target_exposure_us = int(config.exposure_time_ms * 1000)
+        actual_exposure_us = self.handle.get_ExpoTime()
+        real_exposure_us = self.handle.get_RealExpoTime()
+        actual_gain = self.handle.get_ExpoAGain()
+        logger.debug(
+            f"toupcam streaming - settings: exposure={actual_exposure_us}us (real={real_exposure_us}us, target={config.exposure_time_ms}ms), gain={actual_gain}%"
+        )
+
+        # Flush any stale frames before starting streaming
+        try:
+            self.handle.Flush()
+            logger.debug("toupcam - flushed frame buffer before streaming")
+        except Exception as e:
+            logger.debug(f"toupcam - flush before streaming failed: {e}")
+
         self.ctx.bytes_per_pixel = bytes_per_pixel
         self.ctx.pullimage_pix_format = pullimage_pix_format  # type: ignore[assignment]
         self.ctx.dtype = dtype
 
-        # Wrap callback to ignore return value
+        # Wrap callback to trigger next frame after processing current one
+        # This matches Squid's approach of using Trigger(1) for each frame
+        # rather than continuous Trigger(0xffff) mode
         def streaming_callback_wrapper(img_np: np.ndarray) -> bool:
-            """Call user callback and check streaming flag."""
+            """Call user callback and trigger next frame."""
             if not self._streaming_active:
                 return True
 
             callback(img_np)
+
+            # Trigger next frame (like Squid does)
+            if self._streaming_active and self.handle:
+                try:
+                    self.handle.Trigger(1)
+                except Exception as e:
+                    logger.warning(f"toupcam - failed to trigger next streaming frame: {e}")
+                    return True
+
             return False
 
-        # Set to CONTINUOUS mode for streaming
+        # Set to streaming mode with individual triggers
         self.ctx.mode = "until_stop"
         self.ctx.callback = streaming_callback_wrapper  # type: ignore
         self.acq_mode = AcquisitionMode.CONTINUOUS
 
-        # trigger until stop (with retry logic)
-        self._api_trigger(0xffff)
+        # Start with first trigger (subsequent triggers happen in callback)
+        self._api_trigger(1)
 
     def stop_streaming(self) -> None:
         """
