@@ -2277,7 +2277,6 @@ const generate_alpine_object=() => ({
                 const response = await this.api.post('/api/action/laser_autofocus_calibrate', body, {
                     context: 'Laser autofocus calibrate'
                 });
-                console.log(response);
                 return response;
             },
             /**
@@ -2579,7 +2578,6 @@ const generate_alpine_object=() => ({
         const calibration_data = await this.Actions.laserAutofocusCalibrate(
             {},
         );
-        console.log(`calibrated laser autofocus system`, calibration_data);
 
         const calibration_refzmm = this.getMachineConfigItem(
             "laser.autofocus.calibration.ref_z_mm",
