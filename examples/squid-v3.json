@@ -40,7 +40,8 @@
                 {"name": "Chroma ET609/34m", "handle": "em_609_34", "slot": 2},
                 {"name": "Chroma ET540/30m", "handle": "em_540_30", "slot": 3},
                 {"name": "Chroma ET434/32m", "handle": "em_434_32", "slot": 4},
-                {"name": "Chroma ET700/75m", "handle": "em_700_75", "slot": 5}
+                {"name": "Chroma ET700/75m", "handle": "em_700_75", "slot": 5},
+                {"name": "No filter", "handle": "em_none", "slot": 6}
             ]
         }
     ]

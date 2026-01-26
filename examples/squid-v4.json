@@ -38,7 +38,8 @@
             "filter.wheel.configuration": [
                 {"name": "Chroma ZET405/445/514/561/640m", "handle": "em_multiband", "slot": 1},
                 {"name": "Chroma ET434/32m", "handle": "em_434_32", "slot": 2},
-                {"name": "Chroma ET540/30m", "handle": "em_540_30", "slot": 3}
+                {"name": "Chroma ET540/30m", "handle": "em_540_30", "slot": 3},
+                {"name": "No filter", "handle": "em_none", "slot": 4}
             ]
         }
     ]
