@@ -11,6 +11,8 @@ import os
 import pathlib as path
 import re
 import signal
+import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -2317,10 +2319,9 @@ def main():
         logger.info(f"Default protocol file not found: {default_protocol_file}")
         logger.info(f"Generating default protocol for microscope '{microscope_name}'...")
         try:
-            import subprocess
-            import sys
+            script_path = (path.Path(__file__).parent.parent / "scripts/generate_default_protocol.py").resolve()
             result = subprocess.run(
-                [sys.executable, "scripts/generate_default_protocol.py", "--microscope", microscope_name],
+                [sys.executable, str(script_path), "--microscope", microscope_name],
                 capture_output=True,
                 text=True,
             )
