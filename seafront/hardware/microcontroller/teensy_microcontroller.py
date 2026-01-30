@@ -1385,11 +1385,12 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         available_ports = list(serial.tools.list_ports.comports())
         logger.debug(f"_find_device_by_usb_ids: found {len(available_ports)} available serial ports:")
         for port_info in available_ports:
+            vid_str = f"0x{port_info.vid:04x}" if port_info.vid else "None"
+            pid_str = f"0x{port_info.pid:04x}" if port_info.pid else "None"
             logger.debug(
                 f"  - {port_info.device}: desc={port_info.description}, "
                 f"mfg={port_info.manufacturer}, sn={port_info.serial_number}, "
-                f"vid=0x{port_info.vid:04x if port_info.vid else 'None':s}, "
-                f"pid=0x{port_info.pid:04x if port_info.pid else 'None':s}"
+                f"vid={vid_str}, pid={pid_str}"
             )
 
         for port_info in available_ports:
