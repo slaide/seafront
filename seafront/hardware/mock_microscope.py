@@ -46,8 +46,8 @@ from seafront.hardware.forbidden_areas import ForbiddenAreaList
 
 def _simulate_laf_image(
     z_um: float,
-    image_size: tuple[int, int] = (256, 256),
-    separation: float = 60.0,
+    image_size: tuple[int, int] = (2064, 3088),  # Real LAF camera resolution (height, width)
+    separation: float = 700.0,  # Real dot separation ~700px (find_peaks uses distance=300)
     saturation_level: float = 4000,
     fadeout_z: float = 50.0,
     fadeout_sharpness: float = 3.0,
@@ -66,8 +66,8 @@ def _simulate_laf_image(
 
     Args:
         z_um: Z position in micrometers (relative to reference/focus)
-        image_size: Image dimensions (height, width)
-        separation: Distance between dots in pixels
+        image_size: Image dimensions (height, width) - default matches real LAF camera
+        separation: Distance between dots in pixels (~700 for real hardware)
         saturation_level: Max pixel value (saturation)
         fadeout_z: Z position (um) where second dot starts fading
         fadeout_sharpness: How abruptly the dot fades (higher = sharper)
@@ -80,7 +80,8 @@ def _simulate_laf_image(
 
     # Position varies with Z (slightly non-linear)
     # Scale factor converts um to pixel shift (calibration-like behavior)
-    z_scale = 0.5  # pixels per um
+    # Real hardware: ~0.59 µm/pixel means ~1.7 pixels/µm movement
+    z_scale = 1.7  # pixels per um (scaled for real image size)
     base_x = image_size[1] / 2 + z_um * z_scale + 0.0001 * z_um**2
     base_y = image_size[0] / 2 + z_um * 0.02
 
@@ -91,9 +92,9 @@ def _simulate_laf_image(
         cx = base_x + offset
         cy = base_y
 
-        # Aberration varies with Z and position
-        sigma_x = 6 + abs(z_um) * 0.03
-        sigma_y = 5 + abs(z_um) * 0.02
+        # Aberration varies with Z and position (scaled for larger image)
+        sigma_x = 40 + abs(z_um) * 0.2
+        sigma_y = 35 + abs(z_um) * 0.15
         # Coma-like asymmetry
         coma = 0.003 * z_um
         # Astigmatism varies with Z
@@ -1107,14 +1108,15 @@ class MockMicroscope(Microscope):
             current_z_mm = self._pos_z_measured_to_real(self._current_position.z_pos_mm)
             z_offset_um = (current_z_mm - 1.0) * 1000  # Reference at Z=1mm
 
+            # Use real LAF camera dimensions (3088x2064) and dot separation (~700px)
             synthetic_img = _simulate_laf_image(
                 z_um=z_offset_um,
-                image_size=(256, 256),
-                separation=60.0,
+                image_size=(2064, 3088),
+                separation=700.0,
                 # noise_level controlled by MOCK_LAF_NOISE env var (default 1.0)
             )
 
-            result = cmd.AutofocusSnapResult(width_px=256, height_px=256)
+            result = cmd.AutofocusSnapResult(width_px=3088, height_px=2064)
             result._img = synthetic_img
             result._channel = channel_config
             return result  # type: ignore

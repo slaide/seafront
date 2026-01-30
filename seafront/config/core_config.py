@@ -387,8 +387,8 @@ def register_laser_autofocus_config() -> None:
             default=0.0,
         ),
         bool_config_item(
-            handle=LaserAutofocusConfig.USE_GLASS_TOP.value,
-            name="laser autofocus use glass top",
+            handle=LaserAutofocusConfig.USE_RIGHT_DOT.value,
+            name="laser autofocus use right dot",
             default=False,
         ),
         config_item(

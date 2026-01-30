@@ -66,7 +66,7 @@ class LaserAutofocusConfig(ConfigHandle):
     # System availability and basic settings
     AVAILABLE = "laser.autofocus.available"
     EXPOSURE_TIME_MS = "laser.autofocus.exposure_time_ms"
-    USE_GLASS_TOP = "laser.autofocus.use_glass_top"
+    USE_RIGHT_DOT = "laser.autofocus.use_right_dot"
     WARM_UP_LASER = "laser.autofocus.warm_up_laser"
     OFFSET_UM = "laser.autofocus.offset_um"
 
