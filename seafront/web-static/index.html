@@ -1118,6 +1118,11 @@
                                         </button>
                                     </div>
                                     <div
+                                        x-show="laserAutofocusDebug_measurements.length > 0"
+                                        style="font-family: monospace; font-size: 0.9em; margin: 0.5em 0; padding: 0.3em 0.5em; background: var(--bg-secondary); border-radius: 4px;"
+                                        x-text="(() => { const m = getLafDebugMetrics(); return `MAE: ${m.mae.toFixed(2)}µm | |z|≤15: ${m.maeNarrow.toFixed(2)}µm | Max: ${m.maxErr.toFixed(2)}µm`; })()"
+                                    ></div>
+                                    <div
                                         style="width: 100%; max-width: 100%; height: 300px; overflow: hidden;"
                                         x-effect="updateLaserAutofocusDebugMeasurementDisplay($el)"
                                         x-init="initLaserAutofocusDebugMeasurementDisplay($el)"

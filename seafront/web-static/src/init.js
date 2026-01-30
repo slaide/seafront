@@ -2817,6 +2817,30 @@ const generate_alpine_object=() => ({
     laserAutofocusDebug_measurements: [],
     /** @type {HTMLElement|null} Reference to the LAF debug plot element */
     _lafDebugPlotElement: null,
+    /**
+     * Compute LAF debug metrics: MAE, MAE at |z|≤15, max error
+     * @returns {{mae: number, maeNarrow: number, maxErr: number, count: number}}
+     */
+    getLafDebugMetrics() {
+        const m = this.laserAutofocusDebug_measurements;
+        if (m.length === 0) return { mae: 0, maeNarrow: 0, maxErr: 0, count: 0 };
+
+        const errors = m.map((p) => Math.abs(p.measuredz_um - p.realz_um));
+        const mae = errors.reduce((a, b) => a + b, 0) / errors.length;
+        const maxErr = Math.max(...errors);
+
+        // Narrow range: |z| <= 15 µm
+        const narrowPoints = m.filter((p) => Math.abs(p.realz_um) <= 15);
+        const narrowErrors = narrowPoints.map((p) =>
+            Math.abs(p.measuredz_um - p.realz_um),
+        );
+        const maeNarrow =
+            narrowErrors.length > 0
+                ? narrowErrors.reduce((a, b) => a + b, 0) / narrowErrors.length
+                : 0;
+
+        return { mae, maeNarrow, maxErr, count: m.length };
+    },
     async buttons_laserAutofocusDebugMeasurement() {
         // Clear measurements (assign new array for reactivity)
         this.laserAutofocusDebug_measurements = [];
