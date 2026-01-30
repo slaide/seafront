@@ -1175,6 +1175,7 @@ class MockMicroscope(Microscope):
             calibration_data = cmd.LaserAutofocusCalibrationData(
                 um_per_px=1.0,
                 x_reference=0.0,
+                offset_um=0.0,
                 calibration_position=current_state.stage_position
             )
             return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)  # type: ignore

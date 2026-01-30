@@ -2608,6 +2608,15 @@ const generate_alpine_object=() => ({
             throw new Error(`machine config item laser.autofocus.calibration.x_peak_pos has unexpected type ${calibration_x.value_kind}`);
         calibration_x.value = calibration_data.calibration_data.x_reference;
 
+        const offset_um = this.getMachineConfigItem(
+            "laser.autofocus.offset_um",
+        );
+        if (!offset_um)
+            throw new Error(`machine config item laser.autofocus.offset_um not found during laser autofocus calibration`);
+        if (offset_um.value_kind != "float")
+            throw new Error(`machine config item laser.autofocus.offset_um has unexpected type ${offset_um.value_kind}`);
+        offset_um.value = calibration_data.calibration_data.offset_um;
+
         const is_calibrated = this.getMachineConfigItem(
             "laser.autofocus.calibration.is_calibrated",
         );

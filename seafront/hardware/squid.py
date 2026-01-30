@@ -1022,15 +1022,42 @@ class SquidAdapter(Microscope):
             self.close()
             raise DisconnectError() from e
 
+        # Calculate offset correction to zero out error at calibration position
+        # Measure displacement multiple times and average to reduce noise
+        num_offset_measurements = 3
+        measured_displacements_um: list[float] = []
+        for _ in range(num_offset_measurements):
+            current_rightmost_x, current_interpeakdistances = await measure_dot_params()
+            if use_right_dot:
+                current_dot_x = current_rightmost_x
+            else:
+                if len(current_interpeakdistances) == 0:
+                    current_dot_x = current_rightmost_x
+                elif len(current_interpeakdistances) == 1:
+                    current_dot_x = current_rightmost_x - current_interpeakdistances[0]
+                else:
+                    current_dot_x = current_rightmost_x - current_interpeakdistances[0]
+            # Calculate displacement using new calibration params
+            displacement_mm = (current_dot_x - x_reference) / um_per_px
+            measured_displacements_um.append(displacement_mm * 1e3)
+
+        avg_displacement_um = sum(measured_displacements_um) / len(measured_displacements_um)
+        # Offset correction: negate the measured displacement so error becomes zero
+        offset_um = -avg_displacement_um
+
+        logger.debug(f"laser autofocus offset correction: measured {avg_displacement_um:.3f} um at calibration position, setting offset to {offset_um:.3f} um")
+
         calibration_data = cmd.LaserAutofocusCalibrationData(
             # calculate the conversion factor, based on lowest and highest measured position
             um_per_px=um_per_px,
             # set reference position
             x_reference=x_reference,
+            # offset to zero out error at calibration position
+            offset_um=offset_um,
             calibration_position=calibration_position,
         )
 
-        logger.debug(f"laser autofocus calibration result: um_per_px={um_per_px:.4f}, x_reference={x_reference:.1f}")
+        logger.debug(f"laser autofocus calibration result: um_per_px={um_per_px:.4f}, x_reference={x_reference:.1f}, offset_um={offset_um:.3f}")
         return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)
 
     async def get_current_state(self) -> AdapterState:

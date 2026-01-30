@@ -479,6 +479,7 @@ declare global {
         calibration_data: {
             um_per_px: float;
             x_reference: float;
+            offset_um: float;
             calibration_position: AdapterPosition;
         };
         microscope_name: string;

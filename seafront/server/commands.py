@@ -294,6 +294,8 @@ class ConfigFetchResponse(BaseModel):
 class LaserAutofocusCalibrationData(BaseModel):
     um_per_px: float
     x_reference: float
+    offset_um: float = 0.0
+    "offset correction to zero out error at calibration position"
 
     calibration_position: Position
 

@@ -743,6 +743,7 @@ class MockAPIClient {
                 calibration_data: {
                     um_per_px: 0.5,
                     x_reference: 320.0,
+                    offset_um: 0.0,
                     calibration_position: { ...this.mockState.position },
                 },
             };
