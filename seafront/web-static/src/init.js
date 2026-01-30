@@ -2970,8 +2970,6 @@ const generate_alpine_object=() => ({
 
     /** Whether LAF image live mode is active */
     lafImageLiveMode: false,
-    /** @type {number|null} Interval ID for live mode */
-    lafImageLiveInterval: null,
 
     /** Getter for LAF exposure time from machine config */
     get lafExposureTimeMs() {
@@ -3001,27 +2999,20 @@ const generate_alpine_object=() => ({
     async toggleLafImageLiveMode() {
         if (this.lafImageLiveMode) {
             // Stop live mode
-            if (this.lafImageLiveInterval !== null) {
-                clearInterval(this.lafImageLiveInterval);
-                this.lafImageLiveInterval = null;
-            }
             this.lafImageLiveMode = false;
         } else {
             // Start live mode
             this.lafImageLiveMode = true;
-            // Fetch immediately
-            await this.button_laserAutofocusGetLatestImage();
-            // Then set interval for continuous fetching
-            this.lafImageLiveInterval = setInterval(async () => {
-                if (!this.lafImageLiveMode) {
-                    if (this.lafImageLiveInterval !== null) {
-                        clearInterval(this.lafImageLiveInterval);
-                        this.lafImageLiveInterval = null;
-                    }
-                    return;
-                }
+            // Use recursive setTimeout to ensure we wait for each request to complete
+            // before starting the next one (prevents "microscope busy" errors)
+            const fetchLoop = async () => {
+                if (!this.lafImageLiveMode) return;
                 await this.button_laserAutofocusGetLatestImage();
-            }, 200); // ~5 fps
+                if (this.lafImageLiveMode) {
+                    setTimeout(fetchLoop, 50);
+                }
+            };
+            fetchLoop();
         }
     },
 
