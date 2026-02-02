@@ -709,17 +709,20 @@ class SquidAdapter(Microscope):
             estimated_displacement_um=estimated_displacement_um,
         )
 
-    async def _approximate_laser_af_z_offset_mm(
+    async def _approximate_laser_af_displacement_um(
         self,
         calib_params: cmd.LaserAutofocusCalibrationData | None = None,
         _dotxinsteadofestimatedz: bool = False,
     ) -> float:
         """
-        Approximate current z offset (distance from current imaging plane to focus plane).
+        Approximate current displacement from reference position in micrometers.
 
         Args:
             calib_params: calibration parameters, or None if _dotxinsteadofestimatedz is True
             _dotxinsteadofestimatedz: if True, return the tracked dot x coordinate instead of estimated displacement
+
+        Returns:
+            estimated displacement in micrometers, or tracked dot x if _dotxinsteadofestimatedz is True
         """
         conf_af_exp_ms = ConfigRegistry.get(LaserAutofocusConfig.EXPOSURE_TIME_MS).floatvalue
         conf_af_exp_ag = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_ANALOG_GAIN).floatvalue
@@ -962,40 +965,41 @@ class SquidAdapter(Microscope):
                     # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
                     await qmc.move_by_mm("z", z_step_mm)
 
-                approx = await self._approximate_laser_af_z_offset_mm(
+                approx_um = await self._approximate_laser_af_displacement_um(
                     cmd.LaserAutofocusCalibrationData(
-                        um_per_px=left_dot_regression[0],
+                        um_per_px=1000 / left_dot_regression[0],  # px/mm -> um/px
                         x_reference=left_dot_regression[1],
                         calibration_position=cmd.Position.zero(),
                     )
                 )
                 current_pos = await qmc.get_last_position()
                 current_z_mm = current_pos.z_pos_mm
-                approximated_z.append((current_z_mm - start_z, approx))
+                approximated_z.append((current_z_mm - start_z, approx_um))
 
             # move to original position
             await qmc.move_by_mm("z", -half_z_mm)
 
             plt.figure(figsize=(8, 6))
+            # v[0] is real z offset in mm, v[1] is measured displacement in um
             plt.scatter(
-                [v[0] * 1e3 for v in approximated_z],
-                [v[0] * 1e3 for v in approximated_z],
+                [v[0] * 1e3 for v in approximated_z],  # mm -> um
+                [v[0] * 1e3 for v in approximated_z],  # mm -> um
                 color="green",
                 label="real/expected",
                 marker="o",
                 linestyle="-",
             )
             plt.scatter(
-                [v[0] * 1e3 for v in approximated_z],
-                [v[1] * 1e3 for v in approximated_z],
+                [v[0] * 1e3 for v in approximated_z],  # mm -> um
+                [v[1] for v in approximated_z],  # already um
                 color="blue",
                 label="estimated",
                 marker="o",
                 linestyle="-",
             )
             plt.scatter(
-                [v[0] * 1e3 for v in approximated_z],
-                [(v[1] - v[0]) * 1e3 for v in approximated_z],
+                [v[0] * 1e3 for v in approximated_z],  # mm -> um
+                [v[1] - v[0] * 1e3 for v in approximated_z],  # error in um
                 color="red",
                 label="error",
                 marker="o",
@@ -1008,12 +1012,15 @@ class SquidAdapter(Microscope):
             plt.show()
 
         # Select regression and reference dot based on use_right_dot config
+        # Regression fits dot_x = slope * z_mm + intercept, so slope is px/mm
+        # To get um_per_px: um_per_px = 1000 / slope_px_per_mm
         if use_right_dot:
             if right_dot_regression == (0, 0):
                 cmd.error_internal(detail="use_right_dot is enabled but no right dot was detected during calibration")
-            um_per_px, _x_reference = right_dot_regression
+            px_per_mm, _x_reference = right_dot_regression
         else:
-            um_per_px, _x_reference = left_dot_regression
+            px_per_mm, _x_reference = left_dot_regression
+        um_per_px = 1000 / px_per_mm
 
         # Measure reference position (x_reference is the tracked dot x at calibration position)
         x_reference = (await measure()).tracked_dot_x
@@ -1872,10 +1879,9 @@ class SquidAdapter(Microscope):
 
                         num_images = 3 or command.override_num_images
                         for _ in range(num_images):
-                            latest_esimated_z_offset_mm = (
-                                await self._approximate_laser_af_z_offset_mm(calib_params)
-                            )
-                            displacement_um += latest_esimated_z_offset_mm * 1e3 / num_images
+                            displacement_um += (
+                                await self._approximate_laser_af_displacement_um(calib_params)
+                            ) / num_images
 
                     except Exception as e:
                         cmd.error_internal(
