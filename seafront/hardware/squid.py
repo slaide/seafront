@@ -152,6 +152,18 @@ def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
     return ret, cambits
 
 
+class LaserAutofocusMeasurement(BaseModel):
+    """Result of measuring the laser autofocus signal from an image."""
+    rightmost_x: float
+    """x coordinate of the rightmost detected peak"""
+    interpeakdistances: list[float]
+    """distances between consecutive peaks (right to left, empty if only one peak, one element if two peaks)"""
+    tracked_dot_x: float
+    """x coordinate of the tracked dot (depends on use_right_dot setting)"""
+    estimated_displacement_um: float | None
+    """estimated displacement in micrometers from reference, or None if no calibration data provided"""
+
+
 class SquidAdapter(Microscope):
     """interface to squid microscope"""
 
@@ -627,17 +639,23 @@ class SquidAdapter(Microscope):
         """convert real z position to measured position"""
         return z_mm - self.calibrated_stage_position[2]
 
-    def _get_peak_coords(
-        self, img: np.ndarray, TOP_N_PEAKS: int = 2
-    ) -> tuple[float, list[float]]:
+    def _measure_laser_autofocus(
+        self,
+        img: np.ndarray,
+        use_right_dot: bool,
+        calib_params: cmd.LaserAutofocusCalibrationData | None = None,
+    ) -> LaserAutofocusMeasurement:
         """
-        get peaks in laser autofocus signal
+        Measure the laser autofocus signal from an image.
 
-        used to derive actual location information. by itself not terribly useful.
+        Args:
+            img: the autofocus camera image
+            use_right_dot: whether to track the right dot (True) or left dot (False)
+            calib_params: calibration parameters for displacement estimation, or None to skip estimation
 
-        returns rightmost_peak_x, distances_between_peaks
+        Returns:
+            measurement result including tracked dot position and optionally estimated displacement
         """
-
         # Apply blur to reduce noise before peak detection
         img = cv2.GaussianBlur(img, (3, 3), sigmaX=1.0, borderType=cv2.BORDER_DEFAULT)
 
@@ -645,8 +663,6 @@ class SquidAdapter(Microscope):
         I_1d: np.ndarray = img.max(
             axis=0
         )  # use max to avoid issues with noise (sum is another option, but prone to issues with noise)
-        x = np.array(range(len(I_1d)))
-        y = I_1d
 
         # locate peaks == locate dots
         peak_locations, _ = scipy.signal.find_peaks(I_1d, distance=300, height=10)
@@ -654,76 +670,72 @@ class SquidAdapter(Microscope):
         if len(peak_locations.tolist()) == 0:
             error_internal("no signal found")
 
-        # order by height
+        # order by height, pick top 2, then order by x
         tallestpeaks_x = sorted(peak_locations.tolist(), key=lambda x: float(I_1d[x]))
-        # pick top N
-        tallestpeaks_x = tallestpeaks_x[-TOP_N_PEAKS:]
-        # then order n tallest peaks by x
+        # pick two tallest peaks
+        tallestpeaks_x = tallestpeaks_x[-2:]
+        # then order by peaks x coordinate
         tallestpeaks_x = sorted(tallestpeaks_x)
 
         # Find the rightmost (largest x) peak
-        rightmost_peak: float = max(tallestpeaks_x)
+        rightmost_x: float = max(tallestpeaks_x)
 
         # Compute distances between consecutive peaks
-        distances_between_peaks: list[float] = [
+        interpeakdistances: list[float] = [
             tallestpeaks_x[i + 1] - tallestpeaks_x[i] for i in range(len(tallestpeaks_x) - 1)
         ]
 
-        # Output rightmost peak and distances between consecutive peaks
-        return rightmost_peak, distances_between_peaks
+        # Determine tracked dot x based on use_right_dot setting
+        if len(interpeakdistances) == 0:
+            # Only one peak detected, use_right_dot does not matter
+            tracked_dot_x = rightmost_x
+        elif len(interpeakdistances) == 1:
+            if use_right_dot:
+                tracked_dot_x = rightmost_x
+            else:
+                tracked_dot_x = rightmost_x - interpeakdistances[0]
+        else:
+            raise ValueError(f"expected 0 or 1 inter-peak distances, got {len(interpeakdistances)}")
+
+        # Calculate displacement if calibration data provided
+        estimated_displacement_um: float | None = None
+        if calib_params is not None:
+            estimated_displacement_um = (tracked_dot_x - calib_params.x_reference) * calib_params.um_per_px
+
+        return LaserAutofocusMeasurement(
+            rightmost_x=rightmost_x,
+            interpeakdistances=interpeakdistances,
+            tracked_dot_x=tracked_dot_x,
+            estimated_displacement_um=estimated_displacement_um,
+        )
 
     async def _approximate_laser_af_z_offset_mm(
         self,
-        calib_params: cmd.LaserAutofocusCalibrationData,
+        calib_params: cmd.LaserAutofocusCalibrationData | None = None,
         _dotxinsteadofestimatedz: bool = False,
     ) -> float:
         """
-        approximate current z offset (distance from current imaging plane to focus plane)
+        Approximate current z offset (distance from current imaging plane to focus plane).
 
-        args:
-            calib_params:
-            _dotxinsteadofestimatedz: if True, return the coordinate of the tracked dot in the laser autofocus signal instead of the estimated z value that is based on this coordinate
+        Args:
+            calib_params: calibration parameters, or None if _dotxinsteadofestimatedz is True
+            _dotxinsteadofestimatedz: if True, return the tracked dot x coordinate instead of estimated displacement
         """
+        conf_af_exp_ms = ConfigRegistry.get(LaserAutofocusConfig.EXPOSURE_TIME_MS).floatvalue
+        conf_af_exp_ag = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_ANALOG_GAIN).floatvalue
+        use_right_dot = ConfigRegistry.get(LaserAutofocusConfig.USE_RIGHT_DOT).boolvalue
 
-        conf_af_exp_ms_item = ConfigRegistry.get(LaserAutofocusConfig.EXPOSURE_TIME_MS)
-        assert conf_af_exp_ms_item is not None
-        conf_af_exp_ms = conf_af_exp_ms_item.floatvalue
-
-        conf_af_exp_ag_item = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_ANALOG_GAIN)
-        assert conf_af_exp_ag_item is not None
-        conf_af_exp_ag = conf_af_exp_ag_item.floatvalue
-
-        use_right_dot_item = ConfigRegistry.get(LaserAutofocusConfig.USE_RIGHT_DOT)
-        assert use_right_dot_item is not None
-        use_right_dot = use_right_dot_item.boolvalue
-
-        # get params to describe current signal
         res = await self.execute(
             cmd.AutofocusSnap(exposure_time_ms=conf_af_exp_ms, analog_gain=conf_af_exp_ag)
         )
-        new_params = self._get_peak_coords(res._img)
-        rightmost_x, interpeakdistances = new_params
 
-        if len(interpeakdistances) == 0:
-            leftmost_x = rightmost_x
-        elif len(interpeakdistances) == 1:
-            leftmost_x = rightmost_x - interpeakdistances[0]
-        else:
-            raise ValueError(f"expected 0 or 1 peaks, got {len(interpeakdistances)}")
-
-        dot_x = rightmost_x if use_right_dot else leftmost_x
+        measurement = self._measure_laser_autofocus(res._img, use_right_dot, calib_params)
 
         if _dotxinsteadofestimatedz:
-            return dot_x
+            return measurement.tracked_dot_x
 
-        def find_x_for_y(y_measured, regression_params):
-            "find x (input value, z position) for given y (measured value, dot location on sensor)"
-            slope, intercept = regression_params
-            return (y_measured - intercept) / slope
-
-        regression_params = (calib_params.um_per_px, calib_params.x_reference)
-
-        return find_x_for_y(dot_x, regression_params)
+        assert measurement.estimated_displacement_um is not None
+        return measurement.estimated_displacement_um
 
     async def _execute_LaserAutofocusCalibrate(
         self,
@@ -780,19 +792,15 @@ class SquidAdapter(Microscope):
             self.close()
             raise DisconnectError() from e
 
-        # Display each peak's height and width
         class CalibrationData(BaseModel):
             z_mm: float
-            p: tuple[float, list[float]]
+            measurement: LaserAutofocusMeasurement
 
-        async def measure_dot_params():
-            # measure pos
+        async def measure() -> LaserAutofocusMeasurement:
             res = await self.execute(
                 cmd.AutofocusSnap(exposure_time_ms=conf_af_exp_ms, analog_gain=conf_af_exp_ag)
             )
-
-            params = self._get_peak_coords(res._img)
-            return params
+            return self._measure_laser_autofocus(res._img, use_right_dot, calib_params=None)
 
         peak_info: list[CalibrationData] = []
 
@@ -805,9 +813,9 @@ class SquidAdapter(Microscope):
                     self.close()
                     raise DisconnectError() from e
 
-            params = await measure_dot_params()
+            measurement = await measure()
 
-            peak_info.append(CalibrationData(z_mm=-half_z_mm + i * z_step_mm, p=params))
+            peak_info.append(CalibrationData(z_mm=-half_z_mm + i * z_step_mm, measurement=measurement))
 
         # move to original position
         try:
@@ -829,10 +837,10 @@ class SquidAdapter(Microscope):
         distances = []
         distance_x = []
         for i in peak_info:
-            rightmost_x, p_distances = i.p
+            m = i.measurement
 
-            new_distances = [rightmost_x]
-            for p_d in p_distances:
+            new_distances = [m.rightmost_x]
+            for p_d in m.interpeakdistances:
                 new_distances.append(new_distances[-1] - p_d)
 
             new_z = [i.z_mm] * len(new_distances)
@@ -840,12 +848,12 @@ class SquidAdapter(Microscope):
             distances.extend(new_distances)
             distance_x.extend(new_z)
 
-            if len(p_distances) == 0:
+            if len(m.interpeakdistances) == 0:
                 target_domain = one_peak_domain
-            elif len(p_distances) == 1:
+            elif len(m.interpeakdistances) == 1:
                 target_domain = two_peak_domain
             else:
-                raise ValueError(f"expected 0 or 1 peaks, got {len(p_distances)}")
+                raise ValueError(f"expected 0 or 1 inter-peak distances, got {len(m.interpeakdistances)}")
 
             for x in new_distances:
                 target_domain.lowest_x = min(target_domain.lowest_x, x)
@@ -1004,17 +1012,11 @@ class SquidAdapter(Microscope):
             if right_dot_regression == (0, 0):
                 cmd.error_internal(detail="use_right_dot is enabled but no right dot was detected during calibration")
             um_per_px, _x_reference = right_dot_regression
-            rightmost_x, _ = await measure_dot_params()
-            x_reference = rightmost_x
         else:
             um_per_px, _x_reference = left_dot_regression
-            rightmost_x, interpeakdistances = await measure_dot_params()
-            if len(interpeakdistances) == 0:
-                x_reference = rightmost_x
-            elif len(interpeakdistances) == 1:
-                x_reference = rightmost_x - interpeakdistances[0]
-            else:
-                cmd.error_internal(detail=f"expected 0 or 1 inter-peak distances, got {len(interpeakdistances)}")
+
+        # Measure reference position (x_reference is the tracked dot x at calibration position)
+        x_reference = (await measure()).tracked_dot_x
 
         try:
             calibration_position = await qmc.get_last_position()
@@ -1024,22 +1026,18 @@ class SquidAdapter(Microscope):
 
         # Calculate offset correction to zero out error at calibration position
         # Measure displacement multiple times and average to reduce noise
+        temp_calib = cmd.LaserAutofocusCalibrationData(
+            um_per_px=um_per_px,
+            x_reference=x_reference,
+            calibration_position=cmd.Position.zero(),
+        )
         num_offset_measurements = 3
         measured_displacements_um: list[float] = []
         for _ in range(num_offset_measurements):
-            current_rightmost_x, current_interpeakdistances = await measure_dot_params()
-            if use_right_dot:
-                current_dot_x = current_rightmost_x
-            else:
-                if len(current_interpeakdistances) == 0:
-                    current_dot_x = current_rightmost_x
-                elif len(current_interpeakdistances) == 1:
-                    current_dot_x = current_rightmost_x - current_interpeakdistances[0]
-                else:
-                    current_dot_x = current_rightmost_x - current_interpeakdistances[0]
-            # Calculate displacement using new calibration params
-            displacement_mm = (current_dot_x - x_reference) / um_per_px
-            measured_displacements_um.append(displacement_mm * 1e3)
+            res = await self.execute(cmd.AutofocusSnap(exposure_time_ms=conf_af_exp_ms, analog_gain=conf_af_exp_ag))
+            measurement = self._measure_laser_autofocus(res._img, use_right_dot, temp_calib)
+            assert measurement.estimated_displacement_um is not None
+            measured_displacements_um.append(measurement.estimated_displacement_um)
 
         avg_displacement_um = sum(measured_displacements_um) / len(measured_displacements_um)
         # Offset correction: negate the measured displacement so error becomes zero
@@ -1807,12 +1805,10 @@ class SquidAdapter(Microscope):
             height_px=img.shape[0],
         )
 
-        # Store raw image - blur is applied in _get_peak_coords when needed for autofocus
+        # Store raw image - blur is applied in _measure_laser_autofocus when needed
         result._img = img
         result._channel = channel_config
         return result
-
-    #async def _execute_(self,command:cmd.)
 
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         # Validate command against hardware limits first
