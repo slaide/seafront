@@ -847,7 +847,6 @@
                                                             <template x-if="config.value_kind=='option'">
                                                                 <select
                                                                     x-model="config.value"
-                                                                    x-init="$el.value=config.value"
                                                                     x-effect="disableElement($el,()=>config.frozen)"
                                                                 >
                                                                     <template x-for="option in config.options" :key="option.handle">
@@ -855,6 +854,7 @@
                                                                             <option
                                                                                 x-bind:value="option.handle"
                                                                                 x-text="option.handle"
+                                                                                x-bind:selected="option.handle === config.value"
                                                                             ></option>
                                                                         </optgroup>
                                                                     </template>
@@ -939,7 +939,6 @@
                                                                         <template x-if="config.value_kind=='option'">
                                                                             <select
                                                                                 x-model="config.value"
-                                                                                x-init="$el.value=config.value"
                                                                                 x-effect="disableElement($el,()=>config.frozen)"
                                                                             >
                                                                                 <template x-for="option in config.options" :key="option.handle">
@@ -947,6 +946,7 @@
                                                                                         <option
                                                                                             x-bind:value="option.handle"
                                                                                             x-text="option.handle"
+                                                                                            x-bind:selected="option.handle === config.value"
                                                                                         ></option>
                                                                                     </optgroup>
                                                                                 </template>
@@ -1031,7 +1031,6 @@
                                             <template x-if="config.value_kind=='option'">
                                                 <select
                                                     x-model="config.value"
-                                                    x-init="$el.value=config.value"
                                                     x-effect="disableElement($el,()=>config.frozen)"
                                                 >
                                                     <template x-for="option in config.options" :key="option.handle">
@@ -1039,6 +1038,7 @@
                                                             <option
                                                                 x-bind:value="option.handle"
                                                                 x-text="option.handle"
+                                                                x-bind:selected="option.handle === config.value"
                                                             ></option>
                                                         </optgroup>
                                                     </template>

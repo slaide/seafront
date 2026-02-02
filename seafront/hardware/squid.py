@@ -1,12 +1,10 @@
 import asyncio
 import math
 import os
-import threading
 import typing as tp
 from contextlib import contextmanager
 
 import cv2
-import json5
 import numpy as np
 import scipy  # to find peaks in a signal
 
@@ -44,7 +42,6 @@ from seafront.hardware.microcontroller import (
 )
 from seafront.hardware.microcontroller.teensy_microcontroller import (
     ILLUMINATION_CODE,
-    MicrocontrollerTimeout,
 )
 from seafront.hardware.adapter import AdapterState
 from seafront.hardware.camera import (
@@ -76,7 +73,7 @@ def linear_regression(
 ) -> tuple[float, float]:
     "returns (slope,intercept)"
     slope, intercept, _, _, _ = stats.linregress(x, y)
-    return slope, intercept  # type:ignore
+    return slope, intercept
 
 
 def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
@@ -163,6 +160,9 @@ class LaserAutofocusMeasurement(BaseModel):
     estimated_displacement_um: float | None
     """estimated displacement in micrometers from reference, or None if no calibration data provided"""
 
+class PeakData(BaseModel):
+    loc_x:float
+    height:float
 
 class SquidAdapter(Microscope):
     """interface to squid microscope"""
@@ -657,7 +657,8 @@ class SquidAdapter(Microscope):
             measurement result including tracked dot position and optionally estimated displacement
         """
         # Apply blur to reduce noise before peak detection
-        img = cv2.GaussianBlur(img, (3, 3), sigmaX=1.0, borderType=cv2.BORDER_DEFAULT)
+        BLUR_SIZE=9 # 3
+        img: np.ndarray = cv2.GaussianBlur(img, (BLUR_SIZE, BLUR_SIZE), 0)
 
         # 8 bit signal -> max value 255
         I_1d: np.ndarray = img.max(
@@ -665,35 +666,52 @@ class SquidAdapter(Microscope):
         )  # use max to avoid issues with noise (sum is another option, but prone to issues with noise)
 
         # locate peaks == locate dots
-        peak_locations, _ = scipy.signal.find_peaks(I_1d, distance=300, height=10)
+        peak_locations, _ = scipy.signal.find_peaks(
+            I_1d, 
+            distance=300, 
+            height=10,
+            # from cephla:
+            prominence=0.25,
+            width=10, 
+        )
 
         if len(peak_locations.tolist()) == 0:
             error_internal("no signal found")
 
-        # order by height, pick top 2, then order by x
-        tallestpeaks_x = sorted(peak_locations.tolist(), key=lambda x: float(I_1d[x]))
+        peak_data: list[PeakData]=[
+            PeakData(
+                loc_x=loc_x,
+                height=float(I_1d[loc_x])
+            )
+            for loc_x
+            in peak_locations.tolist()
+        ]
+
+        # order by height
+        tallestpeaks: list[PeakData] = sorted(peak_data, key=lambda d: d.height)
         # pick two tallest peaks
-        tallestpeaks_x = tallestpeaks_x[-2:]
+        tallestpeaks = tallestpeaks[-2:]
         # then order by peaks x coordinate
-        tallestpeaks_x = sorted(tallestpeaks_x)
+        tallestpeaks = sorted(tallestpeaks, key=lambda d: d.loc_x)
 
         # Find the rightmost (largest x) peak
-        rightmost_x: float = max(tallestpeaks_x)
+        rightmost_peak = max(tallestpeaks, key=lambda d: d.loc_x)
 
         # Compute distances between consecutive peaks
         interpeakdistances: list[float] = [
-            tallestpeaks_x[i + 1] - tallestpeaks_x[i] for i in range(len(tallestpeaks_x) - 1)
+            tallestpeaks[i + 1].loc_x - tallestpeaks[i].loc_x
+            for i in range(len(tallestpeaks) - 1)
         ]
 
         # Determine tracked dot x based on use_right_dot setting
         if len(interpeakdistances) == 0:
             # Only one peak detected, use_right_dot does not matter
-            tracked_dot_x = rightmost_x
+            tracked_dot_x = rightmost_peak.loc_x
         elif len(interpeakdistances) == 1:
             if use_right_dot:
-                tracked_dot_x = rightmost_x
+                tracked_dot_x = rightmost_peak.loc_x
             else:
-                tracked_dot_x = rightmost_x - interpeakdistances[0]
+                tracked_dot_x = rightmost_peak.loc_x - interpeakdistances[0]
         else:
             raise ValueError(f"expected 0 or 1 inter-peak distances, got {len(interpeakdistances)}")
 
@@ -703,7 +721,7 @@ class SquidAdapter(Microscope):
             estimated_displacement_um = (tracked_dot_x - calib_params.x_reference) * calib_params.um_per_px
 
         return LaserAutofocusMeasurement(
-            rightmost_x=rightmost_x,
+            rightmost_x=rightmost_peak.loc_x,
             interpeakdistances=interpeakdistances,
             tracked_dot_x=tracked_dot_x,
             estimated_displacement_um=estimated_displacement_um,
@@ -1390,6 +1408,7 @@ class SquidAdapter(Microscope):
         # move in 2d grid, no diagonals (slower, but safer)
         res = await self.execute(cmd.MoveTo(x_mm=x_mm, y_mm=None))
         res = await self.execute(cmd.MoveTo(x_mm=None, y_mm=y_mm))
+        _=res
 
         logger.debug("squid - moved to well")
 
@@ -1632,7 +1651,7 @@ class SquidAdapter(Microscope):
             with self.main_camera.locked() as main_camera:
                 if main_camera is None:
                     error_internal("main camera is busy")
-                img_np, cambits = _process_image(img_np, camera=main_camera)
+                img_np, _cambits = _process_image(img_np, camera=main_camera)
 
             self.stream_callback(img_np)
 
