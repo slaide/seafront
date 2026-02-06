@@ -11,8 +11,7 @@ from pathlib import Path
 
 import json5
 import seaconfig as sc
-from seafront.config.basics import GlobalConfigHandler, MicroscopeConfig, ServerConfig
-
+from seafront.config.basics import FilterConfig, GlobalConfigHandler, MicroscopeConfig, ServerConfig
 
 def load_server_config() -> ServerConfig:
     """Load and return server config."""
@@ -60,22 +59,25 @@ def generate_default_protocol(
             if m.get("system.microscope_name") == microscope_name:
                 microscope_config = m
                 break
+
         if microscope_config is None:
             available = [m.get("system.microscope_name", "<unnamed>") for m in server_config.microscopes]
             raise ValueError(f"Microscope '{microscope_name}' not found. Available: {available}")
+
+    assert microscope_config is not None
 
     # Create output directory
     safe_dir_name = GlobalConfigHandler._sanitize_microscope_name_for_directory(microscope_name)
     config_dir = Path.home() / "seafront" / "acquisition_configs" / safe_dir_name
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if microscope has a filter wheel and get first filter handle
     default_filter_handle: str | None = None
     filter_wheel_available = microscope_config.get("filter.wheel.available") == "yes"
     if filter_wheel_available:
-        filter_config = microscope_config.get("filter.wheel.configuration", [])
-        if filter_config and len(filter_config) > 0:
-            default_filter_handle = filter_config[0].get("handle")
+        filter_config_raw = microscope_config.get("filter.wheel.configuration", [])
+        filter_config = [FilterConfig.model_validate(f) for f in filter_config_raw]
+        if filter_config:
+            default_filter_handle = filter_config[0].handle
 
     # Build channels from microscope config with default filter
     channels: list[sc.AcquisitionChannelConfig] = []
