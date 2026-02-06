@@ -148,4 +148,6 @@ uv.lock
 CLAUDE.md
 .claude
 
-scripts/laf
+scripts/laf/laf_images/
+scripts/laf/laf_gifs/
+scripts/laf/__pycache__/

@@ -29,6 +29,7 @@ dependencies = [
 dev = [
     "pyright>=1.1.0", # type checker
     "ruff>=0.3.0",    # linter
+    "torch>=2.10.0",
     "types-pillow",   # type stubs for pillow
     "types-pyserial", # type stubs for pyserial
 ]
