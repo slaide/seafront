@@ -2076,7 +2076,6 @@
                                         <select
                                             id="live-channel-selection"
                                             x-model="actionInput.live_acquisition_channelhandle"
-                                            x-init="$nextTick(()=>{actionInput.live_acquisition_channelhandle = $el.value})"
                                         >
                                             <optgroup label="Fluorescence">
                                                 <template
@@ -2089,6 +2088,7 @@
                                                         <option
                                                             x-bind:value="channel.handle"
                                                             x-text="channel.name"
+                                                            x-bind:selected="channel.handle === actionInput.live_acquisition_channelhandle"
                                                         ></option>
                                                     </template>
                                                 </template>
@@ -2104,6 +2104,7 @@
                                                         <option
                                                             x-bind:value="channel.handle"
                                                             x-text="channel.name"
+                                                            x-bind:selected="channel.handle === actionInput.live_acquisition_channelhandle"
                                                         ></option>
                                                     </template>
                                                 </template>
@@ -2177,10 +2178,13 @@
                                         <span class="action-buttons" style="grid-column: span 2;">
                                             <select
                                                 x-model="focusReferenceChannelHandle"
-                                                x-init="$nextTick(() => { if (microscope_config.channels.filter(c => c.enabled).length > 0 && !focusReferenceChannelHandle) { focusReferenceChannelHandle = microscope_config.channels.filter(c => c.enabled)[0]?.handle; } })"
                                             >
                                                 <template x-for="channel in microscope_config.channels.filter(c => c.enabled)" :key="channel.handle">
-                                                    <option x-bind:value="channel.handle" x-text="channel.name"></option>
+                                                    <option
+                                                        x-bind:value="channel.handle"
+                                                        x-text="channel.name"
+                                                        x-bind:selected="channel.handle === focusReferenceChannelHandle"
+                                                    ></option>
                                                 </template>
                                             </select>
                                             <button
