@@ -2217,13 +2217,14 @@
                                         >Reference channel</label>
                                         <span class="action-buttons" style="grid-column: span 2;">
                                             <select
-                                                x-model="focusReferenceChannelHandle"
+                                                x-bind:value="focusReferenceChannelHandle ?? ''"
+                                                @change="focusReferenceChannelHandle = $event.target.value || null"
                                             >
+                                                <option value="">Select channel...</option>
                                                 <template x-for="channel in microscope_config.channels.filter(c => c.enabled)" :key="channel.handle">
                                                     <option
                                                         x-bind:value="channel.handle"
                                                         x-text="channel.name"
-                                                        x-bind:selected="channel.handle === focusReferenceChannelHandle"
                                                     ></option>
                                                 </template>
                                             </select>
