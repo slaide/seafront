@@ -660,14 +660,14 @@ class SquidAdapter(Microscope):
         BLUR_SIZE=9 # 3
         img: np.ndarray = cv2.GaussianBlur(img, (BLUR_SIZE, BLUR_SIZE), 0)
 
-        # Convert to float64 before reducing and integrate signal over rows.
-        I_1d: np.ndarray = img.astype(np.float64).sum(axis=0)
+        # 8 bit signal -> max value 255
+        I_1d: np.ndarray = img.max(axis=0)
 
         # locate peaks == locate dots
         peak_locations, _ = scipy.signal.find_peaks(
             I_1d, 
-            distance=300, 
-            height=10,
+            distance=200, 
+            height=20,
             # from cephla:
             prominence=0.25,
             width=10, 
