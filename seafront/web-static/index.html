@@ -218,6 +218,46 @@
                 font-style: italic;
                 text-align: center;
             }
+
+            .machine-config-flat-table {
+                width: 100%;
+                table-layout: fixed;
+            }
+
+            .machine-config-flat-table th:nth-child(1),
+            .machine-config-flat-table td:nth-child(1) {
+                width: 3.5rem;
+            }
+
+            .machine-config-flat-table th:nth-child(2),
+            .machine-config-flat-table td:nth-child(2) {
+                width: 26%;
+            }
+
+            .machine-config-flat-table th:nth-child(3),
+            .machine-config-flat-table td:nth-child(3) {
+                width: 36%;
+            }
+
+            .machine-config-flat-table th:nth-child(4),
+            .machine-config-flat-table td:nth-child(4) {
+                width: 7rem;
+            }
+
+            .machine-config-flat-table td:nth-child(2),
+            .machine-config-flat-table td:nth-child(5) {
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+
+            .machine-config-flat-table td:nth-child(3) input,
+            .machine-config-flat-table td:nth-child(3) textarea,
+            .machine-config-flat-table td:nth-child(3) select,
+            .machine-config-flat-table td:nth-child(3) button {
+                width: 100%;
+                max-width: none;
+                box-sizing: border-box;
+            }
         </style>
 
         <link href="/css/tooltip.css" rel="stylesheet" />
@@ -966,7 +1006,7 @@
                             </div>
 
                             <!-- Fallback flat table view -->
-                            <table x-show="!machineConfigUseNamespaces">
+                            <table x-show="!machineConfigUseNamespaces" class="machine-config-flat-table">
                                 <tr>
                                     <th>frozen</th>
                                     <th>handle</th>
