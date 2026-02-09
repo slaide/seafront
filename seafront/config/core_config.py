@@ -389,7 +389,7 @@ def register_laser_autofocus_config() -> None:
         bool_config_item(
             handle=LaserAutofocusConfig.USE_RIGHT_DOT.value,
             name="laser autofocus use right dot",
-            default=False,
+            default=True,
         ),
         config_item(
             handle=LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value,
