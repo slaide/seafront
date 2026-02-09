@@ -1115,6 +1115,7 @@ const generate_alpine_object=() => ({
      * @type {import('./namespace-parser.js').NamespaceNode[]}
      * */
     machineConfigNamespaces: [],
+    machineConfigRenderEpoch: 0,
     
     /** whether to use hierarchical view */
     machineConfigUseNamespaces: true,
@@ -1395,9 +1396,32 @@ const generate_alpine_object=() => ({
         this._plateinfo = await this.getPlateTypes();
         this._microscope_config = await this.defaultConfig();
 
-        // Get machine config data to extract microscope name
+        // Get machine config defaults from server, then merge protocol-provided overrides.
+        // This allows default.json (or any loaded protocol) to carry preferred machine settings
+        // while still inheriting newly added server-side config handles.
         const machineConfigData = await this.getMachineDefaults();
-        this._microscope_config.machine_config = machineConfigData;
+        const protocolMachineConfig = this._microscope_config.machine_config;
+
+        if (Array.isArray(protocolMachineConfig) && protocolMachineConfig.length > 0) {
+            const mergedByHandle = new Map(machineConfigData.map(item => [item.handle, item]));
+            for (const item of protocolMachineConfig) {
+                if (item && item.handle) {
+                    mergedByHandle.set(item.handle, item);
+                }
+            }
+
+            // Keep microscope identity pinned to server value.
+            const serverMicroscopeNameItem = machineConfigData.find(
+                item => item.handle === "system.microscope_name"
+            );
+            if (serverMicroscopeNameItem) {
+                mergedByHandle.set("system.microscope_name", serverMicroscopeNameItem);
+            }
+
+            this._microscope_config.machine_config = Array.from(mergedByHandle.values());
+        } else {
+            this._microscope_config.machine_config = machineConfigData;
+        }
 
         // Load channels and hardware limits from hardware capabilities
         const hardwareCapabilities = await this.getHardwareCapabilities();
@@ -2472,6 +2496,8 @@ const generate_alpine_object=() => ({
         const machine_config=this.microscope_config?.machine_config;
         if (machine_config) {
             this.machineConfigNamespaces = parseConfigNamespaces(machine_config);
+            // Force machine config input rows to fully remount after programmatic reloads.
+            this.machineConfigRenderEpoch += 1;
         }
     },
 

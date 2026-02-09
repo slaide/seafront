@@ -827,7 +827,7 @@
                                         
                                         <!-- Items in this namespace -->
                                         <div x-show="namespace.isExpanded" class="namespace-content">
-                                            <template x-for="config in namespace.items" :key="config.handle">
+                                            <template x-for="config in namespace.items" :key="`${config.handle}:${machineConfigRenderEpoch}`">
                                                 <div 
                                                     class="config-item"
                                                     x-show="!machineConfigHandleFilter || config.handle.toLowerCase().includes(machineConfigHandleFilter.toLowerCase())"
@@ -919,7 +919,7 @@
                                                     </div>
                                                     
                                                     <div x-show="childNamespace.isExpanded" class="namespace-content">
-                                                        <template x-for="config in childNamespace.items" :key="config.handle">
+                                                        <template x-for="config in childNamespace.items" :key="`${config.handle}:${machineConfigRenderEpoch}`">
                                                             <div 
                                                                 class="config-item"
                                                                 x-show="!machineConfigHandleFilter || config.handle.toLowerCase().includes(machineConfigHandleFilter.toLowerCase())"
@@ -1016,7 +1016,7 @@
                                 </tr>
                                 <template
                                     x-for="config in filteredMachineConfig"
-                                    :key="config.handle"
+                                    :key="`${config.handle}:${machineConfigRenderEpoch}`"
                                 >
                                     <tr>
                                         <td>

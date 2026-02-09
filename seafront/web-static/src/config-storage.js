@@ -64,20 +64,40 @@ export async function loadConfig(protocol) {
     // Save the current complete plate_wells grid before replacing
     const currentPlateWells = this.microscope_config.plate_wells;
 
-    // Save server-provided fields that shouldn't be overwritten by the protocol
-    const serverProvidedMachineConfig = this.microscope_config.machine_config;
+    // Save server-provided fields that may need selective preservation
     const serverProvidedChannels = this.microscope_config.channels;
 
     // Load the new configuration
     Object.assign(this.microscope_config, newconfig.file);
 
-    // Restore server-provided fields (machine_config contains microscope name)
-    this.microscope_config.machine_config = serverProvidedMachineConfig;
+    // Rebuild machine_config from server defaults and then apply loaded protocol overrides.
+    // This makes manual "Load" deterministic and prevents stale in-UI edits from surviving
+    // when a protocol has empty/partial machine_config.
+    const serverMachineDefaults = await this.getMachineDefaults();
+    const mergedMachineConfig = new Map(serverMachineDefaults.map(item => [item.handle, item]));
+    if (newconfig.file.machine_config && newconfig.file.machine_config.length > 0) {
+        for (const item of newconfig.file.machine_config) {
+            if (item && item.handle) {
+                mergedMachineConfig.set(item.handle, item);
+            }
+        }
+    }
+    // Keep microscope identity pinned to server value.
+    const serverMicroscopeNameItem = serverMachineDefaults.find(
+        item => item.handle === "system.microscope_name"
+    );
+    if (serverMicroscopeNameItem) {
+        mergedMachineConfig.set("system.microscope_name", serverMicroscopeNameItem);
+    }
+    this.microscope_config.machine_config = Array.from(mergedMachineConfig.values());
 
     // Restore hardware capabilities if the protocol doesn't provide channels
     if (!newconfig.file.channels || newconfig.file.channels.length === 0) {
         this.microscope_config.channels = serverProvidedChannels;
     }
+
+    // Keep machine config tree in sync with potentially new machine_config values
+    this.refreshMachineConfigNamespaces();
 
     // Merge well selection state from loaded protocol into complete grid
     if (newconfig.file.plate_wells && currentPlateWells) {
@@ -105,6 +125,9 @@ export async function loadConfig(protocol) {
         // Save config after well selections are loaded
         this.saveCurrentConfig();
     }
+
+    // Also persist non-well config changes (e.g. machine_config)
+    this.saveCurrentConfig();
 
     this.configIsStored = true;
 }
