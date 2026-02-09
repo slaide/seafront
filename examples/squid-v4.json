@@ -5,7 +5,7 @@
             "system.microscope_name": "squid-v4",
             "system.microscope_type": "squid",
             "camera.main.id": "PLACEHOLDER_USB_ID",
-            "camera.main.driver": "galaxy",
+            "camera.main.driver": "toupcam",
             "microcontroller.id": "PLACEHOLDER_USB_ID",
             "storage.base_image_output_dir": "/home/scientist/seafront/images",
             "calibration.offset.x_mm": 2.44,
