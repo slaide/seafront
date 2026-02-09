@@ -18,6 +18,64 @@ ImagingOrder = tp.Literal["z_order", "wavelength_order", "protocol_order"]
 # Type alias for microscope config - a flat dict of handle -> value
 MicroscopeConfig = dict[str, tp.Any]
 
+_JSON_INDENT_SPACES = 4
+_JSON_INLINE_MAX_CHARS = 800
+_JSON_INLINE_LIST_MAX_CHARS = 120
+
+
+def _is_json_primitive(value: tp.Any) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _format_json_compact(value: tp.Any, indent: int = 0) -> str:
+    """
+    Format JSON with readable indentation while keeping short nested values inline.
+    """
+    if _is_json_primitive(value):
+        return json.dumps(value, ensure_ascii=False)
+
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+
+        if all(_is_json_primitive(item) for item in value):
+            inline = json.dumps(value, ensure_ascii=False, separators=(", ", ": "))
+            if len(inline) <= _JSON_INLINE_LIST_MAX_CHARS:
+                return inline
+
+        next_indent = indent + _JSON_INDENT_SPACES
+        padding = " " * next_indent
+        rendered_items = [
+            f"{padding}{_format_json_compact(item, next_indent)}" for item in value
+        ]
+        return "[\n" + ",\n".join(rendered_items) + f"\n{' ' * indent}]"
+
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+
+        inline = json.dumps(value, ensure_ascii=False, separators=(", ", ": "))
+        if len(inline) <= _JSON_INLINE_MAX_CHARS:
+            return inline
+
+        next_indent = indent + _JSON_INDENT_SPACES
+        padding = " " * next_indent
+        rendered_items = []
+        for key, child_value in value.items():
+            rendered_child = _format_json_compact(child_value, next_indent)
+            rendered_items.append(
+                f"{padding}{json.dumps(key, ensure_ascii=False)}: {rendered_child}"
+            )
+
+        return "{\n" + ",\n".join(rendered_items) + f"\n{' ' * indent}" + "}"
+
+    raise TypeError(f"Unsupported JSON value type: {type(value)!r}")
+
+
+def _dump_compact_json(file_obj: tp.TextIO, value: tp.Any) -> None:
+    file_obj.write(_format_json_compact(value))
+    file_obj.write("\n")
+
 
 def set_config_item_int(
     config_items: list[ConfigItem],
@@ -312,7 +370,7 @@ class GlobalConfigHandler:
         if not CONFIG_FILE_PATH.exists():
             # create config file
             with CONFIG_FILE_PATH.open("w") as f:
-                json.dump(ServerConfig().model_dump(), f, indent=4)
+                _dump_compact_json(f, ServerConfig().model_dump())
 
         return CONFIG_FILE_PATH
 
@@ -358,7 +416,7 @@ class GlobalConfigHandler:
             server_config.microscopes.append(new_microscope_config)
 
         with CONFIG_FILE_PATH.open("w") as f:
-            json.dump(server_config.model_dump(), f, indent=4)
+            _dump_compact_json(f, server_config.model_dump())
 
     @staticmethod
     def get_config_list() -> list[Path]:
@@ -385,7 +443,7 @@ class GlobalConfigHandler:
             )
 
         with filepath.open("w+") as f:
-            json.dump(config.dict(), f, indent=4)
+            _dump_compact_json(f, config.dict())
 
     @staticmethod
     def _sanitize_microscope_name_for_directory(microscope_name: str) -> str:
