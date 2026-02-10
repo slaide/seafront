@@ -644,7 +644,7 @@ class ToupCamCamera(Camera):
 
         # Set camera-specific image flip defaults for main ToupCam cameras only
         if self.device_type == "main":
-            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, False, frozen=True)
+            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, True, frozen=True)
             set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value, False, frozen=True)
 
     def _set_exposure_time(self, exposure_time_ms: float) -> None:
