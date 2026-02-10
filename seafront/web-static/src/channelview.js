@@ -57,7 +57,33 @@ export class ChannelImageView {
         // allow zooming in quite far, but not zoom out much (there is nothing to see outside the image)
         this.zoomLimit = { min: 0.05, max: 1.2 };
 
-        this.drag = { active: false, x: 0, y: 0 };
+        this.drag = { active: false, x: 0, y: 0, sceneInfo: null };
+
+        this._deactivateDrag = () => {
+            this.drag.active = false;
+            this.drag.sceneInfo = null;
+        };
+
+        // Keep drag state consistent even if cursor/button leaves individual plot elements.
+        window.addEventListener("mouseup", this._deactivateDrag);
+        window.addEventListener("blur", this._deactivateDrag);
+
+        const dragContainer = this.canvas.parentElement;
+        if (dragContainer) {
+            dragContainer.addEventListener("mouseleave", this._deactivateDrag);
+        }
+
+        window.addEventListener("mousemove", (event) => {
+            if (!this.drag.active || !this.drag.sceneInfo) return;
+
+            // If mouseup happened outside this window/element, stop dragging on re-entry.
+            if ((event.buttons & 1) === 0) {
+                this._deactivateDrag();
+                return;
+            }
+
+            this._applyDragDelta(this.drag.sceneInfo, event.clientX, event.clientY);
+        });
 
         // toggle drawing loop based on visibility of the plot container
         const observer = new IntersectionObserver((entries) => {
@@ -243,53 +269,19 @@ export class ChannelImageView {
             this.drag.active = true;
             this.drag.x = event.clientX;
             this.drag.y = event.clientY;
+            this.drag.sceneInfo = sceneInfo;
         });
 
         const mouseUpHandler = /** @type {(event: MouseEvent) => void} */((event) => {
             event.preventDefault();
-            this.drag.active = false;
+            this._deactivateDrag();
         });
 
         const mouseMoveHandler = /** @type {(event: MouseEvent) => void} */((event) => {
             if (!this.drag.active) return;
-
             event.preventDefault();
-
-            // calculate offset in screen pixels
-            const deltax = event.clientX - this.drag.x;
-            const deltay = event.clientY - this.drag.y;
-
-            // Get element dimensions to calculate pixel-to-image coordinate conversion
-            const elemRect = elem.getBoundingClientRect();
-
-            if (sceneInfo.img && elemRect.width > 0 && elemRect.height > 0) {
-                // Calculate the actual displayed image size accounting for zoom and aspect ratio
-                const displayedImageWidth = sceneInfo.img.width * sceneInfo.range.zoom;
-                const displayedImageHeight = sceneInfo.img.height * sceneInfo.range.zoom;
-
-                // Calculate the scale factor from screen pixels to image coordinates
-                // This accounts for how much of the element is filled by the image
-                const scaleX = displayedImageWidth / elemRect.width;
-                const scaleY = displayedImageHeight / elemRect.height;
-
-                // Apply the drag with proper scaling so mouse stays pinned to same image pixel
-                sceneInfo.range.offsetx -= deltax * scaleX;
-                sceneInfo.range.offsety += deltay * scaleY;
-            } else {
-                // Fallback to old behavior if image not loaded yet
-                sceneInfo.range.offsetx -= deltax * sceneInfo.range.zoom;
-                sceneInfo.range.offsety += deltay * sceneInfo.range.zoom;
-            }
-
-            // update current cursor position for later updates
-            this.drag.x = event.clientX;
-            this.drag.y = event.clientY;
-
-            // link offsets across channel views
-            for (const otherscene of this.sceneInfos) {
-                otherscene.range.offsetx = sceneInfo.range.offsetx;
-                otherscene.range.offsety = sceneInfo.range.offsety;
-            }
+            event.stopPropagation();
+            this._applyDragDelta(sceneInfo, event.clientX, event.clientY);
         });
 
         elem.addEventListener("wheel", wheelHandler, { capture: true, passive: false });
@@ -304,6 +296,44 @@ export class ChannelImageView {
             mouseup: mouseUpHandler,
             mousemove: mouseMoveHandler,
         };
+    }
+
+    /**
+     * @param {SceneInfo} sceneInfo
+     * @param {number} clientX
+     * @param {number} clientY
+     */
+    _applyDragDelta(sceneInfo, clientX, clientY) {
+        // calculate offset in screen pixels
+        const deltax = clientX - this.drag.x;
+        const deltay = clientY - this.drag.y;
+
+        const elemRect = sceneInfo.elem?.getBoundingClientRect();
+
+        if (sceneInfo.img && elemRect && elemRect.width > 0 && elemRect.height > 0) {
+            // Scale drag from screen-space to image-space.
+            const displayedImageWidth = sceneInfo.img.width * sceneInfo.range.zoom;
+            const displayedImageHeight = sceneInfo.img.height * sceneInfo.range.zoom;
+
+            const scaleX = displayedImageWidth / elemRect.width;
+            const scaleY = displayedImageHeight / elemRect.height;
+
+            sceneInfo.range.offsetx -= deltax * scaleX;
+            sceneInfo.range.offsety += deltay * scaleY;
+        } else {
+            // Fallback if image is not loaded yet.
+            sceneInfo.range.offsetx -= deltax * sceneInfo.range.zoom;
+            sceneInfo.range.offsety += deltay * sceneInfo.range.zoom;
+        }
+
+        this.drag.x = clientX;
+        this.drag.y = clientY;
+
+        // link offsets across channel views
+        for (const otherscene of this.sceneInfos) {
+            otherscene.range.offsetx = sceneInfo.range.offsetx;
+            otherscene.range.offsety = sceneInfo.range.offsety;
+        }
     }
 
     /**
