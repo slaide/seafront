@@ -1426,7 +1426,29 @@ const generate_alpine_object=() => ({
         // Load channels and hardware limits from hardware capabilities
         const hardwareCapabilities = await this.getHardwareCapabilities();
         if (hardwareCapabilities.main_camera_imaging_channels) {
-            this._microscope_config.channels = hardwareCapabilities.main_camera_imaging_channels;
+            // Start from server hardware channels, then preserve protocol-level per-channel settings
+            // (e.g. filter_handle, enabled, exposure, gains) by matching on handle.
+            const protocolChannels = this._microscope_config.channels || [];
+            const protocolByHandle = new Map(protocolChannels.map(ch => [ch.handle, ch]));
+
+            this._microscope_config.channels = hardwareCapabilities.main_camera_imaging_channels.map(serverCh => {
+                const protocolCh = protocolByHandle.get(serverCh.handle);
+                if (!protocolCh) {
+                    return serverCh;
+                }
+
+                return {
+                    ...serverCh,
+                    analog_gain: protocolCh.analog_gain,
+                    exposure_time_ms: protocolCh.exposure_time_ms,
+                    illum_perc: protocolCh.illum_perc,
+                    num_z_planes: protocolCh.num_z_planes,
+                    z_offset_um: protocolCh.z_offset_um,
+                    enabled: protocolCh.enabled,
+                    filter_handle: protocolCh.filter_handle,
+                    delta_z_um: protocolCh.delta_z_um
+                };
+            });
         } else {
             console.warn("No channels found in hardware capabilities");
         }
