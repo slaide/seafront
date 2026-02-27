@@ -8,8 +8,15 @@ from pydantic import BaseModel, ConfigDict
 
 from seaconfig import AcquisitionChannelConfig
 
-from seafront.config.basics import GlobalConfigHandler, set_config_item_bool, ConfigItem, ConfigItemOption
-from seafront.config.handles import CameraConfig, LaserAutofocusConfig
+from seafront.config.basics import (
+    GlobalConfigHandler,
+    set_config_item_bool,
+    set_config_item_float,
+    set_config_item_option,
+    ConfigItem,
+    ConfigItemOption,
+)
+from seafront.config.handles import CameraConfig, LaserAutofocusConfig, ToupCamConfig
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.logger import logger
@@ -238,6 +245,7 @@ class ToupCamCamera(Camera):
         self.ctx=ImageContext(mode="once",cam=self)
         self.pullmode_active=False
         self._streaming_active = False
+        self._last_applied_temp_control_signature: tuple[bool, str, float, float] | None = None
 
     def open(self, device_type: tp.Literal["main", "autofocus"]):
         """Open device for interaction."""
@@ -329,6 +337,7 @@ class ToupCamCamera(Camera):
         # Maximize framerate for live streaming
         # ToupCam defaults to 90% of max framerate, which limits streaming performance
         self._maximize_framerate()
+        self._apply_temperature_control_from_config()
 
     def _stop_pullmode(self)->bool:
         """return true if stopped, otherwise false"""
@@ -492,6 +501,164 @@ class ToupCamCamera(Camera):
             return True
         return False
 
+    def _has_toupcam_capability(self, flag_name: str) -> bool:
+        """Return whether the current camera advertises a Toupcam capability flag."""
+        flag = getattr(tc, flag_name, None)
+        if flag is None:
+            return False
+        return (self._original_device.model.flag & int(flag)) != 0
+
+    def supports_temperature_readout(self) -> bool:
+        return self._has_toupcam_capability("TOUPCAM_FLAG_GETTEMPERATURE")
+
+    def supports_temperature_target_control(self) -> bool:
+        return self._has_toupcam_capability("TOUPCAM_FLAG_TEC_ONOFF")
+
+    def get_sensor_temperature_c(self) -> float:
+        if not self.handle:
+            raise RuntimeError("Camera not opened")
+        if not self.supports_temperature_readout():
+            raise RuntimeError("Camera does not support temperature readout")
+        if not hasattr(self.handle, "get_Temperature"):
+            raise RuntimeError("Toupcam SDK does not expose get_Temperature")
+        # Toupcam temperature is deci-degrees C.
+        return float(self.handle.get_Temperature()) / 10.0  # type: ignore[attr-defined]
+
+    def try_get_sensor_temperature_c(self) -> float | None:
+        try:
+            return self.get_sensor_temperature_c()
+        except Exception:
+            return None
+
+    def set_target_temperature_c(self, target_c: float | None) -> float:
+        if not self.handle:
+            raise RuntimeError("Camera not opened")
+        if not self.supports_temperature_target_control():
+            raise RuntimeError("Camera does not support TEC target control")
+        if not hasattr(self.handle, "put_Temperature"):
+            raise RuntimeError("Toupcam SDK does not expose put_Temperature")
+
+        if target_c is None:
+            # Toupcam special reset value.
+            self.handle.put_Temperature(-2730)  # type: ignore[attr-defined]
+            return float("nan")
+
+        target_dC = int(round(float(target_c) * 10.0))
+
+        tec_range = self._get_tec_target_range_decic()
+        if tec_range is not None:
+            lo_dC, hi_dC = tec_range
+            unclamped_target_dC = target_dC
+            target_dC = max(int(lo_dC), min(target_dC, int(hi_dC)))
+            if target_dC != unclamped_target_dC:
+                logger.warning(
+                    "toupcam - requested TEC target "
+                    f"{unclamped_target_dC / 10.0:.1f}C clamped to {target_dC / 10.0:.1f}C "
+                    f"(range {lo_dC / 10.0:.1f}C..{hi_dC / 10.0:.1f}C)"
+                )
+
+        # Explicitly keep TEC enabled if supported by this SDK build.
+        tec_opt = getattr(tc, "TOUPCAM_OPTION_TEC", None)
+        if tec_opt is not None:
+            with toupcam_ctx("enable toupcam TEC", ignore_error=True):
+                self._set_toupcam_option(int(tec_opt), 1)
+
+        self.handle.put_Temperature(target_dC)  # type: ignore[attr-defined]
+        return target_dC / 10.0
+
+    def _get_tec_target_range_decic(self) -> tuple[int, int] | None:
+        """
+        Return TEC target range in 0.1C units as (min_dC, max_dC), if available.
+
+        Follows SDK docs:
+        - preferred: get_TecTargetRange()
+        - fallback: TOUPCAM_OPTION_TECTARGET_RANGE, low16=min, high16=max (signed short)
+        """
+        if not self.handle:
+            return None
+
+        if hasattr(self.handle, "get_TecTargetRange"):
+            try:
+                lo_dC, hi_dC = self.handle.get_TecTargetRange()  # type: ignore[attr-defined]
+                return int(lo_dC), int(hi_dC)
+            except Exception:
+                pass
+
+        tec_target_range_opt = getattr(tc, "TOUPCAM_OPTION_TECTARGET_RANGE", None)
+        if tec_target_range_opt is None:
+            return None
+
+        try:
+            packed = int(self.handle.get_Option(int(tec_target_range_opt)))
+
+            # Low 16 bits = min, high 16 bits = max, both signed short.
+            lo = packed & 0xFFFF
+            hi = (packed >> 16) & 0xFFFF
+
+            if lo >= 0x8000:
+                lo -= 0x10000
+            if hi >= 0x8000:
+                hi -= 0x10000
+
+            return int(lo), int(hi)
+        except Exception:
+            return None
+
+    def _apply_temperature_control_from_config(self) -> None:
+        if not self.handle:
+            return
+        tec_opt = getattr(tc, "TOUPCAM_OPTION_TEC", None)
+
+        tec_enabled = True
+        try:
+            tec_enabled = ConfigRegistry.get(ToupCamConfig.TEC_ENABLED).boolvalue
+        except Exception:
+            tec_enabled = True
+
+        if tec_opt is not None:
+            with toupcam_ctx("apply toupcam TEC enable from config", ignore_error=True):
+                self._set_toupcam_option(int(tec_opt), 1 if tec_enabled else 0)
+
+        if not tec_enabled:
+            desired_signature = (False, "", 0.0, 0.0)
+            if desired_signature == self._last_applied_temp_control_signature:
+                return
+            self._last_applied_temp_control_signature = desired_signature
+            logger.info("toupcam - TEC disabled by machine config")
+            return
+        if not self.supports_temperature_target_control():
+            return
+
+        target_mode = ConfigRegistry.get(ToupCamConfig.TEMPERATURE_TARGET_MODE).strvalue
+        target_c = ConfigRegistry.get(ToupCamConfig.TEMPERATURE_TARGET_C).floatvalue
+        delta_c = ConfigRegistry.get(ToupCamConfig.TEMPERATURE_DELTA_FROM_CURRENT_C).floatvalue
+
+        desired_signature = (
+            bool(tec_enabled),
+            str(target_mode),
+            float(target_c),
+            float(delta_c),
+        )
+        if desired_signature == self._last_applied_temp_control_signature:
+            return
+
+        resolved_target_c = target_c
+        if target_mode == "relative_to_current":
+            current_c = self.try_get_sensor_temperature_c()
+            if current_c is None:
+                logger.warning(
+                    "toupcam - target mode is relative_to_current but current temperature "
+                    "could not be read; falling back to absolute target"
+                )
+            else:
+                resolved_target_c = current_c + delta_c
+
+        applied_c = self.set_target_temperature_c(resolved_target_c)
+        self._last_applied_temp_control_signature = desired_signature
+        logger.info(
+            f"toupcam - applied TEC target: mode={target_mode} target={applied_c:.1f}C"
+        )
+
     def close(self):
         """Close device handle."""
         logger.debug("toupcam - closing")
@@ -646,6 +813,46 @@ class ToupCamCamera(Camera):
         if self.device_type == "main":
             set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, True, frozen=True)
             set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value, False, frozen=True)
+
+        if self.device_type == "main":
+            set_config_item_option(
+                config_items,
+                ToupCamConfig.TEMPERATURE_TARGET_MODE.value,
+                ConfigRegistry.get(ToupCamConfig.TEMPERATURE_TARGET_MODE).strvalue,
+                options=[
+                    ConfigItemOption(name="Absolute Target", handle="absolute"),
+                    ConfigItemOption(name="Current + Delta", handle="relative_to_current"),
+                ],
+                name="toupcam temperature target mode",
+            )
+            set_config_item_bool(
+                config_items,
+                ToupCamConfig.TEC_ENABLED.value,
+                ConfigRegistry.get(ToupCamConfig.TEC_ENABLED).boolvalue,
+                name="toupcam TEC enabled",
+            )
+            set_config_item_float(
+                config_items,
+                ToupCamConfig.TEMPERATURE_TARGET_C.value,
+                ConfigRegistry.get(ToupCamConfig.TEMPERATURE_TARGET_C).floatvalue,
+                name="toupcam temperature absolute target [C]",
+            )
+            set_config_item_float(
+                config_items,
+                ToupCamConfig.TEMPERATURE_DELTA_FROM_CURRENT_C.value,
+                ConfigRegistry.get(ToupCamConfig.TEMPERATURE_DELTA_FROM_CURRENT_C).floatvalue,
+                name="toupcam temperature delta from current [C]",
+            )
+
+            current_temp_c = self.try_get_sensor_temperature_c()
+            if current_temp_c is not None:
+                set_config_item_float(
+                    config_items,
+                    ToupCamConfig.TEMPERATURE_CURRENT_C.value,
+                    current_temp_c,
+                    name="toupcam sensor temperature [C]",
+                    frozen=True,
+                )
 
     def _set_exposure_time(self, exposure_time_ms: float) -> None:
         """
@@ -819,6 +1026,7 @@ class ToupCamCamera(Camera):
         # set pixel format (determined from device_type config)
         bytes_per_pixel, dtype, pullimage_pix_format = self._set_pixel_format()
 
+        self._apply_temperature_control_from_config()
         self._set_exposure_time(config.exposure_time_ms)
         self._set_analog_gain(config.analog_gain)
 
@@ -879,6 +1087,7 @@ class ToupCamCamera(Camera):
         # set pixel format (determined from device_type config)
         bytes_per_pixel, dtype, pullimage_pix_format = self._set_pixel_format()
 
+        self._apply_temperature_control_from_config()
         self._set_exposure_time(config.exposure_time_ms)
         self._set_analog_gain(config.analog_gain)
 
@@ -948,4 +1157,3 @@ class ToupCamCamera(Camera):
         self.ctx.stop_acquisition = False
 
         logger.debug("toupcam camera - streaming stopped")
-

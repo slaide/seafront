@@ -45,6 +45,17 @@ class CameraConfig(ConfigHandle):
     OPERATION_RETRY_ATTEMPTS = "camera.operation_retry_attempts"
 
 
+class ToupCamConfig(ConfigHandle):
+    """ToupCam-specific configuration handles."""
+
+    # Temperature control/readback
+    TEC_ENABLED = "camera.toupcam.tec_enabled"
+    TEMPERATURE_CURRENT_C = "camera.toupcam.temperature.current_c"
+    TEMPERATURE_TARGET_MODE = "camera.toupcam.temperature.target_mode"
+    TEMPERATURE_TARGET_C = "camera.toupcam.temperature.target_c"
+    TEMPERATURE_DELTA_FROM_CURRENT_C = "camera.toupcam.temperature.delta_from_current_c"
+
+
 class MicrocontrollerConfig(ConfigHandle):
     """Microcontroller communication and retry configuration handles."""
 
@@ -142,4 +153,3 @@ class IlluminationConfig(ConfigHandle):
     """Illumination control configuration handles."""
 
     TURN_OFF_ALL = "illumination.turn_off_all"
-

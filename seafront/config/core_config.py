@@ -11,6 +11,7 @@ from seafront.config.registry import ConfigRegistry, config_item, bool_config_it
 from seafront.config.handles import (
     SystemConfig,
     CameraConfig,
+    ToupCamConfig,
     MicrocontrollerConfig,
     CalibrationConfig,
     StorageConfig,
@@ -149,6 +150,44 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             name="camera operation retry attempts",
             value_kind="int",
             default=5,
+        ),
+        config_item(
+            handle=ToupCamConfig.TEMPERATURE_CURRENT_C.value,
+            name="toupcam sensor temperature [C]",
+            value_kind="float",
+            default=25.0,
+            frozen=True,
+        ),
+        bool_config_item(
+            handle=ToupCamConfig.TEC_ENABLED.value,
+            name="toupcam TEC enabled",
+            default=True,
+            persistent=True,
+        ),
+        config_item(
+            handle=ToupCamConfig.TEMPERATURE_TARGET_MODE.value,
+            name="toupcam temperature target mode",
+            value_kind="option",
+            default="absolute",
+            options=[
+                ConfigItemOption(name="Absolute Target", handle="absolute"),
+                ConfigItemOption(name="Current + Delta", handle="relative_to_current"),
+            ],
+            persistent=True,
+        ),
+        config_item(
+            handle=ToupCamConfig.TEMPERATURE_TARGET_C.value,
+            name="toupcam temperature absolute target [C]",
+            value_kind="float",
+            default=-20.0,
+            persistent=True,
+        ),
+        config_item(
+            handle=ToupCamConfig.TEMPERATURE_DELTA_FROM_CURRENT_C.value,
+            name="toupcam temperature delta from current [C]",
+            value_kind="float",
+            default=-20.0,
+            persistent=True,
         ),
     )
 

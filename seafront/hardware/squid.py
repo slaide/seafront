@@ -33,6 +33,7 @@ from seafront.config.handles import (
     ImagingConfig,
     LaserAutofocusConfig,
     MicrocontrollerConfig,
+    ToupCamConfig,
 )
 from seafront.hardware.microcontroller import (
     Microcontroller,
@@ -1088,6 +1089,24 @@ class SquidAdapter(Microscope):
             self.close()
             logger.debug("microcontroller disconnected (IOError)")
             raise DisconnectError() from e
+
+        for camera_label, camera_lock in (("main", self.main_camera), ("autofocus", self.focus_camera)):
+            with camera_lock.locked(blocking=False) as camera:
+                if camera is not None and camera.__class__.__name__ == "ToupCamCamera":
+                    try:
+                        # Keep TEC target synchronized with machine-config updates even while idle.
+                        apply_temp = getattr(camera, "_apply_temperature_control_from_config", None)
+                        if callable(apply_temp):
+                            apply_temp()
+
+                        temp_c = camera.get_sensor_temperature_c()  # type: ignore[attr-defined]
+                        if camera_label == "main":
+                            ConfigRegistry.set_value(ToupCamConfig.TEMPERATURE_CURRENT_C.value, temp_c)
+                        logger.debug(f"toupcam - {camera_label} sensor temperature {temp_c:.1f}C")
+                    except Exception as e:
+                        logger.debug(
+                            f"toupcam - {camera_label} temperature read failed during status polling: {e}"
+                        )
 
         # supposed=real-calib
         x_pos_mm = self._pos_x_measured_to_real(last_stage_position.x_pos_mm)
