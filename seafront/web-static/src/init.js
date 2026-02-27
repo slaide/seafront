@@ -1122,6 +1122,10 @@ const generate_alpine_object=() => ({
 
     /** indicate of connection to server is currently established */
     isConnectedToServer: false,
+    statusPollIntervalMs: 33,
+    /** @type {number|null} */
+    _statusPollTimer: null,
+    _statusRequestInFlight: false,
 
     // acquisition status websocket for monitoring acquisition progress
     /** @type {WebSocket|null} */
@@ -1145,6 +1149,7 @@ const generate_alpine_object=() => ({
             this.server_url = url;
             // Close old connection when URL changes so we reconnect to the new server
             this.wsManager.closeConnection('status');
+            this.stop_status_getstate_loop();
         }
 
         // reconnection is only attempted if connection is not currently established
@@ -1167,26 +1172,32 @@ const generate_alpine_object=() => ({
                     try {
                         const data = json5.parse(ev.data);
                         await this.updateMicroscopeStatus(data);
+                        this._statusRequestInFlight = false;
 
                         // if we got this far, the connection to the server is established
                         this.isConnectedToServer = true;
                     } catch (error) {
                         console.error('Error updating microscope status:', error);
+                        this._statusRequestInFlight = false;
                         // Continue polling - don't break the loop
                     }
                 },
                 onOpen: (ws) => {
+                    this._statusRequestInFlight = false;
                     // Send initial message immediately to trigger server response
                     this.wsManager.send('status', "info");
+                    this._statusRequestInFlight = true;
                     // Schedule polling loop
-                    requestAnimationFrame(() => this.status_getstate_loop());
+                    this.status_getstate_loop();
                 },
                 onError: (event) => {
                     this.isConnectedToServer = false;
+                    this._statusRequestInFlight = false;
                     // Reconnection is handled by WebSocketManager
                 },
                 onClose: () => {
                     this.isConnectedToServer = false;
+                    this._statusRequestInFlight = false;
                     // Reconnection is handled by WebSocketManager
                 },
                 autoReconnect: true,
@@ -1195,14 +1206,30 @@ const generate_alpine_object=() => ({
     },
 
     status_getstate_loop() {
-        // Only send if connected; WebSocketManager handles reconnection automatically
-        if (this.wsManager.isConnected('status')) {
-            // send arbitrary message to receive status update
-            this.wsManager.send('status', "info");
+        if (this._statusPollTimer !== null) {
+            return;
         }
-        // Schedule next poll iteration regardless of connection status
-        // The WebSocketManager will reconnect automatically on errors
-        requestAnimationFrame(() => this.status_getstate_loop());
+
+        const poll = () => {
+            // Only send if connected; WebSocketManager handles reconnection automatically
+            if (this.wsManager.isConnected('status') && !this._statusRequestInFlight) {
+                // send arbitrary message to receive status update
+                this.wsManager.send('status', "info");
+                this._statusRequestInFlight = true;
+            }
+            // Continue polling with fixed cadence to avoid requestAnimationFrame flooding.
+            this._statusPollTimer = window.setTimeout(poll, this.statusPollIntervalMs);
+        };
+
+        poll();
+    },
+
+    stop_status_getstate_loop() {
+        if (this._statusPollTimer !== null) {
+            window.clearTimeout(this._statusPollTimer);
+            this._statusPollTimer = null;
+        }
+        this._statusRequestInFlight = false;
     },
 
     /**

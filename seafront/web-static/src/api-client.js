@@ -41,6 +41,7 @@
  * @property {WebSocketConnectionOptions} options - Connection options
  * @property {number} reconnectAttempts - Number of reconnection attempts made
  * @property {boolean} reconnectScheduled - Whether a reconnect is already scheduled
+ * @property {number|null} reconnectTimer - Pending reconnect timer handle, if any
  */
 
 /**
@@ -239,6 +240,10 @@ class WebSocketManager {
         // Close existing connection if present
         const existing = this.connections.get(name);
         if (existing) {
+            if (existing.reconnectTimer !== null) {
+                clearTimeout(existing.reconnectTimer);
+                existing.reconnectTimer = null;
+            }
             if (existing.ws && existing.ws.readyState !== WebSocket.CLOSED) {
                 existing.ws.close();
             }
@@ -260,6 +265,7 @@ class WebSocketManager {
                 },
                 reconnectAttempts: 0,
                 reconnectScheduled: false,
+                reconnectTimer: null,
             };
 
             this.connections.set(name, connectionData);
@@ -381,11 +387,20 @@ class WebSocketManager {
         const connectionData = this.connections.get(name);
         if (!connectionData) return;
 
+        // Avoid multiple pending timers for the same logical connection.
+        if (connectionData.reconnectTimer !== null) {
+            clearTimeout(connectionData.reconnectTimer);
+            connectionData.reconnectTimer = null;
+        }
+
         connectionData.reconnectScheduled = true;
         connectionData.reconnectAttempts++;
 
-        setTimeout(() => {
-            if (this.connections.has(name)) {
+        connectionData.reconnectTimer = setTimeout(() => {
+            connectionData.reconnectTimer = null;
+            const currentConn = this.connections.get(name);
+            // Only reconnect if this exact connection is still current.
+            if (currentConn === connectionData) {
                 this.createConnection(
                     name,
                     connectionData.endpoint,
@@ -405,6 +420,10 @@ class WebSocketManager {
     closeConnection(name, code = 1000, reason = '') {
         const connectionData = this.connections.get(name);
         if (connectionData && connectionData.ws) {
+            if (connectionData.reconnectTimer !== null) {
+                clearTimeout(connectionData.reconnectTimer);
+                connectionData.reconnectTimer = null;
+            }
             // Prevent auto-reconnect by temporarily disabling it
             const wasAutoReconnect = connectionData.options.autoReconnect;
             connectionData.options.autoReconnect = false;
