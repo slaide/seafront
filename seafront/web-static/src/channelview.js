@@ -410,8 +410,6 @@ export class ChannelImageView {
                 // sample from texture
                 // red channel (based on format)
                 // convert int value to float
-                // Note: Y-coordinate is NOT inverted here because the backend already
-                // applies vertical flip transformation based on camera config
                 float lum = float(texture2D(uTexture, vec2(vUv.x, vUv.y)).r);
 
                 // adjust from [0;formatMax] to [0;1] space

@@ -643,8 +643,10 @@ class ToupCamCamera(Camera):
             config_items.append(new_item)
 
         # Set camera-specific image flip defaults for main ToupCam cameras only
+        # ToupCam SDK delivers images bottom-to-top (BMP convention), unlike Galaxy
+        # which delivers top-to-bottom — so no vertical flip needed for ToupCam
         if self.device_type == "main":
-            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, True, frozen=True)
+            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, False, frozen=True)
             set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value, False, frozen=True)
 
     def _set_exposure_time(self, exposure_time_ms: float) -> None:
