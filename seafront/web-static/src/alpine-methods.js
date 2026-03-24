@@ -78,6 +78,10 @@ export async function updateMicroscopeStatus(data) {
     // Sync streaming state from server
     if (data.is_streaming !== undefined) {
         this.isStreaming = data.is_streaming;
+        // Sync the streaming channel handle so stop button works on page reload
+        if (data.is_streaming && data.streaming_channel_handle) {
+            this.actionInput.live_acquisition_channelhandle = data.streaming_channel_handle;
+        }
     }
 
     // Update acquisition status WebSocket based on acquisition state

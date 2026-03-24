@@ -266,6 +266,8 @@ class CoreCurrentState(BaseModel):
     current_acquisition_id: str | None
     is_streaming: bool
     "True if live streaming/acquisition is currently active"
+    streaming_channel_handle: str | None = None
+    "Handle of the channel currently being streamed, if any"
     is_busy: bool
     "True if the microscope is currently busy and cannot accept new commands"
     busy_reasons: list[str] = Field(default_factory=list)

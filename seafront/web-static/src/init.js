@@ -1629,6 +1629,12 @@ const generate_alpine_object=() => ({
             console.warn("Could not load cached microscopes list during init:", error);
         }
 
+        // Initialize live acquisition channel to first enabled channel
+        const firstEnabledChannel = this._microscope_config.channels?.find(ch => ch.enabled);
+        if (firstEnabledChannel) {
+            this.actionInput.live_acquisition_channelhandle = firstEnabledChannel.handle;
+        }
+
         // init data - get initial state from server
         const currentStateJson = await this.api.post('/api/get_info/current_state', {}, {
             context: 'Get initial microscope state',

@@ -968,7 +968,7 @@ class Core:
 
         # Start streaming (i.e., acquire x images per sec, until stopped)
         self.image_store_threadpool = AsyncThreadPool()
-        stream_info: dict[str, None | sc.AcquisitionChannelConfig] = {"channel": None}
+        self._streaming_channel: sc.AcquisitionChannelConfig | None = None
 
         def handle_image(arg: np.ndarray | bool) -> bool:
             if isinstance(arg, bool):
@@ -977,12 +977,12 @@ class Core:
                     return True
             else:
                 img = arg
-                assert stream_info["channel"] is not None
+                assert self._streaming_channel is not None
                 self.image_store_threadpool.run(
                     self._store_new_image(
                         img=img,
                         pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
-                        channel_config=stream_info["channel"],
+                        channel_config=self._streaming_channel,
                     )
                 )
             return False
@@ -996,7 +996,7 @@ class Core:
                 microscope.stream_callback = handle_image
 
                 # store channel info, to be used inside the streaming callback to store the images in the server properly
-                stream_info["channel"] = begin.channel
+                self._streaming_channel = begin.channel
 
         route_wrapper(
             "/api/action/stream_channel_begin",
@@ -1009,12 +1009,16 @@ class Core:
             allow_while_acquisition_is_running=False,
             allow_while_streaming=False,
         )
+        def register_stream_end(end: ChannelStreamEnd, res: BasicSuccessResponse):
+            self._streaming_channel = None
+
         route_wrapper(
             "/api/action/stream_channel_end",
             CustomRoute(
                 handler=ChannelStreamEnd,
                 tags=[RouteTag.ACTIONS.value],
                 require_hardware_lock=False,
+                callback=register_stream_end,
             ),
             methods=["POST"],
         )
@@ -1409,6 +1413,7 @@ class Core:
             latest_imgs={key: entry.info for key, entry in self.latest_images.items()},
             current_acquisition_id=current_acquisition_id,
             is_streaming=is_streaming,
+            streaming_channel_handle=self._streaming_channel.handle if self._streaming_channel is not None else None,
             is_busy=is_busy,
             busy_reasons=busy_reasons,
             last_acquisition_error=self._last_acquisition_error,
