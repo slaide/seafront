@@ -1,7 +1,7 @@
 [project]
 name = "seafront"
 version = "2.6.1"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 authors = [{ name = "Patrick Hennig", email = "patrick.hennig@uu.se" }]
 dependencies = [
     "gxipy @ git+https://github.com/slaide/daheng-imaging-gxipy@v1.0.0", # galaxy camera API
