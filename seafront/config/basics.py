@@ -309,6 +309,10 @@ class FilterConfig(BaseModel):
 
 class ServerConfig(BaseModel):
     port: int = 5000
+    # Bind address for the HTTP server. Defaults to loopback only (local access).
+    # Set to "0.0.0.0" (all IPv4) or "::" (all IPv4+IPv6, dual-stack) to expose
+    # the server on the network, e.g. for remote access over a microscope LAN.
+    host: str = "127.0.0.1"
     microscopes: list[MicroscopeConfig] = Field(
         default_factory=lambda: [GlobalConfigHandler.DEFAULT_MICROSCOPE_CONFIG()]
     )

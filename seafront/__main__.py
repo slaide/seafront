@@ -2274,11 +2274,18 @@ def main():
         type=int,
         help=f"Port to run the server on (default: {server_config.port} from config)"
     )
+    parser.add_argument(
+        "--host",
+        type=str,
+        help=f'Bind address (default: "{server_config.host}" from config). Use "0.0.0.0" or "::" to expose on the network.'
+    )
     args = parser.parse_args()
 
-    # Override port from config if specified on command line
+    # Override port/host from config if specified on command line
     if args.port:
         server_config.port = args.port
+    if args.host:
+        server_config.host = args.host
 
     if len(server_config.microscopes) == 0:
         logger.critical("No microscope configurations found in config file")
@@ -2426,9 +2433,10 @@ def main():
     # Test if port is available before starting uvicorn
     try:
         import socket
-        test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        family = socket.AF_INET6 if ":" in server_config.host else socket.AF_INET
+        test_socket = socket.socket(family, socket.SOCK_STREAM)
         test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        test_socket.bind(('127.0.0.1', server_config.port))
+        test_socket.bind((server_config.host, server_config.port))
         test_socket.close()
     except OSError as e:
         if e.errno == 98:  # Address already in use
@@ -2447,12 +2455,25 @@ def main():
         connection_thread.start()
 
         # Start uvicorn server
-        uvicorn.run(
-            app,
-            host="127.0.0.1",
-            port=server_config.port,
-            ws_per_message_deflate=False
-        )
+        if server_config.host == "::":
+            # uvicorn binds "::" as IPv6-only. Bind a dual-stack socket ourselves
+            # (IPV6_V6ONLY=0) so the server is reachable over both IPv6 and IPv4
+            # (e.g. both the fe80:: and 169.254.x.x link-local addresses a client
+            # may resolve a .local name to).
+            sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            sock.bind((server_config.host, server_config.port))
+            uvicorn.Server(
+                uvicorn.Config(app, ws_per_message_deflate=False)
+            ).run(sockets=[sock])
+        else:
+            uvicorn.run(
+                app,
+                host=server_config.host,
+                port=server_config.port,
+                ws_per_message_deflate=False
+            )
         logger.info("http server initialised")
 
     except Exception as e:
