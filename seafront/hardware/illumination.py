@@ -50,8 +50,6 @@ class IlluminationController:
                         "dac_percent": dac_percent,
                     }
 
-                    logger.info(f"Loaded intensity calibration for channel {handle}, max power: {max_power:.2f} mW")
-
                 except Exception as e:
                     logger.error(f"Failed to load calibration for channel {handle}: {e}")
                     # Don't add to LUTs, will fall back to linear scaling
