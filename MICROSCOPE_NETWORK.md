@@ -366,10 +366,10 @@ http://169.254.86.162:8000      # fallback — current IPv4 link-local (changes 
 WebSockets work over the same host/port (same origin), so live image streaming
 and control work unchanged.
 
-### Deploying the code change to lab3
+### Deploying to lab3
 
-The bind-address fix lives in this repo on `workstation`. `lab3` runs its own
-checkout of seafront, so it needs the change too: commit + push here, then
-`git pull` on `lab3` (or otherwise sync the two files
-`seafront/config/basics.py` and `seafront/__main__.py`).
+The bind-address fix is committed. On `lab3`: `git pull` its seafront checkout
+(or `scp` the two files `seafront/config/basics.py`, `seafront/__main__.py` over
+the SSH link). Confirmed working end-to-end: `http://lab3.local:8000` from
+`workstation`.
 ```
