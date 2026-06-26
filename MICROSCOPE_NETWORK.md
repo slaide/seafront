@@ -372,4 +372,56 @@ The bind-address fix is committed. On `lab3`: `git pull` its seafront checkout
 (or `scp` the two files `seafront/config/basics.py`, `seafront/__main__.py` over
 the SSH link). Confirmed working end-to-end: `http://lab3.local:8000` from
 `workstation`.
+
+---
+
+## 12. Planned: gateway PC (central access point)
+
+Scaling from the 2-machine link to the full lab: a **5-port switch** with **4
+microscope PCs** (each running seafront, driving one SQUID over USB) plus a
+**5th PC as the gateway**. The gateway hosts a Wi-Fi hotspot; you join it from a
+laptop/phone, open one dashboard, and reach every microscope through it. The
+microscope PCs are never contacted directly by clients.
+
+```
+        Wi-Fi hotspot ── clients (laptop/phone) join here
+              │
+        ┌─────┴──────┐
+        │ Gateway PC │  :8000  FastAPI dashboard
+        │            │  :8001→squid1:8000  …  :8004→squid4:8000  (Caddy)
+        └─────┬──────┘
+          5-port switch  (wired backbone)
+        ┌────┬────┬────┬────┐
+       PC1  PC2  PC3  PC4      each: seafront --host :: --port 8000
+```
+
+### Components on the gateway
+
+1. **Wi-Fi hotspot** — `nmcli device wifi hotspot` (NetworkManager runs DHCP for
+   clients). Clients only ever talk to the gateway.
+2. **Caddy reverse proxy** — one port per microscope, forwarded **root→root** so
+   seafront's HTML, API, and WebSocket all work with no URL rewriting. WebSocket
+   upgrade is automatic. Minimal `Caddyfile`:
+   ```
+   :8001 { reverse_proxy squid1:8000 }
+   :8002 { reverse_proxy squid2:8000 }
+   :8003 { reverse_proxy squid3:8000 }
+   :8004 { reverse_proxy squid4:8000 }
+   ```
+3. **FastAPI dashboard** (`:8000`) — a separate app serving the landing page. It
+   queries each microscope's seafront API **on demand** (status, and links to its
+   `:800N` port) and renders a card per microscope. Runs alongside Caddy.
+
+### Backbone addressing
+
+For this permanent, always-on setup, **static IPs on the wired NICs** are
+recommended over link-local + mDNS: stable proxy upstreams, no per-boot address
+changes, and no reliance on `.local` resolution inside Caddy/Go (whose pure-Go
+resolver may bypass nss-mdns). E.g. gateway `192.168.50.1`, squid1–4
+`192.168.50.11`–`.14`; point the `Caddyfile` at those addresses. Link-local +
+mDNS (sections 4–5) remains the zero-config option for ad-hoc bring-up.
+
+### Status
+
+Design agreed (Caddy forwarding + parallel FastAPI dashboard). Not yet built.
 ```
