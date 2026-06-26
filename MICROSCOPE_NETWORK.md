@@ -423,5 +423,15 @@ mDNS (sections 4–5) remains the zero-config option for ad-hoc bring-up.
 
 ### Status
 
-Design agreed (Caddy forwarding + parallel FastAPI dashboard). Not yet built.
+**Built** — see the `microscope-gateway` project (`~/code/microscope-gateway`).
+It ships Caddy + a FastAPI dashboard, a `config/microscopes.json` single source
+of truth, and scripts for everything (`install.sh`, `deploy.sh`, `apply-config.sh`,
+`hotspot-up/down.sh`, `start/stop/status.sh`). Deployed and verified on `lab3`
+(dashboard, proxied seafront, and WebSocket passthrough all work). Bring-up and
+day-to-day commands are in that project's `README.md`.
+
+Note: `lab3` currently doubles as a microscope PC (its own seafront on `:8000`),
+so its gateway dashboard runs on `:8080` and `squid1` points at that local
+seafront. On a dedicated gateway PC, set `dashboard_port` back to `8000` and use
+real per-microscope backbone IPs.
 ```
