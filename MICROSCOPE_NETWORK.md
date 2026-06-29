@@ -4,6 +4,19 @@ How we wired two microscope-control PCs together over a dumb switch with no
 DHCP, made them reachable by name across reboots, and how to replicate it for a
 fresh network or add another machine.
 
+> **As-built update (the link-local model below was the initial 2-machine bring-up).**
+> The production fleet (`lab1`–`lab4` + gateway) now runs on a **static
+> `192.168.50.0/24` backbone**, not link-local — addresses are fixed (`lab1` =
+> `.11` … `lab4` = `.14`, gateway `.1`), which Caddy needs as stable proxy
+> upstreams. The boxes also turned out to be **dual-homed**: the same wired NIC
+> carries both the `192.168.50.x` backbone and the lab's existing `10.10.0.x`
+> network (with its own DHCP/internet), so the "isolated, no-DHCP, link-local"
+> framing in §1–§10 is no longer the whole picture. Provisioning is now scripted
+> in the **seafront-gateway** project (`~/code/seafront-gateway`,
+> github.com/slaide/seafront-gateway) — `setup-microscope-pc.sh` pins the static
+> IP, installs ssh/avahi, and opens the firewall in one shot. The link-local +
+> mDNS material below remains valid for zero-config ad-hoc bring-up.
+
 ---
 
 ## 1. Motivation
@@ -423,7 +436,8 @@ mDNS (sections 4–5) remains the zero-config option for ad-hoc bring-up.
 
 ### Status
 
-**Built** — see the `microscope-gateway` project (`~/code/microscope-gateway`).
+**Built** — see the `seafront-gateway` project (`~/code/seafront-gateway`,
+github.com/slaide/seafront-gateway).
 It ships Caddy + a FastAPI dashboard, a `config/microscopes.json` single source
 of truth, and scripts for everything (`install.sh`, `deploy.sh`, `apply-config.sh`,
 `hotspot-up/down.sh`, `start/stop/status.sh`). Deployed and verified on `lab3`
