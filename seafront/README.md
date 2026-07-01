@@ -39,60 +39,90 @@ seafront/
     └── microcontroller/   Microcontroller ABC + teensy_microcontroller (USB serial)
 ```
 
-## The big picture
+## The application flow
 
-```mermaid
-flowchart TD
-    subgraph client["Web UI / API client"]
-        UI["api-client.js<br/>HTTP + WebSocket"]
-    end
-
-    subgraph server["FastAPI process"]
-        direction TB
-        R["route_wrapper<br/>dynamic route + RequestModel"]
-        H["handler_logic_get/post<br/>gating + validation"]
-        T["asyncio.to_thread(asyncio.run, ...)<br/>one OS thread + fresh event loop per request"]
-        CF["callfunc<br/>instantiate BaseCommand"]
-        L{"microscope.lock<br/>blocking=False"}
-        EX["Microscope.execute<br/>dispatch to _execute_*"]
-        WSlive["/ws/get_info/acquired_image<br/>live preview frames"]
-        WSacq["/ws/acquisition/status<br/>progress"]
-        ACQ["acquisition worker loop<br/>run_coroutine_threadsafe"]
-        LI[("latest_images")]
-        C409[["409 Conflict<br/>+ lock reasons"]]
-    end
-
-    subgraph hw["Hardware abstraction"]
-        MS["SquidAdapter / MockMicroscope"]
-        CAM["Camera driver<br/>galaxy / toupcam / mock"]
-        MC["Microcontroller<br/>Teensy USB serial"]
-    end
-
-    UI -->|"POST /api/action/*"| R
-    R --> H --> T --> CF --> L
-    L -->|busy| C409
-    L -->|acquired| EX --> MS
-    MS --> CAM
-    MS --> MC
-    EX -->|"pydantic result"| UI
-    UI -. subscribe .-> WSlive
-    UI -. subscribe .-> WSacq
-    MS -->|"store frame"| LI
-    LI --> WSlive
-    ACQ --> MS
-    ACQ --> WSacq
-```
-
-Three distinct data paths share the one `Microscope` instance:
+Three data paths share the one `Microscope` instance:
 
 1. **Synchronous commands** — `POST /api/action/*` and `/api/get_*`. Request → thread →
-   lock → `execute()` → JSON response. This is the bulk of the API.
+   lock → `execute()` → JSON response. This is the bulk of the API, and the path traced
+   below.
 2. **Live preview** — `stream_channel_begin` puts the camera in continuous mode; each frame
    is stored into `latest_images`, and the client pulls frames over the
    `/ws/get_info/acquired_image` WebSocket (JSON metadata, then a binary blob).
 3. **Background acquisition** — a long-running protocol runs on a dedicated worker event
    loop (`self.acqusition_eventloop`), driven via a command queue, reporting progress over
    `/ws/acquisition/status`.
+
+Here is a *concrete* trace of path 1 — `POST /api/action/snap_channel` (take one image on one
+channel) — from the HTTP boundary down to the USB hardware and back. Every hop cites the code
+so you can follow it.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client (JS)
+    participant F as FastAPI handler_logic_post
+    participant W as Worker OS thread (asyncio.run)
+    participant CF as callfunc + microscope.lock
+    participant EX as SquidAdapter.execute
+    participant MC as Teensy (pyserial)
+    participant CAM as Camera (gxipy, ctypes)
+    participant HW as USB hardware
+    participant S as latest_images store
+
+    C->>F: POST /api/action/snap_channel (RequestModel body)
+    F->>F: validate body, gating check, target_device check
+    F->>W: asyncio.to_thread(asyncio.run, callfunc)
+    W->>CF: instantiate ChannelSnapshot(request_data)
+    CF->>CF: microscope.lock(blocking=False, reason)
+    Note over CF: could not acquire → 409 + lock reasons
+    CF->>EX: await execute(ChannelSnapshot)
+    EX->>EX: microcontroller.locked(), dispatch _execute_ChannelSnapshot
+    EX->>MC: illumination_begin, send_cmd
+    MC->>HW: serial.write(command packet + CRC)
+    HW-->>MC: status packets, poll until ACK (timeout 1-5s)
+    EX->>CAM: main_camera.snap(channel)
+    CAM->>HW: trigger + get_image(timeout) via libgxiapi
+    HW-->>CAM: raw frame bytes
+    CAM-->>EX: numpy array, _process_image (crop/pad)
+    EX->>MC: illumination_end
+    EX-->>CF: ImageAcquiredResponse (_img = array)
+    CF->>S: route.callback write_image, _store_new_image
+    CF-->>F: response model (metadata only, no pixels)
+    F-->>C: 200 JSON (channel handle)
+    C->>S: WS /ws/get_info/acquired_image (channel handle)
+    S-->>C: JSON metadata, then binary pixel blob
+```
+
+What the diagram compresses:
+
+- **Thread-per-request** (`F→W`): each request gets its own OS thread + event loop, required
+  for the `RLock` hardware lock (see Concurrency).
+- **409 = busy**: `microscope.lock(blocking=False)` failing returns `get_lock_reasons()`,
+  naming the command that currently holds the hardware.
+- **Microcontroller hop** (`teensy_microcontroller.py`): `illumination_begin` builds a
+  fixed-length packet (opcode + args + cmd id + CRC), `send_cmd` writes it over pyserial,
+  then polls status packets until the Teensy echoes the matching cmd id — bounded by a 1–5 s
+  timeout.
+- **Camera hop** (`galaxy_camera.py`): `snap` triggers, then
+  `get_image(timeout=exposure+2000ms)` → `gxipy` → `ctypes` → `libgxiapi.so` → USB;
+  `_process_image` crops/pads. That timeout is the *only* bound on a hung camera.
+- **Pixels return separately**: the HTTP response is metadata only. `write_image` stores the
+  array in `latest_images`; the client fetches the downsampled frame as a binary blob over
+  `/ws/get_info/acquired_image`, keeping multi-MB data off the JSON path.
+
+### Two hardware transports
+
+| | Microcontroller (stage, illumination, filter wheel) | Camera (main + autofocus) |
+|---|---|---|
+| Driver | `microcontroller/teensy_microcontroller.py` | `camera/galaxy_camera.py`, `camera/toupcam_camera.py` |
+| Transport | pyserial (USB CDC), fixed-length packets + CRC | vendor SDK (`gxipy`/`toupcam`) → `ctypes` → `.so` → USB |
+| Call shape | write packet, poll status until matching cmd id | trigger + blocking `get_image(timeout)` or continuous callback |
+| Bounded? | yes — ack-poll timeout (1–5 s) | `get_image` yes; **`stream_off`/`unregister_capture_callback` no** |
+| Failure handling | `_usb_operation_with_reconnect` decorator (bounded close/reopen retries) | `_camera_operation_with_reconnect` decorator (bounded close/reopen retries) |
+
+The mocks (`mock_microscope.py`, `mock_camera.py`) replace both transports with synthetic
+images and simulated motion, so the whole flow runs with no hardware (`--microscope mocroscope`).
 
 ## Request routing — `route_wrapper`
 
