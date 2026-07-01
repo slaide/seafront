@@ -447,8 +447,6 @@ class SquidAdapter(Microscope):
                     except Exception as e:
                         logger.warning(f"Filter wheel initialization/configuration/homing failed: {e}")
                         logger.info("Continuing with microscope initialization...")
-                else:
-                    logger.info("Filter wheel not available - skipping initialization")
 
                 logger.info("done initializing microscope")
 
