@@ -36,7 +36,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.routing import APIWebSocketRoute
 from fastapi.staticfiles import StaticFiles
 
@@ -54,6 +54,7 @@ from seafront.config.basics import (
     ServerConfig,
 )
 from seafront.config.registry import ConfigRegistry
+from seafront.debug_introspect import format_stack_dump, register_signal_dumper
 from seafront.config.handles import (
     CalibrationConfig,
     CameraConfig,
@@ -311,6 +312,39 @@ class Core:
         """ stores the last acquisition error message for display in GUI """
         self._last_acquisition_error_timestamp: str | None = None
         """ stores the ISO timestamp of the last acquisition error """
+
+        # Install SIGUSR2 -> timestamped rich stack dump (thread stacks + lock reasons +
+        # asyncio tasks). Complements the SIGUSR1 faulthandler dump registered at module
+        # scope. See seafront/debug_introspect.py for how to use both.
+        try:
+            register_signal_dumper(
+                self.microscope,
+                GlobalConfigHandler.home() / "logs",
+                extra_loops=[self.acqusition_eventloop],
+            )
+        except Exception as e:
+            logger.warning(f"could not install SIGUSR2 stack dumper: {e}")
+
+        # Debug endpoint: dump where every thread/task is currently executing. Registered
+        # directly (not via route_wrapper) so it never takes the hardware lock and stays
+        # responsive while other request threads are wedged on it. Each request already
+        # runs in its own thread, so this answers even during a hang.
+        async def debug_stacks() -> PlainTextResponse:
+            text = await asyncio.to_thread(
+                format_stack_dump,
+                self.microscope,
+                [self.acqusition_eventloop],
+            )
+            return PlainTextResponse(text)
+
+        app.add_api_route(
+            "/api/debug/stacks",
+            debug_stacks,
+            methods=["GET"],
+            operation_id="api.debug.stacks.get",
+            summary="Dump all thread/task stacks and hardware lock reasons (debugging)",
+            tags=[RouteTag.DOCUMENTATION.value],
+        )
 
         # set up routes to member functions
 
