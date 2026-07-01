@@ -76,11 +76,15 @@ def linear_regression(
     return slope, intercept
 
 
-def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
+def _process_image(img: np.ndarray, pixel_format: str) -> tuple[np.ndarray, int]:
     """
     center crop main camera image to target size
 
     also pad so that top bits are used. e.g. if imaging bit depth is 12, top 12 bits will be set.
+
+    Takes ``pixel_format`` (e.g. "mono12") rather than the camera object so it can run
+    without holding the camera lock -- this is called from the streaming capture callback,
+    where holding the camera lock would deadlock against stream_off()/unregister_capture_callback().
     """
 
     cam_img_width = ConfigRegistry.get(CameraConfig.MAIN_IMAGE_WIDTH_PX)
@@ -125,7 +129,7 @@ def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
     assert image_file_pad_low is not None
     cambits = 0
 
-    match camera.pixel_format:
+    match pixel_format:
         case "mono8":
             cambits = 8
         case "mono10":
@@ -137,7 +141,7 @@ def _process_image(img: np.ndarray, camera: Camera) -> tuple[np.ndarray, int]:
         case "mono16":
             cambits = 16
         case _:
-            raise ValueError(f"unsupported pixel format {camera.pixel_format}")
+            raise ValueError(f"unsupported pixel format {pixel_format}")
 
     if image_file_pad_low.boolvalue:
         # e.g. ret = ret << (16 - 12)
@@ -1420,44 +1424,47 @@ class SquidAdapter(Microscope):
 
         logger.debug("squid - requested stream stop")
 
-        # If natural cleanup didn't happen, force comprehensive cleanup to prevent desync
-        if self.stream_callback is not None:
-            logger.warning("squid - streaming thread didn't clean up naturally, forcing comprehensive cleanup")
+        # Stop forwarding first: any capture callback still in flight on the camera SDK's
+        # acquisition thread sees stream_callback=None and returns immediately without
+        # touching the downstream (websocket) callback.
+        self.stream_callback = None
 
-            # Comprehensive camera state reset
+        # Stop the camera under the camera lock. This is deadlock-free now that the capture
+        # callback no longer acquires the camera lock (see _execute_ChannelStreamBegin), so
+        # stop_streaming()'s stream_off()/unregister_capture_callback() cannot block on it.
+        # The lock still provides mutual exclusion against snap/start_streaming; blocking=True
+        # so we reliably stop instead of silently leaving the camera streaming.
+        try:
+            with self.main_camera.locked() as cam:
+                if cam is None:
+                    raise RuntimeError("failed to acquire camera to stop streaming!")
+
+                logger.debug("squid - stopping camera streaming")
+                cam.stop_streaming()
+                logger.debug("squid - camera streaming stopped")
+        except Exception as e:
+            logger.warning(f"squid - failed to stop camera streaming: {e}")
+
+        # Turn off illumination for the streamed channel
+        channel_config = None
+        for ch in self.channels:
+            if ch.handle == command.channel.handle:
+                channel_config = ch
+                break
+
+        if channel_config is not None:
             try:
-                with self.main_camera.locked(blocking=False) as cam:
-                    if cam is None:
-                        raise RuntimeError("failed to acquire camera to stop streaming!")
-
-                    logger.debug("squid - stopping camera streaming")
-                    cam.stop_streaming()
-                    logger.debug("squid - forced camera streaming stop")
+                illum_code = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+                with self.microcontroller.locked() as qmc:
+                    if qmc is None:
+                        logger.debug("failed to acquire microcontroller lock to turn off illumination!!")
+                    else:
+                        await qmc.illumination_end(illum_code.value)
+                        logger.debug(f"squid - illumination cleanup for channel {command.channel.handle}")
             except Exception as e:
-                logger.warning(f"squid - failed to force camera streaming stop: {e}")
-            
-            # Find channel config to clean up illumination
-            channel_config = None
-            for ch in self.channels:
-                if ch.handle == command.channel.handle:
-                    channel_config = ch
-                    break
+                logger.warning(f"squid - failed illumination cleanup: {e}")
 
-            if channel_config is not None:
-                try:
-                    illum_code = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
-                    with self.microcontroller.locked() as qmc:
-                        if qmc is None:
-                            logger.debug("failed to acquire microcontroller locl to turn off illumination!!")
-                        else:
-                            await qmc.illumination_end(illum_code.value)
-                            logger.debug(f"squid - forced illumination cleanup for channel {command.channel.handle}")
-                except Exception as e:
-                    logger.warning(f"squid - failed to force illumination cleanup: {e}")
-
-            # Force microscope state cleanup
-            self.stream_callback = None
-            logger.debug("squid - completed forced comprehensive cleanup")
+        logger.debug("squid - completed stream stop")
 
         result = cmd.BasicSuccessResponse()
         return result  # type: ignore[no-any-return]
@@ -1555,7 +1562,7 @@ class SquidAdapter(Microscope):
                 await qmc.illumination_end(illum_code.value)
                 logger.debug("channel snap - after illum off")
 
-            img, cambits = _process_image(img, camera=main_camera)
+            img, cambits = _process_image(img, pixel_format=main_camera.pixel_format)
 
         logger.debug("squid - took channel snapshot")
 
@@ -1636,24 +1643,24 @@ class SquidAdapter(Microscope):
             # For regular sources (lasers), use intensity directly
             await qmc.illumination_begin(illum_code.value, calibrated_intensity)
 
-        def forward_image(img: np.ndarray) -> None:
-            if self.stream_callback is None:
-                return
-
-            img_np = img.copy()
-
-            # camera must only be locked for specific image acquisition, not for the whole duration where an image may be acquired
-            # there is currently no way to solve this well.. (this current solution is quite brittle)
-            with self.main_camera.locked() as main_camera:
-                if main_camera is None:
-                    error_internal("main camera is busy")
-                img_np, _cambits = _process_image(img_np, camera=main_camera)
-
-            self.stream_callback(img_np)
-
         with self.main_camera.locked() as main_camera:
             if main_camera is None:
                 error_internal("main camera is busy")
+
+            # Snapshot the pixel format now, while we hold the lock, so the streaming
+            # callback (which runs on the camera SDK's acquisition thread) never has to
+            # touch the camera or take the camera lock. Taking the camera lock inside the
+            # callback deadlocks against stop_streaming(): stream_off()/unregister_capture_callback()
+            # block until the in-flight callback returns, while the callback blocks on the lock.
+            stream_pixel_format = main_camera.pixel_format
+
+            def forward_image(img: np.ndarray) -> None:
+                if self.stream_callback is None:
+                    return
+
+                img_np, _cambits = _process_image(img.copy(), pixel_format=stream_pixel_format)
+
+                self.stream_callback(img_np)
 
             main_camera.start_streaming(
                 command.channel,
