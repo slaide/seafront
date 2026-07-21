@@ -84,24 +84,24 @@ class Microcontroller(ABC):
     # Hardware initialization (driver-specific)
 
     @abstractmethod
-    async def reset(self) -> None:
+    def reset(self) -> None:
         """Reset the microcontroller."""
         pass
 
     @abstractmethod
-    async def initialize(self) -> None:
+    def initialize(self) -> None:
         """Initialize the microcontroller (motor drivers, DAC, etc.)."""
         pass
 
     @abstractmethod
-    async def configure_actuators(self) -> None:
+    def configure_actuators(self) -> None:
         """Configure motor drivers, leadscrew pitch, velocity/acceleration limits."""
         pass
 
     # Stage control
 
     @abstractmethod
-    async def home(self, axis: tp.Literal["x", "y", "z"]) -> None:
+    def home(self, axis: tp.Literal["x", "y", "z"]) -> None:
         """
         Home the specified axis.
 
@@ -111,7 +111,7 @@ class Microcontroller(ABC):
         pass
 
     @abstractmethod
-    async def move_to_mm(self, axis: tp.Literal["x", "y", "z"], position_mm: float) -> None:
+    def move_to_mm(self, axis: tp.Literal["x", "y", "z"], position_mm: float) -> None:
         """
         Move to an absolute position on the specified axis.
 
@@ -122,7 +122,7 @@ class Microcontroller(ABC):
         pass
 
     @abstractmethod
-    async def move_by_mm(self, axis: tp.Literal["x", "y", "z"], distance_mm: float) -> None:
+    def move_by_mm(self, axis: tp.Literal["x", "y", "z"], distance_mm: float) -> None:
         """
         Move by a relative distance on the specified axis.
 
@@ -133,7 +133,7 @@ class Microcontroller(ABC):
         pass
 
     @abstractmethod
-    async def set_zero(self, axis: tp.Literal["x", "y", "z"]) -> None:
+    def set_zero(self, axis: tp.Literal["x", "y", "z"]) -> None:
         """
         Set the current position as zero for the specified axis.
 
@@ -143,7 +143,7 @@ class Microcontroller(ABC):
         pass
 
     @abstractmethod
-    async def set_limit_mm(
+    def set_limit_mm(
         self,
         axis: tp.Literal["x", "y", "z"],
         coord: float,
@@ -160,7 +160,7 @@ class Microcontroller(ABC):
         pass
 
     @abstractmethod
-    async def get_position(self) -> Position:
+    def get_position(self) -> Position:
         """
         Get the current stage position.
 
@@ -170,7 +170,7 @@ class Microcontroller(ABC):
         pass
 
     @abstractmethod
-    async def get_last_position(self) -> Position:
+    def get_last_position(self) -> Position:
         """
         Get the last known stage position from cached state.
 
@@ -182,7 +182,7 @@ class Microcontroller(ABC):
     # Illumination control
 
     @abstractmethod
-    async def illumination_begin(
+    def illumination_begin(
         self,
         source: int,
         intensity_percent: float,
@@ -199,7 +199,7 @@ class Microcontroller(ABC):
         pass
 
     @abstractmethod
-    async def illumination_end(self, source: int | None = None) -> None:
+    def illumination_end(self, source: int | None = None) -> None:
         """
         Turn off illumination.
 
@@ -211,34 +211,34 @@ class Microcontroller(ABC):
     # Autofocus laser
 
     @abstractmethod
-    async def af_laser_on(self) -> None:
+    def af_laser_on(self) -> None:
         """Turn on the autofocus laser."""
         pass
 
     @abstractmethod
-    async def af_laser_off(self) -> None:
+    def af_laser_off(self) -> None:
         """Turn off the autofocus laser."""
         pass
 
     # Filter wheel
 
     @abstractmethod
-    async def filter_wheel_init(self) -> None:
+    def filter_wheel_init(self) -> None:
         """Initialize the filter wheel hardware."""
         pass
 
     @abstractmethod
-    async def filter_wheel_configure_actuator(self) -> None:
+    def filter_wheel_configure_actuator(self) -> None:
         """Configure filter wheel motor parameters."""
         pass
 
     @abstractmethod
-    async def filter_wheel_home(self) -> None:
+    def filter_wheel_home(self) -> None:
         """Home the filter wheel to establish reference position."""
         pass
 
     @abstractmethod
-    async def filter_wheel_set_position(self, position: int) -> None:
+    def filter_wheel_set_position(self, position: int) -> None:
         """
         Set the filter wheel to a specific position.
 

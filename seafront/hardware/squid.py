@@ -377,18 +377,18 @@ class SquidAdapter(Microscope):
 
                 # reset the MCU
                 logger.debug("resetting mcu")
-                await qmc.reset()
+                qmc.reset()
                 logger.debug("done")
 
                 # reinitialize motor drivers and DAC
                 logger.debug("initializing microcontroller")
-                await qmc.initialize()
+                qmc.initialize()
                 logger.debug("done initializing microcontroller")
 
                 if True:
                     # disable for testing (new firmware should have better defaults)
                     logger.debug("configure_actuators")
-                    await qmc.configure_actuators()
+                    qmc.configure_actuators()
                     logger.debug("done configuring actuators")
 
                 logger.info("ensuring illumination is off")
@@ -403,38 +403,38 @@ class SquidAdapter(Microscope):
                     # this will turn off the led matrix
                     ILLUMINATION_CODE.ILLUMINATION_SOURCE_LED_ARRAY_FULL,
                 ]:
-                    await qmc.illumination_end(illum_src.value)
+                    qmc.illumination_end(illum_src.value)
 
                 logger.debug("calibrating xy stage")
 
                 # when starting up the microscope, the initial position is considered (0,0,0)
                 # even homing considers the limits, so before homing, we need to disable the limits
-                await qmc.set_limit_mm("z", -10.0, "lower")
-                await qmc.set_limit_mm("z", 10.0, "upper")
+                qmc.set_limit_mm("z", -10.0, "lower")
+                qmc.set_limit_mm("z", 10.0, "upper")
 
                 # move objective out of the way
-                await qmc.home("z")
-                await qmc.set_zero("z")
+                qmc.home("z")
+                qmc.set_zero("z")
                 # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
-                await qmc.set_limit_mm("z", 0.0, "lower")
-                await qmc.set_limit_mm("z", 6.7, "upper")
+                qmc.set_limit_mm("z", 0.0, "lower")
+                qmc.set_limit_mm("z", 6.7, "upper")
                 # home x to set x reference
-                await qmc.home("x")
-                await qmc.set_zero("x")
+                qmc.home("x")
+                qmc.set_zero("x")
                 # clear clamp in x
-                await qmc.move_by_mm("x", 30)
+                qmc.move_by_mm("x", 30)
                 # then move in position to properly apply clamp
-                await qmc.home("y")
-                await qmc.set_zero("y")
+                qmc.home("y")
+                qmc.set_zero("y")
                 # home x again to engage clamp
-                await qmc.home("x")
+                qmc.home("x")
 
                 # move to an arbitrary position to disengage the clamp
-                await qmc.move_by_mm("x", 30)
-                await qmc.move_by_mm("y", 30)
+                qmc.move_by_mm("x", 30)
+                qmc.move_by_mm("y", 30)
 
                 # and move objective up, slightly
-                await qmc.move_by_mm("z", 1)
+                qmc.move_by_mm("z", 1)
 
                 # Only initialize filter wheel if it's available
                 filter_wheel_available = ConfigRegistry.get(FilterWheelConfig.AVAILABLE)
@@ -442,11 +442,11 @@ class SquidAdapter(Microscope):
                     # Initialize filter wheel with homing sequence (matching Squid behavior)
                     logger.info("initializing filter wheel...")
                     try:
-                        await qmc.filter_wheel_init()
+                        qmc.filter_wheel_init()
                         logger.info("configuring filter wheel actuator...")
-                        await qmc.filter_wheel_configure_actuator()
+                        qmc.filter_wheel_configure_actuator()
                         logger.info("performing filter wheel homing...")
-                        await qmc.filter_wheel_home()
+                        qmc.filter_wheel_home()
                         logger.info("✓ Filter wheel initialized, configured, and homed")
                     except Exception as e:
                         logger.warning(f"Filter wheel initialization/configuration/homing failed: {e}")
@@ -546,7 +546,7 @@ class SquidAdapter(Microscope):
             # then:
             # if autofocus is available, measure and approach 0 in a loop up to 5 times
             try:
-                current_stage_position = await qmc.get_last_position()
+                current_stage_position = qmc.get_last_position()
             except IOError as e:
                 self.close()
                 raise DisconnectError() from e
@@ -570,7 +570,7 @@ class SquidAdapter(Microscope):
 
                 # then store current z coordinate as reference z
                 try:
-                    current_stage_position = await qmc.get_last_position()
+                    current_stage_position = qmc.get_last_position()
                 except IOError as e:
                     self.close()
                     raise DisconnectError() from e
@@ -800,15 +800,15 @@ class SquidAdapter(Microscope):
         half_z_mm = z_mm_movement_range / 2
 
         try:
-            current_pos = await qmc.get_last_position()
+            current_pos = qmc.get_last_position()
             _start_z_mm: float = current_pos.z_pos_mm
 
             # move down by half z range
             if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
-                await qmc.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
-                await qmc.move_by_mm("z", Z_MM_BACKLASH_COUNTER)
+                qmc.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
+                qmc.move_by_mm("z", Z_MM_BACKLASH_COUNTER)
             else:
-                await qmc.move_by_mm("z", -half_z_mm)
+                qmc.move_by_mm("z", -half_z_mm)
         except IOError as e:
             self.close()
             raise DisconnectError() from e
@@ -829,7 +829,7 @@ class SquidAdapter(Microscope):
             if i > 0:
                 # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
                 try:
-                    await qmc.move_by_mm("z", z_step_mm)
+                    qmc.move_by_mm("z", z_step_mm)
                 except IOError as e:
                     self.close()
                     raise DisconnectError() from e
@@ -840,7 +840,7 @@ class SquidAdapter(Microscope):
 
         # move to original position
         try:
-            await qmc.move_by_mm("z", -half_z_mm)
+            qmc.move_by_mm("z", -half_z_mm)
         except IOError as e:
             self.close()
             raise DisconnectError() from e
@@ -964,7 +964,7 @@ class SquidAdapter(Microscope):
 
         # -- eval performance, display with pyplot
         if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_EVAL_FIT:
-            current_pos = await qmc.get_last_position()
+            current_pos = qmc.get_last_position()
             start_z = current_pos.z_pos_mm
 
             half_z_mm = z_mm_movement_range / 2
@@ -972,16 +972,16 @@ class SquidAdapter(Microscope):
             z_step_mm = z_mm_movement_range / (num_z_steps_eval - 1)
 
             if Z_MM_BACKLASH_COUNTER != 0:  # is not None:
-                await qmc.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
-                await qmc.move_by_mm("z", Z_MM_BACKLASH_COUNTER)
+                qmc.move_by_mm("z", -(half_z_mm + Z_MM_BACKLASH_COUNTER))
+                qmc.move_by_mm("z", Z_MM_BACKLASH_COUNTER)
             else:
-                await qmc.move_by_mm("z", -half_z_mm)
+                qmc.move_by_mm("z", -half_z_mm)
 
             approximated_z: list[tuple[float, float]] = []
             for i in range(num_z_steps_eval):
                 if i > 0:
                     # move up by half z range to get position at original position, but moved to from fixed direction to counter backlash
-                    await qmc.move_by_mm("z", z_step_mm)
+                    qmc.move_by_mm("z", z_step_mm)
 
                 approx_um = await self._approximate_laser_af_displacement_um(
                     cmd.LaserAutofocusCalibrationData(
@@ -990,12 +990,12 @@ class SquidAdapter(Microscope):
                         calibration_position=cmd.Position.zero(),
                     )
                 )
-                current_pos = await qmc.get_last_position()
+                current_pos = qmc.get_last_position()
                 current_z_mm = current_pos.z_pos_mm
                 approximated_z.append((current_z_mm - start_z, approx_um))
 
             # move to original position
-            await qmc.move_by_mm("z", -half_z_mm)
+            qmc.move_by_mm("z", -half_z_mm)
 
             plt.figure(figsize=(8, 6))
             # v[0] is real z offset in mm, v[1] is measured displacement in um
@@ -1044,7 +1044,7 @@ class SquidAdapter(Microscope):
         x_reference = (await measure()).tracked_dot_x
 
         try:
-            calibration_position = await qmc.get_last_position()
+            calibration_position = qmc.get_last_position()
         except IOError as e:
             self.close()
             raise DisconnectError() from e
@@ -1085,7 +1085,7 @@ class SquidAdapter(Microscope):
 
     async def get_current_state(self) -> AdapterState:
         try:
-            last_stage_position = await self.microcontroller.get_last_position()
+            last_stage_position = self.microcontroller.get_last_position()
         except IOError as e:
             self.close()
             logger.debug("microcontroller disconnected (IOError)")
@@ -1211,16 +1211,16 @@ class SquidAdapter(Microscope):
             cmd.error_internal(detail="already in loading position")
 
         # home z
-        await qmc.home("z")
+        qmc.home("z")
 
         # clear clamp in y first
-        await qmc.move_to_mm("y", 30)
+        qmc.move_to_mm("y", 30)
         # then clear clamp in x
-        await qmc.move_to_mm("x", 30)
+        qmc.move_to_mm("x", 30)
 
         # then home y, x
-        await qmc.home("y")
-        await qmc.home("x")
+        qmc.home("y")
+        qmc.home("x")
 
         self.is_in_loading_position = True
 
@@ -1237,9 +1237,9 @@ class SquidAdapter(Microscope):
         if not self.is_in_loading_position:
             cmd.error_internal(detail="not in loading position")
 
-        await qmc.move_to_mm("x", 30)
-        await qmc.move_to_mm("y", 30)
-        await qmc.move_to_mm("z", 1)
+        qmc.move_to_mm("x", 30)
+        qmc.move_to_mm("y", 30)
+        qmc.move_to_mm("z", 1)
 
         self.is_in_loading_position = False
 
@@ -1258,7 +1258,7 @@ class SquidAdapter(Microscope):
 
         # Calculate target position after relative movement
         try:
-            current_stage_position = await qmc.get_last_position()
+            current_stage_position = qmc.get_last_position()
         except IOError as e:
             self.close()
             raise DisconnectError() from e
@@ -1283,7 +1283,7 @@ class SquidAdapter(Microscope):
         if is_forbidden:
             cmd.error_internal(detail=error_message)
 
-        await qmc.move_by_mm(command.axis, command.distance_mm)
+        qmc.move_by_mm(command.axis, command.distance_mm)
 
         logger.debug("squid - moved by")
 
@@ -1316,7 +1316,7 @@ class SquidAdapter(Microscope):
         approach_x_before_y = True
 
         if command.x_mm is not None and command.y_mm is not None:
-            current_stage_position = await qmc.get_last_position()
+            current_stage_position = qmc.get_last_position()
 
             # plate center is (very) rougly at x=61mm, y=40mm
             # we have: start position, target position, and two possible edges to move across
@@ -1346,7 +1346,7 @@ class SquidAdapter(Microscope):
                     cmd.error_internal(
                         detail=f"calibrated x coordinate out of bounds {x_mm = }"
                     )
-                await qmc.move_to_mm("x", x_mm)
+                qmc.move_to_mm("x", x_mm)
 
             if command.y_mm is not None:
                 y_mm = self._pos_y_real_to_measured(command.y_mm)
@@ -1354,7 +1354,7 @@ class SquidAdapter(Microscope):
                     cmd.error_internal(
                         detail=f"calibrated y coordinate out of bounds {y_mm = }"
                     )
-                await qmc.move_to_mm("y", y_mm)
+                qmc.move_to_mm("y", y_mm)
         else:
             if command.y_mm is not None:
                 y_mm = self._pos_y_real_to_measured(command.y_mm)
@@ -1362,7 +1362,7 @@ class SquidAdapter(Microscope):
                     cmd.error_internal(
                         detail=f"calibrated y coordinate out of bounds {y_mm = }"
                     )
-                await qmc.move_to_mm("y", y_mm)
+                qmc.move_to_mm("y", y_mm)
 
             if command.x_mm is not None:
                 x_mm = self._pos_x_real_to_measured(command.x_mm)
@@ -1370,7 +1370,7 @@ class SquidAdapter(Microscope):
                     cmd.error_internal(
                         detail=f"calibrated x coordinate out of bounds {x_mm = }"
                     )
-                await qmc.move_to_mm("x", x_mm)
+                qmc.move_to_mm("x", x_mm)
 
         if command.z_mm is not None:
             z_mm = self._pos_z_real_to_measured(command.z_mm)
@@ -1378,7 +1378,7 @@ class SquidAdapter(Microscope):
                 cmd.error_internal(
                     detail=f"calibrated z coordinate out of bounds {z_mm = }"
                 )
-            await qmc.move_to_mm("z", z_mm)
+            qmc.move_to_mm("z", z_mm)
 
         logger.debug("squid - moved to")
 
@@ -1459,7 +1459,7 @@ class SquidAdapter(Microscope):
                     if qmc is None:
                         logger.debug("failed to acquire microcontroller lock to turn off illumination!!")
                     else:
-                        await qmc.illumination_end(illum_code.value)
+                        qmc.illumination_end(illum_code.value)
                         logger.debug(f"squid - illumination cleanup for channel {command.channel.handle}")
             except Exception as e:
                 logger.warning(f"squid - failed illumination cleanup: {e}")
@@ -1520,7 +1520,7 @@ class SquidAdapter(Microscope):
 
             try:
                 logger.debug(f"channel snap - using filter '{filter_config.name}' (handle: {filter_config.handle}, wheel position: {filter_config.slot})")
-                await qmc.filter_wheel_set_position(filter_config.slot)
+                qmc.filter_wheel_set_position(filter_config.slot)
             except Exception as e:
                 cmd.error_internal(
                     detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
@@ -1538,14 +1538,14 @@ class SquidAdapter(Microscope):
         if illum_code.is_led_matrix:
             # Convert calibrated intensity to RGB brightness (0-1 range)
             rgb_brightness = calibrated_intensity / 100.0
-            await qmc.illumination_begin(
+            qmc.illumination_begin(
                 illum_code.value,
                 100.0,  # intensity_percent is ignored for LED matrix
                 (rgb_brightness, rgb_brightness, rgb_brightness)
             )
         else:
             # For regular sources (lasers), use intensity directly
-            await qmc.illumination_begin(illum_code.value, calibrated_intensity)
+            qmc.illumination_begin(illum_code.value, calibrated_intensity)
 
         with self.main_camera.locked() as main_camera:
             if main_camera is None:
@@ -1559,7 +1559,7 @@ class SquidAdapter(Microscope):
             finally:
                 logger.debug("channel snap - after acq")
 
-                await qmc.illumination_end(illum_code.value)
+                qmc.illumination_end(illum_code.value)
                 logger.debug("channel snap - after illum off")
 
             img, cambits = _process_image(img, pixel_format=main_camera.pixel_format)
@@ -1619,7 +1619,7 @@ class SquidAdapter(Microscope):
 
             try:
                 logger.debug(f"channel stream - setting filter wheel to position {filter_config.slot} ({filter_config.name})")
-                await qmc.filter_wheel_set_position(filter_config.slot)
+                qmc.filter_wheel_set_position(filter_config.slot)
             except Exception as e:
                 cmd.error_internal(
                     detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
@@ -1634,14 +1634,14 @@ class SquidAdapter(Microscope):
         if illum_code.is_led_matrix:
             # Convert calibrated intensity to RGB brightness (0-1 range)
             rgb_brightness = calibrated_intensity / 100.0
-            await qmc.illumination_begin(
+            qmc.illumination_begin(
                 illum_code.value,
                 100.0,  # intensity_percent is ignored for LED matrix
                 (rgb_brightness, rgb_brightness, rgb_brightness)
             )
         else:
             # For regular sources (lasers), use intensity directly
-            await qmc.illumination_begin(illum_code.value, calibrated_intensity)
+            qmc.illumination_begin(illum_code.value, calibrated_intensity)
 
         with self.main_camera.locked() as main_camera:
             if main_camera is None:
@@ -1710,7 +1710,7 @@ class SquidAdapter(Microscope):
 
         OFFSET_MOVEMENT_THRESHOLD_MM = 0.5e-3
 
-        current_state = await qmc.get_last_position()
+        current_state = qmc.get_last_position()
         current_z = current_state.z_pos_mm
         initial_z = current_z
 
@@ -1746,7 +1746,7 @@ class SquidAdapter(Microscope):
         try:
             last_distance_estimate_mm = await _estimate_offset_mm()
             logger.debug("autofocus - estimated offset")
-            last_z_mm = (await qmc.get_last_position()).z_pos_mm
+            last_z_mm = (qmc.get_last_position()).z_pos_mm
             MAX_MOVEMENT_RANGE_MM = 0.3  # should be derived from the calibration data, but this value works fine in practice
             if math.fabs(last_distance_estimate_mm) > MAX_MOVEMENT_RANGE_MM:
                 cmd.error_internal(
@@ -1766,27 +1766,27 @@ class SquidAdapter(Microscope):
                     distance_estimate_mm
                 ):
                     # move back to last z, since that seemed like the better position to be in
-                    await qmc.move_to_mm("z", last_z_mm)
+                    qmc.move_to_mm("z", last_z_mm)
                     logger.debug("autofocus - reset z to known good position")
                     # TODO unsure if this is the best approach. we cannot do better, but we also have not actually gotten close to the offset
                     reached_threshold = True
                     break
 
                 last_distance_estimate_mm = distance_estimate_mm
-                last_z_mm = (await qmc.get_position()).z_pos_mm
+                last_z_mm = (qmc.get_position()).z_pos_mm
 
                 # if movement distance is not worth compensating, stop
                 if math.fabs(distance_estimate_mm) < OFFSET_MOVEMENT_THRESHOLD_MM:
                     reached_threshold = True
                     break
 
-                await qmc.move_by_mm("z", distance_estimate_mm)
+                qmc.move_by_mm("z", distance_estimate_mm)
                 num_compensating_moves += 1
                 logger.debug("autofocus - refined z")
 
         except Exception:
             # if any interaction failed, attempt to reset z position to known somewhat-good position
-            await qmc.move_to_mm("z", initial_z)
+            qmc.move_to_mm("z", initial_z)
             logger.debug("autofocus - reset z position")
 
         logger.debug("squid - used autofocus to approach target displacement")
@@ -1804,7 +1804,7 @@ class SquidAdapter(Microscope):
         command:cmd.AutofocusSnap
     ):
         if command.turn_laser_on:
-            await qmc.af_laser_on()
+            qmc.af_laser_on()
             logger.debug("squid - autofocus - turned laser on")
 
         channel_config = sc.AcquisitionChannelConfig(
@@ -1826,7 +1826,7 @@ class SquidAdapter(Microscope):
         logger.debug("squid - autofocus - acquired image")
 
         if command.turn_laser_off:
-            await qmc.af_laser_off()
+            qmc.af_laser_off()
             logger.debug("squid - autofocus - turned laser off")
 
         result = cmd.AutofocusSnapResult(
@@ -1926,12 +1926,12 @@ class SquidAdapter(Microscope):
                     return result  # type: ignore[no-any-return]
 
                 elif isinstance(command, cmd.AutofocusLaserWarmup):
-                    await qmc.af_laser_on()
+                    qmc.af_laser_on()
 
                     # wait for the laser to warm up
                     await asyncio.sleep(command.warmup_time_s)
 
-                    await qmc.af_laser_off()
+                    qmc.af_laser_off()
 
                     logger.debug("squid - warmed up autofocus laser")
 
@@ -1943,7 +1943,7 @@ class SquidAdapter(Microscope):
                     for channel_config in self.channels:
                         try:
                             illum_src = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
-                            await qmc.illumination_end(illum_src.value)
+                            qmc.illumination_end(illum_src.value)
                             logger.debug(
                                 f"squid - illumination end all - turned off illumination for {channel_config.name} (slot {channel_config.source_slot})"
                             )
@@ -1976,7 +1976,7 @@ class SquidAdapter(Microscope):
 
                 elif isinstance(command, cmd.MC_getLastPosition):
                     logger.debug("squid - fetching last stage position")
-                    res = await qmc.get_last_position()
+                    res = qmc.get_last_position()
                     logger.debug("squid - fetched last stage position")
                     return res  # type: ignore[no-any-return]
 

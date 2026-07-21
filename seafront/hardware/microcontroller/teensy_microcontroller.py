@@ -1,6 +1,5 @@
 # this code is written on top of the firmware specifications in github.com/hongquanli/octopi-research
 
-import asyncio
 import dataclasses
 import threading
 import time
@@ -977,48 +976,48 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
 
     # High-level interface methods (implementing abstract class)
 
-    async def reset(self) -> None:
+    def reset(self) -> None:
         """Reset the microcontroller."""
-        await self.send_cmd(Command.reset())
+        self.send_cmd(Command.reset())
 
-    async def initialize(self) -> None:
+    def initialize(self) -> None:
         """Initialize the microcontroller (motor drivers, DAC, etc.)."""
-        await self.send_cmd(Command.initialize())
+        self.send_cmd(Command.initialize())
 
-    async def configure_actuators(self) -> None:
+    def configure_actuators(self) -> None:
         """Configure motor drivers, leadscrew pitch, velocity/acceleration limits."""
-        await self.send_cmd(Command.configure_actuators())
+        self.send_cmd(Command.configure_actuators())
 
-    async def home(self, axis: tp.Literal["x", "y", "z"]) -> None:
+    def home(self, axis: tp.Literal["x", "y", "z"]) -> None:
         """Home the specified axis."""
-        await self.send_cmd(Command.home(axis))
+        self.send_cmd(Command.home(axis))
 
-    async def move_to_mm(self, axis: tp.Literal["x", "y", "z"], position_mm: float) -> None:
+    def move_to_mm(self, axis: tp.Literal["x", "y", "z"], position_mm: float) -> None:
         """Move to an absolute position on the specified axis."""
-        await self.send_cmd(Command.move_to_mm(axis, position_mm))
+        self.send_cmd(Command.move_to_mm(axis, position_mm))
 
-    async def move_by_mm(self, axis: tp.Literal["x", "y", "z"], distance_mm: float) -> None:
+    def move_by_mm(self, axis: tp.Literal["x", "y", "z"], distance_mm: float) -> None:
         """Move by a relative distance on the specified axis."""
-        await self.send_cmd(Command.move_by_mm(axis, distance_mm))
+        self.send_cmd(Command.move_by_mm(axis, distance_mm))
 
-    async def set_zero(self, axis: tp.Literal["x", "y", "z"]) -> None:
+    def set_zero(self, axis: tp.Literal["x", "y", "z"]) -> None:
         """Set the current position as zero for the specified axis."""
-        await self.send_cmd(Command.set_zero(axis))
+        self.send_cmd(Command.set_zero(axis))
 
-    async def set_limit_mm(
+    def set_limit_mm(
         self,
         axis: tp.Literal["x", "y", "z"],
         coord: float,
         bound: tp.Literal["upper", "lower"],
     ) -> None:
         """Set a software limit on the specified axis."""
-        await self.send_cmd(Command.set_limit_mm(axis, coord, bound))
+        self.send_cmd(Command.set_limit_mm(axis, coord, bound))
 
-    async def get_position(self) -> AdapterPosition:
+    def get_position(self) -> AdapterPosition:
         """Get the current stage position."""
-        return await self.get_last_position()
+        return self.get_last_position()
 
-    async def illumination_begin(
+    def illumination_begin(
         self,
         source: int,
         intensity_percent: float,
@@ -1027,29 +1026,29 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         """Turn on illumination."""
         illum_source = ILLUMINATION_CODE(source)
         if rgb is not None:
-            await self.send_cmd(Command.illumination_begin(illum_source, intensity_percent, rgb[0], rgb[1], rgb[2]))
+            self.send_cmd(Command.illumination_begin(illum_source, intensity_percent, rgb[0], rgb[1], rgb[2]))
         else:
-            await self.send_cmd(Command.illumination_begin(illum_source, intensity_percent))
+            self.send_cmd(Command.illumination_begin(illum_source, intensity_percent))
 
-    async def illumination_end(self, source: int | None = None) -> None:
+    def illumination_end(self, source: int | None = None) -> None:
         """Turn off illumination."""
         if source is not None:
             illum_source = ILLUMINATION_CODE(source)
-            await self.send_cmd(Command.illumination_end(illum_source))
+            self.send_cmd(Command.illumination_end(illum_source))
         else:
-            await self.send_cmd(Command.illumination_end(None))
+            self.send_cmd(Command.illumination_end(None))
 
-    async def af_laser_on(self) -> None:
+    def af_laser_on(self) -> None:
         """Turn on the autofocus laser."""
-        await self.send_cmd(Command.af_laser_illum_begin())
+        self.send_cmd(Command.af_laser_illum_begin())
 
-    async def af_laser_off(self) -> None:
+    def af_laser_off(self) -> None:
         """Turn off the autofocus laser."""
-        await self.send_cmd(Command.af_laser_illum_end())
+        self.send_cmd(Command.af_laser_illum_end())
 
     # ==================== Internal Implementation ====================
 
-    async def _wait_until_cmd_is_finished(
+    def _wait_until_cmd_is_finished(
         self,
         cmd: "Command",
         _ignore_cmd_id: bool = False,
@@ -1065,7 +1064,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         last_position_z = 0
         timeoutinfo: None | MicrocontrollerTimeoutInfo = None
 
-        async def read_packet(packet: MicrocontrollerStatusPackage) -> bool:
+        def read_packet(packet: MicrocontrollerStatusPackage) -> bool:
             nonlocal last_position_x
             nonlocal last_position_y
             nonlocal last_position_z
@@ -1120,10 +1119,10 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         if cmd.is_move_cmd:
             # wait short time for move commands to have engaged the motors to start moving
             # (moving takes way longer than this short delay, so we are waiting this time anyway)
-            await asyncio.sleep(5e-3)
+            time.sleep(5e-3)
 
         try:
-            await self._read_packets(until=read_packet, timeout_s=timeout_s)
+            self._read_packets(until=read_packet, timeout_s=timeout_s)
         except MicrocontrollerTimeout as mte:
             logger.debug("_read_packets timed out")
             if mte.info is None:
@@ -1132,10 +1131,9 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                 logger.debug(f"did not overwrite timeoutinfo {mte.info} with {timeoutinfo}")
             raise mte
 
-    async def _read_packets(
+    def _read_packets(
         self,
-        until: tp.Callable[[MicrocontrollerStatusPackage], bool]
-        | tp.Callable[[MicrocontrollerStatusPackage], tp.Coroutine[None, None, bool]],
+        until: tp.Callable[[MicrocontrollerStatusPackage], bool],
         timeout_s: float = 5.0,
         MICROCONTROLLER_PACKET_RETRY_DELAY_S=0.4e-3,
     ):
@@ -1168,13 +1166,13 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
 
             if self.handle is None:
                 logger.warning("self.handle is None ")
-                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
+                time.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
 
             bytes_waiting = self._usb_check_waiting()
 
             if bytes_waiting < firmware_config.READ_PACKET_LENGTH:
-                await asyncio.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
+                time.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
 
             # skip all bytes except those in the last package, since parsing takes too long
@@ -1192,16 +1190,11 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
             # save current position as last known position
             self.last_position = packet.pos
 
-            until_res = until(packet)
-            # the type checker does not understand inspect.iscoroutine, so we isinstance a bool
-            if isinstance(until_res, bool):
-                should_terminate: bool = until_res
-            else:
-                should_terminate: bool = await until_res
+            should_terminate: bool = until(packet)
 
             self.terminate_reading_received_packet_thread = should_terminate
 
-    async def get_last_position(self) -> AdapterPosition:
+    def get_last_position(self) -> AdapterPosition:
         """
         get last known position of the stage
 
@@ -1213,7 +1206,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                 # do not wait to read a package if there is currently no connection
                 if self.handle is not None:
                     # internally updates the last known position
-                    await self._read_packets(lambda p: True)
+                    self._read_packets(lambda p: True)
 
             except Exception as e:
                 print(f"got error? {e}")
@@ -1239,7 +1232,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         return self.last_command_id
 
     @microcontroller_exclusive
-    async def send_cmd(self, cmd_in: tp.Union["Command", list["Command"]]):
+    def send_cmd(self, cmd_in: tp.Union["Command", list["Command"]]):
         "send command for execution. waits for command to complete if command type requires awaiting."
         if isinstance(cmd_in, list):
             cmds = cmd_in
@@ -1284,7 +1277,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                             f"awaiting {CommandName(cmd[1])} the {cmd_repeat_attempt}th time"
                         )
                         try:
-                            await self._wait_until_cmd_is_finished(
+                            self._wait_until_cmd_is_finished(
                                 cmd,
                                 # allow more time for a move command to finish
                                 timeout_s=5.0 if cmd.is_move_cmd else 1.0,
@@ -1532,7 +1525,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         logger.debug("microcontroller - closed")
 
     @microcontroller_exclusive
-    async def filter_wheel_set_position(self, position: int):
+    def filter_wheel_set_position(self, position: int):
         """
         Set the filter wheel to the specified position.
         Position should be between FILTERWHEEL_MIN_INDEX and FILTERWHEEL_MAX_INDEX.
@@ -1553,18 +1546,18 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
             usteps = firmware_config.mm_to_ustep_w(distance_mm)
             move_commands = Command.move_w_usteps(usteps)
 
-            await self.send_cmd(move_commands)
+            self.send_cmd(move_commands)
 
             # Update internal position tracking
             self.filter_wheel_position = position
 
     @microcontroller_exclusive
-    async def filter_wheel_init(self):
+    def filter_wheel_init(self):
         """Initialize the filter wheel"""
-        await self.send_cmd(Command.filter_wheel_init())
+        self.send_cmd(Command.filter_wheel_init())
 
     @microcontroller_exclusive
-    async def filter_wheel_configure_actuator(self):
+    def filter_wheel_configure_actuator(self):
         """Configure the filter wheel (W axis) motor parameters before homing"""
         # Configure W axis leadscrew pitch
         cmd = Command()
@@ -1572,7 +1565,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         cmd[2] = firmware_config.AXIS_W
         cmd[3] = (int(firmware_config.SCREW_PITCH_W_MM * 1e3) >> 8 * 1) & 0xFF
         cmd[4] = (int(firmware_config.SCREW_PITCH_W_MM * 1e3) >> 8 * 0) & 0xFF
-        await self.send_cmd(cmd)
+        self.send_cmd(cmd)
 
         # Configure W axis motor driver (microstepping and current)
         cmd = Command()
@@ -1582,7 +1575,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         cmd[4] = (firmware_config.W_MOTOR_RMS_CURRENT_mA >> 8 * 1) & 0xFF
         cmd[5] = (firmware_config.W_MOTOR_RMS_CURRENT_mA >> 8 * 0) & 0xFF
         cmd[6] = int(firmware_config.W_MOTOR_I_HOLD * 255)
-        await self.send_cmd(cmd)
+        self.send_cmd(cmd)
 
         # Configure W axis max velocity and acceleration
         cmd = Command()
@@ -1592,10 +1585,10 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         cmd[4] = (int(firmware_config.MAX_VELOCITY_W_mm * 100) >> 8 * 0) & 0xFF
         cmd[5] = (int(firmware_config.MAX_ACCELERATION_W_mm * 10) >> 8 * 1) & 0xFF
         cmd[6] = (int(firmware_config.MAX_ACCELERATION_W_mm * 10) >> 8 * 0) & 0xFF
-        await self.send_cmd(cmd)
+        self.send_cmd(cmd)
 
     @microcontroller_exclusive
-    async def filter_wheel_home(self):
+    def filter_wheel_home(self):
         """
         Home the filter wheel to establish reference position.
 
@@ -1608,13 +1601,13 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         """
         # Home the W axis - this moves to the physical limit switch
         # The home command is marked as a move command so send_cmd will wait for completion
-        await self.send_cmd(Command.home("w"))
+        self.send_cmd(Command.home("w"))
 
         # Apply small offset to move away from the limit switch
         # This matches SQUID_FILTERWHEEL_OFFSET from the original Squid code
         offset_usteps = firmware_config.mm_to_ustep_w(firmware_config.FILTERWHEEL_OFFSET_MM)
         move_commands = Command.move_w_usteps(offset_usteps)
-        await self.send_cmd(move_commands)
+        self.send_cmd(move_commands)
 
         # Reset position tracking to minimum index (position 1)
         self.filter_wheel_position = firmware_config.FILTERWHEEL_MIN_INDEX
