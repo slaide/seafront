@@ -210,19 +210,6 @@ class Microscope(BaseModel, abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def snap_selected_channels(self, config_file: sc.AcquisitionConfig) -> cmd.BasicSuccessResponse:
-        """
-        Take snapshots of all enabled channels in the acquisition config.
-        
-        Args:
-            config_file: Acquisition configuration with enabled channels
-            
-        Returns:
-            Success response
-        """
-        pass
-
-    @abc.abstractmethod
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         """
         Main command dispatcher for all microscope operations.

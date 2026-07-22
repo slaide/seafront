@@ -528,55 +528,6 @@ class MockMicroscope(Microscope):
             logger.warning(f"Unknown imaging order '{imaging_order}', using protocol_order")
             return channels
 
-    async def snap_selected_channels(self, config_file: sc.AcquisitionConfig) -> cmd.BasicSuccessResponse:
-        """Mock channel snapping."""
-        logger.info("Mock microscope: snapping selected channels")
-
-        enabled_channels = [ch for ch in config_file.channels if ch.enabled]
-
-        # Get imaging order from machine config and sort channels
-        g_config = GlobalConfigHandler.get_dict()
-        imaging_order = g_config.get(ImagingConfig.ORDER.value, "protocol_order")
-        if isinstance(imaging_order, str):
-            imaging_order_value = imaging_order
-        else:
-            imaging_order_value = imaging_order.strvalue if hasattr(imaging_order, 'strvalue') else "protocol_order"
-
-        # Sort channels according to configured imaging order
-        enabled_channels = self._sort_channels_by_imaging_order(enabled_channels, tp.cast(ImagingOrder, imaging_order_value))
-
-        for channel in enabled_channels:
-            # Generate synthetic image via camera
-            synthetic_img = self.main_camera.value.snap(channel)
-
-            # Create image store entry
-            image_entry = cmd.ImageStoreEntry(
-                pixel_format="mono16",
-                info=cmd.ImageStoreInfo(
-                    channel=channel,
-                    width_px=synthetic_img.shape[1],
-                    height_px=synthetic_img.shape[0],
-                    timestamp=time.time(),
-                    position=cmd.SitePosition(
-                        well_name="mock_well",
-                        site_x=0,
-                        site_y=0,
-                        site_z=0,
-                        x_offset_mm=0.0,
-                        y_offset_mm=0.0,
-                        z_offset_mm=0.0,
-                        position=self._current_position
-                    ),
-                    storage_path=None
-                )
-            )
-            image_entry._img = synthetic_img
-
-            self._latest_images[channel.handle] = image_entry
-
-        logger.info(f"Mock microscope: snapped {len(enabled_channels)} channels")
-        return cmd.BasicSuccessResponse()
-
     def get_hardware_limits(self) -> HardwareLimits:
         """
         Get mock hardware limits for testing.
