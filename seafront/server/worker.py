@@ -117,8 +117,13 @@ class MicroscopeWorker:
 
     @property
     def is_busy(self) -> bool:
-        """True if a command is currently in flight."""
-        return self._current_cancel is not None
+        """True while a command is in flight (from acceptance until completion).
+
+        Backed by the in-flight token, so it also covers the brief handoff window
+        before the worker thread picks the command up. Read by the status hatch;
+        never blocks.
+        """
+        return self._inflight.locked()
 
     # -- worker thread -----------------------------------------------------
 

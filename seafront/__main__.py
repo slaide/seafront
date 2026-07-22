@@ -407,15 +407,19 @@ class Core:
                     instance = target_func(**request_data)
                     arg = instance
                     if isinstance(instance, BaseCommand):
+                        async def run_on_worker(command):
+                            # Single hardware owner: submit() returns None when a
+                            # command is already in flight (reject-on-busy).
+                            submitted = self.worker.submit(command)
+                            if submitted is None:
+                                error_microscope_busy(self.microscope.get_lock_reasons())
+                            return await asyncio.wrap_future(submitted[0])
+
                         if route.require_hardware_lock:
                             try:
-                                # ensure a connection is established, before running any other command
-                                command_name = instance.__class__.__name__
-                                with self.microscope.lock(blocking=False, reason=f"executing command: {command_name}") as microscope:
-                                    if microscope is None:
-                                        error_microscope_busy(self.microscope.get_lock_reasons())
-                                    _ = await microscope.execute(EstablishHardwareConnection())
-                                    result = await microscope.execute(instance)
+                                # lazy-connect, then run the command — both on the worker
+                                await run_on_worker(EstablishHardwareConnection())
+                                result = await run_on_worker(instance)
                             except DisconnectError:
                                 error_internal("hardware disconnected")
                         else:
@@ -487,9 +491,9 @@ class Core:
                 request_data = kwargs.copy()
                 request_data.update(kwargs_static)
 
-                # Use asyncio.to_thread to run each request in its own system thread
-                # This ensures RLock works properly with different thread IDs
-                result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
+                # Hardware commands run on the microscope-worker thread (via callfunc ->
+                # worker.submit); callfunc itself is safe on the event loop.
+                result = await callfunc(request_data)
                 return result
 
             # Dynamically create a Pydantic model for the POST request body if the target function has parameters
@@ -543,12 +547,9 @@ class Core:
                         status_code=421,  # Misdirected Request
                     )
 
-                # microscope code expects rlock to function as expected, but fastapi serving two requests in parallel
-                # through async will technically run in the same thread, so rlock will function improperly.
-                # we start a new thread just to run this async code in it, to work around this issue.
-                logger.debug(f"about to start thread to generate answer {callfunc}")
-                result = await asyncio.to_thread(asyncio.run, callfunc(request_data))
-                logger.debug("answer thread done")
+                # Hardware commands run on the microscope-worker thread (via callfunc ->
+                # worker.submit); callfunc itself is safe on the event loop.
+                result = await callfunc(request_data)
 
                 # Record last request time for health monitoring
                 self.last_request_time = time.time()
@@ -1436,18 +1437,10 @@ class Core:
         # Check if streaming is currently active by looking at the stream callback
         is_streaming = self.microscope.stream_callback is not None
 
-        # Check if microscope is busy by attempting a non-blocking lock
-        is_busy = False
-        busy_reasons: list[str] = []
-        try:
-            with self.microscope.lock(blocking=False, reason="checking microscope status") as microscope:
-                if microscope is None:
-                    is_busy = True
-                    # Get the reasons why the lock is held
-                    busy_reasons = self.microscope.get_lock_reasons()
-        except Exception:
-            is_busy = True
-            busy_reasons = self.microscope.get_lock_reasons()
+        # Busy state is owned by the single-owner worker (reject-on-busy): a command
+        # in flight == busy. The status hatch reads it directly, never queuing.
+        is_busy = self.worker.is_busy
+        busy_reasons: list[str] = ["hardware command in progress"] if is_busy else []
 
         return CoreCurrentState(
             adapter_state=microscope_adapter_state,
