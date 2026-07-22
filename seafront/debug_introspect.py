@@ -58,13 +58,7 @@ def format_stack_dump(
 
     if microscope is not None:
         try:
-            reasons = microscope.get_lock_reasons()
-            buf.write("\n--- microscope lock reasons (top = most recent) ---\n")
-            if reasons:
-                for i, reason in enumerate(reversed(reasons)):
-                    buf.write(f"  [{i}] {reason}\n")
-            else:
-                buf.write("  (lock not currently held)\n")
+            buf.write("\n--- microscope ---\n")
             buf.write(f"stream_callback set: {microscope.stream_callback is not None}\n")
         except Exception as e:
             buf.write(f"  (failed to read microscope state: {e!r})\n")

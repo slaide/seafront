@@ -18,12 +18,9 @@ Environment Variables:
 
 import asyncio
 import os
-import threading
 import time
 import typing as tp
-from contextlib import contextmanager
 
-import json5
 import numpy as np
 import seaconfig as sc
 from pydantic import PrivateAttr
@@ -37,7 +34,7 @@ from seafront.hardware.firmware_config import (
     get_firmware_config,
 )
 from seafront.hardware.illumination import IlluminationController
-from seafront.hardware.microscope import HardwareLimits, Locked, Microscope, microscope_exclusive
+from seafront.hardware.microscope import HardwareLimits, Locked, Microscope
 from seafront.logger import logger
 from seafront.server import commands as cmd
 
@@ -373,19 +370,6 @@ class MockMicroscope(Microscope):
             total_time_s = (exposure_time_ms + 10.0) / 1000.0
             time.sleep(total_time_s)
 
-    @contextmanager
-    def lock(self, blocking: bool = True, reason: str = "unknown") -> tp.Iterator[tp.Self | None]:
-        """Mock lock - always succeeds immediately."""
-        if self._lock.acquire(blocking=blocking):
-            self._lock_reasons.append(reason)
-            try:
-                yield self
-            finally:
-                self._lock_reasons.pop()
-                self._lock.release()
-        else:
-            yield None
-
     @classmethod
     def make(cls) -> "MockMicroscope":
         """Create a mock microscope instance from configuration."""
@@ -418,7 +402,6 @@ class MockMicroscope(Microscope):
             main_camera=Locked(mock_camera),
         )
 
-    @microscope_exclusive
     def open_connections(self) -> None:
         """Mock connection opening - always succeeds."""
         logger.info("Mock microscope: opening connections")

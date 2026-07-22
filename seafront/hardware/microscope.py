@@ -101,19 +101,33 @@ class Microscope(BaseModel, abc.ABC):
     call with either:
         image, then return if should stop or not
         or call with bool, which indicates if should stop (return value then ignored)
+
+    Touched from three threads (the worker sets/clears it via ChannelStream begin/end,
+    the camera SDK's acquisition thread reads it to forward frames), so all access goes
+    through set_stream_callback()/read_stream_callback() under _stream_callback_lock.
     """
 
     last_state: AdapterState | None = None
 
-    _lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
-    _lock_reasons: list[str] = PrivateAttr(default_factory=list)
-    """Stack of reasons for why the lock is currently held"""
+    _stream_callback_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    """The one remaining cross-thread guard: serializes access to stream_callback between
+    the worker and the SDK frame-callback thread."""
 
     _current_cancel: threading.Event | None = PrivateAttr(default=None)
     """Cancel event of the command currently executing, set by the worker. Single
     owner => at most one command runs at a time, so this is unambiguous."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def set_stream_callback(self, cb: tp.Callable[[np.ndarray | bool], bool] | None) -> None:
+        """Set or clear the streaming frame callback (worker thread)."""
+        with self._stream_callback_lock:
+            self.stream_callback = cb
+
+    def read_stream_callback(self) -> tp.Callable[[np.ndarray | bool], bool] | None:
+        """Read the current streaming frame callback (SDK acquisition thread)."""
+        with self._stream_callback_lock:
+            return self.stream_callback
 
     def set_current_cancel(self, cancel: threading.Event | None) -> None:
         """Set (or clear) the cancel event for the in-flight command. Called by the
@@ -130,30 +144,6 @@ class Microscope(BaseModel, abc.ABC):
         """True if the in-flight command's cancel event is set. Callers that want a
         different exception (e.g. acquisition) check this instead of raise_if_cancelled."""
         return self._current_cancel is not None and self._current_cancel.is_set()
-
-    def get_lock_reasons(self) -> list[str]:
-        """
-        Get the current stack of reasons why the lock is held.
-
-        Returns:
-            A copy of the lock reasons stack
-        """
-        return self._lock_reasons.copy()
-
-    @contextmanager
-    @abc.abstractmethod
-    def lock(self, blocking: bool = True, reason: str = "unknown") -> tp.Iterator[tp.Self | None]:
-        """
-        Lock all hardware devices.
-
-        Args:
-            blocking: Whether to block waiting for the lock
-            reason: Description of why the lock is being acquired (for debugging)
-
-        Yields:
-            Self if lock acquired, None if blocking=False and lock unavailable
-        """
-        pass
 
     @classmethod
     @abc.abstractmethod
@@ -362,15 +352,3 @@ class Microscope(BaseModel, abc.ABC):
             AcquisitionEstimate with storage and time estimates
         """
         pass
-
-
-def microscope_exclusive(f):
-    """
-    Decorator to ensure exclusive access to microscope hardware.
-    
-    This is a hardware-agnostic version of the squid_exclusive decorator.
-    """
-    def wrapper(self, *args, **kwargs):
-        with self._lock:
-            return f(self, *args, **kwargs)
-    return wrapper

@@ -203,12 +203,6 @@ class CustomRoute(BaseModel):
         | tp.Callable[[tp.Any, tp.Any], tp.Coroutine[tp.Any, tp.Any, None]]
     ) = None
 
-    require_hardware_lock:bool=True
-    """
-    not all commands require a hardware lock (i.e. do not strictly require hardware connection either)"
-
-    e.g. streamend (just sets a flag)
-    """
 
     # Set by route_wrapper - the dynamically created Pydantic model for request parameters
     request_model: type[BaseModel] | None = None
@@ -405,21 +399,17 @@ class Core:
                             # command is already in flight (reject-on-busy).
                             submitted = self.worker.submit(command)
                             if submitted is None:
-                                error_microscope_busy(self.microscope.get_lock_reasons())
+                                error_microscope_busy(["hardware command in progress"])
                             return await asyncio.wrap_future(submitted[0])
 
-                        if route.require_hardware_lock:
-                            try:
-                                # lazy-connect, then run the command — both on the worker
-                                await run_on_worker(EstablishHardwareConnection())
-                                result = await run_on_worker(instance)
-                            except DisconnectError:
-                                error_internal("hardware disconnected")
-                            except OperationCancelledError:
-                                error_internal("operation cancelled")
-                        else:
-                            _ = await self.microscope.execute(EstablishHardwareConnection())
-                            result = await self.microscope.execute(instance)
+                        try:
+                            # lazy-connect, then run the command — both on the worker
+                            await run_on_worker(EstablishHardwareConnection())
+                            result = await run_on_worker(instance)
+                        except DisconnectError:
+                            error_internal("hardware disconnected")
+                        except OperationCancelledError:
+                            error_internal("operation cancelled")
                     else:
                         raise AttributeError(
                             f"Provided class {target_func} {type(target_func)=} is no BaseCommand"
@@ -1043,15 +1033,12 @@ class Core:
             return False
 
         def register_stream_begin(begin: ChannelStreamBegin, res: StreamingStartedResponse):
-            # register callback on microscope
-            with self.microscope.lock(reason=f"starting stream: {begin.channel.name}") as microscope:
-                if microscope is None:
-                    error_microscope_busy(self.microscope.get_lock_reasons())
-
-                microscope.stream_callback = handle_image
-
-                # store channel info, to be used inside the streaming callback to store the images in the server properly
-                self._streaming_channel = begin.channel
+            # Wire the server-side frame handler under the narrow stream-callback lock (the
+            # SDK acquisition thread reads it). The ChannelStreamBegin command already ran on
+            # the worker and started the camera stream; frames are dropped until this is set.
+            self.microscope.set_stream_callback(handle_image)
+            # store channel info, used inside the streaming callback to store images properly
+            self._streaming_channel = begin.channel
 
         route_wrapper(
             "/api/action/stream_channel_begin",
@@ -1072,7 +1059,6 @@ class Core:
             CustomRoute(
                 handler=ChannelStreamEnd,
                 tags=[RouteTag.ACTIONS.value],
-                require_hardware_lock=False,
                 callback=register_stream_end,
             ),
             methods=["POST"],
@@ -1274,19 +1260,16 @@ class Core:
         due to the delay between improper calibration and actual cause of the damage, this function should be treat with appropriate care.
         """
 
-        with self.microscope.lock(reason="calibrating stage XY position") as microscope:
-            if microscope is None:
-                error_microscope_busy(self.microscope.get_lock_reasons())
+        # Lock-free: reads a field + the status hatch (get_current_state), no hardware mutation.
+        if self.microscope.is_in_loading_position:
+            error_internal(detail="now allowed while in loading position")
 
-            if microscope.is_in_loading_position:
-                error_internal(detail="now allowed while in loading position")
+        _plates = [p for p in sc.Plates if p.Model_id == plate_model_id]
+        if len(_plates) == 0:
+            error_internal(f"{plate_model_id=} is not a known plate model")
+        plate = _plates[0]
 
-            _plates = [p for p in sc.Plates if p.Model_id == plate_model_id]
-            if len(_plates) == 0:
-                error_internal(f"{plate_model_id=} is not a known plate model")
-            plate = _plates[0]
-
-            current_pos = (await microscope.get_current_state()).stage_position
+        current_pos = (await self.microscope.get_current_state()).stage_position
 
         # real/should position = measured/is position + calibrated offset
         # i.e. calibrated offset = real/should position - measured/is position
@@ -1380,7 +1363,7 @@ class Core:
             lambda: self._snap_selected_channels_impl(config_file), "snap_selected_channels"
         )
         if submitted is None:
-            error_microscope_busy(self.microscope.get_lock_reasons())
+            error_microscope_busy(["hardware command in progress"])
         try:
             return await asyncio.wrap_future(submitted[0])
         except DisconnectError:
@@ -1564,17 +1547,11 @@ class Core:
                 enabled=True                    # Enabled by default
             ))
 
-        # Get real hardware limits from the microscope
-        with self.microscope.lock(blocking=False, reason="querying hardware capabilities") as microscope:
-            if microscope is None:
-                # Microscope is busy - use cached limits if available
-                if self._hardware_limits_cache is None:
-                    error_internal(f"Internal error: hardware limits cache not initialized and microscope is busy: {self.microscope.get_lock_reasons()}")
-                hardware_limits_obj = self._hardware_limits_cache
-            else:
-                # Get actual hardware limits from microscope and cache them
-                hardware_limits_obj = microscope.get_hardware_limits()
-                self._hardware_limits_cache = hardware_limits_obj
+        # Hardware limits are static camera capabilities: query once (briefly takes the
+        # camera lock), then always serve the cache — no hardware access on later calls.
+        if self._hardware_limits_cache is None:
+            self._hardware_limits_cache = self.microscope.get_hardware_limits()
+        hardware_limits_obj = self._hardware_limits_cache
 
         return HardwareCapabilitiesResponse(
             wellplate_types=sc.Plates,
@@ -1773,7 +1750,7 @@ class Core:
             f"acquisition:{acquisition_id}",
         )
         if submitted is None:
-            error_microscope_busy(self.microscope.get_lock_reasons())
+            error_microscope_busy(["hardware command in progress"])
         self.acquisition_future = submitted[0]
 
         acquisition_status.thread_is_running = True
@@ -1914,7 +1891,7 @@ class Core:
             "progressive_snap",
         )
         if submitted is None:
-            error_microscope_busy(self.microscope.get_lock_reasons())
+            error_microscope_busy(["hardware command in progress"])
         await asyncio.wrap_future(submitted[0])
 
         return BasicSuccessResponse()
@@ -2021,10 +1998,7 @@ class Core:
     def close(self):
         logger.debug("shutdown - closing microscope")
         try:
-            with self.microscope.lock(blocking=True, reason="shutting down microscope") as microscope:
-                assert microscope is not None
-
-                microscope.close()
+            self.microscope.close()
         except:
             pass
 

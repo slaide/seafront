@@ -2,7 +2,6 @@ import math
 import os
 import time
 import typing as tp
-from contextlib import contextmanager
 
 import cv2
 import numpy as np
@@ -52,7 +51,7 @@ from seafront.hardware.camera import (
 )
 from seafront.hardware.illumination import IlluminationController
 from seafront.hardware.adapter import DeviceAlreadyInUseError
-from seafront.hardware.microscope import DisconnectError, HardwareLimits, Locked, Microscope, microscope_exclusive
+from seafront.hardware.microscope import DisconnectError, HardwareLimits, Locked, Microscope
 from seafront.logger import logger
 from seafront.server import commands as cmd
 from seafront.server.commands import (
@@ -177,24 +176,6 @@ class SquidAdapter(Microscope):
     microcontroller: Microcontroller
     illumination_controller: IlluminationController
 
-    @contextmanager
-    def lock(self, blocking: bool = True, reason: str = "unknown") -> tp.Iterator[tp.Self | None]:
-        "lock all hardware devices"
-        if self._lock.acquire(blocking=blocking):
-            self._lock_reasons.append(reason)
-            try:
-                with (
-                    self.main_camera.locked(blocking=blocking),
-                    self.focus_camera.locked(blocking=blocking),
-                    self.microcontroller.locked(blocking=blocking),
-                ):
-                    yield self
-            finally:
-                self._lock_reasons.pop()
-                self._lock.release()
-        else:
-            yield None
-
     @classmethod
     def make(cls) -> "SquidAdapter":
         # Get device configuration (USB IDs and drivers)
@@ -261,19 +242,15 @@ class SquidAdapter(Microscope):
 
         return squid
 
-    @microscope_exclusive
     def open_connections(self):
         """open connections to devices"""
         if self.is_connected:
             return
 
         with (
-            self.microcontroller.locked() as mc,
             self.main_camera.locked() as main_camera,
             self.focus_camera.locked() as focus_camera,
         ):
-            if mc is None:
-                error_internal("microcontroller is busy")
             if main_camera is None:
                 error_internal("main camera is busy")
             if focus_camera is None:
@@ -292,7 +269,7 @@ class SquidAdapter(Microscope):
                 logger.debug("startup - connected to main cam")
                 focus_camera.open(device_type="autofocus")
                 logger.debug("startup - connected to focus cam")
-                mc.open()
+                self.microcontroller.open()
                 logger.debug("startup - connected to microcontroller")
             except DeviceAlreadyInUseError:
                 # Don't convert to DisconnectError - let it propagate for specific handling
@@ -331,12 +308,9 @@ class SquidAdapter(Microscope):
             return
 
         with (
-            self.microcontroller.locked() as mc,
             self.main_camera.locked() as main_camera,
             self.focus_camera.locked() as focus_camera,
         ):
-            if mc is None:
-                error_internal("microcontroller is busy")
             if main_camera is None:
                 error_internal("main camera is busy")
             if focus_camera is None:
@@ -346,7 +320,7 @@ class SquidAdapter(Microscope):
 
             logger.debug("closing microcontroller")
             try:
-                mc.close()
+                self.microcontroller.close()
             except Exception:
                 pass
 
@@ -365,14 +339,8 @@ class SquidAdapter(Microscope):
             logger.info("closed connection to hardware devices")
 
     async def home(self):
-        """perform homing maneuver"""
-
-        with self.microcontroller.locked() as qmc:
-            if qmc is None:
-                error_internal("microcontroller is busy")
-                return # unreachable but satisfies the type checker
-
-            self._home_impl(qmc)
+        """perform homing maneuver (single owner: no lock needed)"""
+        self._home_impl(self.microcontroller)
 
     def _home_impl(self, qmc: Microcontroller) -> None:
         """homing maneuver body; caller must already hold the microcontroller lock"""
@@ -1430,7 +1398,7 @@ class SquidAdapter(Microscope):
         self,
         command:cmd.ChannelStreamEnd
     ):
-        if self.stream_callback is None:
+        if self.read_stream_callback() is None:
             cmd.error_internal(detail="not currently streaming")
 
         logger.debug("squid - requested stream stop")
@@ -1438,7 +1406,7 @@ class SquidAdapter(Microscope):
         # Stop forwarding first: any capture callback still in flight on the camera SDK's
         # acquisition thread sees stream_callback=None and returns immediately without
         # touching the downstream (websocket) callback.
-        self.stream_callback = None
+        self.set_stream_callback(None)
 
         # Stop the camera under the camera lock. This is deadlock-free now that the capture
         # callback no longer acquires the camera lock (see _execute_ChannelStreamBegin), so
@@ -1466,12 +1434,8 @@ class SquidAdapter(Microscope):
         if channel_config is not None:
             try:
                 illum_code = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
-                with self.microcontroller.locked() as qmc:
-                    if qmc is None:
-                        logger.debug("failed to acquire microcontroller lock to turn off illumination!!")
-                    else:
-                        qmc.illumination_end(illum_code.value)
-                        logger.debug(f"squid - illumination cleanup for channel {command.channel.handle}")
+                self.microcontroller.illumination_end(illum_code.value)
+                logger.debug(f"squid - illumination cleanup for channel {command.channel.handle}")
             except Exception as e:
                 logger.warning(f"squid - failed illumination cleanup: {e}")
 
@@ -1509,7 +1473,7 @@ class SquidAdapter(Microscope):
 
         GlobalConfigHandler.override(command.machine_config)
 
-        if self.stream_callback is not None:
+        if self.read_stream_callback() is not None:
             cmd.error_internal(detail="Cannot take snapshot while camera is streaming")
 
         # Validate channel configuration for acquisition
@@ -1587,7 +1551,7 @@ class SquidAdapter(Microscope):
         qmc: Microcontroller,
         command:cmd.ChannelStreamBegin
     ):
-        if self.stream_callback is not None:
+        if self.read_stream_callback() is not None:
             cmd.error_internal(detail="Streaming already active - stop current stream before starting a new one")
 
         # Find channel config by handle and get illumination code from source slot
@@ -1666,12 +1630,15 @@ class SquidAdapter(Microscope):
             stream_pixel_format = main_camera.pixel_format
 
             def forward_image(img: np.ndarray) -> None:
-                if self.stream_callback is None:
+                # Runs on the SDK acquisition thread. Read the callback once under the narrow
+                # lock, then invoke it outside the lock (so a slow send never blocks stream-end).
+                cb = self.read_stream_callback()
+                if cb is None:
                     return
 
                 img_np, _cambits = _process_image(img.copy(), pixel_format=stream_pixel_format)
 
-                self.stream_callback(img_np)
+                cb(img_np)
 
             main_camera.start_streaming(
                 command.channel,
@@ -1853,26 +1820,24 @@ class SquidAdapter(Microscope):
         return result
 
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
-        # ChannelStreamEnd is handled without the microcontroller lock to avoid deadlock.
+        # Single owner (the worker) — no hardware lock needed. ChannelStreamEnd still
+        # dispatches directly (it must run while a stream is active but the worker is idle).
         if isinstance(command, cmd.ChannelStreamEnd):
             self.validate_command(command)
             result = self._execute_ChannelStreamEnd(command)
             return result # type: ignore[no-any-return]
 
-        with self.microcontroller.locked() as qmc:
-            if qmc is None:
-                error_internal("microcontroller is busy")
-
-            try:
-                result = self._dispatch(qmc, command)
-                return result # type: ignore[no-any-return]
-            except GalaxyCameraOffline as e:
-                logger.critical("squid - lost camera connection")
-                raise DisconnectError() from e
-            except IOError as e:
-                logger.critical("squid - lost connection to microcontroller")
-                self.close()
-                raise DisconnectError() from e
+        qmc = self.microcontroller
+        try:
+            result = self._dispatch(qmc, command)
+            return result # type: ignore[no-any-return]
+        except GalaxyCameraOffline as e:
+            logger.critical("squid - lost camera connection")
+            raise DisconnectError() from e
+        except IOError as e:
+            logger.critical("squid - lost connection to microcontroller")
+            self.close()
+            raise DisconnectError() from e
 
     def _dispatch(self, qmc: Microcontroller, command: cmd.BaseCommand[tp.Any]) -> tp.Any:
         """Synchronous command dispatch. Caller must already hold the microcontroller lock.

@@ -119,8 +119,7 @@ class TestMockMicroscopeConnection:
         from seafront.hardware.mock_microscope import MockMicroscope
 
         mc = MockMicroscope.make()
-        with mc.lock(reason="test"):
-            mc.open_connections()
+        mc.open_connections()
         assert mc.is_connected is True
 
     def test_close_succeeds(self, mock_microscope_env):
@@ -128,8 +127,7 @@ class TestMockMicroscopeConnection:
         from seafront.hardware.mock_microscope import MockMicroscope
 
         mc = MockMicroscope.make()
-        with mc.lock(reason="test"):
-            mc.open_connections()
+        mc.open_connections()
         mc.close()
         assert mc.is_connected is False
 
@@ -266,38 +264,3 @@ class TestMockMicroscopeLoadingPosition:
         asyncio.run(mc.execute(cmd.LoadingPositionLeave()))
 
         assert mc.is_in_loading_position is False
-
-
-class TestMockMicroscopeLocking:
-    """Tests for MockMicroscope locking mechanism."""
-
-    def test_lock_context_manager(self, mock_microscope_env):
-        """lock() context manager should work."""
-        from seafront.hardware.mock_microscope import MockMicroscope
-
-        mc = MockMicroscope.make()
-
-        with mc.lock(reason="test_operation") as locked_mc:
-            assert locked_mc is mc
-
-    def test_lock_tracks_reason(self, mock_microscope_env):
-        """lock() should track the lock reason."""
-        from seafront.hardware.mock_microscope import MockMicroscope
-
-        mc = MockMicroscope.make()
-
-        with mc.lock(reason="my_test_reason"):
-            reasons = mc.get_lock_reasons()
-            assert "my_test_reason" in reasons
-
-    def test_lock_releases_on_exit(self, mock_microscope_env):
-        """lock() should release when context exits."""
-        from seafront.hardware.mock_microscope import MockMicroscope
-
-        mc = MockMicroscope.make()
-
-        with mc.lock(reason="temporary"):
-            pass
-
-        reasons = mc.get_lock_reasons()
-        assert "temporary" not in reasons
