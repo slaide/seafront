@@ -27,6 +27,10 @@ class DisconnectError(BaseException):
         super().__init__()
 
 
+class OperationCancelledError(Exception):
+    """Raised inside a hardware operation when its cancel event has been set."""
+
+
 class Locked[T]:
     """Thread-safe wrapper for a value with a reentrant lock."""
 
@@ -105,7 +109,22 @@ class Microscope(BaseModel, abc.ABC):
     _lock_reasons: list[str] = PrivateAttr(default_factory=list)
     """Stack of reasons for why the lock is currently held"""
 
+    _current_cancel: threading.Event | None = PrivateAttr(default=None)
+    """Cancel event of the command currently executing, set by the worker. Single
+    owner => at most one command runs at a time, so this is unambiguous."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def set_current_cancel(self, cancel: threading.Event | None) -> None:
+        """Set (or clear) the cancel event for the in-flight command. Called by the
+        worker around each command; long operations poll it via raise_if_cancelled()."""
+        self._current_cancel = cancel
+
+    def raise_if_cancelled(self) -> None:
+        """Cooperative cancel checkpoint: raise OperationCancelledError if the current
+        command's cancel event is set. Safe to call from any hardware operation."""
+        if self._current_cancel is not None and self._current_cancel.is_set():
+            raise OperationCancelledError()
 
     def get_lock_reasons(self) -> list[str]:
         """

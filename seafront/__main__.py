@@ -63,7 +63,12 @@ from seafront.config.handles import (
     ProtocolConfig,
     SystemConfig,
 )
-from seafront.hardware.microscope import DisconnectError, HardwareLimits, Microscope
+from seafront.hardware.microscope import (
+    DisconnectError,
+    HardwareLimits,
+    Microscope,
+    OperationCancelledError,
+)
 from seafront.hardware.mock_microscope import MockMicroscope
 from seafront.logger import logger
 from seafront.hardware.forbidden_areas import ForbiddenAreaList
@@ -422,6 +427,8 @@ class Core:
                                 result = await run_on_worker(instance)
                             except DisconnectError:
                                 error_internal("hardware disconnected")
+                            except OperationCancelledError:
+                                error_internal("operation cancelled")
                         else:
                             _ = await self.microscope.execute(EstablishHardwareConnection())
                             result = await self.microscope.execute(instance)
@@ -801,6 +808,19 @@ class Core:
             ),
             allow_while_acquisition_is_running=True,
             allow_while_streaming=False,
+            methods=["POST"],
+        )
+
+        # Cancel hatch: cancel whatever command is currently on the worker. Allowed
+        # in every state (it is the escape from a stuck/long command).
+        route_wrapper(
+            "/api/action/cancel_current",
+            CustomRoute(
+                handler=self.cancel_current_command,
+                tags=[RouteTag.ACTIONS.value],
+            ),
+            allow_while_acquisition_is_running=True,
+            allow_while_streaming=True,
             methods=["POST"],
         )
 
@@ -1476,6 +1496,18 @@ class Core:
 
         await acq.queue_in.put(AcquisitionCommand.CANCEL)
 
+        return BasicSuccessResponse()
+
+    async def cancel_current_command(self) -> BasicSuccessResponse:
+        """Cancel hatch: request cancellation of the command currently on the worker.
+
+        Never rejected/queued — sets the in-flight command's cooperative cancel event.
+        Long operations abort at their next checkpoint, freeing the worker. A no-op if
+        nothing is running.
+        """
+        cancel = self.worker.current_cancel()
+        if cancel is not None:
+            cancel.set()
         return BasicSuccessResponse()
 
     @property

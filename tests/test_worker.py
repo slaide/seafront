@@ -5,10 +5,13 @@ worker against a real MockMicroscope.
 """
 
 import asyncio
+import os
 import threading
+import time
 
 import pytest
 
+from seafront.hardware.microscope import OperationCancelledError
 from seafront.server import commands as cmd
 from seafront.server.worker import MicroscopeWorker
 
@@ -43,6 +46,9 @@ class _GatedScope:
     def __init__(self) -> None:
         self.started = threading.Event()
         self.release = threading.Event()
+
+    def set_current_cancel(self, cancel):  # noqa: ANN001, ANN201 - test stub
+        pass
 
     async def execute(self, command):  # noqa: ANN001, ANN201 - test stub
         self.started.set()
@@ -80,10 +86,41 @@ def test_worker_rejects_second_command_while_busy():
         worker.stop()
 
 
+def test_worker_cancel_interrupts_long_move(mock_scope):
+    """Setting the in-flight cancel event aborts a long move and frees the worker."""
+    # make the move take real wall-clock time so it can be cancelled mid-flight
+    # (_realistic_delays_enabled reads this env var live; the fixture clears it on teardown)
+    os.environ["MOCK_NO_DELAYS"] = "0"
+
+    worker = MicroscopeWorker(mock_scope)
+    worker.start()
+    try:
+        submitted = worker.submit(cmd.MoveTo(x_mm=50.0, y_mm=50.0, z_mm=1.0))
+        assert submitted is not None
+        future, cancel = submitted
+
+        # request cancellation almost immediately; a move that far takes ~1s, so the
+        # per-step checkpoint aborts it well before completion
+        time.sleep(0.05)
+        cancel.set()
+
+        with pytest.raises(OperationCancelledError):
+            future.result(timeout=5)
+
+        # the worker is free again and accepts new work
+        assert not worker.is_busy
+        assert worker.submit(cmd.MoveTo(x_mm=1.0)) is not None
+    finally:
+        worker.stop()
+
+
 def test_worker_reports_exception_through_future():
     """An exception in execute is delivered via the future, and the worker recovers."""
 
     class _BoomScope:
+        def set_current_cancel(self, cancel):  # noqa: ANN001, ANN201 - test stub
+            pass
+
         async def execute(self, command):  # noqa: ANN001, ANN201 - test stub
             raise RuntimeError("boom")
 

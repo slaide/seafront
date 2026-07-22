@@ -134,6 +134,9 @@ class MicroscopeWorker:
                 return
 
             self._current_cancel = item.cancel
+            # Publish the cancel event onto the scope so long operations can poll it
+            # via raise_if_cancelled().
+            self._scope.set_current_cancel(item.cancel)
             try:
                 result = self._run_command(item.command)
             except BaseException as e:
@@ -141,10 +144,12 @@ class MicroscopeWorker:
                 # BEFORE completing the future so a caller that awaits the result
                 # and immediately resubmits finds the worker free.
                 self._current_cancel = None
+                self._scope.set_current_cancel(None)
                 self._inflight.release()
                 item.reply.set_exception(e)
             else:
                 self._current_cancel = None
+                self._scope.set_current_cancel(None)
                 self._inflight.release()
                 item.reply.set_result(result)
 

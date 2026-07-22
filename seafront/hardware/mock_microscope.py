@@ -337,6 +337,9 @@ class MockMicroscope(Microscope):
         num_steps = max(1, int(movement_time_s / update_interval_s))
 
         for step in range(num_steps + 1):
+            # Cooperative cancel checkpoint: abort the move promptly if requested.
+            self.raise_if_cancelled()
+
             # Calculate progress (0.0 to 1.0)
             progress = min((step + 1) / num_steps, 1.0) if num_steps > 0 else 1.0
 

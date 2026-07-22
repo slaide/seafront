@@ -1262,6 +1262,7 @@ class SquidAdapter(Microscope):
         qmc: Microcontroller,
         command:cmd.MoveBy
     ):
+        self.raise_if_cancelled()
         if self.is_in_loading_position:
             cmd.error_internal(detail="now allowed while in loading position")
 
@@ -1304,6 +1305,7 @@ class SquidAdapter(Microscope):
         qmc: Microcontroller,
         command:cmd.MoveTo
     ):
+        self.raise_if_cancelled()
         if self.is_in_loading_position:
             cmd.error_internal(detail="now allowed while in loading position")
 
