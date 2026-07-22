@@ -908,13 +908,18 @@ class Core:
                 config_data = await ws.receive_json()
                 config_file = sc.AcquisitionConfig(**config_data)
 
-                # Register callback to send updates via WebSocket
+                # Register callback to send updates via WebSocket. The snap loop runs on
+                # the worker thread, so marshal each status onto this (the WebSocket's) event
+                # loop with call_soon_threadsafe before touching the socket.
+                loop = asyncio.get_running_loop()
+
                 def send_status_update(status: ChannelSnapProgressiveStatus):
-                    try:
-                        # Create a task to send the WebSocket message
-                        asyncio.create_task(_safe_send_json(ws, status.model_dump()))
-                    except Exception as e:
-                        logger.warning(f"Failed to send progressive snap status: {e}")
+                    def _send():
+                        try:
+                            asyncio.create_task(_safe_send_json(ws, status.model_dump()))
+                        except Exception as e:
+                            logger.warning(f"Failed to send progressive snap status: {e}")
+                    loop.call_soon_threadsafe(_send)
 
                 self._progressive_snap_callbacks[callback_id] = send_status_update
 
@@ -1380,56 +1385,67 @@ class Core:
 
         The server orchestrates individual channel snapshots, allowing each image
         to be stored and displayed as soon as it's acquired, rather than waiting
-        for all channels to complete.
+        for all channels to complete. The whole multi-channel snap runs as one job
+        on the worker (single owner), so it is atomic w.r.t. other commands.
         """
-        pixel_format = ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue
-
+        submitted = self.worker.submit_job(
+            lambda: self._snap_selected_channels_impl(config_file), "snap_selected_channels"
+        )
+        if submitted is None:
+            error_microscope_busy(self.microscope.get_lock_reasons())
         try:
-            with self.microscope.lock(blocking=False, reason="snapping all selected channels") as microscope:
-                if microscope is None:
-                    error_microscope_busy(self.microscope.get_lock_reasons())
-
-                # Establish hardware connection
-                await microscope.execute(EstablishHardwareConnection())
-
-                # Validate all enabled channels BEFORE starting to image any of them
-                for channel in config_file.channels:
-                    if channel.enabled:
-                        microscope.validate_channel_for_acquisition(channel)
-
-                channel_handles: list[str] = []
-                channel_images: dict[str, np.ndarray] = {}
-
-                # Execute individual channel snapshots
-                for channel in config_file.channels:
-                    if not channel.enabled:
-                        continue
-
-                    # Create and execute individual snapshot command
-                    cmd_snap = ChannelSnapshot(
-                        channel=channel,
-                        machine_config=config_file.machine_config or [],
-                    )
-                    res_snap = await microscope.execute(cmd_snap)
-
-                    # Store image immediately (allows incremental UI updates)
-                    await self._store_new_image(
-                        img=res_snap._img,
-                        pixel_format=pixel_format,
-                        channel_config=channel
-                    )
-
-                    # Accumulate results
-                    channel_images[channel.handle] = res_snap._img
-                    channel_handles.append(channel.handle)
-
-                logger.debug(f"server - took snapshot in {len(channel_handles)} channels")
-
-                result = ChannelSnapSelectionResult(channel_handles=channel_handles)
-                result._images = channel_images
-                return result
+            return await asyncio.wrap_future(submitted[0])
         except DisconnectError:
             error_internal("hardware disconnected")
+        except OperationCancelledError:
+            error_internal("snap cancelled")
+
+    async def _snap_selected_channels_impl(self, config_file: sc.AcquisitionConfig) -> ChannelSnapSelectionResult:
+        """Worker-thread body of snap_selected_channels: establish, then snap each
+        enabled channel in turn, storing each image as it arrives."""
+        pixel_format = ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue
+
+        # Establish hardware connection
+        await self.microscope.execute(EstablishHardwareConnection())
+
+        # Validate all enabled channels BEFORE starting to image any of them
+        for channel in config_file.channels:
+            if channel.enabled:
+                self.microscope.validate_channel_for_acquisition(channel)
+
+        channel_handles: list[str] = []
+        channel_images: dict[str, np.ndarray] = {}
+
+        # Execute individual channel snapshots
+        for channel in config_file.channels:
+            if not channel.enabled:
+                continue
+
+            self.microscope.raise_if_cancelled()  # cancel between channels
+
+            # Create and execute individual snapshot command
+            cmd_snap = ChannelSnapshot(
+                channel=channel,
+                machine_config=config_file.machine_config or [],
+            )
+            res_snap = await self.microscope.execute(cmd_snap)
+
+            # Store image immediately (allows incremental UI updates)
+            await self._store_new_image(
+                img=res_snap._img,
+                pixel_format=pixel_format,
+                channel_config=channel
+            )
+
+            # Accumulate results
+            channel_images[channel.handle] = res_snap._img
+            channel_handles.append(channel.handle)
+
+        logger.debug(f"server - took snapshot in {len(channel_handles)} channels")
+
+        result = ChannelSnapSelectionResult(channel_handles=channel_handles)
+        result._images = channel_images
+        return result
 
     async def get_current_state(self) -> CoreCurrentState:
         """
@@ -1955,105 +1971,122 @@ class Core:
         else:
             imaging_order_value = imaging_order.strvalue if hasattr(imaging_order, 'strvalue') else "protocol_order"
 
-        # Use microscope's sorting function to maintain consistent ordering logic
-        with self.microscope.lock(reason="sorting channels for progressive snap") as microscope:
-            if microscope is None:
-                error_microscope_busy(self.microscope.get_lock_reasons())
-            enabled_channels = microscope._sort_channels_by_imaging_order(enabled_channels, tp.cast(ImagingOrder, imaging_order_value))
+        # Sort channels (pure computation, no hardware -> no lock).
+        enabled_channels = self.microscope._sort_channels_by_imaging_order(
+            enabled_channels, tp.cast(ImagingOrder, imaging_order_value)
+        )
 
+        # Run the whole per-channel loop as one worker job (single owner). Await it so the
+        # WebSocket stays open and status updates (marshaled onto its loop by the callback)
+        # flow until the snap finishes.
+        submitted = self.worker.submit_job(
+            lambda: self._progressive_snap_impl(enabled_channels, config_file, callback),
+            "progressive_snap",
+        )
+        if submitted is None:
+            error_microscope_busy(self.microscope.get_lock_reasons())
+        await asyncio.wrap_future(submitted[0])
+
+        return BasicSuccessResponse()
+
+    async def _progressive_snap_impl(
+        self,
+        enabled_channels: list[sc.AcquisitionChannelConfig],
+        config_file: sc.AcquisitionConfig,
+        callback: tp.Callable[[ChannelSnapProgressiveStatus], None],
+    ) -> None:
+        """Worker-thread body of progressive snap: snap each channel in turn, reporting
+        status via `callback` (which marshals onto the WebSocket's loop) as each completes."""
         total_channels = len(enabled_channels)
+        completed_channels = 0
 
-        # Start background task for progressive snapping
-        async def progressive_snap_task():
-            completed_channels = 0
+        try:
+            for channel in enabled_channels:
+                self.microscope.raise_if_cancelled()
 
-            try:
-                for channel in enabled_channels:
-                    # Send starting status
+                # Send starting status
+                callback(ChannelSnapProgressiveStatus(
+                    channel_handle=channel.handle,
+                    channel_name=channel.name,
+                    status="starting",
+                    total_channels=total_channels,
+                    completed_channels=completed_channels,
+                    message=f"Starting acquisition for {channel.name}"
+                ))
+
+                try:
+                    result = await self.microscope.execute(ChannelSnapshot(
+                        channel=channel,
+                        machine_config=config_file.machine_config or []
+                    ))
+
+                    # Store the image
+                    g_dict = GlobalConfigHandler.get_dict()
+                    pixel_format = g_dict[CameraConfig.MAIN_PIXEL_FORMAT.value].strvalue
+                    await self._store_new_image(
+                        img=result._img,
+                        pixel_format=pixel_format,
+                        channel_config=channel
+                    )
+
+                    completed_channels += 1
+
+                    # Send completed status
                     callback(ChannelSnapProgressiveStatus(
                         channel_handle=channel.handle,
                         channel_name=channel.name,
-                        status="starting",
+                        status="completed",
                         total_channels=total_channels,
                         completed_channels=completed_channels,
-                        message=f"Starting acquisition for {channel.name}"
+                        message=f"Completed {channel.name} ({completed_channels}/{total_channels})"
                     ))
 
-                    try:
-                        # Execute channel snapshot
-                        with self.microscope.lock(reason=f"snapping channel: {channel.name}") as microscope:
-                            if microscope is None:
-                                error_microscope_busy(self.microscope.get_lock_reasons())
+                except OperationCancelledError:
+                    raise
+                except Exception as e:
+                    # Send error status
+                    callback(ChannelSnapProgressiveStatus(
+                        channel_handle=channel.handle,
+                        channel_name=channel.name,
+                        status="error",
+                        total_channels=total_channels,
+                        completed_channels=completed_channels,
+                        message=f"Error acquiring {channel.name}",
+                        error_detail=str(e)
+                    ))
+                    break
 
-                            result = await microscope.execute(ChannelSnapshot(
-                                channel=channel,
-                                machine_config=config_file.machine_config or []
-                            ))
+            # Send finished status
+            callback(ChannelSnapProgressiveStatus(
+                channel_handle="",
+                channel_name="",
+                status="finished",
+                total_channels=total_channels,
+                completed_channels=completed_channels,
+                message=f"All channels complete ({completed_channels}/{total_channels})"
+            ))
 
-                        # Store the image
-                        g_dict = GlobalConfigHandler.get_dict()
-                        pixel_format = g_dict[CameraConfig.MAIN_PIXEL_FORMAT.value].strvalue
-                        await self._store_new_image(
-                            img=result._img,
-                            pixel_format=pixel_format,
-                            channel_config=channel
-                        )
-
-                        completed_channels += 1
-
-                        # Send completed status
-                        callback(ChannelSnapProgressiveStatus(
-                            channel_handle=channel.handle,
-                            channel_name=channel.name,
-                            status="completed",
-                            total_channels=total_channels,
-                            completed_channels=completed_channels,
-                            message=f"Completed {channel.name} ({completed_channels}/{total_channels})"
-                        ))
-
-                    except Exception as e:
-                        # Send error status
-                        callback(ChannelSnapProgressiveStatus(
-                            channel_handle=channel.handle,
-                            channel_name=channel.name,
-                            status="error",
-                            total_channels=total_channels,
-                            completed_channels=completed_channels,
-                            message=f"Error acquiring {channel.name}",
-                            error_detail=str(e)
-                        ))
-                        break
-
-                # Send finished status
-                callback(ChannelSnapProgressiveStatus(
-                    channel_handle="",
-                    channel_name="",
-                    status="finished",
-                    total_channels=total_channels,
-                    completed_channels=completed_channels,
-                    message=f"All channels complete ({completed_channels}/{total_channels})"
-                ))
-
-            except Exception as e:
-                # Send error status for unexpected errors
-                callback(ChannelSnapProgressiveStatus(
-                    channel_handle="",
-                    channel_name="",
-                    status="error",
-                    total_channels=total_channels,
-                    completed_channels=completed_channels,
-                    message="Unexpected error during progressive snap",
-                    error_detail=str(e)
-                ))
-            finally:
-                # Clean up callback
-                if callback_id in self._progressive_snap_callbacks:
-                    del self._progressive_snap_callbacks[callback_id]
-
-        # Start the task in background
-        asyncio.create_task(progressive_snap_task())
-
-        return BasicSuccessResponse()
+        except OperationCancelledError:
+            callback(ChannelSnapProgressiveStatus(
+                channel_handle="",
+                channel_name="",
+                status="error",
+                total_channels=total_channels,
+                completed_channels=completed_channels,
+                message="Progressive snap cancelled",
+                error_detail="cancelled"
+            ))
+        except Exception as e:
+            # Send error status for unexpected errors
+            callback(ChannelSnapProgressiveStatus(
+                channel_handle="",
+                channel_name="",
+                status="error",
+                total_channels=total_channels,
+                completed_channels=completed_channels,
+                message="Unexpected error during progressive snap",
+                error_detail=str(e)
+            ))
 
     def close(self):
         logger.debug("shutdown - closing microscope")

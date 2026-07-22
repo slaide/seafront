@@ -10,9 +10,10 @@ This corrects the `queue.Queue` + always-enqueue worker sketched in
 REFACTOR_PLAN.md: there is no command queue, only a single in-flight slot whose
 availability *is* the reject-on-busy gate.
 
-Phase 3 status: this module exists and is started by `Core`, but no HTTP route
-submits to it yet. `_run_command` still bridges to the (async) `Microscope.execute`
-via `asyncio.run`; Phase 4 replaces that with a pure-sync execute path.
+Non-streaming commands and the multi-channel snap orchestrations (snap-all,
+progressive) route through here via `submit` / `submit_job`. `_run_coro` still
+bridges the (async) `Microscope.execute` and those orchestrations to the worker
+thread via `asyncio.run`; a later phase replaces that with a pure-sync execute path.
 """
 
 import asyncio
@@ -27,7 +28,8 @@ from seafront.server import commands as cmd
 
 
 class WorkItem(tp.NamedTuple):
-    command: cmd.BaseCommand[tp.Any]
+    make_coro: tp.Callable[[], tp.Coroutine[tp.Any, tp.Any, tp.Any]]
+    label: str
     reply: concurrent.futures.Future[tp.Any]
     cancel: threading.Event
 
@@ -98,6 +100,23 @@ class MicroscopeWorker:
         caller resolves `future` for the result and may `cancel.set()` to request
         cooperative cancellation.
         """
+        return self.submit_job(
+            lambda: self._scope.execute(command), type(command).__qualname__
+        )
+
+    def submit_job(
+        self,
+        make_coro: tp.Callable[[], tp.Coroutine[tp.Any, tp.Any, tp.Any]],
+        label: str = "job",
+    ) -> tuple[concurrent.futures.Future[tp.Any], threading.Event] | None:
+        """Run an arbitrary async orchestration on the worker thread.
+
+        Same reject-on-busy contract as `submit`, for multi-command work that must
+        hold the single owner for its whole duration (e.g. snap-all-channels,
+        progressive snap). `make_coro` is called on the worker thread and its
+        coroutine driven to completion there; poll `cancel` via
+        `scope.raise_if_cancelled()` at checkpoints inside it.
+        """
         if self._shutdown.is_set():
             return None
         # reject-on-busy: claim the single slot without waiting.
@@ -105,7 +124,7 @@ class MicroscopeWorker:
             return None
         reply: concurrent.futures.Future[tp.Any] = concurrent.futures.Future()
         cancel = threading.Event()
-        self._handoff.put(WorkItem(command, reply, cancel))
+        self._handoff.put(WorkItem(make_coro, label, reply, cancel))
         return reply, cancel
 
     def current_cancel(self) -> threading.Event | None:
@@ -138,7 +157,7 @@ class MicroscopeWorker:
             # via raise_if_cancelled().
             self._scope.set_current_cancel(item.cancel)
             try:
-                result = self._run_command(item.command)
+                result = self._run_coro(item.make_coro, item.label)
             except BaseException as e:
                 # Any failure is relayed to the caller's future. Release the slot
                 # BEFORE completing the future so a caller that awaits the result
@@ -153,9 +172,10 @@ class MicroscopeWorker:
                 self._inflight.release()
                 item.reply.set_result(result)
 
-    def _run_command(self, command: cmd.BaseCommand[tp.Any]) -> tp.Any:
-        # Transitional bridge: Microscope.execute is still async at the HTTP
-        # boundary. Everything under it is already sync (Phase 2), so this just
-        # drives the coroutine to completion on the worker thread. Phase 4
+    def _run_coro(self, make_coro: tp.Callable[[], tp.Coroutine[tp.Any, tp.Any, tp.Any]], label: str) -> tp.Any:
+        # Transitional bridge: Microscope.execute (and the orchestrations that call
+        # it) are still async. Everything under them is sync (Phase 2), so this just
+        # drives the coroutine to completion on the worker thread. A later phase
         # introduces a pure-sync execute path and deletes this asyncio.run.
-        return asyncio.run(self._scope.execute(command))
+        logger.debug(f"microscope-worker - running {label}")
+        return asyncio.run(make_coro())
