@@ -118,6 +118,7 @@ from seafront.server.protocol import (
     build_ome_instrument,
     make_unique_acquisition_id,
 )
+from seafront.server.worker import MicroscopeWorker
 
 
 # Custom exception for acquisition cancellation
@@ -296,6 +297,12 @@ class Core:
             # By importing here instead of at module level, mock mode works without drivers installed.
             from seafront.hardware.squid import SquidAdapter
             self.microscope = SquidAdapter.make()
+
+        # Single-owner hardware worker (reject-on-busy). Constructed and started here,
+        # but NOT yet wired to any route: HTTP handlers still call microscope.execute
+        # directly. Phase 4 routes non-streaming commands through worker.submit.
+        self.worker = MicroscopeWorker(self.microscope)
+        self.worker.start()
 
         self.acquisition_map: dict[str, AcquisitionStatus] = {}
         """ map containing information on past and current acquisitions """
