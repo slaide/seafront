@@ -59,6 +59,9 @@ class MicroscopeWorker:
         # Cancel event of the command currently running, or None when idle. Read by
         # the cancel hatch; only ever mutated by the worker thread.
         self._current_cancel: threading.Event | None = None
+        # Label of the command currently running, or None when idle. Surfaced in the
+        # 409 busy reason so callers see WHAT the hardware is doing.
+        self._current_label: str | None = None
         self._thread = threading.Thread(
             target=self._run, name="microscope-worker", daemon=True
         )
@@ -134,6 +137,11 @@ class MicroscopeWorker:
         """
         return self._current_cancel
 
+    def current_label(self) -> str | None:
+        """Label of the in-flight command (e.g. "acquisition:<id>", "MoveTo"), or None
+        when idle. Surfaced in the busy (409) reason for debuggability."""
+        return self._current_label
+
     @property
     def is_busy(self) -> bool:
         """True while a command is in flight (from acceptance until completion).
@@ -153,6 +161,7 @@ class MicroscopeWorker:
                 return
 
             self._current_cancel = item.cancel
+            self._current_label = item.label
             # Publish the cancel event onto the scope so long operations can poll it
             # via raise_if_cancelled().
             self._scope.set_current_cancel(item.cancel)
@@ -163,11 +172,13 @@ class MicroscopeWorker:
                 # BEFORE completing the future so a caller that awaits the result
                 # and immediately resubmits finds the worker free.
                 self._current_cancel = None
+                self._current_label = None
                 self._scope.set_current_cancel(None)
                 self._inflight.release()
                 item.reply.set_exception(e)
             else:
                 self._current_cancel = None
+                self._current_label = None
                 self._scope.set_current_cancel(None)
                 self._inflight.release()
                 item.reply.set_result(result)

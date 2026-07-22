@@ -70,6 +70,8 @@ def test_worker_rejects_second_command_while_busy():
         # wait until the worker is actually executing the first command
         assert scope.started.wait(timeout=10)
         assert worker.is_busy
+        # the in-flight label is exposed so a busy rejection can name what's running
+        assert worker.current_label() == "MoveTo"
 
         # reject-on-busy: second submit returns None instead of queuing
         assert worker.submit(cmd.MoveTo(x_mm=2.0)) is None

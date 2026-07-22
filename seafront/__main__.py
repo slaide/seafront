@@ -399,7 +399,7 @@ class Core:
                             # command is already in flight (reject-on-busy).
                             submitted = self.worker.submit(command)
                             if submitted is None:
-                                error_microscope_busy(["hardware command in progress"])
+                                error_microscope_busy(self._busy_reasons())
                             return await asyncio.wrap_future(submitted[0])
 
                         try:
@@ -1363,7 +1363,7 @@ class Core:
             lambda: self._snap_selected_channels_impl(config_file), "snap_selected_channels"
         )
         if submitted is None:
-            error_microscope_busy(["hardware command in progress"])
+            error_microscope_busy(self._busy_reasons())
         try:
             return await asyncio.wrap_future(submitted[0])
         except DisconnectError:
@@ -1447,7 +1447,7 @@ class Core:
         # Busy state is owned by the single-owner worker (reject-on-busy): a command
         # in flight == busy. The status hatch reads it directly, never queuing.
         is_busy = self.worker.is_busy
-        busy_reasons: list[str] = ["hardware command in progress"] if is_busy else []
+        busy_reasons: list[str] = self._busy_reasons() if is_busy else []
 
         return CoreCurrentState(
             adapter_state=microscope_adapter_state,
@@ -1501,6 +1501,14 @@ class Core:
         if cancel is not None:
             cancel.set()
         return BasicSuccessResponse()
+
+    def _busy_reasons(self) -> list[str]:
+        """Busy (409) reason: name what the hardware worker is currently running, so the
+        rejection says WHY (e.g. "hardware busy: acquisition:<id>") instead of a generic string."""
+        label = self.worker.current_label()
+        if label is not None:
+            return [f"hardware busy: {label}"]
+        return ["hardware command in progress"]
 
     @property
     def acquisition_is_running(self) -> bool:
@@ -1750,7 +1758,7 @@ class Core:
             f"acquisition:{acquisition_id}",
         )
         if submitted is None:
-            error_microscope_busy(["hardware command in progress"])
+            error_microscope_busy(self._busy_reasons())
         self.acquisition_future = submitted[0]
 
         acquisition_status.thread_is_running = True
@@ -1891,7 +1899,7 @@ class Core:
             "progressive_snap",
         )
         if submitted is None:
-            error_microscope_busy(["hardware command in progress"])
+            error_microscope_busy(self._busy_reasons())
         await asyncio.wrap_future(submitted[0])
 
         return BasicSuccessResponse()
