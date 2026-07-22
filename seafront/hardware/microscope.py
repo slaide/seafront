@@ -123,8 +123,13 @@ class Microscope(BaseModel, abc.ABC):
     def raise_if_cancelled(self) -> None:
         """Cooperative cancel checkpoint: raise OperationCancelledError if the current
         command's cancel event is set. Safe to call from any hardware operation."""
-        if self._current_cancel is not None and self._current_cancel.is_set():
+        if self.should_cancel():
             raise OperationCancelledError()
+
+    def should_cancel(self) -> bool:
+        """True if the in-flight command's cancel event is set. Callers that want a
+        different exception (e.g. acquisition) check this instead of raise_if_cancelled."""
+        return self._current_cancel is not None and self._current_cancel.is_set()
 
     def get_lock_reasons(self) -> list[str]:
         """

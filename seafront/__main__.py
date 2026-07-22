@@ -73,7 +73,6 @@ from seafront.hardware.mock_microscope import MockMicroscope
 from seafront.logger import logger
 from seafront.hardware.forbidden_areas import ForbiddenAreaList
 from seafront.server.commands import (
-    AcquisitionCommand,
     AcquisitionEstimate,
     AcquisitionMetaInformation,
     AcquisitionProgressStatus,
@@ -273,17 +272,6 @@ class Core:
 
     def __init__(self, selected_microscope: MicroscopeConfig):
 
-        def make_acquisition_event_loop():
-            worker_loop = asyncio.new_event_loop()
-
-            # make daemon so that it automatically terminates on program shutdown
-            t = threading.Thread(target=worker_loop.run_forever, daemon=True)
-            t.start()
-
-            return worker_loop
-
-        self.acqusition_eventloop = make_acquisition_event_loop()
-
         # Store microscope name for status reporting
         self.microscope_name: str = selected_microscope.get(SystemConfig.MICROSCOPE_NAME.value, "unknown")
 
@@ -332,7 +320,7 @@ class Core:
             register_signal_dumper(
                 self.microscope,
                 GlobalConfigHandler.home() / "logs",
-                extra_loops=[self.acqusition_eventloop],
+                extra_loops=[],
             )
         except Exception as e:
             logger.warning(f"could not install SIGUSR2 stack dumper: {e}")
@@ -345,7 +333,7 @@ class Core:
             text = await asyncio.to_thread(
                 format_stack_dump,
                 self.microscope,
-                [self.acqusition_eventloop],
+                [],
             )
             return PlainTextResponse(text)
 
@@ -1510,7 +1498,12 @@ class Core:
         if not acq.thread_is_running:
             error_internal(detail=f"acquisition with id {acquisition_id} is not running")
 
-        await acq.queue_in.put(AcquisitionCommand.CANCEL)
+        # The acquisition holds the worker for its whole duration, so the in-flight
+        # cancel event IS this acquisition's. Setting it makes the protocol loop's next
+        # handle_q_in checkpoint raise AcquisitionCancelledError.
+        cancel = self.worker.current_cancel()
+        if cancel is not None:
+            cancel.set()
 
         return BasicSuccessResponse()
 
@@ -1624,17 +1617,15 @@ class Core:
         # validation here if protocols are submitted directly via API without going through config_fetch
 
         # check if microscope is even is connected
-        with self.microscope.lock(reason=f"starting acquisition: {config_file.plate_name}") as microscope:
-            if microscope is None:
-                error_microscope_busy(self.microscope.get_lock_reasons())
+        # Pre-flight checks (lock-free: status read + a field read). The acquisition
+        # itself runs on the worker, which provides exclusivity.
+        try:
+            _ = await self.microscope.get_current_state()
+        except DisconnectError:
+            error_internal("device not connected")
 
-            try:
-                _ = await microscope.get_current_state()
-            except DisconnectError:
-                error_internal("device not connected")
-
-            if microscope.is_in_loading_position:
-                error_internal(detail="now allowed while in loading position")
+        if self.microscope.is_in_loading_position:
+            error_internal(detail="now allowed while in loading position")
 
         if self.acquisition_future is not None:
             if not self.acquisition_future.done():
@@ -1676,14 +1667,11 @@ class Core:
         )
         self.acquisition_map[acquisition_id] = acquisition_status
 
-        def handle_q_in(q_in=queue_in):
-            """if there is something in q_in, fetch it and handle it (e.g. terminae on cancel command)"""
-            if not q_in.empty():
-                q_in_item = q_in.get_nowait()
-                if q_in_item == AcquisitionCommand.CANCEL:
-                    raise AcquisitionCancelledError("acquisition cancelled")
-
-                logger.warning(f"command unhandled: {q_in_item}")
+        def handle_q_in():
+            """protocol cancel checkpoint: raise if this acquisition's worker cancel
+            event has been set (see cancel_acquisition)."""
+            if self.microscope.should_cancel():
+                raise AcquisitionCancelledError("acquisition cancelled")
 
         project_name_issue = name_check(config_file.project_name)
         if project_name_issue is not None:
@@ -1776,147 +1764,89 @@ class Core:
         for channel_info in protocol.iter_channels():
             self.microscope.validate_channel_for_acquisition(channel_info.channel)
 
-        # this function internally locks the microscope
-        async def run_acquisition(
-            q_in: asyncio.Queue[AcquisitionCommand],
-            q_out: asyncio.Queue[
-                tp.Literal["disconnected"] | InternalErrorModel | AcquisitionStatusOut
-            ],
-        ):
-            """
-            acquisition execution
-
-            may be run in another thread
-
-            arguments:
-                - q_in:q.Queue send messages into the acquisition logic, mainly for cancellation message
-                - q_out:q.Queue acquisition status updates are posted at regular logic intervals. The
-                    queue length is capped to a low number, so long times without reading an update to not
-                    consume large amounts of memory. The oldest messages are evicted first.
-
-            """
-
-            async def inner(
-                q_in: asyncio.Queue[AcquisitionCommand],
-                q_out: asyncio.Queue[
-                    tp.Literal["disconnected"] | InternalErrorModel | AcquisitionStatusOut
-                ],
-            ):
-                logger.debug("protocol - started. awaiting microscope lock.")
-
-                with self.microscope.lock(reason="running acquisition protocol") as microscope:
-                    if microscope is None:
-                        error_microscope_busy(self.microscope.get_lock_reasons())
-
-                    logger.debug("protocol - acquired microscope lock")
-
-                    try:
-                        # initiate generation
-                        protocol_generator = protocol.generate()
-
-                        # send none on first yield
-                        result = None
-                        # protocol generates None to indicate that protocol is finished
-                        while (next_step := await protocol_generator.asend(result)) is not None:
-                            logger.debug(f"protocol - next step {type(next_step)}")
-                            if isinstance(next_step, str):
-                                result = None
-                            else:
-                                result = None
-                                try:
-                                    result = await microscope.execute(next_step)
-                                except DisconnectError as e:
-                                    logger.debug(f"executing protocol step generated error {e}")
-                                    await protocol_generator.athrow(e)
-                                    # TODO what should we do here?! break?
-
-                                if result is not None and isinstance(next_step, ChannelSnapshot):
-                                    await self._store_new_image(
-                                        img=result._img,
-                                        pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
-                                        channel_config=next_step.channel,
-                                    )
-
-                        logger.debug("protocol done")
-
-                        # finished regularly, set status accordingly (there must have been at least one image, so a status has been set)
-                        assert acquisition_status.last_status is not None
-                        acquisition_status.last_status.acquisition_status = (
-                            AcquisitionStatusStage.COMPLETED
-                        )
-
-                    except AcquisitionCancelledError:
-                        # User requested cancellation
-                        assert acquisition_status.last_status is not None
-                        acquisition_status.last_status.acquisition_status = (
-                            AcquisitionStatusStage.CANCELLED
-                        )
-                    except HTTPException as e:
-                        # Validation errors or other internal errors should crash the acquisition
-                        assert acquisition_status.last_status is not None
-                        acquisition_status.last_status.acquisition_status = (
-                            AcquisitionStatusStage.CRASHED
-                        )
-                        acquisition_status.last_status.message = str(e.detail)
-
-                        # Store error in buffer for GUI to display
-                        self._last_acquisition_error = str(e.detail)
-                        self._last_acquisition_error_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-                    except DisconnectError:
-                        await q_out.put("disconnected")
-                        logger.debug("microscope disconnected during acquisition - closing connections.")
-                        microscope.close()
-
-                        assert acquisition_status.last_status is not None
-                        acquisition_status.last_status.acquisition_status = (
-                            AcquisitionStatusStage.CRASHED
-                        )
-                        acquisition_status.last_status.message = "hardware disconnect"
-
-                    except Exception as e:
-                        logger.exception(f"error during acquisition {e}\n{traceback.format_exc()}")
-
-                        full_error = traceback.format_exc()
-                        await q_out.put(
-                            InternalErrorModel(
-                                detail=f"acquisition thread failed because {e!s}, more specifically: {full_error}"
-                            )
-                        )
-
-                        if acquisition_status.last_status is not None:
-                            acquisition_status.last_status.acquisition_status = (
-                                AcquisitionStatusStage.CRASHED
-                            )
-
-                    finally:
-                        # ensure no dangling image store task threads
-                        protocol.image_store_pool.join()
-
-            # wrap async execution in sync function
-            def sync_inner(q_in, q_out):
-                asyncio.run(inner(q_in, q_out))
-
-            # then run sync in a real thread, but async awaitable
-            # (an async task, which would behave the same in practice, does NOT work with RLock, which is essential!)
-            await asyncio.to_thread(sync_inner, q_in, q_out)
-
-            # indicate that this thread has stopped running (no matter the cause)
-            acquisition_status.thread_is_running = False
-
-            logger.debug("acquisition thread is done")
-            return
-
-        # create future object for acquisition that allows status polling.
-        self.acquisition_future = asyncio.run_coroutine_threadsafe(
-            run_acquisition(queue_in, queue_out),
-            # run coroutine in dedicated acquisition event loop
-            self.acqusition_eventloop,
+        # Run the whole acquisition as one worker job (single owner). It holds the worker
+        # for its entire duration, so every other command is rejected (409) meanwhile —
+        # which is exactly what allow_while_acquisition_is_running=False expects. Cancel via
+        # the worker's cancel event (cancel_acquisition sets it; handle_q_in checks it).
+        submitted = self.worker.submit_job(
+            lambda: self._run_acquisition_impl(protocol, acquisition_status),
+            f"acquisition:{acquisition_id}",
         )
+        if submitted is None:
+            error_microscope_busy(self.microscope.get_lock_reasons())
+        self.acquisition_future = submitted[0]
 
         acquisition_status.thread_is_running = True
 
         return AcquisitionStartResponse(acquisition_id=acquisition_id)
+
+    async def _run_acquisition_impl(
+        self, protocol: ProtocolGenerator, acquisition_status: AcquisitionStatus
+    ) -> None:
+        """Worker-thread body of an acquisition: drive the protocol generator, execute each
+        hardware step, store each channel image. Updates acquisition_status.last_status in
+        place (the status endpoint reads that). No lock — the worker is the single owner."""
+        logger.debug("protocol - started")
+        try:
+            # initiate generation
+            protocol_generator = protocol.generate()
+
+            # send none on first yield; protocol yields None to indicate it is finished
+            result = None
+            while (next_step := await protocol_generator.asend(result)) is not None:
+                logger.debug(f"protocol - next step {type(next_step)}")
+                if isinstance(next_step, str):
+                    result = None
+                else:
+                    result = None
+                    try:
+                        result = await self.microscope.execute(next_step)
+                    except DisconnectError as e:
+                        logger.debug(f"executing protocol step generated error {e}")
+                        await protocol_generator.athrow(e)
+
+                    if result is not None and isinstance(next_step, ChannelSnapshot):
+                        await self._store_new_image(
+                            img=result._img,
+                            pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
+                            channel_config=next_step.channel,
+                        )
+
+            logger.debug("protocol done")
+
+            # finished regularly (there was at least one image, so a status exists)
+            assert acquisition_status.last_status is not None
+            acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.COMPLETED
+
+        except (AcquisitionCancelledError, OperationCancelledError):
+            # user requested cancellation (via cancel_acquisition -> worker cancel event)
+            assert acquisition_status.last_status is not None
+            acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CANCELLED
+        except HTTPException as e:
+            # validation / internal errors crash the acquisition
+            assert acquisition_status.last_status is not None
+            acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
+            acquisition_status.last_status.message = str(e.detail)
+            self._last_acquisition_error = str(e.detail)
+            self._last_acquisition_error_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        except DisconnectError:
+            logger.debug("microscope disconnected during acquisition - closing connections.")
+            self.microscope.close()
+            assert acquisition_status.last_status is not None
+            acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
+            acquisition_status.last_status.message = "hardware disconnect"
+        except Exception as e:
+            logger.exception(f"error during acquisition {e}\n{traceback.format_exc()}")
+            full_error = traceback.format_exc()
+            self._last_acquisition_error = f"acquisition failed because {e!s}, more specifically: {full_error}"
+            self._last_acquisition_error_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            if acquisition_status.last_status is not None:
+                acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
+        finally:
+            # ensure no dangling image-store threads, and mark the run finished
+            protocol.image_store_pool.join()
+            acquisition_status.thread_is_running = False
+        logger.debug("acquisition done")
 
     async def get_acquisition_status(self, acquisition_id: str) -> AcquisitionStatusOut:
         """
