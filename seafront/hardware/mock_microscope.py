@@ -283,7 +283,7 @@ class MockMicroscope(Microscope):
 
         return total_time, actual_max_vel
 
-    async def _simulate_gradual_movement(self, target_x_mm: float | None = None, target_y_mm: float | None = None, target_z_mm: float | None = None) -> None:
+    def _simulate_gradual_movement(self, target_x_mm: float | None = None, target_y_mm: float | None = None, target_z_mm: float | None = None) -> None:
         """Simulate realistic movement with per-axis acceleration, max speed, and stabilization time"""
         # Get current real positions
         start_x = self._pos_x_measured_to_real(self._current_position.x_pos_mm)
@@ -352,7 +352,7 @@ class MockMicroscope(Microscope):
 
             # Wait for next update (except last step)
             if step < num_steps:
-                await asyncio.sleep(update_interval_s)
+                time.sleep(update_interval_s)
 
         # Ensure final position is exact
         self._current_position.x_pos_mm = self._pos_x_real_to_measured(final_x)
@@ -361,14 +361,14 @@ class MockMicroscope(Microscope):
 
         # Wait for stabilization time
         if stabilization_time_s > 0:
-            await asyncio.sleep(stabilization_time_s)
+            time.sleep(stabilization_time_s)
 
-    async def _delay_for_imaging(self, exposure_time_ms: float) -> None:
+    def _delay_for_imaging(self, exposure_time_ms: float) -> None:
         """Simulate realistic imaging delay (exposure time + overhead)"""
         if self._realistic_delays_enabled:
             # Imaging takes exposure time + 10ms overhead (readout, processing, etc.)
             total_time_s = (exposure_time_ms + 10.0) / 1000.0
-            await asyncio.sleep(total_time_s)
+            time.sleep(total_time_s)
 
     @contextmanager
     def lock(self, blocking: bool = True, reason: str = "unknown") -> tp.Iterator[tp.Self | None]:
@@ -945,7 +945,7 @@ class MockMicroscope(Microscope):
                 cmd.error_internal(detail="Cannot enter loading position while camera is streaming - stop streaming first")
 
             # Simulate gradual movement to loading position (0, 0, 0)
-            await self._simulate_gradual_movement(target_x_mm=0.0, target_y_mm=0.0, target_z_mm=0.0)
+            self._simulate_gradual_movement(target_x_mm=0.0, target_y_mm=0.0, target_z_mm=0.0)
 
             self.is_in_loading_position = True
             return cmd.BasicSuccessResponse()  # type: ignore
@@ -962,7 +962,7 @@ class MockMicroscope(Microscope):
             plate_center_y = 80.0 / 2.0   # 40.0mm
             current_z = self._pos_z_measured_to_real(self._current_position.z_pos_mm)
 
-            await self._simulate_gradual_movement(target_x_mm=plate_center_x, target_y_mm=plate_center_y, target_z_mm=current_z)
+            self._simulate_gradual_movement(target_x_mm=plate_center_x, target_y_mm=plate_center_y, target_z_mm=current_z)
             self.is_in_loading_position = False
             return cmd.BasicSuccessResponse()  # type: ignore
 
@@ -983,7 +983,7 @@ class MockMicroscope(Microscope):
             target_z = command.z_mm if command.z_mm is not None else self._pos_z_measured_to_real(self._current_position.z_pos_mm)
 
             # Simulate gradual movement with real-time position updates
-            await self._simulate_gradual_movement(target_x_mm=target_x, target_y_mm=target_y, target_z_mm=target_z)
+            self._simulate_gradual_movement(target_x_mm=target_x, target_y_mm=target_y, target_z_mm=target_z)
             return cmd.BasicSuccessResponse()  # type: ignore
 
         elif isinstance(command, cmd.MoveBy):
@@ -1019,7 +1019,7 @@ class MockMicroscope(Microscope):
                 cmd.error_internal(detail=error_message)
 
             # Simulate gradual movement with real-time position updates
-            await self._simulate_gradual_movement(target_x_mm=target_x, target_y_mm=target_y, target_z_mm=target_z)
+            self._simulate_gradual_movement(target_x_mm=target_x, target_y_mm=target_y, target_z_mm=target_z)
             return cmd.MoveByResult(axis=command.axis, moved_by_mm=command.distance_mm)  # type: ignore
 
         elif isinstance(command, cmd.MoveToWell):
@@ -1040,7 +1040,7 @@ class MockMicroscope(Microscope):
             current_z = self._pos_z_measured_to_real(self._current_position.z_pos_mm)
 
             # Simulate gradual movement with real-time position updates
-            await self._simulate_gradual_movement(target_x_mm=well_x, target_y_mm=well_y, target_z_mm=current_z)
+            self._simulate_gradual_movement(target_x_mm=well_x, target_y_mm=well_y, target_z_mm=current_z)
             return cmd.BasicSuccessResponse()  # type: ignore
 
         elif isinstance(command, cmd.ChannelSnapshot):
@@ -1054,7 +1054,7 @@ class MockMicroscope(Microscope):
             self.validate_channel_for_acquisition(command.channel)
 
             # Simulate imaging delay based on exposure time
-            await self._delay_for_imaging(command.channel.exposure_time_ms)
+            self._delay_for_imaging(command.channel.exposure_time_ms)
 
             # Generate synthetic image via camera
             synthetic_img = self.main_camera.value.snap(command.channel)
@@ -1089,7 +1089,7 @@ class MockMicroscope(Microscope):
                 cmd.error_internal(detail="Cannot capture autofocus image while main camera is streaming")
 
             # Simulate imaging delay (autofocus typically uses shorter exposure ~5ms)
-            await self._delay_for_imaging(5.0)
+            self._delay_for_imaging(5.0)
 
             # Create channel config for the autofocus snap
             channel_config = sc.AcquisitionChannelConfig(
