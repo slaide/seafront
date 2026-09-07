@@ -239,6 +239,16 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
         ),
     )
 
+    # Device lock (expert escape hatch; the UI otherwise only breaks a lock via the cancel dialog)
+    ConfigRegistry.register(
+        config_item(
+            handle=SystemConfig.BREAK_LOCK.value,
+            name="break the device lock (frees another client's lease; stops nothing)",
+            value_kind="action",
+            default="/api/lock/break",
+        ),
+    )
+
     # Storage
     ConfigRegistry.register(
         config_item(

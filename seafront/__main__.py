@@ -105,6 +105,8 @@ from seafront.server.commands import (
     InternalErrorModel,
     ConflictErrorModel,
     LaserAutofocusCalibrate,
+    LockAcquireResponse,
+    LockStatusResponse,
     MachineConfigFlushResponse,
     LoadingPositionEnter,
     LoadingPositionLeave,
@@ -114,6 +116,7 @@ from seafront.server.commands import (
     SitePosition,
     StreamingStartedResponse,
     error_internal,
+    error_device_locked,
     error_microscope_busy,
     positionIsForbidden,
 )
@@ -123,6 +126,7 @@ from seafront.server.protocol import (
     build_ome_instrument,
     make_unique_acquisition_id,
 )
+from seafront.server.lock import DeviceLock
 from seafront.server.worker import MicroscopeWorker
 
 
@@ -147,6 +151,7 @@ class RouteTag(str, Enum):
     STATIC_FILES = "Static Files"
     ACTIONS = "Microscope Actions"
     ACQUISITION_CONTROLS = "Acquisition Controls"
+    LOCK = "Device Lock"
     DOCUMENTATION = "Documentation"
     INFO = "Server Info"
 
@@ -292,6 +297,10 @@ class Core:
         self.worker = MicroscopeWorker(self.microscope)
         self.worker.start()
 
+        # Client-held lease above the worker: one client at a time across requests. Routes
+        # registered with requires_lock (the default) refuse 423 while another client holds it.
+        self.lock = DeviceLock(worker_is_busy=lambda: self.worker.is_busy)
+
         self.acquisition_map: dict[str, AcquisitionStatus] = {}
         """ map containing information on past and current acquisitions """
 
@@ -379,9 +388,15 @@ class Core:
             methods: list[str] | None = None,
             allow_while_acquisition_is_running: bool = True,
             allow_while_streaming: bool = True,
+            requires_lock: bool = True,
             summary: str | None = None,
             **kwargs_static,
         ):
+            """
+            requires_lock: while another client holds the device lease, refuse this route with
+            423 unless the request carries the lease token (`lock_token`). Default on; opt out
+            for reads, cancel (safety hatch, always allowed) and the lock routes themselves.
+            """
             if methods is None:
                 methods = ["GET"]
             custom_route_handlers[path] = route
@@ -497,6 +512,14 @@ class Core:
 
             # Add target_device to all requests for device routing/validation
             model_fields["target_device"] = (str, Field(..., description="Target device name for request routing"))
+            # Add lock_token to all requests: the device lease token (see /api/lock/acquire)
+            model_fields["lock_token"] = (
+                str | None,
+                Field(default=None, description="Device lease token from /api/lock/acquire; required while another client holds the lease"),
+            )
+            handler_accepts_lock_token = (not inspect.isclass(target_func)) and (
+                "lock_token" in inspect.signature(target_func).parameters
+            )
 
             # Dynamically create the Pydantic model (model_fields is always non-empty due to target_device)
             model_name = f"{target_func.__name__.capitalize()}RequestModel"
@@ -532,6 +555,16 @@ class Core:
                         },
                         status_code=421,  # Misdirected Request
                     )
+
+                # Device lease: a token renews the lease on every use; a gated route is refused
+                # while someone else holds the lease.
+                lock_token = request_data.pop("lock_token", None)
+                if lock_token:
+                    self.lock.touch(lock_token)
+                if requires_lock and not self.lock.allows(lock_token):
+                    error_device_locked(self.lock.state())
+                if handler_accepts_lock_token:
+                    request_data["lock_token"] = lock_token
 
                 # Hardware commands run on the microscope-worker thread (via callfunc ->
                 # worker.submit); callfunc itself is safe on the event loop.
@@ -587,6 +620,7 @@ class Core:
             "/api/get_info/current_state",
             CustomRoute(handler=self.get_current_state),
             methods=["POST"],
+            requires_lock=False,
         )
 
         # Register hardware capabilities route
@@ -594,6 +628,7 @@ class Core:
             "/api/get_features/hardware_capabilities",
             CustomRoute(handler=self.get_hardware_capabilities),
             methods=["POST"],
+            requires_lock=False,
         )
 
         # Register machine defaults route
@@ -601,6 +636,7 @@ class Core:
             "/api/get_features/machine_defaults",
             CustomRoute(handler=self.get_machine_defaults),
             methods=["POST"],
+            requires_lock=False,
         )
 
         # Health check endpoint - doesn't require target_device or hardware interaction
@@ -788,6 +824,7 @@ class Core:
             allow_while_acquisition_is_running=True,
             allow_while_streaming=False,
             methods=["POST"],
+            requires_lock=False,
         )
 
         # Cancel hatch: cancel whatever command is currently on the worker. Allowed
@@ -801,6 +838,33 @@ class Core:
             allow_while_acquisition_is_running=True,
             allow_while_streaming=True,
             methods=["POST"],
+            requires_lock=False,
+        )
+
+        # Device lease ("lock"): one client at a time across requests. See seafront/server/lock.py.
+        route_wrapper(
+            "/api/lock/acquire",
+            CustomRoute(handler=self.lock_acquire, tags=[RouteTag.LOCK.value]),
+            methods=["POST"],
+            requires_lock=False,
+        )
+        route_wrapper(
+            "/api/lock/release",
+            CustomRoute(handler=self.lock_release, tags=[RouteTag.LOCK.value]),
+            methods=["POST"],
+            requires_lock=False,
+        )
+        route_wrapper(
+            "/api/lock/status",
+            CustomRoute(handler=self.lock_status, tags=[RouteTag.LOCK.value]),
+            methods=["POST"],
+            requires_lock=False,
+        )
+        route_wrapper(
+            "/api/lock/break",
+            CustomRoute(handler=self.lock_break, tags=[RouteTag.LOCK.value]),
+            methods=["POST"],
+            requires_lock=False,
         )
 
         # Register URL for get_acquisition_status
@@ -812,6 +876,7 @@ class Core:
             ),
             allow_while_acquisition_is_running=True,
             methods=["POST"],
+            requires_lock=False,
         )
 
         # Register URL for get_acquisition_estimate
@@ -822,6 +887,7 @@ class Core:
                 tags=[RouteTag.ACQUISITION_CONTROLS.value],
             ),
             methods=["POST"],
+            requires_lock=False,
         )
 
         @app.websocket("/ws/acquisition/status")
@@ -931,6 +997,7 @@ class Core:
             "/api/acquisition/config_list",
             CustomRoute(handler=self.get_config_list, tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
+            requires_lock=False,
         )
 
         # Fetch acquisition config
@@ -938,6 +1005,7 @@ class Core:
             "/api/acquisition/config_fetch",
             CustomRoute(handler=self.config_fetch, tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
+            requires_lock=False,
         )
 
         # Save/load config
@@ -945,6 +1013,7 @@ class Core:
             "/api/acquisition/config_store",
             CustomRoute(handler=self.config_store, tags=[RouteTag.ACQUISITION_CONTROLS.value]),
             methods=["POST"],
+            requires_lock=False,
         )
 
         # Move to well
@@ -1233,10 +1302,6 @@ class Core:
 
         config_file.timestamp = sc.datetime2str(dt.datetime.now(dt.UTC))
 
-        # get machine config
-        if config_file.machine_config is not None:
-            GlobalConfigHandler.override(config_file.machine_config)
-
         if comment is not None:
             config_file.comment = comment
 
@@ -1462,7 +1527,69 @@ class Core:
             last_acquisition_error=self._last_acquisition_error,
             last_acquisition_error_timestamp=self._last_acquisition_error_timestamp,
             microscope_name=self.microscope_name,
+            lock=self.lock.state(),
         )
+
+    def lock_acquire(
+        self, owner: str, ttl_s: float | None = None, lock_token: str | None = None
+    ) -> LockAcquireResponse:
+        """
+        take the device lease
+
+        while you hold it, every hardware command (moves, snaps, streaming, acquisition start,
+        machine config flush, ...) from a request without your `lock_token` is refused with 423.
+        status reads and cancel are never refused. the lease expires `ttl_s` seconds after the
+        last request that carried the token, but never while a command is running on the
+        hardware. calling this with your own token renews (and re-labels) the lease.
+        """
+        lease = self.lock.acquire(owner=owner, ttl_s=ttl_s, token=lock_token)
+        if lease is None:
+            error_device_locked(self.lock.state())
+        logger.info(f"device lock acquired by '{lease.owner}' (lock {lease.lock_id})")
+        return LockAcquireResponse(
+            token=lease.token, lock_id=lease.lock_id, owner=lease.owner, expires_at=lease.expires_at
+        )
+
+    def lock_release(self, lock_token: str | None = None) -> BasicSuccessResponse:
+        """
+        give the device lease back
+
+        idempotent when nothing is held; 423 if someone else holds it (use /api/lock/break).
+        """
+        before = self.lock.state()
+        if not self.lock.release(lock_token):
+            error_device_locked(before)
+        if before.held:
+            logger.info(f"device lock released by '{before.owner}' (lock {before.lock_id})")
+        return BasicSuccessResponse()
+
+    def lock_status(self, lock_token: str | None = None) -> LockStatusResponse:
+        """
+        who holds the device lease, and whether the `lock_token` you sent is the holder's
+        """
+        state = self.lock.state()
+        return LockStatusResponse(
+            held=state.held,
+            owner=state.owner,
+            lock_id=state.lock_id,
+            expires_at=state.expires_at,
+            token_matches=self.lock.matches(lock_token),
+        )
+
+    def lock_break(self, reason: str = "") -> BasicSuccessResponse:
+        """
+        force-free the device lease, whoever holds it
+
+        open to anyone (it is a coordination tool, not a permission system). does not stop
+        anything that is running; use cancel for that. logged with the previous owner and
+        your reason.
+        """
+        previous = self.lock.break_lock()
+        if previous.held:
+            logger.warning(
+                f"device lock held by '{previous.owner}' (lock {previous.lock_id}) was broken; reason: {reason or '(none given)'}"
+            )
+        return BasicSuccessResponse()
 
     async def cancel_acquisition(self, acquisition_id: str) -> BasicSuccessResponse:
         """

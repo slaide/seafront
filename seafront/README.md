@@ -285,6 +285,16 @@ only `/api/action/machine_config_flush` with `privileged: true` and server-inter
 once. Values are validated against the registered `value_kind`/options; unknown handles are
 ignored and reported (`OverrideResult`).
 
+## Device lock (client lease)
+
+`seafront/server/lock.py` holds one lease per process (= per device): owner label, secret
+token, expiry. `route_wrapper(requires_lock=True)` (the default) refuses a request with **423**
+while another client holds the lease and the request lacks the matching `lock_token` (a
+synthetic body field like `target_device`). Opted out: reads, `acquisition/cancel`,
+`cancel_current` (safety hatch: cancel is never gated), config file routes and `/api/lock/*`.
+Expiry is lazy and never fires while the worker is busy; every token-bearing request renews it.
+`/api/lock/break` is open to anyone and logs owner + reason at WARNING. Coordination, not auth.
+
 ## WebSocket data flows
 
 | Endpoint | Purpose | Shape |

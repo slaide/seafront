@@ -671,4 +671,10 @@ If you change the `microscope_name` in your configuration:
 
 **Note:** Browser configuration is stored in localStorage. Changes to the server-side config won't automatically sync with previously saved browser settings. Use the "reset all values" button to synchronize server-to-browser, or "flush to server" to sync browser-to-server.
 
+### Device lock
+
+A client can hold the microscope: in the server panel (click the connection indicator) enter a name and press "Acquire lock". While a lock is held, hardware commands from other clients (moves, snaps, streaming, acquisition start, machine config flush) are refused with "locked by <name>", and the header shows who holds it. Status reads always work. The lock renews itself with every request you make and lapses 10 minutes after your last one, but never while a command is running on the hardware. "Release lock" gives it back; a page reload in the same tab keeps it.
+
+Cancel is never blocked by a lock, since stopping a run may be needed to protect the hardware. Cancelling asks for confirmation; if the run belongs to someone else the dialog says so and offers "Stop and take over lock". There is no plain "break lock" button; the expert route is the `system.lock.break` action in the machine config panel. Scripts use `/api/lock/acquire`, `/api/lock/status`, `/api/lock/release` and `/api/lock/break`, and send the returned token as `lock_token` in every request body.
+
 Machine config items marked *privileged* (calibration values, device IDs, microscope identity, ...) are owned by the server. A plain flush that would change one of them is rejected and names the handles; tick the "privileged" box next to the flush button to write them anyway. The server saves such a change to `config.json` at once. Some of these (device IDs, drivers) only take effect after a server restart. Laser autofocus and stage calibration write their results server-side, so they never need a privileged flush.

@@ -8,6 +8,8 @@ import seaconfig as sc
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from seafront.server.lock import LockState
+
 from seafront.config.basics import GlobalConfigHandler
 from seafront.config.handles import ProtocolConfig
 from seafront.config.registry import ConfigRegistry
@@ -82,6 +84,21 @@ def error_microscope_busy(busy_reasons: list[str]) -> tp.NoReturn:
             "message": "microscope is busy",
             "busy_reasons": busy_reasons,
         }
+    )
+
+
+def error_device_locked(lock_state: "LockState") -> tp.NoReturn:
+    """raise an HTTPException (423 Locked): another client holds the device lease"""
+    logger.debug(f"error_device_locked - {lock_state=}")
+
+    raise HTTPException(
+        status_code=423,
+        detail={
+            "message": f"microscope is locked by '{lock_state.owner}'",
+            "owner": lock_state.owner,
+            "lock_id": lock_state.lock_id,
+            "expires_at": lock_state.expires_at,
+        },
     )
 
 
@@ -278,6 +295,37 @@ class CoreCurrentState(BaseModel):
     "ISO timestamp of the last acquisition error"
     microscope_name: str
     "Name of the currently connected microscope configuration"
+    lock: LockState = Field(default_factory=LockState)
+    "who holds the device lease, if anyone (see /api/lock/*)"
+
+
+class LockAcquireResponse(BaseModel):
+    "a freshly taken (or renewed) device lease; keep `token` secret, `lock_id` is public"
+
+    token: str
+    "send as `lock_token` with every request while you hold the lease"
+    lock_id: str
+    "public id of this lease; matches CoreCurrentState.lock.lock_id while it is yours"
+    owner: str
+    expires_at: str
+    "ISO-8601 UTC; renewed by every request carrying the token"
+
+    microscope_name: str = ""
+    "name of the device that processed this request"
+
+
+class LockStatusResponse(BaseModel):
+    "device lease status plus whether the token you sent is the holder's"
+
+    held: bool
+    owner: str | None = None
+    lock_id: str | None = None
+    expires_at: str | None = None
+    token_matches: bool
+    "True if the `lock_token` in this request is the current lease's token"
+
+    microscope_name: str = ""
+    "name of the device that processed this request"
 
 
 class BasicSuccessResponse(BaseModel):

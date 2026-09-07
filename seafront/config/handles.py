@@ -136,6 +136,7 @@ class SystemConfig(ConfigHandle):
 
     MICROSCOPE_NAME = "system.microscope_name"
     MICROSCOPE_TYPE = "system.microscope_type"
+    BREAK_LOCK = "system.lock.break"
 
 
 class IlluminationConfig(ConfigHandle):

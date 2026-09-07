@@ -435,3 +435,104 @@ class TestMachineConfigFlushPrivilege:
             assert self._defaults()["camera.reconnection_delay_ms"]["value"] == changed["value"]
         finally:
             self._flush([original])
+
+
+@pytest.mark.usefixtures("running_server")
+class TestDeviceLock:
+    """/api/lock/*: one client at a time across requests; cancel and reads are never gated."""
+
+    def _post(self, path: str, data: dict | None = None) -> tuple[int, dict | None]:
+        return make_request(f"{self.server_url}{path}", data=data or {})
+
+    def _acquire(self, owner: str, token: str | None = None) -> tuple[int, dict | None]:
+        body: dict = {"owner": owner}
+        if token is not None:
+            body["lock_token"] = token
+        return self._post("/api/lock/acquire", body)
+
+    def test_full_lifecycle(self):
+        # nothing held: moves work without a token, status says so
+        status, data = self._post("/api/lock/status")
+        assert status == 200 and data is not None
+        assert data["held"] is False and data["token_matches"] is False
+        status, _ = self._post("/api/action/move_to", {"x_mm": 60.0, "y_mm": 40.0})
+        assert status == 200
+
+        status, lease = self._acquire("alice")
+        assert status == 200 and lease is not None
+        token = lease["token"]
+        try:
+            # holder is fine, everyone else is 423 with the holder named
+            status, _ = self._post("/api/action/move_to", {"x_mm": 60.5, "y_mm": 40.0, "lock_token": token})
+            assert status == 200
+            status, data = self._post("/api/action/move_to", {"x_mm": 61.0, "y_mm": 40.0})
+            assert status == 423, (status, data)
+            assert data is not None and data["detail"]["owner"] == "alice"
+            assert data["detail"]["lock_id"] == lease["lock_id"]
+            status, data = self._post("/api/action/move_to", {"x_mm": 61.0, "y_mm": 40.0, "lock_token": "wrong"})
+            assert status == 423
+
+            # a second client cannot take it
+            status, data = self._acquire("bob")
+            assert status == 423
+
+            # status distinguishes the holder from others
+            status, data = self._post("/api/lock/status", {"lock_token": token})
+            assert status == 200 and data is not None
+            assert data["held"] and data["owner"] == "alice" and data["token_matches"] is True
+            status, data = self._post("/api/lock/status")
+            assert data is not None and data["held"] and data["token_matches"] is False
+
+            # reads and cancel are never gated
+            status, data = self._post("/api/get_info/current_state")
+            assert status == 200 and data is not None
+            assert data["lock"]["held"] is True and data["lock"]["owner"] == "alice"
+            assert data["lock"]["lock_id"] == lease["lock_id"]
+            assert "token" not in data["lock"]
+            status, _ = self._post("/api/get_features/machine_defaults")
+            assert status == 200
+            status, _ = self._post("/api/action/cancel_current")
+            assert status == 200
+
+            # machine config flush is a hardware mutation: gated
+            status, _ = self._post("/api/action/machine_config_flush", {"machine_config": []})
+            assert status == 423
+            status, _ = self._post("/api/action/machine_config_flush", {"machine_config": [], "lock_token": token})
+            assert status == 200
+
+            # release by a stranger is refused, by the holder works, and is idempotent
+            status, _ = self._post("/api/lock/release", {"lock_token": "wrong"})
+            assert status == 423
+        finally:
+            status, _ = self._post("/api/lock/release", {"lock_token": token})
+            assert status == 200
+        status, _ = self._post("/api/lock/release", {"lock_token": token})
+        assert status == 200
+        status, data = self._post("/api/lock/status")
+        assert data is not None and data["held"] is False
+
+    def test_break_is_open_to_anyone(self):
+        status, lease = self._acquire("alice")
+        assert status == 200 and lease is not None
+        try:
+            status, _ = self._post("/api/lock/break", {"reason": "test takeover"})
+            assert status == 200
+            status, data = self._post("/api/lock/status", {"lock_token": lease["token"]})
+            assert data is not None and data["held"] is False and data["token_matches"] is False
+            status, fresh = self._acquire("bob")
+            assert status == 200 and fresh is not None and fresh["lock_id"] != lease["lock_id"]
+            self._post("/api/lock/release", {"lock_token": fresh["token"]})
+        finally:
+            self._post("/api/lock/break", {"reason": "test cleanup"})
+
+    def test_holder_renews_by_reacquiring(self):
+        status, lease = self._acquire("alice")
+        assert status == 200 and lease is not None
+        try:
+            status, again = self._acquire("alice (renamed)", token=lease["token"])
+            assert status == 200 and again is not None
+            assert again["token"] == lease["token"] and again["lock_id"] == lease["lock_id"]
+            status, data = self._post("/api/lock/status")
+            assert data is not None and data["owner"] == "alice (renamed)"
+        finally:
+            self._post("/api/lock/release", {"lock_token": lease["token"]})
