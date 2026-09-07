@@ -6,10 +6,11 @@ import typing as tp
 from pathlib import Path
 
 import json5
+from loguru import logger
 from pydantic import BaseModel, Field
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
-from seafront.config.registry import ConfigRegistry
+from seafront.config.registry import ConfigRegistry, OverrideResult
 
 CameraDriver = tp.Literal["galaxy", "toupcam"]
 MicroscopeType = tp.Literal["squid", "mock"]
@@ -82,7 +83,7 @@ def set_config_item_int(
     handle: str,
     value: int,
     name: str | None = None,
-    frozen: bool = False,
+    privileged: bool = False,
 ) -> None:
     """
     Set or update an integer config item in the list.
@@ -95,7 +96,7 @@ def set_config_item_int(
         handle: Unique identifier for the config item
         value: Integer value to set
         name: Display name (used only when creating new item)
-        frozen: Whether item can be modified by user
+        privileged: Server-owned item (see ConfigItem.privileged); only used when creating a new item
     """
     for item in config_items:
         if item.handle == handle and item.value_kind == "int":
@@ -108,7 +109,7 @@ def set_config_item_int(
             name=name or handle,
             value_kind="int",
             value=value,
-            frozen=frozen,
+            privileged=privileged,
         )
     )
 
@@ -118,7 +119,7 @@ def set_config_item_float(
     handle: str,
     value: float,
     name: str | None = None,
-    frozen: bool = False,
+    privileged: bool = False,
 ) -> None:
     """
     Set or update a float config item in the list.
@@ -131,7 +132,7 @@ def set_config_item_float(
         handle: Unique identifier for the config item
         value: Float value to set
         name: Display name (used only when creating new item)
-        frozen: Whether item can be modified by user
+        privileged: Server-owned item (see ConfigItem.privileged); only used when creating a new item
     """
     for item in config_items:
         if item.handle == handle and item.value_kind == "float":
@@ -144,7 +145,7 @@ def set_config_item_float(
             name=name or handle,
             value_kind="float",
             value=value,
-            frozen=frozen,
+            privileged=privileged,
         )
     )
 
@@ -154,7 +155,7 @@ def set_config_item_text(
     handle: str,
     value: str,
     name: str | None = None,
-    frozen: bool = False,
+    privileged: bool = False,
 ) -> None:
     """
     Set or update a text config item in the list.
@@ -167,7 +168,7 @@ def set_config_item_text(
         handle: Unique identifier for the config item
         value: String value to set
         name: Display name (used only when creating new item)
-        frozen: Whether item can be modified by user
+        privileged: Server-owned item (see ConfigItem.privileged); only used when creating a new item
     """
     for item in config_items:
         if item.handle == handle and item.value_kind == "text":
@@ -180,7 +181,7 @@ def set_config_item_text(
             name=name or handle,
             value_kind="text",
             value=value,
-            frozen=frozen,
+            privileged=privileged,
         )
     )
 
@@ -191,7 +192,7 @@ def set_config_item_option(
     value: str,
     options: list[ConfigItemOption],
     name: str | None = None,
-    frozen: bool = False,
+    privileged: bool = False,
 ) -> None:
     """
     Set or update an option config item in the list.
@@ -205,7 +206,7 @@ def set_config_item_option(
         value: Option value to set (must be a valid handle from options list)
         options: List of ConfigItemOption to set as available options
         name: Display name (used only when creating new item)
-        frozen: Whether item can be modified by user
+        privileged: Server-owned item (see ConfigItem.privileged); only used when creating a new item
     """
     for item in config_items:
         if item.handle == handle and item.value_kind == "option":
@@ -220,7 +221,7 @@ def set_config_item_option(
             value_kind="option",
             value=value,
             options=options,
-            frozen=frozen,
+            privileged=privileged,
         )
     )
 
@@ -230,7 +231,7 @@ def set_config_item_bool(
     handle: str,
     value: bool,
     name: str | None = None,
-    frozen: bool = False,
+    privileged: bool = False,
 ) -> None:
     """
     Set or update a boolean option config item in the list.
@@ -244,7 +245,7 @@ def set_config_item_bool(
         handle: Unique identifier for the config item
         value: Boolean value to set
         name: Display name (used only when creating new item)
-        frozen: Whether item can be modified by user
+        privileged: Server-owned item (see ConfigItem.privileged); only used when creating a new item
     """
     str_value = "yes" if value else "no"
     set_config_item_option(
@@ -253,7 +254,7 @@ def set_config_item_bool(
         str_value,
         ConfigItemOption.get_bool_options(),
         name=name,
-        frozen=frozen,
+        privileged=privileged,
     )
 
 
@@ -613,14 +614,37 @@ class GlobalConfigHandler:
         return ConfigRegistry.get_all()
 
     @staticmethod
-    def override(new_config_items: dict[str, ConfigItem] | list[ConfigItem]):
-        """Override config items with new values."""
-        if isinstance(new_config_items, dict):
-            for handle, item in new_config_items.items():
-                ConfigRegistry.set_value(handle, item.value)
-        else:
-            for item in new_config_items:
-                ConfigRegistry.set_value(item.handle, item.value)
+    def override(
+        new_config_items: dict[str, ConfigItem] | list[ConfigItem],
+        *,
+        privileged: bool = False,
+    ) -> OverrideResult:
+        """
+        Apply request-provided config values to the runtime registry.
+
+        Without `privileged`, privileged handles are left untouched (the server value
+        wins) and the attempt is logged. With `privileged`, everything valid is written
+        and the config file is rewritten at once, so privileged changes survive a restart.
+        Unknown handles and values failing validation are never written.
+        """
+        items = (
+            list(new_config_items.values())
+            if isinstance(new_config_items, dict)
+            else new_config_items
+        )
+        result = ConfigRegistry.apply(items, privileged=privileged)
+        if result.skipped_privileged:
+            logger.warning(
+                f"ignored unprivileged change to privileged config: {result.skipped_privileged}"
+            )
+        if result.unknown_handles:
+            logger.debug(f"ignored unknown config handles: {result.unknown_handles}")
+        if result.invalid:
+            logger.warning(f"rejected invalid config values: {result.invalid}")
+        if privileged and result.changed_privileged:
+            logger.info(f"privileged config change: {result.changed_privileged}")
+            GlobalConfigHandler.store()
+        return result
 
     @staticmethod
     def get_dict() -> dict[str, ConfigItem]:

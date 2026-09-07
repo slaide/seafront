@@ -199,8 +199,8 @@ class MockCamera(Camera):
 
         # Set camera-specific image flip defaults for main mock cameras only
         if self.device_type == "main":
-            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, False, frozen=True)
-            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value, False, frozen=True)
+            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, False, privileged=True)
+            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value, False, privileged=True)
 
     def _streaming_loop(
         self,

@@ -37,7 +37,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             name="microscope name",
             value_kind="text",
             default="squid",
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
         config_item(
@@ -49,7 +49,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
                 ConfigItemOption(name="SQUID", handle="squid"),
                 ConfigItemOption(name="Mock", handle="mock"),
             ],
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
     )
@@ -61,7 +61,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             name="main camera USB ID",
             value_kind="text",
             default="CHANGE_ME",
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
         config_item(
@@ -73,7 +73,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
                 ConfigItemOption(name="Galaxy (Daheng)", handle="galaxy"),
                 ConfigItemOption(name="ToupCam", handle="toupcam"),
             ],
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
         config_item(
@@ -124,13 +124,13 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             handle=CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value,
             name="main camera flip image horizontally",
             default=False,
-            frozen=True,
+            privileged=True,
         ),
         bool_config_item(
             handle=CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value,
             name="main camera flip image vertically",
             default=True,
-            frozen=True,
+            privileged=True,
         ),
         config_item(
             handle=CameraConfig.RECONNECTION_ATTEMPTS.value,
@@ -159,7 +159,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             name="microcontroller USB ID",
             value_kind="text",
             default="",
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
         config_item(
@@ -170,7 +170,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             options=[
                 ConfigItemOption(name="Teensy/Arduino", handle="teensy"),
             ],
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
         config_item(
@@ -219,6 +219,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             value_kind="float",
             default=0.0,
             persistent=True,
+            privileged=True,
         ),
         config_item(
             handle=CalibrationConfig.OFFSET_Y_MM.value,
@@ -226,6 +227,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             value_kind="float",
             default=0.0,
             persistent=True,
+            privileged=True,
         ),
         config_item(
             handle=CalibrationConfig.OFFSET_Z_MM.value,
@@ -233,6 +235,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             value_kind="float",
             default=0.0,
             persistent=True,
+            privileged=True,
         ),
     )
 
@@ -254,7 +257,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             name="imaging channels configuration",
             value_kind="object",
             default=default_channels,
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
         config_item(
@@ -334,7 +337,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             handle=FilterWheelConfig.AVAILABLE.value,
             name="filter wheel system available",
             default=False,
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
     )
@@ -345,7 +348,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             handle=LaserAutofocusConfig.AVAILABLE.value,
             name="laser autofocus system available",
             default=False,
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
     )
@@ -359,7 +362,7 @@ def register_laser_autofocus_config() -> None:
             name="laser autofocus camera USB ID",
             value_kind="text",
             default="CHANGE_ME",
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
         config_item(
@@ -371,7 +374,7 @@ def register_laser_autofocus_config() -> None:
                 ConfigItemOption(name="Galaxy (Daheng)", handle="galaxy"),
                 ConfigItemOption(name="ToupCam", handle="toupcam"),
             ],
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
         config_item(
@@ -412,6 +415,8 @@ def register_laser_autofocus_config() -> None:
             name="laser autofocus offset [um]",
             value_kind="float",
             default=0.0,
+            privileged=True,
+            persistent=True,
         ),
         config_item(
             handle=LaserAutofocusConfig.CALIBRATION_Z_SPAN_MM.value,
@@ -429,24 +434,32 @@ def register_laser_autofocus_config() -> None:
             handle=LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.value,
             name="laser autofocus is calibrated",
             default=False,
+            privileged=True,
+            persistent=True,
         ),
         config_item(
             handle=LaserAutofocusConfig.CALIBRATION_X_PEAK_POS.value,
             name="laser autofocus calibration: x peak pos",
             value_kind="float",
             default=0.0,
+            privileged=True,
+            persistent=True,
         ),
         config_item(
             handle=LaserAutofocusConfig.CALIBRATION_UM_PER_PX.value,
             name="laser autofocus calibration: um per px",
             value_kind="float",
             default=0.0,
+            privileged=True,
+            persistent=True,
         ),
         config_item(
             handle=LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value,
             name="laser autofocus calibration: ref z in mm",
             value_kind="float",
             default=0.0,
+            privileged=True,
+            persistent=True,
         ),
     )
 
@@ -459,7 +472,7 @@ def register_filter_wheel_config() -> None:
             name="filter wheel configuration",
             value_kind="object",
             default=[],
-            frozen=True,
+            privileged=True,
             persistent=True,
         ),
     )

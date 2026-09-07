@@ -29,10 +29,26 @@ from __future__ import annotations
 import typing as tp
 from enum import Enum
 
+from pydantic import BaseModel, Field
 from seaconfig import ConfigItem, ConfigItemOption
 
 # Value kinds supported by the config system
 ValueKind = tp.Literal["text", "int", "float", "option", "action", "object"]
+
+
+class OverrideResult(BaseModel):
+    """Outcome of writing request-provided values into the registry (see ConfigRegistry.apply)."""
+
+    changed: list[str] = Field(default_factory=list)
+    "handles whose value was written and actually differs from before"
+    changed_privileged: list[str] = Field(default_factory=list)
+    "subset of `changed` that is privileged (only non-empty for privileged requests)"
+    skipped_privileged: list[str] = Field(default_factory=list)
+    "privileged handles the request tried to change without privilege; left untouched"
+    unknown_handles: list[str] = Field(default_factory=list)
+    "handles the server does not know; ignored"
+    invalid: dict[str, str] = Field(default_factory=dict)
+    "handle -> reason, for values rejected by type/option validation; left untouched"
 
 
 class ConfigRegistry:
@@ -86,7 +102,7 @@ class ConfigRegistry:
                 value_kind=spec.value_kind,
                 value=value,
                 options=spec.options,
-                frozen=spec.frozen,
+                privileged=spec.privileged,
             )
 
             cls._items[spec.handle] = item
@@ -123,9 +139,91 @@ class ConfigRegistry:
 
     @classmethod
     def set_value(cls, handle: str, value: tp.Any) -> None:
-        """Update a config item's value at runtime."""
+        """Update a config item's value at runtime (no validation, no privilege check)."""
         if handle in cls._items:
             cls._items[handle].value = value
+
+    @classmethod
+    def is_privileged(cls, handle: str | Enum) -> bool:
+        key = handle.value if isinstance(handle, Enum) else handle
+        return cls._items[key].privileged
+
+    @classmethod
+    def validate_value(cls, handle: str, value: tp.Any) -> str | None:
+        """
+        Check that `value` is acceptable for the registered item `handle`.
+
+        Returns None when valid, otherwise a short reason. The registered item's
+        value_kind is authoritative (the request's value_kind is ignored).
+        """
+        item = cls._items.get(handle)
+        if item is None:
+            return "unknown handle"
+        kind = item.value_kind
+        # bool is a subclass of int; never accept it for numeric kinds
+        if kind == "int":
+            if isinstance(value, bool) or not isinstance(value, int):
+                return f"expected int, got {type(value).__name__}"
+        elif kind == "float":
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                return f"expected float, got {type(value).__name__}"
+        elif kind == "text" or kind == "action":
+            if not isinstance(value, str):
+                return f"expected str, got {type(value).__name__}"
+        elif kind == "option":
+            if not isinstance(value, str):
+                return f"expected option handle (str), got {type(value).__name__}"
+            if item.options:
+                allowed = [o.handle for o in item.options]
+                if value not in allowed:
+                    return f"{value!r} is not one of {allowed}"
+        elif kind == "object":
+            if not isinstance(value, dict | list):
+                return f"expected dict or list, got {type(value).__name__}"
+        return None
+
+    @classmethod
+    def apply(cls, items: tp.Iterable[ConfigItem], *, privileged: bool = False) -> OverrideResult:
+        """
+        Write request-provided values into the registry.
+
+        Privileged handles are only written when `privileged` is set; otherwise they
+        are left untouched (the server value wins) and reported in `skipped_privileged`
+        when the request actually tried to change them. Unknown handles and values that
+        fail validation are never written.
+        """
+        result = OverrideResult()
+        for item in items:
+            current = cls._items.get(item.handle)
+            if current is None:
+                result.unknown_handles.append(item.handle)
+                continue
+            reason = cls.validate_value(item.handle, item.value)
+            if reason is not None:
+                result.invalid[item.handle] = reason
+                continue
+            differs = current.value != item.value
+            if current.privileged and not privileged:
+                if differs:
+                    result.skipped_privileged.append(item.handle)
+                continue
+            if differs:
+                result.changed.append(item.handle)
+                if current.privileged:
+                    result.changed_privileged.append(item.handle)
+            current.value = item.value
+        return result
+
+    @classmethod
+    def privileged_mismatches(cls, items: tp.Iterable[ConfigItem]) -> list[str]:
+        """Privileged handles whose provided value differs from the registry value."""
+        return [
+            item.handle
+            for item in items
+            if (current := cls._items.get(item.handle)) is not None
+            and current.privileged
+            and current.value != item.value
+        ]
 
     @classmethod
     def reset(cls) -> None:
@@ -143,7 +241,7 @@ class ConfigItemSpec(tp.NamedTuple):
     value_kind: ValueKind
     default: tp.Any
     options: list[ConfigItemOption] | None = None
-    frozen: bool = False
+    privileged: bool = False
     persistent: bool = False
 
 
@@ -153,7 +251,7 @@ def config_item(
     value_kind: ValueKind,
     default: tp.Any,
     options: list[ConfigItemOption] | None = None,
-    frozen: bool = False,
+    privileged: bool = False,
     persistent: bool = False,
 ) -> ConfigItemSpec:
     """
@@ -165,7 +263,9 @@ def config_item(
         value_kind: Type of value
         default: Default value if not in config file
         options: For "option" type, list of valid options
-        frozen: If True, cannot be changed via UI
+        privileged: If True, the value is server-owned (calibration, device identity, ...):
+            a request may only overwrite it by explicitly asserting privilege, and such
+            a write is persisted at once. Changing one may require a server restart.
         persistent: If True, will be saved to config file on store()
     """
     return ConfigItemSpec(
@@ -174,7 +274,7 @@ def config_item(
         value_kind=value_kind,
         default=default,
         options=options,
-        frozen=frozen,
+        privileged=privileged,
         persistent=persistent,
     )
 
@@ -183,7 +283,7 @@ def bool_config_item(
     handle: str,
     name: str,
     default: bool,
-    frozen: bool = False,
+    privileged: bool = False,
     persistent: bool = False,
 ) -> ConfigItemSpec:
     """Convenience function for boolean config items (yes/no options)."""
@@ -193,6 +293,6 @@ def bool_config_item(
         value_kind="option",
         default="yes" if default else "no",
         options=ConfigItemOption.get_bool_options(),
-        frozen=frozen,
+        privileged=privileged,
         persistent=persistent,
     )

@@ -15,7 +15,14 @@ import numpy as np
 import seaconfig as sc
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, ImagingOrder
+from seafront.config.basics import (
+    ChannelConfig,
+    ConfigItem,
+    FilterConfig,
+    GlobalConfigHandler,
+    ImagingOrder,
+)
+from seafront.config.handles import LaserAutofocusConfig
 from seafront.hardware.adapter import AdapterState
 from seafront.server import commands as cmd
 
@@ -309,6 +316,38 @@ class Microscope(BaseModel, abc.ABC):
             Calls error_internal() if validation fails
         """
         pass
+
+    def record_laser_autofocus_calibration(self, data: cmd.LaserAutofocusCalibrationData) -> None:
+        """
+        Write a fresh laser autofocus calibration into the privileged machine config and
+        persist it. The server computed these numbers, so it owns them; a client only
+        needs to re-read the machine config afterwards.
+        """
+        GlobalConfigHandler.override(
+            [
+                ConfigItem(
+                    name="", handle=LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.value,
+                    value_kind="option", value="yes",
+                ),
+                ConfigItem(
+                    name="", handle=LaserAutofocusConfig.CALIBRATION_X_PEAK_POS.value,
+                    value_kind="float", value=data.x_reference,
+                ),
+                ConfigItem(
+                    name="", handle=LaserAutofocusConfig.CALIBRATION_UM_PER_PX.value,
+                    value_kind="float", value=data.um_per_px,
+                ),
+                ConfigItem(
+                    name="", handle=LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value,
+                    value_kind="float", value=data.calibration_position.z_pos_mm,
+                ),
+                ConfigItem(
+                    name="", handle=LaserAutofocusConfig.OFFSET_UM.value,
+                    value_kind="float", value=data.offset_um,
+                ),
+            ],
+            privileged=True,
+        )
 
     @abc.abstractmethod
     def extend_machine_config(self, config_items: list[ConfigItem]) -> None:

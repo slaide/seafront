@@ -278,6 +278,13 @@ Effective config = **code defaults** → **file overrides** (`~/seafront/config.
 strings. `GlobalConfigHandler` owns file I/O and the override stack (`override(...)` is
 applied per request from `machine_config` in the body).
 
+Items registered with `privileged=True` (calibration, device identity, hardware-asserted
+flags) are server-owned: `override()` skips them unless called with `privileged=True`, which
+only `/api/action/machine_config_flush` with `privileged: true` and server-internal writers
+(laser autofocus / stage calibration) do. A privileged write is persisted with `store()` at
+once. Values are validated against the registered `value_kind`/options; unknown handles are
+ignored and reported (`OverrideResult`).
+
 ## WebSocket data flows
 
 | Endpoint | Purpose | Shape |

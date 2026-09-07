@@ -358,3 +358,80 @@ class TestAcquisitionConfigEndpoints:
         assert status == 200
         assert "configs" in data, f"Response should have 'configs' key, got: {data}"
         assert isinstance(data["configs"], list)
+
+
+@pytest.mark.usefixtures("running_server")
+class TestMachineConfigFlushPrivilege:
+    """/api/action/machine_config_flush: privileged handles need explicit privilege.
+
+    Only unprivileged flushes are exercised over HTTP: a privileged write persists to the
+    config file of the server under test, which here is the real seafront home.
+    """
+
+    def _defaults(self) -> dict:
+        status, data = make_request(f"{self.server_url}/api/get_features/machine_defaults", method="POST")
+        assert status == 200 and isinstance(data, list)
+        return {item["handle"]: item for item in data}
+
+    def _flush(self, items: list, privileged: bool | None = None) -> tuple[int, dict | None]:
+        body: dict = {"machine_config": items}
+        if privileged is not None:
+            body["privileged"] = privileged
+        return make_request(f"{self.server_url}/api/action/machine_config_flush", data=body)
+
+    def test_machine_defaults_expose_privileged_flag(self):
+        by_handle = self._defaults()
+        assert by_handle["system.microscope_name"]["privileged"] is True
+        assert by_handle["calibration.offset.x_mm"]["privileged"] is True
+        assert by_handle["camera.reconnection_delay_ms"]["privileged"] is False
+        assert "frozen" not in by_handle["system.microscope_name"]
+
+    def test_unprivileged_flush_changing_privileged_handle_is_rejected(self):
+        item = self._defaults()["system.microscope_name"]
+        stale = dict(item, value=item["value"] + "-stale")
+        status, data = self._flush([stale])
+        assert status == 400, (status, data)
+        assert data is not None
+        assert data["detail"]["mismatched_handles"] == ["system.microscope_name"]
+        # nothing was written
+        assert self._defaults()["system.microscope_name"]["value"] == item["value"]
+
+    def test_unprivileged_flush_with_matching_privileged_value_succeeds(self):
+        item = self._defaults()["system.microscope_name"]
+        status, data = self._flush([item])
+        assert status == 200, (status, data)
+        assert data is not None
+        assert data["changed"] == []
+        assert data["skipped_privileged"] == []
+
+    def test_unknown_handles_are_reported_not_rejected(self):
+        status, data = self._flush(
+            [{"name": "", "handle": "no.such.handle", "value_kind": "float", "value": 1.0}]
+        )
+        assert status == 200, (status, data)
+        assert data is not None
+        assert data["unknown_handles"] == ["no.such.handle"]
+
+    def test_invalid_value_is_rejected_before_anything_is_written(self):
+        defaults = self._defaults()
+        bad = dict(defaults["camera.reconnection_attempts"], value="five")
+        other = dict(defaults["camera.reconnection_delay_ms"])
+        other["value"] = float(other["value"]) + 1.0
+        status, data = self._flush([bad, other])
+        assert status == 400, (status, data)
+        assert data is not None
+        assert "camera.reconnection_attempts" in data["detail"]["invalid"]
+        # all-or-nothing: the valid item in the same flush was not written either
+        assert self._defaults()["camera.reconnection_delay_ms"]["value"] == defaults["camera.reconnection_delay_ms"]["value"]
+
+    def test_ordinary_handle_is_written_and_reported(self):
+        original = self._defaults()["camera.reconnection_delay_ms"]
+        changed = dict(original, value=float(original["value"]) + 1.0)
+        try:
+            status, data = self._flush([changed])
+            assert status == 200, (status, data)
+            assert data is not None
+            assert data["changed"] == ["camera.reconnection_delay_ms"]
+            assert self._defaults()["camera.reconnection_delay_ms"]["value"] == changed["value"]
+        finally:
+            self._flush([original])

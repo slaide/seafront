@@ -331,7 +331,7 @@ class TestConfigItemSpec:
             name="Test Name",
             value_kind="float",
             default=3.14,
-            frozen=True,
+            privileged=True,
             persistent=True,
         )
 
@@ -340,7 +340,7 @@ class TestConfigItemSpec:
         assert spec.name == "Test Name"
         assert spec.value_kind == "float"
         assert spec.default == 3.14
-        assert spec.frozen is True
+        assert spec.privileged is True
         assert spec.persistent is True
 
     def test_config_item_defaults(self):
@@ -353,7 +353,7 @@ class TestConfigItemSpec:
         )
 
         assert spec.options is None
-        assert spec.frozen is False
+        assert spec.privileged is False
         assert spec.persistent is False
 
 

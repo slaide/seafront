@@ -898,5 +898,5 @@ class GalaxyCamera(Camera):
 
         # Set camera-specific image flip defaults for main Galaxy cameras only
         if self.device_type == "main":
-            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, True, frozen=True)
-            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value, False, frozen=True)
+            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_VERTICAL.value, True, privileged=True)
+            set_config_item_bool(config_items, CameraConfig.MAIN_IMAGE_FLIP_HORIZONTAL.value, False, privileged=True)

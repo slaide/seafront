@@ -287,6 +287,22 @@ class BasicSuccessResponse(BaseModel):
     "name of the device that processed this request"
 
 
+class MachineConfigFlushResponse(BaseModel):
+    "outcome of a machine config flush: which handles were written, which were ignored"
+
+    changed: list[str] = Field(default_factory=list)
+    "handles whose value was written and differs from before"
+    skipped_privileged: list[str] = Field(default_factory=list)
+    "privileged handles left untouched because the request was not privileged"
+    unknown_handles: list[str] = Field(default_factory=list)
+    "handles the server does not know; ignored"
+    invalid: dict[str, str] = Field(default_factory=dict)
+    "handle -> reason, for values rejected by validation; left untouched"
+
+    microscope_name: str = ""
+    "name of the device that processed this request"
+
+
 class ConfigFetchResponse(BaseModel):
     file: sc.AcquisitionConfig
     microscope_name: str = ""

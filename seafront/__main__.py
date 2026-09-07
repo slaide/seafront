@@ -105,6 +105,7 @@ from seafront.server.commands import (
     InternalErrorModel,
     ConflictErrorModel,
     LaserAutofocusCalibrate,
+    MachineConfigFlushResponse,
     LoadingPositionEnter,
     LoadingPositionLeave,
     MoveBy,
@@ -1305,7 +1306,8 @@ class Core:
                     value_kind="float",
                     value=ref_z_mm,
                 ),
-            }
+            },
+            privileged=True,
         )
 
         return BasicSuccessResponse()
@@ -1521,10 +1523,51 @@ class Core:
 
         return True
 
-    def machine_config_flush(self, machine_config: list[ConfigItem]) -> BasicSuccessResponse:
-        GlobalConfigHandler.override(machine_config)
+    def machine_config_flush(
+        self, machine_config: list[ConfigItem], privileged: bool = False
+    ) -> MachineConfigFlushResponse:
+        """
+        write client-side machine config values into the running server config
 
-        return BasicSuccessResponse()
+        privileged handles (calibration, device identity, ...) are only written when `privileged`
+        is set; such a change is persisted to the config file at once (and may need a server
+        restart to take effect). without it, a flush that would change a privileged handle is
+        rejected (400) listing the offending handles, so a stale client cannot overwrite them by
+        accident. values failing type/option validation are rejected the same way; unknown
+        handles are ignored and reported.
+        """
+        if not privileged:
+            mismatches = ConfigRegistry.privileged_mismatches(machine_config)
+            if len(mismatches) > 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "flush would change privileged config without privilege",
+                        "mismatched_handles": mismatches,
+                    },
+                )
+
+        # validate everything before writing anything: an explicit flush is all-or-nothing
+        known = ConfigRegistry.get_dict()
+        invalid = {
+            item.handle: reason
+            for item in machine_config
+            if item.handle in known
+            and (reason := ConfigRegistry.validate_value(item.handle, item.value)) is not None
+        }
+        if len(invalid) > 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "flush contains invalid config values", "invalid": invalid},
+            )
+
+        result = GlobalConfigHandler.override(machine_config, privileged=privileged)
+        return MachineConfigFlushResponse(
+            changed=result.changed,
+            skipped_privileged=result.skipped_privileged,
+            unknown_handles=result.unknown_handles,
+            invalid=result.invalid,
+        )
 
     def get_hardware_capabilities(self) -> HardwareCapabilitiesResponse:
         """

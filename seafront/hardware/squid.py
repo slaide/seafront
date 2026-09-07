@@ -970,6 +970,7 @@ class SquidAdapter(Microscope):
         )
 
         logger.debug(f"laser autofocus calibration result: um_per_px={um_per_px:.4f}, x_reference={x_reference:.1f}, offset_um={offset_um:.3f}")
+        self.record_laser_autofocus_calibration(calibration_data)
         return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)
 
     async def get_current_state(self) -> AdapterState:
