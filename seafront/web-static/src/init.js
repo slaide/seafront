@@ -52,6 +52,7 @@ import {
     refreshConfigList,
     storeConfig,
     loadConfig,
+    mergeMachineConfig,
 } from "./config-storage.js";
 
 import {
@@ -750,9 +751,12 @@ const generate_alpine_object=() => ({
         }
 
         console.log(`executing action: '${config.value}'`);
-        return this.api.post(config.value, {}, {
+        const response = await this.api.post(config.value, {}, {
             context: `Execute action: ${config.handle}`
         });
+        // actions such as stage calibration write privileged config server-side
+        await this.refreshPrivilegedMachineConfig();
+        return response;
     },
 
     // keep track of number of open websockets (to limit frontend load)
@@ -1423,32 +1427,13 @@ const generate_alpine_object=() => ({
         this._plateinfo = await this.getPlateTypes();
         this._microscope_config = await this.defaultConfig();
 
-        // Get machine config defaults from server, then merge protocol-provided overrides.
-        // This allows default.json (or any loaded protocol) to carry preferred machine settings
-        // while still inheriting newly added server-side config handles.
+        // Machine config comes from the server; default.json may only contribute values
+        // for non-privileged handles (see mergeMachineConfig).
         const machineConfigData = await this.getMachineDefaults();
-        const protocolMachineConfig = this._microscope_config.machine_config;
-
-        if (Array.isArray(protocolMachineConfig) && protocolMachineConfig.length > 0) {
-            const mergedByHandle = new Map(machineConfigData.map(item => [item.handle, item]));
-            for (const item of protocolMachineConfig) {
-                if (item && item.handle) {
-                    mergedByHandle.set(item.handle, item);
-                }
-            }
-
-            // Keep microscope identity pinned to server value.
-            const serverMicroscopeNameItem = machineConfigData.find(
-                item => item.handle === "system.microscope_name"
-            );
-            if (serverMicroscopeNameItem) {
-                mergedByHandle.set("system.microscope_name", serverMicroscopeNameItem);
-            }
-
-            this._microscope_config.machine_config = Array.from(mergedByHandle.values());
-        } else {
-            this._microscope_config.machine_config = machineConfigData;
-        }
+        this._microscope_config.machine_config = mergeMachineConfig(
+            machineConfigData,
+            this._microscope_config.machine_config,
+        );
 
         // Load channels and hardware limits from hardware capabilities
         const hardwareCapabilities = await this.getHardwareCapabilities();
@@ -1989,7 +1974,7 @@ const generate_alpine_object=() => ({
     async acquisition_start() {
         try {
             
-            await this.machineConfigFlush();
+            await this.machineConfigFlush({ implicit: true });
 
             // Model is always in backend format
             const backend_config = this.microscope_config_copy;
@@ -2075,7 +2060,7 @@ const generate_alpine_object=() => ({
      */
     async showAcquisitionConfirmation() {
         try {
-            await this.machineConfigFlush();
+            await this.machineConfigFlush({ implicit: true });
 
             // Model is always in backend format
             const backend_config = this.microscope_config_copy;
@@ -2262,7 +2247,7 @@ const generate_alpine_object=() => ({
              * @returns {Promise<void>}
              */
             snapAllChannels: async () => {
-                await this.machineConfigFlush();
+                await this.machineConfigFlush({ implicit: true });
 
                 // Get current z as default reference
                 let currentState = await this.api.post('/api/get_info/current_state', {}, {
@@ -2324,7 +2309,7 @@ const generate_alpine_object=() => ({
              * @returns {Promise<StreamingStartedResponse>}
              */
             streamBegin: async (body) => {
-                await this.machineConfigFlush();
+                await this.machineConfigFlush({ implicit: true });
 
                 // Model is always in backend format
                 const backend_body = body;
@@ -2351,7 +2336,7 @@ const generate_alpine_object=() => ({
              * @returns {Promise<LaserAutofocusCalibrateResponse>}
              */
             laserAutofocusCalibrate: async (body) => {
-                await this.machineConfigFlush();
+                await this.machineConfigFlush({ implicit: true });
 
                 const response = await this.api.post('/api/action/laser_autofocus_calibrate', body, {
                     context: 'Laser autofocus calibrate'
@@ -2364,7 +2349,7 @@ const generate_alpine_object=() => ({
              * @returns {Promise<LaserAutofocusMoveToTargetOffsetResponse>}
              */
             laserAutofocusMoveToTargetOffset: async (body) => {
-                await this.machineConfigFlush();
+                await this.machineConfigFlush({ implicit: true });
 
                 return this.api.post('/api/action/laser_autofocus_move_to_target_offset', body, {
                     context: 'Laser autofocus move to target offset'
@@ -2376,7 +2361,7 @@ const generate_alpine_object=() => ({
              * @returns {Promise<LaserAutofocusMeasureDisplacementResponse>}
              */
             laserAutofocusMeasureDisplacement: async (body) => {
-                await this.machineConfigFlush();
+                await this.machineConfigFlush({ implicit: true });
 
                 return this.api.post('/api/action/laser_autofocus_measure_displacement', body, {
                     context: 'Laser autofocus measure displacement'
@@ -2388,7 +2373,7 @@ const generate_alpine_object=() => ({
              * @returns {Promise<LaserAutofocusSnapResponse>}
              */
             laserAutofocusSnap: async (body) => {
-                await this.machineConfigFlush();
+                await this.machineConfigFlush({ implicit: true });
 
                 return this.api.post('/api/action/snap_reflection_autofocus', body, {
                     context: 'Snap reflection autofocus'
@@ -2535,15 +2520,59 @@ const generate_alpine_object=() => ({
             await this.getMachineDefaults();
         this.refreshMachineConfigNamespaces();
     },
-    async machineConfigFlush() {
+    /** state of the "privileged" checkbox next to the Flush button */
+    machineConfigFlushPrivileged: false,
+    /**
+     * push machine config to the server.
+     *
+     * explicit (the Flush button): sends everything. with the privileged box ticked,
+     * privileged handles are written too and the server persists them at once; without
+     * it, the server rejects the flush (400) if any privileged value differs, naming the
+     * handles. afterwards privileged items are re-read from the server so whatever was
+     * not written snaps back.
+     *
+     * implicit (before snap / stream / acquisition / autofocus actions): sends only
+     * non-privileged items, so a stale client copy can never trip that rejection.
+     * @param {{implicit?:boolean}} [opts]
+     * @returns {Promise<MachineConfigFlushResponse>}
+     */
+    async machineConfigFlush(opts = {}) {
+        const implicit = opts.implicit === true;
+        const all = this.microscope_config.machine_config || [];
         /** @type {MachineConfigFlushRequest} */
         const body = {
-            machine_config: this.microscope_config.machine_config,
+            machine_config: implicit ? all.filter(item => !item.privileged) : all,
+            privileged: !implicit && this.machineConfigFlushPrivileged,
         };
 
-        return this.api.post('/api/action/machine_config_flush', body, {
-            context: 'Flush machine config'
+        /** @type {MachineConfigFlushResponse} */
+        const response = await this.api.post('/api/action/machine_config_flush', body, {
+            context: implicit ? 'Sync machine config' : 'Flush machine config'
         });
+        if (!implicit) {
+            this.machineConfigFlushPrivileged = false;
+            await this.refreshPrivilegedMachineConfig();
+        }
+        return response;
+    },
+    /**
+     * re-read privileged machine config items (calibration, device identity, ...) from the
+     * server, keeping local edits to everything else. used after a flush and after actions
+     * that make the server write such values (laser autofocus / stage calibration).
+     */
+    async refreshPrivilegedMachineConfig() {
+        const serverItems = await this.getMachineDefaults();
+        const local = this.microscope_config.machine_config || [];
+        const byHandle = new Map(local.map(item => [item.handle, item]));
+        for (const serverItem of serverItems) {
+            if (!serverItem.privileged) continue;
+            const localItem = byHandle.get(serverItem.handle);
+            if (localItem) {
+                Object.assign(localItem, serverItem);
+            } else {
+                local.push(serverItem);
+            }
+        }
     },
 
     // Namespace-related methods
@@ -2656,58 +2685,11 @@ const generate_alpine_object=() => ({
      * -> store for later retrieval
      */
     async buttons_calibrateLaserAutofocusHere() {
-        const calibration_data = await this.Actions.laserAutofocusCalibrate(
-            {},
-        );
-
-        const calibration_refzmm = this.getMachineConfigItem(
-            "laser.autofocus.calibration.ref_z_mm",
-        );
-        if (!calibration_refzmm)
-            throw new Error(`machine config item laser.autofocus.calibration.ref_z_mm not found during laser autofocus calibration`);
-        if (calibration_refzmm.value_kind != "float")
-            throw new Error(`machine config item laser.autofocus.calibration.ref_z_mm has unexpected type ${calibration_refzmm.value_kind}`);
-        calibration_refzmm.value =
-            calibration_data.calibration_data.calibration_position.z_pos_mm;
-
-        const calibration_umpx = this.getMachineConfigItem(
-            "laser.autofocus.calibration.um_per_px",
-        );
-        if (!calibration_umpx)
-            throw new Error(`machine config item laser.autofocus.calibration.um_per_px not found during laser autofocus calibration`);
-        if (calibration_umpx.value_kind != "float")
-            throw new Error(`machine config item laser.autofocus.calibration.um_per_px has unexpected type ${calibration_umpx.value_kind}`);
-        calibration_umpx.value =
-            calibration_data.calibration_data.um_per_px;
-
-        const calibration_x = this.getMachineConfigItem(
-            "laser.autofocus.calibration.x_peak_pos",
-        );
-        if (!calibration_x)
-            throw new Error(`machine config item laser.autofocus.calibration.x_peak_pos not found during laser autofocus calibration`);
-        if (calibration_x.value_kind != "float")
-            throw new Error(`machine config item laser.autofocus.calibration.x_peak_pos has unexpected type ${calibration_x.value_kind}`);
-        calibration_x.value = calibration_data.calibration_data.x_reference;
-
-        const offset_um = this.getMachineConfigItem(
-            "laser.autofocus.offset_um",
-        );
-        if (!offset_um)
-            throw new Error(`machine config item laser.autofocus.offset_um not found during laser autofocus calibration`);
-        if (offset_um.value_kind != "float")
-            throw new Error(`machine config item laser.autofocus.offset_um has unexpected type ${offset_um.value_kind}`);
-        offset_um.value = calibration_data.calibration_data.offset_um;
-
-        const is_calibrated = this.getMachineConfigItem(
-            "laser.autofocus.calibration.is_calibrated",
-        );
-        if (!is_calibrated)
-            throw new Error(`machine config item laser.autofocus.calibration.is_calibrated not found during laser autofocus calibration`);
-        if (is_calibrated.value_kind != "option")
-            throw new Error(`machine config item laser.autofocus.calibration.is_calibrated has unexpected type ${is_calibrated.value_kind}`);
-        is_calibrated.value = "yes";
+        // the server computes the calibration and writes it into the (privileged) machine
+        // config itself; we only need to pick up the new values.
+        await this.Actions.laserAutofocusCalibrate({});
+        await this.refreshPrivilegedMachineConfig();
     },
-
     get laserAutofocusOffsetText() {
         const noresult = "(not measured)";
 

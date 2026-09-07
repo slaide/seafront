@@ -177,7 +177,7 @@
                 align-items: start;
             }
 
-            .config-frozen {
+            .config-privileged {
                 display: flex;
                 align-items: center;
             }
@@ -806,7 +806,13 @@
                                     <button @click="machineConfigReset">
                                         Reset All
                                     </button>
-                                    <button @click="machineConfigFlush">
+                                    <label
+                                        title="also write privileged (server-owned) values: calibration, device identity, ... The server persists them at once; some need a restart to take effect."
+                                    >
+                                        <input type="checkbox" x-model="machineConfigFlushPrivileged" />
+                                        privileged
+                                    </label>
+                                    <button @click="machineConfigFlush()">
                                         Flush to Server
                                     </button>
                                 </div>
@@ -833,17 +839,18 @@
                                                     x-show="!machineConfigHandleFilter || config.handle.toLowerCase().includes(machineConfigHandleFilter.toLowerCase())"
                                                 >
                                                     <div class="config-row">
-                                                        <div class="config-frozen">
+                                                        <div class="config-privileged">
                                                             <input
-                                                                x-bind:id="`machineconfig-${config.handle}-frozen`"
+                                                                x-bind:id="`machineconfig-${config.handle}-privileged`"
                                                                 type="checkbox"
-                                                                x-model.boolean="config.frozen"
-                                                                x-init="disableElement($el,()=>(config.frozen||config.value_kind=='action'))"
+                                                                x-model.boolean="config.privileged"
+                                                                title="privileged: server-owned value (calibration, device identity, ...). Editable, but only written by a flush with the privileged box ticked; may need a server restart to take effect."
+                                                                x-init="disableElement($el,()=>true)"
                                                             />
                                                         </div>
                                                         <div class="config-info">
                                                             <label
-                                                                x-bind:for="`machineconfig-${config.handle}-frozen`"
+                                                                x-bind:for="`machineconfig-${config.handle}-privileged`"
                                                                 class="config-handle"
                                                                 x-text="config.handle"
                                                             ></label>
@@ -857,7 +864,6 @@
                                                                     x-model.number="config.value"
                                                                     is="number-input"
                                                                     x-init="registerNumberInput($el)"
-                                                                    x-effect="disableElement($el,()=>config.frozen)"
                                                                 />
                                                             </template>
                                                             <template x-if="config.value_kind=='float'">
@@ -867,7 +873,6 @@
                                                                     x-model.number="config.value"
                                                                     is="number-input"
                                                                     x-init="registerNumberInput($el)"
-                                                                    x-effect="disableElement($el,()=>config.frozen)"
                                                                 />
                                                             </template>
                                                             <template x-if="config.value_kind=='text'">
@@ -875,7 +880,6 @@
                                                                     rows="2"
                                                                     wrap="soft"
                                                                     x-model="config.value"
-                                                                    x-effect="disableElement($el,()=>config.frozen)"
                                                                 ></textarea>
                                                             </template>
                                                             <template x-if="config.value_kind=='action'">
@@ -887,7 +891,6 @@
                                                             <template x-if="config.value_kind=='option'">
                                                                 <select
                                                                     x-model="config.value"
-                                                                    x-effect="disableElement($el,()=>config.frozen)"
                                                                 >
                                                                     <template x-for="option in config.options" :key="option.handle">
                                                                         <optgroup x-bind:label="option.name">
@@ -925,17 +928,18 @@
                                                                 x-show="!machineConfigHandleFilter || config.handle.toLowerCase().includes(machineConfigHandleFilter.toLowerCase())"
                                                             >
                                                                 <div class="config-row">
-                                                                    <div class="config-frozen">
+                                                                    <div class="config-privileged">
                                                                         <input
-                                                                            x-bind:id="`machineconfig-${config.handle}-frozen`"
+                                                                            x-bind:id="`machineconfig-${config.handle}-privileged`"
                                                                             type="checkbox"
-                                                                            x-model.boolean="config.frozen"
-                                                                            x-init="disableElement($el,()=>(config.frozen||config.value_kind=='action'))"
+                                                                            x-model.boolean="config.privileged"
+                                                                            title="privileged: server-owned value (calibration, device identity, ...). Editable, but only written by a flush with the privileged box ticked; may need a server restart to take effect."
+                                                                            x-init="disableElement($el,()=>true)"
                                                                         />
                                                                     </div>
                                                                     <div class="config-info">
                                                                         <label
-                                                                            x-bind:for="`machineconfig-${config.handle}-frozen`"
+                                                                            x-bind:for="`machineconfig-${config.handle}-privileged`"
                                                                             class="config-handle"
                                                                             x-text="config.handle"
                                                                         ></label>
@@ -949,7 +953,6 @@
                                                                                 x-model.number="config.value"
                                                                                 is="number-input"
                                                                                 x-init="registerNumberInput($el)"
-                                                                                x-effect="disableElement($el,()=>config.frozen)"
                                                                             />
                                                                         </template>
                                                                         <template x-if="config.value_kind=='float'">
@@ -959,7 +962,6 @@
                                                                                 x-model.number="config.value"
                                                                                 is="number-input"
                                                                                 x-init="registerNumberInput($el)"
-                                                                                x-effect="disableElement($el,()=>config.frozen)"
                                                                             />
                                                                         </template>
                                                                         <template x-if="config.value_kind=='text'">
@@ -967,7 +969,6 @@
                                                                                 rows="2"
                                                                                 wrap="soft"
                                                                                 x-model="config.value"
-                                                                                x-effect="disableElement($el,()=>config.frozen)"
                                                                             ></textarea>
                                                                         </template>
                                                                         <template x-if="config.value_kind=='action'">
@@ -979,7 +980,6 @@
                                                                         <template x-if="config.value_kind=='option'">
                                                                             <select
                                                                                 x-model="config.value"
-                                                                                x-effect="disableElement($el,()=>config.frozen)"
                                                                             >
                                                                                 <template x-for="option in config.options" :key="option.handle">
                                                                                     <optgroup x-bind:label="option.name">
@@ -1008,7 +1008,7 @@
                             <!-- Fallback flat table view -->
                             <table x-show="!machineConfigUseNamespaces" class="machine-config-flat-table">
                                 <tr>
-                                    <th>frozen</th>
+                                    <th>privileged</th>
                                     <th>handle</th>
                                     <th>value</th>
                                     <th>kind</th>
@@ -1021,15 +1021,16 @@
                                     <tr>
                                         <td>
                                             <input
-                                                x-bind:id="`machineconfig-${config.handle}-frozen`"
+                                                x-bind:id="`machineconfig-${config.handle}-privileged`"
                                                 type="checkbox"
-                                                x-model.boolean="config.frozen"
-                                                x-init="disableElement($el,()=>(config.frozen||config.value_kind=='action'))"
+                                                x-model.boolean="config.privileged"
+                                                title="privileged: server-owned value (calibration, device identity, ...). Editable, but only written by a flush with the privileged box ticked; may need a server restart to take effect."
+                                                x-init="disableElement($el,()=>true)"
                                             />
                                         </td>
                                         <td>
                                             <label
-                                                x-bind:for="`machineconfig-${config.handle}-frozen`"
+                                                x-bind:for="`machineconfig-${config.handle}-privileged`"
                                                 x-text="config.handle"
                                             ></label>
                                         </td>
@@ -1041,7 +1042,6 @@
                                                     x-model.number="config.value"
                                                     is="number-input"
                                                     x-init="registerNumberInput($el)"
-                                                    x-effect="disableElement($el,()=>config.frozen)"
                                                 />
                                             </template>
                                             <template x-if="config.value_kind=='float'">
@@ -1051,7 +1051,6 @@
                                                     x-model.number="config.value"
                                                     is="number-input"
                                                     x-init="registerNumberInput($el)"
-                                                    x-effect="disableElement($el,()=>config.frozen)"
                                                 />
                                             </template>
                                             <template x-if="config.value_kind=='text'">
@@ -1059,7 +1058,6 @@
                                                     rows="3"
                                                     wrap="soft"
                                                     x-model="config.value"
-                                                    x-effect="disableElement($el,()=>config.frozen)"
                                                 ></textarea>
                                             </template>
                                             <template x-if="config.value_kind=='action'">
@@ -1071,7 +1069,6 @@
                                             <template x-if="config.value_kind=='option'">
                                                 <select
                                                     x-model="config.value"
-                                                    x-effect="disableElement($el,()=>config.frozen)"
                                                 >
                                                     <template x-for="option in config.options" :key="option.handle">
                                                         <optgroup x-bind:label="option.name">

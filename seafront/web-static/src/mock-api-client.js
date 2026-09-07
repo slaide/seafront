@@ -514,7 +514,7 @@ class MockAPIClient {
                     handle: "microscope_name",
                     value_kind: "text",
                     value: "Mock Microscope (Offline)",
-                    frozen: true,
+                    privileged: true,
                 },
             ];
         }
@@ -640,8 +640,8 @@ class MockAPIClient {
         }
 
         if (endpoint === '/api/action/machine_config_flush') {
-            // Machine config flush - just acknowledge in mock mode
-            return {};
+            // Machine config flush - nothing is written in mock mode
+            return { changed: [], skipped_privileged: [], unknown_handles: [], invalid: {} };
         }
 
         // === ACTION - Streaming ===
@@ -773,7 +773,7 @@ class MockAPIClient {
         // === ACTION - Configuration ===
 
         if (endpoint === '/api/action/machine_config_flush') {
-            return {};
+            return { changed: [], skipped_privileged: [], unknown_handles: [], invalid: {} };
         }
 
         // === ACQUISITION ===

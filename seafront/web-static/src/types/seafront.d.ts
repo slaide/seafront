@@ -250,8 +250,24 @@ declare global {
 
     type MachineConfigFlushRequest = {
         machine_config: MachineConfigItem[];
+        /**
+         * write privileged items too (calibration, device identity, ...); the server persists
+         * such a change at once. without it, a flush that would change a privileged value is
+         * rejected with 400 and `detail.mismatched_handles`.
+         */
+        privileged?: boolean;
     };
-    type MachineConfigFlushResponse = BasicSuccessResponse;
+    type MachineConfigFlushResponse = {
+        /** handles whose value was written and differs from before */
+        changed: string[];
+        /** privileged handles left untouched because the request was not privileged */
+        skipped_privileged: string[];
+        /** handles the server does not know; ignored */
+        unknown_handles: string[];
+        /** handle -> reason, for values rejected by validation */
+        invalid: Record<string, string>;
+        microscope_name: string;
+    };
 
     type StreamBeginRequest = {
         channel: AcquisitionChannelConfig;
@@ -308,28 +324,32 @@ declare global {
               handle: string;
               value_kind: "int";
               value: int;
-              frozen: boolean;
+              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
+              privileged: boolean;
           }
         | {
               name: string;
               handle: string;
               value_kind: "float";
               value: float;
-              frozen: boolean;
+              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
+              privileged: boolean;
           }
         | {
               name: string;
               handle: string;
               value_kind: "text";
               value: string;
-              frozen: boolean;
+              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
+              privileged: boolean;
           }
         | {
               name: string;
               handle: string;
               value_kind: "option";
               value: string;
-              frozen: boolean;
+              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
+              privileged: boolean;
               options: ConfigItemOption[] | null;
           }
         | {
@@ -337,7 +357,8 @@ declare global {
               handle: string;
               value_kind: "action";
               value: string;
-              frozen: boolean;
+              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
+              privileged: boolean;
           };
     type MachineConfigItem = ConfigItem;
     type MachineDefaults = MachineConfigItem[];

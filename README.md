@@ -359,7 +359,7 @@ When you update the microscope configuration with new channel names or other def
    uv run python -m seafront --microscope "your-microscope-name"
    ```
 
-5. **Reset machine config values**: In the web interface, go to "Machine Config" → "reset all values" to ensure all configuration values match the updated defaults
+5. **Reset machine config values**: In the web interface, go to "Machine Config" → "reset all values" to ensure all configuration values match the updated defaults. Items marked *privileged* (calibration, device identity, ...) always come from the server anyway; a protocol or a stale browser tab cannot overwrite them.
 
 6. **Reload interface**: Refresh (not hard reload) the browser page to apply all changes
 
@@ -670,3 +670,5 @@ If you change the `microscope_name` in your configuration:
 3. [as a last resort, delete the local microscope cache for the current microscope via the "advanced" tab, then reload.]
 
 **Note:** Browser configuration is stored in localStorage. Changes to the server-side config won't automatically sync with previously saved browser settings. Use the "reset all values" button to synchronize server-to-browser, or "flush to server" to sync browser-to-server.
+
+Machine config items marked *privileged* (calibration values, device IDs, microscope identity, ...) are owned by the server. A plain flush that would change one of them is rejected and names the handles; tick the "privileged" box next to the flush button to write them anyway. The server saves such a change to `config.json` at once. Some of these (device IDs, drivers) only take effect after a server restart. Laser autofocus and stage calibration write their results server-side, so they never need a privileged flush.

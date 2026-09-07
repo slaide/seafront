@@ -27,6 +27,34 @@ export async function refreshConfigList() {
 }
 
 /**
+ * Merge a protocol's machine config into the server's.
+ *
+ * The server list is authoritative for which handles exist and for every privileged
+ * handle (calibration, device identity, ...). A protocol may only carry values for
+ * non-privileged handles; handles the server does not know are dropped (the server
+ * would ignore them anyway).
+ * @param {MachineConfigItem[]} serverItems
+ * @param {MachineConfigItem[]|undefined|null} protocolItems
+ * @returns {MachineConfigItem[]}
+ */
+export function mergeMachineConfig(serverItems, protocolItems) {
+    const protocolByHandle = new Map(
+        (protocolItems || [])
+            .filter(item => item && item.handle)
+            .map(item => [item.handle, item]),
+    );
+    return serverItems.map(serverItem => {
+        const protocolItem = protocolByHandle.get(serverItem.handle);
+        if (serverItem.privileged || !protocolItem) {
+            return serverItem;
+        }
+        return /** @type {MachineConfigItem} */ (
+            Object.assign({}, serverItem, { value: protocolItem.value })
+        );
+    });
+}
+
+/**
  * Store current configuration to server.
  * @this {AlpineMicroscopeState}
  */
@@ -70,26 +98,13 @@ export async function loadConfig(protocol) {
     // Load the new configuration
     Object.assign(this.microscope_config, newconfig.file);
 
-    // Rebuild machine_config from server defaults and then apply loaded protocol overrides.
-    // This makes manual "Load" deterministic and prevents stale in-UI edits from surviving
-    // when a protocol has empty/partial machine_config.
+    // Rebuild machine_config from the server list; the protocol may only contribute
+    // values for non-privileged handles (see mergeMachineConfig).
     const serverMachineDefaults = await this.getMachineDefaults();
-    const mergedMachineConfig = new Map(serverMachineDefaults.map(item => [item.handle, item]));
-    if (newconfig.file.machine_config && newconfig.file.machine_config.length > 0) {
-        for (const item of newconfig.file.machine_config) {
-            if (item && item.handle) {
-                mergedMachineConfig.set(item.handle, item);
-            }
-        }
-    }
-    // Keep microscope identity pinned to server value.
-    const serverMicroscopeNameItem = serverMachineDefaults.find(
-        item => item.handle === "system.microscope_name"
+    this.microscope_config.machine_config = mergeMachineConfig(
+        serverMachineDefaults,
+        newconfig.file.machine_config,
     );
-    if (serverMicroscopeNameItem) {
-        mergedMachineConfig.set("system.microscope_name", serverMicroscopeNameItem);
-    }
-    this.microscope_config.machine_config = Array.from(mergedMachineConfig.values());
 
     // Restore hardware capabilities if the protocol doesn't provide channels
     if (!newconfig.file.channels || newconfig.file.channels.length === 0) {
