@@ -278,7 +278,9 @@ def _store_image(
     return path.stat().st_size
 
 
-def run_protocol(client: SeafrontClient, protocol: sc.AcquisitionConfig, out_root: Path, compression: str) -> Summary:
+def run_protocol(
+    client: SeafrontClient, protocol: sc.AcquisitionConfig, out_root: Path, compression: str, store_workers: int = 1
+) -> Summary:
     md = client.machine_defaults()
 
     def cfg(handle: str, default: tp.Any = None) -> tp.Any:
@@ -378,7 +380,8 @@ def run_protocol(client: SeafrontClient, protocol: sc.AcquisitionConfig, out_roo
     start = time.time()
     num_images = 0
     bytes_written = 0
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    # the server stores images on one worker thread; match it by default so runs compare like for like
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, store_workers))
     pending: list[concurrent.futures.Future[int]] = []
 
     def drain(block: bool) -> None:
@@ -509,6 +512,7 @@ def main() -> int:
     parser.add_argument("--ttl-s", type=float, default=600.0, help="lock lease length; renewed by every request")
     parser.add_argument("--lock-token", help="reuse an existing lease instead of taking a new one (it is not released afterwards)")
     parser.add_argument("--compression", choices=["LZW", "zlib"], default="LZW")
+    parser.add_argument("--store-workers", type=int, default=1, help="threads writing TIFFs (default 1, like the server)")
     args = parser.parse_args()
 
     client = SeafrontClient(args.server, lock_token=args.lock_token)
@@ -544,7 +548,7 @@ def main() -> int:
 
     try:
         protocol = load_protocol(client, args.protocol, args.protocol_file)
-        summary = run_protocol(client, protocol, args.output_dir, args.compression)
+        summary = run_protocol(client, protocol, args.output_dir, args.compression, store_workers=args.store_workers)
         log(f"done: {summary.num_images} images, {summary.bytes_written / 1e6:.1f} MB in {summary.seconds:.1f}s -> {summary.output_dir}")
         return 0
     except KeyboardInterrupt:
