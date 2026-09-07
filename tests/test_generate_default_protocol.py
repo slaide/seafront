@@ -4,6 +4,14 @@ from pathlib import Path
 import pytest
 
 from scripts.generate_default_protocol import generate_default_protocol
+from seafront.config.basics import GlobalConfigHandler
+
+
+def _redirect_seafront_home(monkeypatch, tmp_path: Path) -> None:
+    """Point the seafront home at tmp_path/seafront, the way the server does it ($SEAFRONT_HOME)."""
+    monkeypatch.setenv("SEAFRONT_HOME", str(tmp_path / "seafront"))
+    # home() caches its result process-wide; drop whatever an earlier test computed
+    monkeypatch.setattr(GlobalConfigHandler, "_seafront_home", None)
 
 
 def _read_protocol(path: Path) -> dict:
@@ -12,7 +20,7 @@ def _read_protocol(path: Path) -> dict:
 
 
 def test_generate_default_protocol_uses_first_filter_from_direct_config(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _redirect_seafront_home(monkeypatch, tmp_path)
 
     microscope_config = {
         "system.microscope_name": "test-scope",
@@ -39,7 +47,7 @@ def test_generate_default_protocol_uses_first_filter_from_direct_config(tmp_path
 
 
 def test_generate_default_protocol_reads_custom_config_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _redirect_seafront_home(monkeypatch, tmp_path)
 
     config_dir = tmp_path / "seafront"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -94,7 +102,7 @@ def test_generate_default_protocol_matches_example_files(
     example_file: str,
     expected_filter_handle: str | None,
 ):
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _redirect_seafront_home(monkeypatch, tmp_path)
 
     repo_root = Path(__file__).resolve().parents[1]
     example_path = repo_root / "examples" / example_file

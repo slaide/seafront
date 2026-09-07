@@ -15,7 +15,7 @@ from seafront.config.basics import FilterConfig, GlobalConfigHandler, Microscope
 
 def load_server_config() -> ServerConfig:
     """Load and return server config."""
-    config_path = Path.home() / "seafront" / "config.json"
+    config_path = GlobalConfigHandler.home() / "config.json"
 
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found at {config_path}. See examples/ directory.")
@@ -68,7 +68,7 @@ def generate_default_protocol(
 
     # Create output directory
     safe_dir_name = GlobalConfigHandler._sanitize_microscope_name_for_directory(microscope_name)
-    config_dir = Path.home() / "seafront" / "acquisition_configs" / safe_dir_name
+    config_dir = GlobalConfigHandler.home() / "acquisition_configs" / safe_dir_name
     config_dir.mkdir(parents=True, exist_ok=True)
 
     default_filter_handle: str | None = None
