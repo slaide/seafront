@@ -69,6 +69,38 @@ declare global {
         microscope_name: string;
         last_acquisition_error: string|null;
         last_acquisition_error_timestamp: string|null;
+        /** who holds the device lease, if anyone */
+        lock: LockState;
+    };
+
+    /** public view of the device lease; carries no token */
+    type LockState = {
+        held: boolean;
+        owner: string | null;
+        /** public id of the lease; equals the lock_id you got on acquire while it is yours */
+        lock_id: string | null;
+        /** ISO-8601 UTC; renewed by every request carrying the token */
+        expires_at: string | null;
+    };
+    type LockAcquireRequest = {
+        owner: string;
+        ttl_s?: number;
+    };
+    type LockAcquireResponse = {
+        /** secret; send as lock_token with every request */
+        token: string;
+        lock_id: string;
+        owner: string;
+        expires_at: string;
+        microscope_name: string;
+    };
+    type LockStatusResponse = LockState & {
+        /** true if the lock_token in the request is the holder's */
+        token_matches: boolean;
+        microscope_name: string;
+    };
+    type LockBreakRequest = {
+        reason?: string;
     };
     type Version = {
         major: int;

@@ -387,12 +387,23 @@ function stopAcquisitionSimulation() {
  * Mock API client for offline/development mode.
  * Simulates server responses when the backend is unavailable.
  */
+/** in-memory device lease for offline mock mode (see /api/lock/* on the real server) */
+const mockLock = {
+    held: false,
+    /** @type {string|null} */ owner: null,
+    /** @type {string|null} */ lock_id: null,
+    /** @type {string|null} */ expires_at: null,
+    /** @type {string|null} */ token: null,
+};
+
 class MockAPIClient {
     constructor(baseURL, options = {}) {
         this.mockState = sharedMockState;
         this.baseURL = baseURL || '';
         this.onError = options.onError || (() => {});
         this.getTargetDevice = options.getTargetDevice || (() => 'Mock Microscope (Offline)');
+        /** the mock never holds a real lease token; present for API parity with APIClient */
+        this.getLockToken = () => null;
     }
 
     /**
@@ -562,7 +573,42 @@ class MockAPIClient {
                 microscope_name: "Mock Microscope (Offline)",
                 last_acquisition_error: null,
                 last_acquisition_error_timestamp: null,
+                lock: { held: mockLock.held, owner: mockLock.owner, lock_id: mockLock.lock_id, expires_at: mockLock.expires_at },
             };
+        }
+
+        // === DEVICE LOCK (in-memory, single tab) ===
+
+        if (endpoint === '/api/lock/acquire') {
+            const token = body?.lock_token ?? null;
+            if (mockLock.held && token !== mockLock.token) {
+                throw new Error(`The microscope is locked by '${mockLock.owner}' (mock)`);
+            }
+            if (!mockLock.held) {
+                mockLock.token = `mock-token-${Date.now()}`;
+                mockLock.lock_id = `mock-lock-${Date.now()}`;
+            }
+            mockLock.held = true;
+            mockLock.owner = body?.owner ?? 'you';
+            mockLock.expires_at = new Date(Date.now() + 600_000).toISOString();
+            return { token: mockLock.token, lock_id: mockLock.lock_id, owner: mockLock.owner, expires_at: mockLock.expires_at };
+        }
+        if (endpoint === '/api/lock/release') {
+            if (mockLock.held && (body?.lock_token ?? null) !== mockLock.token) {
+                throw new Error(`The microscope is locked by '${mockLock.owner}' (mock)`);
+            }
+            Object.assign(mockLock, { held: false, owner: null, lock_id: null, expires_at: null, token: null });
+            return {};
+        }
+        if (endpoint === '/api/lock/status') {
+            return {
+                held: mockLock.held, owner: mockLock.owner, lock_id: mockLock.lock_id, expires_at: mockLock.expires_at,
+                token_matches: mockLock.held && (body?.lock_token ?? null) === mockLock.token,
+            };
+        }
+        if (endpoint === '/api/lock/break') {
+            Object.assign(mockLock, { held: false, owner: null, lock_id: null, expires_at: null, token: null });
+            return {};
         }
 
         // === ACQUISITION ===

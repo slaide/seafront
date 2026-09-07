@@ -4,6 +4,7 @@
  * @typedef {Object} APIClientOptions
  * @property {(title: string, message: string) => void} [onError] - Error callback
  * @property {() => string} [getTargetDevice] - Function that returns the target device name for request routing
+ * @property {() => (string|null)} [getLockToken] - Function that returns this client's device lease token (sent as lock_token), if any
  */
 
 /**
@@ -15,6 +16,19 @@
 /**
  * @typedef {Object} ConflictErrorModel
  * @property {ConflictErrorDetail} detail - Conflict error details from server
+ */
+
+/**
+ * @typedef {Object} LockedErrorDetail
+ * @property {string} message
+ * @property {string|null} owner - Label the lease holder gave on acquire
+ * @property {string|null} lock_id - Public id of the lease
+ * @property {string|null} expires_at - ISO-8601 UTC
+ */
+
+/**
+ * @typedef {Object} LockedErrorModel
+ * @property {LockedErrorDetail} detail - 423 Locked: another client holds the device lease
  */
 
 /**
@@ -64,6 +78,7 @@ class APIClient {
         this.baseURL = baseURL;
         this.onError = options.onError || (() => {});
         this.getTargetDevice = options.getTargetDevice || (() => '');
+        this.getLockToken = options.getLockToken || (() => null);
     }
 
     /**
@@ -112,6 +127,22 @@ class APIClient {
                     this.onError(context + ' Error', userMessage);
                 }
                 throw new Error(error);
+            } else if (response.status === 423) {
+                // Device lease held by another client
+                /** @type {LockedErrorModel} */
+                const errorBody = await response.json();
+                const d = errorBody.detail;
+                const until = d.expires_at ? ` (until ${new Date(d.expires_at).toLocaleTimeString()})` : '';
+                const userMessage = `The microscope is locked by '${d.owner ?? 'another client'}'${until}. `
+                    + `Only the lock holder can drive the hardware; acquire the lock from the server panel, or take it over via the cancel dialog.`;
+
+                const error = `${context} failed with ${response.statusText} ${response.status} because: ${userMessage}`;
+                console.error(error);
+
+                if (showError) {
+                    this.onError(context + ' Error', userMessage);
+                }
+                throw new Error(error);
             } else {
                 const responseBlob = await response.blob();
                 const responseText = await responseBlob.text();
@@ -148,10 +179,12 @@ class APIClient {
             showError = true,
         } = options;
 
-        // Inject target_device into every request for device routing
+        // Inject target_device (routing) and, while this client holds the device lease, lock_token
+        const lockToken = this.getLockToken();
         const requestBody = {
             ...body,
             target_device: this.getTargetDevice(),
+            ...(lockToken ? { lock_token: lockToken } : {}),
         };
 
         const url = this.buildUrl(endpoint);

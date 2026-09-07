@@ -178,6 +178,101 @@ const generate_alpine_object=() => ({
         estimatedTimeString: '--'
     },
 
+    /** state of the cancel-acquisition confirmation dialog */
+    cancelConfirm: {
+        show: false,
+        /** the run belongs to another client (device lock held by someone else) */
+        foreign: false,
+        /** @type {string|null} */
+        owner: null,
+        busy: false,
+    },
+
+    // ============ Device lock (client-held lease, see seafront/server/lock.py) ============
+    /**
+     * the device lease this tab holds, if any. `token` is secret and goes out as lock_token on
+     * every request; `lock_id` is public and is compared with state.lock.lock_id to know the
+     * current lease is ours. persisted in sessionStorage so a reload keeps the lease.
+     * @type {{token: string|null, lock_id: string|null, owner: string}}
+     */
+    lock: { token: null, lock_id: null, owner: '' },
+    _lockStorageKey() {
+        return `seafront.lock.${this.getMicroscopeName() || 'default'}`;
+    },
+    loadLockFromStorage() {
+        try {
+            const raw = sessionStorage.getItem(this._lockStorageKey());
+            if (raw) {
+                const saved = JSON.parse(raw);
+                this.lock.token = saved.token ?? null;
+                this.lock.lock_id = saved.lock_id ?? null;
+            }
+            this.lock.owner = localStorage.getItem('seafront.lock_owner') ?? '';
+        } catch (e) {
+            console.warn('could not restore device lock from storage', e);
+        }
+    },
+    _saveLockToStorage() {
+        try {
+            sessionStorage.setItem(this._lockStorageKey(), JSON.stringify({ token: this.lock.token, lock_id: this.lock.lock_id }));
+            localStorage.setItem('seafront.lock_owner', this.lock.owner);
+        } catch (e) {
+            console.warn('could not persist device lock', e);
+        }
+    },
+    /** @returns {LockState} */
+    get lockState() {
+        return this.state.lock ?? { held: false, owner: null, lock_id: null, expires_at: null };
+    },
+    get lockIsMine() {
+        const s = this.lockState;
+        return !!(s.held && this.lock.lock_id && s.lock_id === this.lock.lock_id);
+    },
+    get lockText() {
+        const s = this.lockState;
+        if (!s.held) return 'Unlocked';
+        return this.lockIsMine ? 'Locked by you' : `Locked by ${s.owner ?? 'another client'}`;
+    },
+    get lockExpiresText() {
+        const s = this.lockState;
+        if (!s.held || !s.expires_at) return '';
+        return `until ${new Date(s.expires_at).toLocaleTimeString()}`;
+    },
+    /** take (or renew) the device lease for this tab */
+    async lockAcquire() {
+        const owner = (this.lock.owner || '').trim() || 'web ui';
+        /** @type {LockAcquireRequest} */
+        const body = { owner, ttl_s: 600 };
+        /** @type {LockAcquireResponse} */
+        const response = await this.api.post('/api/lock/acquire', body, { context: 'Acquire lock' });
+        this.lock.token = response.token;
+        this.lock.lock_id = response.lock_id;
+        this._saveLockToStorage();
+    },
+    async lockRelease() {
+        await this.api.post('/api/lock/release', {}, { context: 'Release lock' });
+        this._clearLock();
+    },
+    _clearLock() {
+        this.lock.token = null;
+        this.lock.lock_id = null;
+        this._saveLockToStorage();
+    },
+    /** @returns {Promise<LockStatusResponse>} */
+    async lockStatus() {
+        return this.api.post('/api/lock/status', {}, { context: 'Lock status' });
+    },
+    /**
+     * force-free the device lease whoever holds it. no button of its own in the UI: reachable
+     * through the cancel dialog and as a machine config action (system.lock.break).
+     * @param {string} reason
+     */
+    async lockBreak(reason) {
+        /** @type {LockBreakRequest} */
+        const body = { reason };
+        return this.api.post('/api/lock/break', body, { context: 'Break lock' });
+    },
+
     // Mock mode indicator
     mockModeActive: false,
 
@@ -1029,6 +1124,7 @@ const generate_alpine_object=() => ({
                 current_acquisition_id:undefined,
                 last_acquisition_error:null,
                 last_acquisition_error_timestamp:null,
+                lock: { held: false, owner: null, lock_id: null, expires_at: null },
             };
         }
         //@ts-ignore
@@ -1040,6 +1136,10 @@ const generate_alpine_object=() => ({
     set state(newstate) {
         /** @ts-ignore */
         Object.assign(this._state, newstate);
+        // our lease is gone (expired, released elsewhere, or broken): forget the token
+        if (this.lock.token && newstate.lock && (!newstate.lock.held || newstate.lock.lock_id !== this.lock.lock_id)) {
+            this._clearLock();
+        }
     },
     /** @type {{plategroups: WellPlateGroup[],allplates: Wellplate[]}|null}  */
     _plateinfo: null,
@@ -1394,6 +1494,7 @@ const generate_alpine_object=() => ({
             this._api = new APIClient(this.server_url, {
                 onError: (title, message) => this.showError(title, message),
                 getTargetDevice: () => this.getMicroscopeName() || '',
+                getLockToken: () => this.lock.token,
             });
 
             this._wsManager = new WebSocketManager(this.server_url, {
@@ -1472,6 +1573,9 @@ const generate_alpine_object=() => ({
         } else {
             console.warn("No hardware limits found in capabilities, using defaults");
         }
+
+        // Now that microscope name is available, restore this tab's device lease (if any)
+        this.loadLockFromStorage();
 
         // Now that microscope name is available, try to load saved config from localStorage
         const savedData = this.loadMicroscopeConfigFromStorage();
@@ -2009,6 +2113,40 @@ const generate_alpine_object=() => ({
      * rpc to api/acquisition/cancel
      * @returns {Promise<AcquisitionStopResponse>}
      */
+    /**
+     * first click on Cancel: find out whose run this is, then ask. the server never refuses a
+     * cancel (it may be needed to protect the hardware), so this is only about making the user
+     * aware when it is someone else's run.
+     */
+    async requestAcquisitionCancel() {
+        let foreign = false;
+        /** @type {string|null} */
+        let owner = null;
+        try {
+            const status = await this.lockStatus();
+            foreign = status.held && !status.token_matches;
+            owner = status.owner;
+        } catch (e) {
+            console.warn('lock status unavailable, treating the run as our own', e);
+        }
+        this.cancelConfirm = { show: true, foreign, owner, busy: false };
+    },
+    /**
+     * @param {{takeOverLock?: boolean}} [opts] also break the other client's lease and take it
+     */
+    async confirmAcquisitionCancel(opts = {}) {
+        this.cancelConfirm.busy = true;
+        try {
+            if (opts.takeOverLock) {
+                await this.lockBreak(`taken over from '${this.cancelConfirm.owner ?? 'unknown'}' via the cancel dialog`);
+                await this.lockAcquire();
+            }
+            await this.acquisition_stop();
+        } finally {
+            this.cancelConfirm.show = false;
+            this.cancelConfirm.busy = false;
+        }
+    },
     async acquisition_stop() {
         try {
             const acquisitionId = this.state.current_acquisition_id;
