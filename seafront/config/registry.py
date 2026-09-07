@@ -76,7 +76,7 @@ class ConfigRegistry:
         cls._initialized = True
 
     @classmethod
-    def register(cls, *items: "ConfigItemSpec") -> None:
+    def register(cls, *items: ConfigItemSpec) -> None:
         """
         Register one or more config items.
 
