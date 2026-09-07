@@ -7,6 +7,7 @@ here lets other test modules build a `MockMicroscope` in-process too.
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -78,3 +79,48 @@ def mock_scope(mock_microscope_env):
     from seafront.hardware.mock_microscope import MockMicroscope
 
     return MockMicroscope.make()
+
+
+# --------------------------------------------------------------------------------------------
+# mock S3 (MinIO in docker) for the S3 storage backend
+
+# fixed test credentials for tests/mock-s3/docker-compose.yml; set at import time so any server
+# subprocess a test starts inherits them
+MINIO_ENDPOINT = "http://127.0.0.1:19000"
+MINIO_BUCKET = "seafront-test"
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "seafront")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "seafront-test-secret")
+os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+
+
+@pytest.fixture(scope="session")
+def minio_s3():
+    """endpoint URL and bucket of a MinIO container; skips when docker is not usable"""
+    import shutil
+    import subprocess
+    import time
+
+    compose = Path(__file__).parent / "mock-s3" / "docker-compose.yml"
+    if shutil.which("docker") is None:
+        pytest.skip("docker not installed")
+    up = subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], capture_output=True, text=True, timeout=300)
+    if up.returncode != 0:
+        pytest.skip(f"could not start mock S3: {up.stderr.strip()[-300:]}")
+    import boto3
+    from botocore.config import Config
+
+    client = boto3.client("s3", endpoint_url=MINIO_ENDPOINT, config=Config(retries={"max_attempts": 1}, connect_timeout=2, read_timeout=5))
+    deadline = time.time() + 60
+    while True:
+        try:
+            client.list_buckets()
+            break
+        except Exception:
+            if time.time() > deadline:
+                subprocess.run(["docker", "compose", "-f", str(compose), "down", "-v"], capture_output=True, timeout=120)
+                pytest.skip("mock S3 did not become ready")
+            time.sleep(0.5)
+    if MINIO_BUCKET not in {b["Name"] for b in client.list_buckets().get("Buckets", [])}:
+        client.create_bucket(Bucket=MINIO_BUCKET)
+    yield {"endpoint_url": MINIO_ENDPOINT, "bucket": MINIO_BUCKET, "client": client}
+    subprocess.run(["docker", "compose", "-f", str(compose), "down", "-v"], capture_output=True, timeout=120)

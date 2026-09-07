@@ -1,0 +1,18 @@
+# Mock S3 for testing the S3 storage backend (MinIO). Not network-bound, so upload thread counts
+# measured against it only flatter the number; keep the defaults at 1 like production.
+#
+#   docker compose -f tests/mock-s3/docker-compose.yml up -d
+#   export AWS_ACCESS_KEY_ID=seafront AWS_SECRET_ACCESS_KEY=seafront-test-secret
+#   uv run scripts/acquire_via_api.py --protocol default.json --storage s3 --s3-bucket images \
+#       --s3-endpoint-url http://127.0.0.1:19000
+#   docker compose -f tests/mock-s3/docker-compose.yml down -v
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:19000:9000"   # S3 API
+      - "127.0.0.1:19001:9001"   # web console
+    environment:
+      MINIO_ROOT_USER: seafront
+      MINIO_ROOT_PASSWORD: seafront-test-secret

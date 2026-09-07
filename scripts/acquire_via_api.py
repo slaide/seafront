@@ -20,6 +20,10 @@ Per-command mapping (built-in command -> API route):
   (image pixels)                      WS   /ws/get_info/acquired_image
   (lock)                              POST /api/lock/acquire, /api/lock/release
 
+Storage uses the same backends as the server (seafront.storage): --storage disk writes under
+--output-dir; --storage s3 uploads directly and spills to --output-dir only when uploads lag.
+--store-workers (encoding threads) and --s3-upload-threads default to 1 like the server.
+
 Usage:
   uv run scripts/acquire_via_api.py --protocol default.json
   uv run scripts/acquire_via_api.py --protocol-file my_protocol.json --owner "pipeline 3" --output-dir ./out
@@ -36,7 +40,7 @@ therefore differ by the calibration offsets; file names, pixels and everything e
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
+import functools
 import datetime as dt
 import getpass
 import json
@@ -53,7 +57,6 @@ from pathlib import Path
 import json5
 import numpy as np
 import seaconfig as sc
-import tifffile
 from websockets.sync.client import connect as ws_connect
 
 from seafront.config.basics import ChannelConfig
@@ -61,8 +64,9 @@ from seafront.server import commands as cmd
 from seafront.server.protocol import (
     _format_well_name_with_padding,
     build_ome_instrument,
-    build_ome_metadata,
+    encode_image,
 )
+from seafront.storage import DiskSink, ImageStore, S3Sink
 
 # --- constants mirrored from ProtocolGenerator.generate -------------------------------------
 Z_STACK_COUNTER_BACKLASH_MM = 40e-3
@@ -234,53 +238,14 @@ def z_planes(channels: list[sc.AcquisitionChannelConfig], reference_z_mm: float,
 
 
 class Summary(tp.NamedTuple):
-    output_dir: Path
+    output: str
     num_images: int
     bytes_written: int
     seconds: float
+    spilled: int = 0
 
 
-def _store_image(
-    entry: cmd.ImageStoreEntry,
-    plane_index: int,
-    compression: str,
-    protocol: sc.AcquisitionConfig,
-    hardware_channels: list[ChannelConfig],
-    ome_template: tp.Any,
-    autofocus_succeeded: bool,
-) -> int:
-    """Same on-disk result as seafront.server.protocol.store_image."""
-    assert entry.info.storage_path is not None
-    path = Path(entry.info.storage_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ome_xml = build_ome_metadata(
-        ome_template=ome_template,
-        image_entry=entry,
-        channel_config=entry.info.channel,
-        position=entry.info.position,
-        plane_index=plane_index,
-        pixel_size_um=PIXEL_SIZE_UM,
-        project_name=protocol.project_name,
-        plate_name=protocol.plate_name,
-        cell_line=protocol.cell_line,
-        hardware_channels=hardware_channels,
-        autofocus_succeeded=autofocus_succeeded,
-    )
-    tifffile.imwrite(
-        path,
-        entry._img,
-        compression=compression,
-        compressionargs={},
-        maxworkers=1,
-        description=ome_xml,
-        photometric="minisblack",
-    )
-    return path.stat().st_size
-
-
-def run_protocol(
-    client: SeafrontClient, protocol: sc.AcquisitionConfig, out_root: Path, compression: str, store_workers: int = 1
-) -> Summary:
+def run_protocol(client: SeafrontClient, protocol: sc.AcquisitionConfig, store: ImageStore, compression: str) -> Summary:
     md = client.machine_defaults()
 
     def cfg(handle: str, default: tp.Any = None) -> tp.Any:
@@ -321,11 +286,10 @@ def run_protocol(
     num_images_total = len(wells) * len(sites) * num_planes_per_site * grid.num_t
     log(f"protocol: {len(wells)} wells x {len(sites)} sites x {num_planes_per_site} channel/z planes x {grid.num_t} timepoints = {num_images_total} images")
 
-    # output directory, laid out like the server's (base/project/plate_timestamp[/tN]/file)
+    # output laid out like the server's: <base or bucket prefix>/project/plate_timestamp[/tN]/file
     stamp = sc.datetime2str(dt.datetime.now(dt.UTC))
-    project_out = out_root / protocol.project_name / f"{protocol.plate_name}_{stamp}"
-    project_out.mkdir(parents=True)
-    (project_out / "config.json").write_text(protocol.model_dump_json())
+    project_rel = Path(protocol.project_name) / f"{protocol.plate_name}_{stamp}"
+    store.put_bytes(str(project_rel / "config.json"), protocol.model_dump_json().encode())
 
     # -- EstablishHardwareConnection
     client.post("/api/action/establish_hardware_connection")
@@ -379,17 +343,6 @@ def run_protocol(
 
     start = time.time()
     num_images = 0
-    bytes_written = 0
-    # the server stores images on one worker thread; match it by default so runs compare like for like
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, store_workers))
-    pending: list[concurrent.futures.Future[int]] = []
-
-    def drain(block: bool) -> None:
-        nonlocal bytes_written, pending
-        done = [f for f in pending if f.done()] if not block else list(pending)
-        for f in done:
-            bytes_written += f.result()  # re-raises storage errors
-        pending = [f for f in pending if not f.done()]
 
     try:
         for timepoint in range(1, grid.num_t + 1):
@@ -442,7 +395,7 @@ def run_protocol(
                             f"{well_name}_s{site_index + site_start}_x{site.col + xy_start}_y{site.row + xy_start}"
                             f"_z{plane.plane_index + z_start}_{channel_identifier}.tiff"
                         )
-                        storage_path = project_out / (f"t{timepoint - 1}" if grid.num_t > 1 else "") / filename
+                        image_rel = project_rel / (f"t{timepoint - 1}" if grid.num_t > 1 else "") / filename
 
                         entry = cmd.ImageStoreEntry(
                             pixel_format=pixel_format,
@@ -457,19 +410,33 @@ def run_protocol(
                                     x_offset_mm=0, y_offset_mm=0, z_offset_mm=0,
                                     position=position,
                                 ),
-                                storage_path=str(storage_path),
+                                storage_path=store.describe(str(image_rel)),
                             ),
                         )
                         entry._img = img
-                        pending.append(pool.submit(
-                            _store_image, entry, plane.plane_index, compression, protocol,
-                            hardware_channels, ome_template, autofocus_succeeded,
-                        ))
-                        drain(block=False)
+                        store.put(
+                            str(image_rel),
+                            functools.partial(
+                                encode_image,
+                                image_entry=entry,
+                                img_compression_algorithm=compression,  # type: ignore[arg-type]
+                                channel_config=plane.channel,
+                                position=entry.info.position,
+                                plane_index=plane.plane_index,
+                                pixel_size_um=PIXEL_SIZE_UM,
+                                project_name=protocol.project_name,
+                                plate_name=protocol.plate_name,
+                                cell_line=protocol.cell_line,
+                                hardware_channels=hardware_channels,
+                                ome_template=ome_template,
+                                autofocus_succeeded=autofocus_succeeded,
+                            ),
+                        )
                         num_images += 1
                         log(
                             f"[{num_images}/{num_images_total}] well {well.well_name} ({well_index + 1}/{len(ordered_wells)}) "
-                            f"site {site_index + 1}/{len(ordered_sites)} z{plane.plane_index} '{plane.channel.name}' -> {storage_path.name}"
+                            f"site {site_index + 1}/{len(ordered_sites)} z{plane.plane_index} '{plane.channel.name}' -> {filename}"
+                            + (f"  (store backlog {store.pending})" if store.pending > 8 else "")
                         )
 
             if grid.num_t > timepoint:
@@ -481,11 +448,12 @@ def run_protocol(
                 while remaining > 0:
                     time.sleep(min(remaining, 0.5))
                     remaining -= 0.5
-        drain(block=True)
     finally:
-        pool.shutdown(wait=True)
-
-    return Summary(project_out, num_images, bytes_written, time.time() - start)
+        report = store.close()
+    if report.failed:
+        shown = "\n  ".join(report.failed[:10])
+        raise RuntimeError(f"{len(report.failed)} of {num_images} images failed to store:\n  {shown}")
+    return Summary(store.describe(str(project_rel)), num_images, report.bytes_written, time.time() - start, report.spilled_to_disk)
 
 
 # --- CLI -------------------------------------------------------------------------------------
@@ -507,12 +475,19 @@ def main() -> int:
     src.add_argument("--protocol", metavar="NAME", help="protocol stored on the server (see --list-protocols)")
     src.add_argument("--protocol-file", type=Path, metavar="PATH", help="local protocol JSON file")
     src.add_argument("--list-protocols", action="store_true", help="list protocols stored on the server and exit")
-    parser.add_argument("--output-dir", type=Path, default=Path("acquisitions"), help="where to write images (default: ./acquisitions)")
+    parser.add_argument("--output-dir", type=Path, default=Path("acquisitions"), help="disk: where images go; s3: spill directory (default: ./acquisitions)")
+    parser.add_argument("--storage", choices=["disk", "s3"], default="disk")
+    parser.add_argument("--s3-bucket", default="", help="s3: bucket (credentials from the AWS environment / shared config)")
+    parser.add_argument("--s3-prefix", default="", help="s3: key prefix")
+    parser.add_argument("--s3-endpoint-url", default="", help="s3: endpoint URL, e.g. a MinIO server; empty for AWS")
+    parser.add_argument("--s3-region", default="")
+    parser.add_argument("--s3-upload-threads", type=int, default=1, help="s3: concurrent uploads (default 1 like the server)")
+    parser.add_argument("--s3-spill-threshold", type=int, default=16, help="s3: images held in memory before spilling to --output-dir")
     parser.add_argument("--owner", default=f"acquire_via_api ({getpass.getuser()}@{socket.gethostname()})", help="lock owner label shown to other clients")
     parser.add_argument("--ttl-s", type=float, default=600.0, help="lock lease length; renewed by every request")
     parser.add_argument("--lock-token", help="reuse an existing lease instead of taking a new one (it is not released afterwards)")
     parser.add_argument("--compression", choices=["LZW", "zlib"], default="LZW")
-    parser.add_argument("--store-workers", type=int, default=1, help="threads writing TIFFs (default 1, like the server)")
+    parser.add_argument("--store-workers", type=int, default=1, help="threads encoding TIFFs (default 1, like the server's storage.writer_threads)")
     args = parser.parse_args()
 
     client = SeafrontClient(args.server, lock_token=args.lock_token)
@@ -548,8 +523,20 @@ def main() -> int:
 
     try:
         protocol = load_protocol(client, args.protocol, args.protocol_file)
-        summary = run_protocol(client, protocol, args.output_dir, args.compression, store_workers=args.store_workers)
-        log(f"done: {summary.num_images} images, {summary.bytes_written / 1e6:.1f} MB in {summary.seconds:.1f}s -> {summary.output_dir}")
+        if args.storage == "s3":
+            if not args.s3_bucket:
+                parser.error("--storage s3 needs --s3-bucket")
+            sink: DiskSink | S3Sink = S3Sink(
+                args.s3_bucket, spill_dir=args.output_dir, prefix=args.s3_prefix,
+                endpoint_url=args.s3_endpoint_url or None, region=args.s3_region or None,
+                spill_threshold=args.s3_spill_threshold, upload_threads=args.s3_upload_threads,
+            )
+        else:
+            sink = DiskSink(args.output_dir)
+        store = ImageStore(sink, writer_threads=args.store_workers)
+        summary = run_protocol(client, protocol, store, args.compression)
+        spilled = f", {summary.spilled} spilled to disk" if summary.spilled else ""
+        log(f"done: {summary.num_images} images, {summary.bytes_written / 1e6:.1f} MB in {summary.seconds:.1f}s{spilled} -> {summary.output}")
         return 0
     except KeyboardInterrupt:
         log("interrupted; cancelling the command in flight")

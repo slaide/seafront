@@ -1,6 +1,7 @@
 import asyncio
 import asyncio as aio
 import datetime as dt
+import functools
 import math
 import pathlib as path
 import random
@@ -13,7 +14,6 @@ from concurrent.futures import Future as ConcurrentFuture
 from threading import Thread
 
 import seaconfig as sc
-import tifffile
 from ome_types import OME
 from ome_types.model import (
     Channel,
@@ -52,6 +52,7 @@ from seafront.config.handles import (
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import Position as McPosition
 from seafront.logger import logger
+from seafront.storage import ImageStore, encode_ome_tiff, image_store_from_config
 
 
 # Supporting data classes for protocol iterators
@@ -92,16 +93,6 @@ class ZPositionInfo(BaseModel):
     channel_info: ChannelInfo
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
-
-class StorageTracker:
-    """Tracks accumulated storage usage as async image store tasks complete"""
-    def __init__(self):
-        self.accumulated_bytes: int = 0
-
-    def add_file_size(self, size_bytes: int) -> None:
-        """Record file size from a completed image storage task"""
-        self.accumulated_bytes += size_bytes
 
 
 class AsyncThreadPool(BaseModel):
@@ -534,7 +525,7 @@ def build_ome_metadata(
     return ome.to_xml()
 
 
-async def store_image(
+def encode_image(
     image_entry: cmds.ImageStoreEntry,
     img_compression_algorithm: tp.Literal["LZW", "zlib"],
     channel_config: sc.AcquisitionChannelConfig,
@@ -547,35 +538,13 @@ async def store_image(
     hardware_channels: list[basics.ChannelConfig],
     ome_template: OME,
     autofocus_succeeded: bool = False,
-    storage_tracker: StorageTracker | None = None,
-):
+) -> bytes:
     """
-    Store image as OME-TIFF file with OME-XML metadata and compression.
+    OME-TIFF bytes for one acquired image (OME-XML in ImageDescription, lossless compression).
 
-    Args:
-        image_entry: Image data and basic metadata
-        img_compression_algorithm: LZW or zlib compression
-        channel_config: Channel acquisition settings
-        position: Stage position and well information
-        plane_index: Z-plane index for this image
-        pixel_size_um: Physical pixel size in micrometers
-        project_name: Project/experiment name
-        plate_name: Plate identifier
-        cell_line: Cell line identifier
-        hardware_channels: List of available hardware channels
-        ome_template: Pre-built OME template with Instrument populated
-        autofocus_succeeded: Whether autofocus succeeded for this plane
-        storage_tracker: Optional tracker for storage usage
+    Pure: runs on an image-writer thread; the ImageStore's sink decides where the bytes go.
+    Shared with scripts/acquire_via_api.py so both write identical files.
     """
-
-    image_storage_path = image_entry.info.storage_path
-    assert isinstance(image_storage_path, str), f"{image_entry.info.storage_path} is not str"
-
-    # ensure parent dir exists (primarily for time series)
-    storage_path = path.Path(image_storage_path)
-    storage_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Build OME-XML metadata
     ome_xml = build_ome_metadata(
         ome_template=ome_template,
         image_entry=image_entry,
@@ -589,26 +558,8 @@ async def store_image(
         hardware_channels=hardware_channels,
         autofocus_succeeded=autofocus_succeeded,
     )
-
-    # takes 70-250ms
-    tifffile.imwrite(
-        storage_path,
-        image_entry._img,
-        compression=img_compression_algorithm,
-        compressionargs={},  # for zlib: {'level': 8},
-        maxworkers=1,
-        # OME-TIFF with OME-XML in ImageDescription (industry standard)
-        # description parameter accepts OME-XML string for OME-TIFF files
-        description=ome_xml,
-        photometric="minisblack",  # zero means black
-    )
-
-    # Track storage usage from the compressed file
-    if storage_tracker is not None:
-        file_size = storage_path.stat().st_size
-        storage_tracker.add_file_size(file_size)
-
-    logger.debug(f"stored image to {image_storage_path}")
+    # takes 40-250ms depending on image size and compression
+    return encode_ome_tiff(image_entry._img, ome_xml, img_compression_algorithm)
 
 
 class ProtocolGenerator(BaseModel):
@@ -625,7 +576,8 @@ class ProtocolGenerator(BaseModel):
 
     acquisition_id: str = Field(default_factory=make_unique_acquisition_id)
 
-    image_store_pool: AsyncThreadPool = Field(default_factory=lambda: AsyncThreadPool())
+    image_store: ImageStore | None = None
+    "built from machine config in model_post_init (backend, writer threads); closed at the end of generate()"
 
     img_compression_algorithm: tp.Literal["LZW", "zlib"] = "LZW"
 
@@ -646,7 +598,8 @@ class ProtocolGenerator(BaseModel):
     site_topleft_y_mm: float = -1
     image_size_bytes: int = -1
     max_storage_size_images_GB: float = -1
-    project_output_path: path.Path = Field(default_factory=path.Path)
+    project_relpath: path.Path = Field(default_factory=path.Path)
+    "<project>/<plate>_<timestamp>, relative to the storage backend's base (directory or bucket prefix)"
 
     latest_channel_images: dict[str, cmds.ImageStoreEntry] = Field(default_factory=dict)
     completed_timepoint_imaging_times: list[float] = Field(default_factory=list)
@@ -829,22 +782,16 @@ class ProtocolGenerator(BaseModel):
             - ((self.config_file.grid.num_y - 1) * self.config_file.grid.delta_y_mm) / 2
         )
 
-        base_storage_path_item = ConfigRegistry.get(StorageConfig.BASE_IMAGE_OUTPUT_DIR)
-        assert base_storage_path_item is not None
-        assert type(base_storage_path_item.value) is str
-        base_storage_path = path.Path(base_storage_path_item.value)
+        base_storage_path = path.Path(ConfigRegistry.get(StorageConfig.BASE_IMAGE_OUTPUT_DIR).strvalue)
         assert base_storage_path.exists(), f"{base_storage_path = } does not exist"
 
-        self.project_output_path = (
-            base_storage_path
-            / self.config_file.project_name
-            / f"{self.config_file.plate_name!s}_{sc.datetime2str(dt.datetime.now(dt.UTC))}"
+        self.project_relpath = path.Path(self.config_file.project_name) / (
+            f"{self.config_file.plate_name!s}_{sc.datetime2str(dt.datetime.now(dt.UTC))}"
         )
-        self.project_output_path.mkdir(parents=True)
-
-        # write config file to output directory
-        with (self.project_output_path / "config.json").open("w") as file:
-            file.write(self.config_file.json())
+        # backend + writer threads come from machine config (storage.*)
+        self.image_store = image_store_from_config()
+        # the protocol itself travels with the images
+        self.image_store.put_bytes(str(self.project_relpath / "config.json"), self.config_file.json().encode())
 
         self.acquisition_status.last_status = cmds.AcquisitionStatusOut(
             acquisition_id=self.acquisition_id,
@@ -1049,7 +996,8 @@ class ProtocolGenerator(BaseModel):
         last_image_information = None
 
         num_images_acquired = 0
-        storage_tracker = StorageTracker()
+        image_store = self.image_store
+        assert image_store is not None
 
         # get current z coordinate as z reference
         last_position = yield cmds.MC_getLastPosition()
@@ -1274,10 +1222,10 @@ class ProtocolGenerator(BaseModel):
                         if is_timeseries_acquisition:
                             #timepoints start at 1, but we use 0 for the first one in dir
                             assert timepoint>=1
-                            timepoint_name=str(timepoint-1)
-                            image_storage_path = f"{self.project_output_path!s}/t{timepoint_name}/{image_filename}"
+                            image_relpath = self.project_relpath / f"t{timepoint - 1}" / image_filename
                         else:
-                            image_storage_path = f"{self.project_output_path!s}/{image_filename}"
+                            image_relpath = self.project_relpath / image_filename
+                        image_storage_path = image_store.describe(str(image_relpath))
 
                         image_store_entry = cmds.ImageStoreEntry(
                             pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
@@ -1303,23 +1251,25 @@ class ProtocolGenerator(BaseModel):
 
                         self.latest_channel_images[channel.name] = image_store_entry
 
-                        # improve system responsiveness while compressing and writing to disk
-                        image_store_task = store_image(
-                            image_entry=image_store_entry,
-                            img_compression_algorithm=self.img_compression_algorithm,
-                            channel_config=channel,
-                            position=image_store_entry.info.position,
-                            plane_index=plane_index,
-                            pixel_size_um=PIXEL_SIZE_UM,
-                            project_name=self.config_file.project_name,
-                            plate_name=self.config_file.plate_name,
-                            cell_line=self.config_file.cell_line,
-                            hardware_channels=self.hardware_channels,
-                            ome_template=self.ome_template,
-                            autofocus_succeeded=autofocus_succeeded,
-                            storage_tracker=storage_tracker,
+                        # encode + store off the acquisition path (image-writer threads, then the sink)
+                        image_store.put(
+                            str(image_relpath),
+                            functools.partial(
+                                encode_image,
+                                image_entry=image_store_entry,
+                                img_compression_algorithm=self.img_compression_algorithm,
+                                channel_config=channel,
+                                position=image_store_entry.info.position,
+                                plane_index=plane_index,
+                                pixel_size_um=PIXEL_SIZE_UM,
+                                project_name=self.config_file.project_name,
+                                plate_name=self.config_file.plate_name,
+                                cell_line=self.config_file.cell_line,
+                                hardware_channels=self.hardware_channels,
+                                ome_template=self.ome_template,
+                                autofocus_succeeded=autofocus_succeeded,
+                            ),
                         )
-                        self.image_store_pool.run(image_store_task)
 
                         logger.debug(
                             f"protocol - scheduled image store to {image_store_entry.info.storage_path}"
@@ -1379,7 +1329,7 @@ class ProtocolGenerator(BaseModel):
                             current_num_images=num_images_acquired,
                             time_since_start_s=time_since_start_s,
                             start_time_iso_str=start_time_iso_str,
-                            storage_usage_bytes=storage_tracker.accumulated_bytes,
+                            storage_usage_bytes=image_store.bytes_written,
                             estimated_remaining_time_s=estimated_remaining_time_s,
                             last_image_information=last_image_information,
                             message=f"Acquisition is {(100 * num_images_acquired / self.num_images_total):.2f}% complete",
@@ -1423,7 +1373,7 @@ class ProtocolGenerator(BaseModel):
                         current_num_images=num_images_acquired,
                         time_since_start_s=time.time() - start_time,
                         start_time_iso_str=start_time_iso_str,
-                        storage_usage_bytes=storage_tracker.accumulated_bytes,
+                        storage_usage_bytes=image_store.bytes_written,
                         estimated_remaining_time_s=estimated_remaining_during_wait,
                         last_image_information=last_image_information,
                         message=f"Waiting for next timepoint ({time_remaining:.1f}s remaining)...",
@@ -1438,13 +1388,18 @@ class ProtocolGenerator(BaseModel):
 
         logger.debug("protocol - finished protocol steps")
 
-        # wait for image storage tasks to finish
-        self.image_store_pool.join()
-
-        logger.debug("protocol - finished image storage stasks")
+        # wait for image storage to finish; a lost image is an error, not a silent gap
+        report = image_store.close()
+        logger.debug(f"protocol - finished image storage ({report.stored} stored, {report.spilled_to_disk} spilled)")
+        if report.failed:
+            shown = "\n  ".join(report.failed[:10])
+            more = f"\n  ... and {len(report.failed) - 10} more" if len(report.failed) > 10 else ""
+            cmds.error_internal(
+                detail=f"acquisition finished but {len(report.failed)} of {num_images_acquired} images failed to store:\n  {shown}{more}"
+            )
 
         total_time_s = time.time() - start_time
-        total_storage_gb = storage_tracker.accumulated_bytes / (1024**3)
+        total_storage_gb = report.bytes_written / (1024**3)
         logger.info(f"protocol - done (total time: {total_time_s:.1f}s, total storage: {total_storage_gb:.2f} GB)")
 
         # done -> yield None and return

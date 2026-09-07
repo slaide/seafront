@@ -2011,8 +2011,11 @@ class Core:
             if acquisition_status.last_status is not None:
                 acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
         finally:
-            # ensure no dangling image-store threads, and mark the run finished
-            protocol.image_store_pool.join()
+            # ensure no dangling image-writer threads, and mark the run finished (close is idempotent)
+            if protocol.image_store is not None:
+                late = protocol.image_store.close()
+                if late.failed:
+                    logger.error(f"acquisition {protocol.acquisition_id}: {len(late.failed)} images failed to store: {late.failed[:5]}")
             acquisition_status.thread_is_running = False
         logger.debug("acquisition done")
 

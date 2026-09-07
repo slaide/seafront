@@ -116,6 +116,15 @@ class StorageConfig(ConfigHandle):
     """Storage and output configuration handles."""
 
     BASE_IMAGE_OUTPUT_DIR = "storage.base_image_output_dir"
+    "disk backend: where images go; s3 backend: spill directory for images the uploader could not take yet"
+    WRITER_THREADS = "storage.writer_threads"
+    BACKEND = "storage.backend"
+    S3_BUCKET = "storage.s3.bucket"
+    S3_PREFIX = "storage.s3.prefix"
+    S3_ENDPOINT_URL = "storage.s3.endpoint_url"
+    S3_REGION = "storage.s3.region"
+    S3_UPLOAD_THREADS = "storage.s3.upload_threads"
+    S3_SPILL_THRESHOLD = "storage.s3.spill_threshold"
 
 
 class FilterWheelConfig(ConfigHandle):

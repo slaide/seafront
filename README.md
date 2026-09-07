@@ -683,6 +683,14 @@ uv run scripts/acquire_via_api.py --protocol-file my_protocol.json --owner "pipe
 
 Output layout and file names match the server's. The only known difference is that the server records raw microcontroller coordinates in the OME metadata while the API reports calibrated ones. `tests/test_acquire_via_api.py` checks the parity against the mock server: identical output for single sites, multi-well z-stacks, timepoints and laser autofocus; identical refusals (uncalibrated autofocus, forbidden positions, foreign lock) before anything moves; and the interrupt and error paths (Ctrl-C cancels and releases the lock, a lock broken mid-run stops the script without touching the new holder's lease).
 
+### Image storage: writer threads and S3
+
+Where acquisitions go is machine config (privileged): `storage.backend` is `disk` (files under `storage.base_image_output_dir`) or `s3` (direct upload to `storage.s3.bucket` under `storage.s3.prefix`, `storage.s3.endpoint_url` for MinIO/Ceph, `storage.s3.region`). Credentials are never in the config: the server reads the standard AWS environment variables or shared credentials file.
+
+`storage.writer_threads` is the number of threads encoding and writing images, default 1. That default is tuned for a storage server made of plain HDDs without RAID, where parallel writers only fight over the same disk. On an SSD, a RAID or a fast network target, raising it (and `storage.s3.upload_threads` for S3) roughly scales throughput until the target saturates. In S3 mode at most `storage.s3.spill_threshold` encoded images wait in memory for the uploader; beyond that they are written to the base directory and uploaded from there in order, and an image whose upload keeps failing stays there and the acquisition ends with an error naming it. The same backends and knobs are available to `scripts/acquire_via_api.py` (`--storage`, `--store-workers`, `--s3-*`).
+
+A mock S3 for trying this out is in `tests/mock-s3/docker-compose.yml` (MinIO; see the comment there). It is not network bound, so upload thread counts measured against it do not transfer to a real link.
+
 ### Device lock
 
 A client can hold the microscope: in the server panel (click the connection indicator) enter a name and press "Acquire lock". While a lock is held, hardware commands from other clients (moves, snaps, streaming, acquisition start, machine config flush) are refused with "locked by <name>", and the header shows who holds it. Status reads always work. The lock renews itself with every request you make and lapses 10 minutes after your last one, but never while a command is running on the hardware. "Release lock" gives it back; a page reload in the same tab keeps it.

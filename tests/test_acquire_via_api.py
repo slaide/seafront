@@ -184,6 +184,16 @@ def _builtin_run(proto: dict, out_dir: Path) -> tuple[str, dict]:
     raise AssertionError("built-in acquisition did not finish")
 
 
+def _wait_for_acquisition(acq_id: str) -> dict:
+    deadline = time.time() + TOTAL_TIMEOUT_S
+    while time.time() < deadline:
+        st = _ok("/api/acquisition/status", {"acquisition_id": acq_id})
+        if st["acquisition_status"] not in ("running", "scheduled"):
+            return st
+        time.sleep(0.05)
+    raise AssertionError("built-in acquisition did not finish")
+
+
 def _norm_ome(xml: str) -> str:
     """drop what legitimately differs between two runs of the same protocol"""
     xml = re.sub(r"\d{4}-\d{2}-\d{2}T[0-9:.+\-]*", "TS", xml)
@@ -408,3 +418,50 @@ class TestInterruptsAndErrors:
             assert st["held"] is True and st["token_matches"] is True
         finally:
             _ok("/api/lock/release", {"lock_token": lease["token"]})
+
+
+@pytest.mark.usefixtures("scratch_server")
+class TestS3Backend:
+    """both the script and the built-in acquisition can store to S3 (MinIO here); same keys"""
+
+    def _keys(self, minio_s3, prefix: str) -> dict[str, int]:
+        listed = minio_s3["client"].list_objects_v2(Bucket=minio_s3["bucket"], Prefix=prefix + "/")
+        return {o["Key"].removeprefix(prefix + "/").split("/", 2)[-1]: o["Size"] for o in listed.get("Contents", [])}
+
+    def test_script_and_builtin_store_to_s3(self, minio_s3, tmp_path):
+        proto_path, proto = _protocol(tmp_path, channels=2, name="s3")
+        run_id = f"api-{int(time.time())}"
+
+        # script: direct upload, spill dir stays empty when the link keeps up
+        res = _run_script(
+            "--protocol-file", str(proto_path), "--output-dir", str(tmp_path / "spill"), "--storage", "s3",
+            "--s3-bucket", minio_s3["bucket"], "--s3-prefix", f"{run_id}/script", "--s3-endpoint-url", minio_s3["endpoint_url"],
+        )
+        assert res.returncode == 0, res.stderr
+        assert "s3://" in res.stderr and "spilled" not in res.stderr
+        assert not list((tmp_path / "spill").rglob("*.tiff"))
+        script_keys = self._keys(minio_s3, f"{run_id}/script")
+        assert len([k for k in script_keys if k.endswith(".tiff")]) == 2 and any(k.endswith("config.json") for k in script_keys)
+
+        # built-in: switch the server's backend through privileged machine config, then back
+        defaults = {i["handle"]: i for i in _ok("/api/get_features/machine_defaults")}
+        originals = [defaults[h] for h in ("storage.backend", "storage.s3.bucket", "storage.s3.prefix", "storage.s3.endpoint_url")]
+        (tmp_path / "server-spill").mkdir()
+        proto["machine_config"] = [dict(defaults["storage.base_image_output_dir"], value=str(tmp_path / "server-spill"))]
+        try:
+            _ok("/api/action/machine_config_flush", {"privileged": True, "machine_config": [
+                dict(defaults["storage.backend"], value="s3"),
+                dict(defaults["storage.s3.bucket"], value=minio_s3["bucket"]),
+                dict(defaults["storage.s3.prefix"], value=f"{run_id}/builtin"),
+                dict(defaults["storage.s3.endpoint_url"], value=minio_s3["endpoint_url"]),
+            ]})
+            resp = _ok("/api/acquisition/start", {"config_file": proto})
+            final = _wait_for_acquisition(resp["acquisition_id"])
+            assert final["acquisition_status"] == "completed", final
+            assert final["acquisition_progress"]["last_image"]["storage_path"].startswith(f"s3://{minio_s3['bucket']}/{run_id}/builtin/")
+        finally:
+            _ok("/api/action/machine_config_flush", {"privileged": True, "machine_config": originals})
+            _ok("/api/action/machine_config_flush", {"machine_config": [defaults["storage.base_image_output_dir"]]})
+        builtin_keys = self._keys(minio_s3, f"{run_id}/builtin")
+        assert set(builtin_keys) == set(script_keys), (sorted(builtin_keys), sorted(script_keys))
+        assert not list((tmp_path / "server-spill").rglob("*.tiff")), "server did not need to spill"
