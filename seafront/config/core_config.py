@@ -319,6 +319,22 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             persistent=True,
         ),
         config_item(
+            handle=StorageConfig.STRIP_ROWS.value,
+            name="tiff: rows per strip (0 = tifffile default, 256 KB strips)",
+            value_kind="int",
+            default=64,
+            privileged=True,
+            persistent=True,
+        ),
+        config_item(
+            handle=StorageConfig.CODEC_THREADS.value,
+            name="tiff: strips compressed concurrently per image (in-memory; not disk writers)",
+            value_kind="int",
+            default=4,
+            privileged=True,
+            persistent=True,
+        ),
+        config_item(
             handle=StorageConfig.S3_SPILL_THRESHOLD.value,
             name="s3: images held in memory before spilling to the spill directory",
             value_kind="int",

@@ -62,16 +62,26 @@ STRIP_ROWS = 64
 CODEC_THREADS = 4
 
 
-def encode_ome_tiff(image: np.ndarray, ome_xml: str, compression: str) -> bytes:
-    """the exact bytes `tifffile.imwrite` puts on disk for this image and OME-XML description"""
+def encode_ome_tiff(
+    image: np.ndarray,
+    ome_xml: str,
+    compression: str,
+    strip_rows: int = STRIP_ROWS,
+    codec_threads: int = CODEC_THREADS,
+) -> bytes:
+    """
+    the exact bytes `tifffile.imwrite` puts on disk for this image and OME-XML description
+
+    strip_rows <= 0 means tifffile's default strip size (256 KB strips).
+    """
     buf = io.BytesIO()
     tifffile.imwrite(
         buf,
         image,
         compression=compression,
         compressionargs={},
-        rowsperstrip=STRIP_ROWS,
-        maxworkers=CODEC_THREADS,
+        rowsperstrip=strip_rows if strip_rows > 0 else None,
+        maxworkers=max(1, codec_threads),
         description=ome_xml,
         photometric="minisblack",
     )

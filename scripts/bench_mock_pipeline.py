@@ -265,9 +265,13 @@ def bench_store(frames: int, workers_list: list[int]) -> None:
             print(f"  {n:<8d} {rate:9.1f} {rate / base_rate:8.2f}x")
 
 
-def bench_pipeline(frames: int, names: list[str], channels: list[str], workers_list: list[int], compression: str | None) -> None:
+def bench_pipeline(
+    frames: int, names: list[str], channels: list[str], workers_list: list[int], compression: str | None,
+    rowsperstrip: int | None = None, codec_threads: int = 1,
+) -> None:
     """one producer thread (the 'camera'), a store queue with N workers (like protocol.py's pool)"""
-    print(f"pipeline, {frames} frames, compression={compression or 'none'}: synth on the main thread, store queue with N workers")
+    print(f"pipeline, {frames} frames, compression={compression or 'none'}, rowsperstrip={rowsperstrip or 'default'}, "
+          f"codec_threads={codec_threads}, switchinterval={sys.getswitchinterval()*1000:.1f}ms: synth on the main thread, store queue with N workers")
     print(f"  {'strategy':10s} {'workers':>7s} {'images/s':>9s} {'synth ms':>9s} {'queue max':>9s}")
     with tempfile.TemporaryDirectory() as d:
         for name in names:
@@ -283,7 +287,7 @@ def bench_pipeline(frames: int, names: list[str], channels: list[str], workers_l
                     t = time.perf_counter()
                     img = strat.frame(r).copy()  # the server copies the frame into its store entry
                     synth_ms.append((time.perf_counter() - t) * 1000)
-                    pending.append(pool.submit(_write, f"{d}/{name}_{n}_{i}.tiff", img, compression))
+                    pending.append(pool.submit(_write, f"{d}/{name}_{n}_{i}.tiff", img, compression, codec_threads, rowsperstrip))
                     pending = [f for f in pending if not f.done()]
                     qmax = max(qmax, len(pending))
                 pool.shutdown(wait=True)
@@ -299,6 +303,9 @@ def main() -> int:
     p.add_argument("--channels", default="fluo405,fluo488,fluo561,fluo638,bfledfull", help="cycled like an acquisition")
     p.add_argument("--workers", default="1,2,4", help="store worker counts to try")
     p.add_argument("--compression", default="LZW", help="LZW, zlib or none (pipeline bench)")
+    p.add_argument("--rowsperstrip", type=int, default=None, help="pipeline bench: TIFF strip height (default: tifffile's 256 KB strips)")
+    p.add_argument("--codec-threads", type=int, default=1, help="pipeline bench: tifffile maxworkers (strips compressed concurrently)")
+    p.add_argument("--switch-interval-ms", type=float, default=None, help="set sys.setswitchinterval (GIL handoff latency) for the run")
     a = p.parse_args()
     names = a.strategies.split(",")
     channels = a.channels.split(",")
@@ -310,8 +317,10 @@ def main() -> int:
     if a.what in ("store", "all"):
         bench_store(max(10, a.frames // 3), workers)
         print()
+    if a.switch_interval_ms is not None:
+        sys.setswitchinterval(a.switch_interval_ms / 1000)
     if a.what in ("pipeline", "all"):
-        bench_pipeline(a.frames, names, channels, workers, comp)
+        bench_pipeline(a.frames, names, channels, workers, comp, a.rowsperstrip, a.codec_threads)
     return 0
 
 

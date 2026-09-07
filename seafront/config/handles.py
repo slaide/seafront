@@ -125,6 +125,8 @@ class StorageConfig(ConfigHandle):
     S3_REGION = "storage.s3.region"
     S3_UPLOAD_THREADS = "storage.s3.upload_threads"
     S3_SPILL_THRESHOLD = "storage.s3.spill_threshold"
+    STRIP_ROWS = "storage.tiff.strip_rows"
+    CODEC_THREADS = "storage.tiff.codec_threads"
 
 
 class FilterWheelConfig(ConfigHandle):

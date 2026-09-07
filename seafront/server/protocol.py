@@ -53,6 +53,7 @@ from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import Position as McPosition
 from seafront.logger import logger
 from seafront.storage import ImageStore, encode_ome_tiff, image_store_from_config
+from seafront.storage.base import CODEC_THREADS, STRIP_ROWS
 
 
 # Supporting data classes for protocol iterators
@@ -538,6 +539,8 @@ def encode_image(
     hardware_channels: list[basics.ChannelConfig],
     ome_template: OME,
     autofocus_succeeded: bool = False,
+    strip_rows: int = STRIP_ROWS,
+    codec_threads: int = CODEC_THREADS,
 ) -> bytes:
     """
     OME-TIFF bytes for one acquired image (OME-XML in ImageDescription, lossless compression).
@@ -558,8 +561,8 @@ def encode_image(
         hardware_channels=hardware_channels,
         autofocus_succeeded=autofocus_succeeded,
     )
-    # takes 40-250ms depending on image size and compression
-    return encode_ome_tiff(image_entry._img, ome_xml, img_compression_algorithm)
+    # takes 10-250ms depending on image size, compression and strip layout
+    return encode_ome_tiff(image_entry._img, ome_xml, img_compression_algorithm, strip_rows, codec_threads)
 
 
 class ProtocolGenerator(BaseModel):
@@ -998,6 +1001,8 @@ class ProtocolGenerator(BaseModel):
         num_images_acquired = 0
         image_store = self.image_store
         assert image_store is not None
+        strip_rows = ConfigRegistry.get(StorageConfig.STRIP_ROWS).intvalue
+        codec_threads = ConfigRegistry.get(StorageConfig.CODEC_THREADS).intvalue
 
         # get current z coordinate as z reference
         last_position = yield cmds.MC_getLastPosition()
@@ -1268,6 +1273,8 @@ class ProtocolGenerator(BaseModel):
                                 hardware_channels=self.hardware_channels,
                                 ome_template=self.ome_template,
                                 autofocus_succeeded=autofocus_succeeded,
+                                strip_rows=strip_rows,
+                                codec_threads=codec_threads,
                             ),
                         )
 

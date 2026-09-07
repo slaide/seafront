@@ -245,7 +245,10 @@ class Summary(tp.NamedTuple):
     spilled: int = 0
 
 
-def run_protocol(client: SeafrontClient, protocol: sc.AcquisitionConfig, store: ImageStore, compression: str) -> Summary:
+def run_protocol(
+    client: SeafrontClient, protocol: sc.AcquisitionConfig, store: ImageStore, compression: str,
+    strip_rows: int = 64, codec_threads: int = 4,
+) -> Summary:
     md = client.machine_defaults()
 
     def cfg(handle: str, default: tp.Any = None) -> tp.Any:
@@ -430,6 +433,8 @@ def run_protocol(client: SeafrontClient, protocol: sc.AcquisitionConfig, store: 
                                 hardware_channels=hardware_channels,
                                 ome_template=ome_template,
                                 autofocus_succeeded=autofocus_succeeded,
+                                strip_rows=strip_rows,
+                                codec_threads=codec_threads,
                             ),
                         )
                         num_images += 1
@@ -488,6 +493,8 @@ def main() -> int:
     parser.add_argument("--lock-token", help="reuse an existing lease instead of taking a new one (it is not released afterwards)")
     parser.add_argument("--compression", choices=["LZW", "zlib"], default="LZW")
     parser.add_argument("--store-workers", type=int, default=1, help="threads encoding TIFFs (default 1, like the server's storage.writer_threads)")
+    parser.add_argument("--strip-rows", type=int, default=64, help="TIFF rows per strip; 0 = tifffile default (server: storage.tiff.strip_rows)")
+    parser.add_argument("--codec-threads", type=int, default=4, help="strips compressed concurrently per image (server: storage.tiff.codec_threads)")
     args = parser.parse_args()
 
     client = SeafrontClient(args.server, lock_token=args.lock_token)
@@ -534,7 +541,7 @@ def main() -> int:
         else:
             sink = DiskSink(args.output_dir)
         store = ImageStore(sink, writer_threads=args.store_workers)
-        summary = run_protocol(client, protocol, store, args.compression)
+        summary = run_protocol(client, protocol, store, args.compression, strip_rows=args.strip_rows, codec_threads=args.codec_threads)
         spilled = f", {summary.spilled} spilled to disk" if summary.spilled else ""
         log(f"done: {summary.num_images} images, {summary.bytes_written / 1e6:.1f} MB in {summary.seconds:.1f}s{spilled} -> {summary.output}")
         return 0
