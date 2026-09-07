@@ -671,6 +671,18 @@ If you change the `microscope_name` in your configuration:
 
 **Note:** Browser configuration is stored in localStorage. Changes to the server-side config won't automatically sync with previously saved browser settings. Use the "reset all values" button to synchronize server-to-browser, or "flush to server" to sync browser-to-server.
 
+### Driving the microscope from a script
+
+`scripts/acquire_via_api.py` runs an imaging protocol from the outside, one API request per step, the same way the built-in acquisition does internally (move, autofocus, snap, fetch pixels, write OME-TIFF), including taking the device lock first. It exists to show that the API gives an external client exactly the capabilities of the built-in protocol:
+
+```bash
+uv run scripts/acquire_via_api.py --list-protocols
+uv run scripts/acquire_via_api.py --protocol default.json --output-dir ./acquisitions
+uv run scripts/acquire_via_api.py --protocol-file my_protocol.json --owner "pipeline 3"
+```
+
+Output layout and file names match the server's. The only known difference is that the server records raw microcontroller coordinates in the OME metadata while the API reports calibrated ones. `tests/test_acquire_via_api.py` checks the parity against the mock server.
+
 ### Device lock
 
 A client can hold the microscope: in the server panel (click the connection indicator) enter a name and press "Acquire lock". While a lock is held, hardware commands from other clients (moves, snaps, streaming, acquisition start, machine config flush) are refused with "locked by <name>", and the header shows who holds it. Status reads always work. The lock renews itself with every request you make and lapses 10 minutes after your last one, but never while a command is running on the hardware. "Release lock" gives it back; a page reload in the same tab keeps it.
