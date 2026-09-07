@@ -12,6 +12,7 @@ import pytest
 import tifffile
 
 from seafront.storage import DiskSink, ImageStore, S3Sink, encode_ome_tiff
+from seafront.storage.base import CODEC_THREADS, STRIP_ROWS
 
 
 def _img(seed: int = 0) -> np.ndarray:
@@ -31,8 +32,16 @@ class TestEncode:
 
     def test_bytes_equal_imwrite_to_disk(self, tmp_path):
         data = encode_ome_tiff(_img(2), "<OME/>", "LZW")
-        tifffile.imwrite(tmp_path / "a.tiff", _img(2), compression="LZW", compressionargs={}, maxworkers=1, description="<OME/>", photometric="minisblack")
+        tifffile.imwrite(tmp_path / "a.tiff", _img(2), compression="LZW", compressionargs={}, rowsperstrip=STRIP_ROWS, maxworkers=CODEC_THREADS, description="<OME/>", photometric="minisblack")
         assert (tmp_path / "a.tiff").read_bytes() == data
+
+    def test_strip_layout_is_what_readers_expect(self):
+        data = encode_ome_tiff(np.zeros((1024, 1024), dtype=np.uint16), "<OME/>", "LZW")
+        with tifffile.TiffFile(__import__("io").BytesIO(data)) as t:
+            page = t.pages[0]
+            assert not page.is_tiled, "tiles are not baseline TIFF; ImageJ's native reader cannot read them"
+            assert page.tags["RowsPerStrip"].value == STRIP_ROWS
+            assert len(page.dataoffsets) == 1024 // STRIP_ROWS
 
 
 class TestDiskStore:
