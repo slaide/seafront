@@ -338,6 +338,8 @@ declare global {
     };
 
     type HardwareCapabilities = {
+        /** identity of the main camera as reported by its driver */
+        main_camera: { vendor: string; model: string; serial_number: string };
         main_camera_imaging_channels: AcquisitionChannelConfig[];
         wellplate_types: Wellplate[];
         hardware_limits: HardwareLimits;

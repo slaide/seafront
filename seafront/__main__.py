@@ -105,6 +105,7 @@ from seafront.server.commands import (
     InternalErrorModel,
     ConflictErrorModel,
     LaserAutofocusCalibrate,
+    CameraInfo,
     LockAcquireResponse,
     LockStatusResponse,
     MachineConfigFlushResponse,
@@ -1731,7 +1732,19 @@ class Core:
             self._hardware_limits_cache = self.microscope.get_hardware_limits()
         hardware_limits_obj = self._hardware_limits_cache
 
+        main_camera = CameraInfo()
+        try:
+            camera = self.microscope.main_camera.value  # type: ignore[attr-defined]
+            main_camera = CameraInfo(
+                vendor=str(getattr(camera, "vendor_name", "")),
+                model=str(getattr(camera, "model_name", "")),
+                serial_number=str(getattr(camera, "sn", "")),
+            )
+        except Exception as e:
+            logger.debug(f"camera identity unavailable for hardware capabilities: {e}")
+
         return HardwareCapabilitiesResponse(
+            main_camera=main_camera,
             wellplate_types=sc.Plates,
             main_camera_imaging_channels=acquisition_channels,
             hardware_limits=hardware_limits_obj.to_dict(),

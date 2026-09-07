@@ -577,7 +577,17 @@ class AcquisitionStatus(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+class CameraInfo(BaseModel):
+    "identity of a camera as reported by its driver (empty strings when not connected)"
+
+    vendor: str = ""
+    model: str = ""
+    serial_number: str = ""
+
+
 class HardwareCapabilitiesResponse(BaseModel):
+    main_camera: CameraInfo = Field(default_factory=CameraInfo)
+    "identity of the main camera; the server puts this into OME metadata, clients can do the same"
     wellplate_types: list[sc.Wellplate] = Field(
         ...,
         title="Wellplate Types",

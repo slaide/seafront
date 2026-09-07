@@ -12,7 +12,6 @@ import uuid
 from concurrent.futures import Future as ConcurrentFuture
 from threading import Thread
 
-import json5
 import seaconfig as sc
 import tifffile
 from ome_types import OME
@@ -43,7 +42,13 @@ from pydantic import BaseModel, ConfigDict, Field
 import seafront.server.commands as cmds
 from seafront.config import basics
 from seafront.config.basics import ImagingOrder
-from seafront.config.handles import CameraConfig, ImagingConfig, LaserAutofocusConfig, StorageConfig
+from seafront.config.handles import (
+    CameraConfig,
+    ImageConfig,
+    ImagingConfig,
+    LaserAutofocusConfig,
+    StorageConfig,
+)
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import Position as McPosition
 from seafront.logger import logger
@@ -1232,7 +1237,7 @@ class ProtocolGenerator(BaseModel):
 
                         # store image
                         # Choose channel identifier for filename based on configuration
-                        use_channel_name = g_config.get("image_filename_use_channel_name")
+                        use_channel_name = g_config.get(ImageConfig.FILENAME_USE_CHANNEL_NAME.value)
                         if use_channel_name is None or use_channel_name.boolvalue:
                             # Use channel name with spaces replaced by underscores (default behavior)
                             channel_identifier = channel.name.replace(" ", "_")
@@ -1241,13 +1246,13 @@ class ProtocolGenerator(BaseModel):
                             channel_identifier = channel.handle
 
                         # Get index starting values from configuration (with defaults if not present)
-                        xy_start = g_config.get("image_filename_xy_index_start")
+                        xy_start = g_config.get(ImageConfig.FILENAME_XY_INDEX_START.value)
                         xy_start_value = xy_start.intvalue if xy_start else 0
 
-                        z_start = g_config.get("image_filename_z_index_start")
+                        z_start = g_config.get(ImageConfig.FILENAME_Z_INDEX_START.value)
                         z_start_value = z_start.intvalue if z_start else 0
 
-                        site_start = g_config.get("image_filename_site_index_start")
+                        site_start = g_config.get(ImageConfig.FILENAME_SITE_INDEX_START.value)
                         site_start_value = site_start.intvalue if site_start else 1
 
                         # Generate filename with configurable index starting values
@@ -1257,7 +1262,7 @@ class ProtocolGenerator(BaseModel):
                         z_num = plane_index + z_start_value
 
                         # Apply zero-padding to well name if configured
-                        zero_pad_column = g_config.get("image_filename_zero_pad_column")
+                        zero_pad_column = g_config.get(ImageConfig.FILENAME_ZERO_PAD_COLUMN.value)
                         if zero_pad_column is None or zero_pad_column.boolvalue:
                             # Default behavior: apply zero-padding (e.g., F8 -> F08)
                             formatted_well_name = _format_well_name_with_padding(well.well_name)
