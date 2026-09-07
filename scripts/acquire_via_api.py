@@ -393,7 +393,7 @@ def run_protocol(client: SeafrontClient, protocol: sc.AcquisitionConfig, store: 
                         well_name = _format_well_name_with_padding(well.well_name) if zero_pad else well.well_name
                         filename = (
                             f"{well_name}_s{site_index + site_start}_x{site.col + xy_start}_y{site.row + xy_start}"
-                            f"_z{plane.plane_index + z_start}_{channel_identifier}.tiff"
+                            f"_z{plane.plane_index + z_start}_{channel_identifier}.ome.tiff"
                         )
                         image_rel = project_rel / (f"t{timepoint - 1}" if grid.num_t > 1 else "") / filename
 

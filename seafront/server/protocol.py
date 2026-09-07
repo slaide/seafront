@@ -1218,7 +1218,7 @@ class ProtocolGenerator(BaseModel):
                             # Use well name as-is without zero-padding
                             formatted_well_name = well.well_name
 
-                        image_filename=f"{formatted_well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.tiff"
+                        image_filename=f"{formatted_well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.ome.tiff"
                         if is_timeseries_acquisition:
                             #timepoints start at 1, but we use 0 for the first one in dir
                             assert timepoint>=1
