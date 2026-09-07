@@ -311,6 +311,10 @@ def run_protocol(client: SeafrontClient, protocol: sc.AcquisitionConfig, out_roo
             plate.get_well_offset_y(well.well_name) + site_topleft_y_mm + site.row * grid.delta_y_mm,
         )
 
+    # same refusal as /api/acquisition/start, before anything moves
+    if protocol.autofocus_enabled and not cfg_bool("laser.autofocus.calibration.is_calibrated", False):
+        raise RuntimeError("laser autofocus is enabled, but not calibrated")
+
     num_planes_per_site = sum(c.num_z_planes for c in channels)
     num_images_total = len(wells) * len(sites) * num_planes_per_site * grid.num_t
     log(f"protocol: {len(wells)} wells x {len(sites)} sites x {num_planes_per_site} channel/z planes x {grid.num_t} timepoints = {num_images_total} images")

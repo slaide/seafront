@@ -681,7 +681,7 @@ uv run scripts/acquire_via_api.py --protocol default.json --output-dir ./acquisi
 uv run scripts/acquire_via_api.py --protocol-file my_protocol.json --owner "pipeline 3"
 ```
 
-Output layout and file names match the server's. The only known difference is that the server records raw microcontroller coordinates in the OME metadata while the API reports calibrated ones. `tests/test_acquire_via_api.py` checks the parity against the mock server.
+Output layout and file names match the server's. The only known difference is that the server records raw microcontroller coordinates in the OME metadata while the API reports calibrated ones. `tests/test_acquire_via_api.py` checks the parity against the mock server: identical output for single sites, multi-well z-stacks, timepoints and laser autofocus; identical refusals (uncalibrated autofocus, forbidden positions, foreign lock) before anything moves; and the interrupt and error paths (Ctrl-C cancels and releases the lock, a lock broken mid-run stops the script without touching the new holder's lease).
 
 ### Device lock
 
