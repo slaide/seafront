@@ -26,6 +26,8 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from websockets.exceptions import ConnectionClosed
+from websockets.sync.client import connect as ws_connect
 
 MOCK_MICROSCOPE_NAME = "mocroscope"
 
@@ -723,6 +725,107 @@ class TestStatusNeverContradictsItself:
             type(self).lease = body["token"]
         assert samples >= 100, f"too few status samples to prove anything ({samples})"
         assert not wrong, f"{len(wrong)} of {samples} status reads contradicted themselves: {wrong[:5]}"
+
+
+@pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
+class TestStatusWebsocket:
+    """
+    The status socket is how the UI watches the microscope, and it shares the state read with
+    the HTTP route. Several clients watching at once, or one watching while the hardware is
+    busy, must not interfere with each other or with the request that is running.
+    """
+
+    def _url(self, path: str) -> str:
+        return f"{self.server_url}{path}"
+
+    @staticmethod
+    def _state(ws) -> dict:
+        """the socket answers every message with one state snapshot"""
+        ws.send(json.dumps({"anything": "at all"}))
+        return json.loads(ws.recv(timeout=10))
+
+    def test_the_socket_answers_every_poke_with_a_state(self):
+        with ws_connect("ws://127.0.0.1:5000/ws/get_info/current_state") as ws:
+            ws.send(json.dumps({"target_device": MOCK_MICROSCOPE_NAME}))
+            for _ in range(20):
+                state = self._state(ws)
+                assert state["microscope_name"] == MOCK_MICROSCOPE_NAME
+                assert "adapter_state" in state and "is_busy" in state
+
+    def test_a_socket_client_sees_the_hardware_go_busy_and_idle_again(self):
+        """the socket is a live view, not a snapshot taken when it was opened"""
+        with ws_connect("ws://127.0.0.1:5000/ws/get_info/current_state") as ws:
+            ws.send(json.dumps({"target_device": MOCK_MICROSCOPE_NAME}))
+            assert self._state(ws)["is_busy"] is False
+
+            result: dict = {}
+
+            def move():
+                result["status"], _ = make_request(
+                    self._url("/api/action/move_to"), data=_FAR, timeout=30, token=self.lease
+                )
+
+            make_request(self._url("/api/action/move_to"), data=_START, timeout=30, token=self.lease)
+            thread = threading.Thread(target=move)
+            thread.start()
+            try:
+                seen_busy = False
+                while thread.is_alive():
+                    state = self._state(ws)
+                    if state["is_busy"]:
+                        seen_busy = True
+                        assert state["busy_reasons"], "busy with no reason over the socket"
+            finally:
+                thread.join()
+            assert result["status"] == 200
+            assert seen_busy, "the socket never showed the move running"
+            assert self._state(ws)["is_busy"] is False
+
+    def test_many_sockets_watch_at_once_without_disturbing_each_other(self):
+        """eight watchers plus HTTP status: everyone gets served, nobody gets an error"""
+        errors: list[str] = []
+        stop = threading.Event()
+        ready = threading.Barrier(9)
+
+        def watcher():
+            try:
+                with ws_connect("ws://127.0.0.1:5000/ws/get_info/current_state") as ws:
+                    ws.send(json.dumps({"target_device": MOCK_MICROSCOPE_NAME}))
+                    ready.wait(timeout=20)
+                    while not stop.is_set():
+                        state = self._state(ws)
+                        if "error" in state:
+                            errors.append(f"socket error: {state}")
+                        if state["is_busy"] != bool(state["busy_reasons"]):
+                            errors.append(f"contradictory state over the socket: {state}")
+            except Exception as e:  # any failure at all is the finding here
+                errors.append(f"{type(e).__name__}: {e}")
+
+        watchers = [threading.Thread(target=watcher) for _ in range(8)]
+        for t in watchers:
+            t.start()
+        try:
+            ready.wait(timeout=20)
+            for i in range(10):
+                target = _HOP_A if i % 2 else _HOP_B
+                status, data = make_request(self._url("/api/action/move_to"), data=target, timeout=30, token=self.lease)
+                assert status == 200, f"a command failed while eight sockets watched: {status} {data}"
+                status, _ = make_request(self._url("/api/get_info/current_state"), timeout=5)
+                assert status == 200, "an HTTP status read failed while eight sockets watched"
+        finally:
+            stop.set()
+            for t in watchers:
+                t.join()
+        assert not errors, errors[:5]
+
+    def test_a_socket_for_the_wrong_microscope_is_closed(self):
+        with ws_connect("ws://127.0.0.1:5000/ws/get_info/current_state") as ws:
+            ws.send(json.dumps({"target_device": "some-other-microscope"}))
+            reply = json.loads(ws.recv(timeout=10))
+            assert reply["error"] == "target_device_mismatch"
+            with pytest.raises(ConnectionClosed) as closed:
+                ws.recv(timeout=5)
+            assert closed.value.rcvd is not None and closed.value.rcvd.code == 4421
 
 
 # --- config helpers for the streaming and acquisition tests -----------------------
