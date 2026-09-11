@@ -288,12 +288,26 @@ ignored and reported (`OverrideResult`).
 ## Device lock (client lease)
 
 `seafront/server/lock.py` holds one lease per process (= per device): owner label, secret
-token, expiry. `route_wrapper(requires_lock=True)` (the default) refuses a request with **423**
-while another client holds the lease and the request lacks the matching `lock_token` (a
-synthetic body field like `target_device`). Opted out: reads, `acquisition/cancel`,
-`cancel_current` (safety hatch: cancel is never gated), config file routes and `/api/lock/*`.
-Expiry is lazy and never fires while the worker is busy; every token-bearing request renews it.
-`/api/lock/break` is open to anyone and logs owner + reason at WARNING. Coordination, not auth.
+token, expiry. **The lease is required, not advisory.** `route_wrapper(requires_lock=True)`
+(the default) refuses a request with **423** unless it carries the current lease's
+`lock_token` (a synthetic body field like `target_device`) - an unheld lease denies everyone
+(`reason: "not_held"`) rather than letting everyone through, and a lease somebody else holds
+denies with `reason: "held_by_other"` plus the owner. Opted out: reads, `acquisition/cancel`,
+`cancel_current` (safety hatch: cancel is never gated), the acquisition config file routes
+(they write protocol files, not hardware) and `/api/lock/*`.
+
+`DeviceLock.check(token)` makes that decision and renews the holder's expiry in one atomic
+step; every request calls it, so a holder's lease is kept alive by anything it does, gated or
+not. Expiry is lazy and never fires while the worker is busy. `/api/lock/break` is open to
+anyone and logs owner + reason at WARNING. Coordination, not auth.
+
+A gated route must be POST (a GET cannot carry `lock_token`); `route_wrapper` raises at
+registration if you try, so the mistake shows up at startup rather than at the first request.
+`/ws/action/snap_selected_channels_progressive` drives hardware too and takes the token in its
+first message, closing with **4423** instead of answering 423. Every route publishes
+`x-requires-device-lease` in `/openapi.json`, which is what the UI and
+`tests/test_lock_enforcement.py` read - that test sweeps the schema, so a hardware route added
+later is covered without anyone remembering to list it.
 
 ## WebSocket data flows
 

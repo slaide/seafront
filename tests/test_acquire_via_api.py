@@ -9,6 +9,7 @@ The server under test runs against a scratch copy of the seafront home (SEAFRONT
 calibration writes and acquisitions never touch the real config or image directory.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -95,15 +96,31 @@ def scratch_server(tmp_path_factory):
 # helpers
 
 
-def _post(path: str, data: dict | None = None) -> tuple[int, dict | None]:
-    return make_request(f"{SERVER}{path}", data=data or {})
+def _post(path: str, data: dict | None = None, token: str | None = None) -> tuple[int, dict | None]:
+    return make_request(f"{SERVER}{path}", data=data or {}, token=token)
 
 
-def _ok(path: str, data: dict | None = None) -> dict:
-    status, body = _post(path, data)
+def _ok(path: str, data: dict | None = None, token: str | None = None) -> dict:
+    status, body = _post(path, data, token=token)
     assert status == 200, (path, status, body)
     assert body is not None
     return body
+
+
+@contextlib.contextmanager
+def _leased(owner: str = "test_acquire_via_api") -> tp.Iterator[str]:
+    """
+    hold the device lease for the block, the way the script does for its own run
+
+    Hardware routes refuse requests without it, so anything here that drives the microscope
+    directly (rather than through the script) has to take one. It is given back on the way
+    out, which is also what lets the script take its own lease in the next line.
+    """
+    lease = _ok("/api/lock/acquire", {"owner": owner})
+    try:
+        yield lease["token"]
+    finally:
+        _post("/api/lock/release", {"lock_token": lease["token"]})
 
 
 def _protocol(
@@ -173,14 +190,15 @@ def _builtin_run(proto: dict, out_dir: Path) -> tuple[str, dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
     proto = dict(proto)
     proto["machine_config"] = [{"name": "", "handle": "storage.base_image_output_dir", "value_kind": "text", "value": str(out_dir)}]
-    resp = _ok("/api/acquisition/start", {"config_file": proto})
-    acq_id = resp["acquisition_id"]
-    deadline = time.time() + TOTAL_TIMEOUT_S
-    while time.time() < deadline:
-        st = _ok("/api/acquisition/status", {"acquisition_id": acq_id})
-        if st["acquisition_status"] not in ("running", "scheduled"):
-            return acq_id, st
-        time.sleep(0.05)
+    with _leased("builtin run") as token:
+        resp = _ok("/api/acquisition/start", {"config_file": proto}, token=token)
+        acq_id = resp["acquisition_id"]
+        deadline = time.time() + TOTAL_TIMEOUT_S
+        while time.time() < deadline:
+            st = _ok("/api/acquisition/status", {"acquisition_id": acq_id})
+            if st["acquisition_status"] not in ("running", "scheduled"):
+                return acq_id, st
+            time.sleep(0.05)
     raise AssertionError("built-in acquisition did not finish")
 
 
@@ -225,10 +243,11 @@ def _stage() -> tuple[float, float, float]:
 
 
 def _set_calibrated(value: bool) -> None:
-    _ok("/api/action/machine_config_flush", {
-        "privileged": True,
-        "machine_config": [{"name": "", "handle": "laser.autofocus.calibration.is_calibrated", "value_kind": "option", "value": "yes" if value else "no"}],
-    })
+    with _leased("calibration flag") as token:
+        _ok("/api/action/machine_config_flush", {
+            "privileged": True,
+            "machine_config": [{"name": "", "handle": "laser.autofocus.calibration.is_calibrated", "value_kind": "option", "value": "yes" if value else "no"}],
+        }, token=token)
 
 
 # --------------------------------------------------------------------------------------------
@@ -267,8 +286,9 @@ class TestSameOutput:
 
     def test_with_laser_autofocus(self, tmp_path):
         # calibrate through the API first (the server writes the privileged calibration itself)
-        _ok("/api/action/move_to", {"x_mm": 60.0, "y_mm": 40.0, "z_mm": 2.0})
-        _ok("/api/action/laser_autofocus_calibrate")
+        with _leased("calibrate for autofocus test") as token:
+            _ok("/api/action/move_to", {"x_mm": 60.0, "y_mm": 40.0, "z_mm": 2.0}, token=token)
+            _ok("/api/action/laser_autofocus_calibrate", token=token)
         defaults = {i["handle"]: i["value"] for i in _ok("/api/get_features/machine_defaults")}
         assert defaults["laser.autofocus.calibration.is_calibrated"] == "yes"
         proto_path, proto = _protocol(tmp_path, wells=[(8, 12), (8, 13)], channels=2, autofocus=True, name="af")
@@ -290,7 +310,8 @@ class TestSameRefusals:
         try:
             proto_path, proto = _protocol(tmp_path, autofocus=True, name="uncal")
             before = _stage()
-            status, body = _post("/api/acquisition/start", {"config_file": proto})
+            with _leased() as token:
+                status, body = _post("/api/acquisition/start", {"config_file": proto}, token=token)
             assert status == 500 and body is not None
             assert "not calibrated" in body["detail"]
             res = _run_script("--protocol-file", str(proto_path), "--output-dir", str(tmp_path / "client"))
@@ -306,7 +327,8 @@ class TestSameRefusals:
         proto_path, proto = _protocol(tmp_path, wells=[(0, 0)], name="forbidden")
         before = _stage()
         # built-in: refused at start, before anything is scheduled
-        status, body = _post("/api/acquisition/start", {"config_file": proto})
+        with _leased() as token:
+            status, body = _post("/api/acquisition/start", {"config_file": proto}, token=token)
         assert status == 500 and body is not None, (status, body)
         err = str(body["detail"])
         assert "forbidden" in err.lower() and "A1" in err, err
@@ -374,9 +396,10 @@ class TestInterruptsAndErrors:
         out = tmp_path / "server"
         out.mkdir()
         proto["machine_config"] = [{"name": "", "handle": "storage.base_image_output_dir", "value_kind": "text", "value": str(out)}]
-        acq_id = _ok("/api/acquisition/start", {"config_file": proto})["acquisition_id"]
-        _wait_files(out, at_least=2)
-        _ok("/api/acquisition/cancel", {"acquisition_id": acq_id})
+        with _leased("builtin cancel run") as token:
+            acq_id = _ok("/api/acquisition/start", {"config_file": proto}, token=token)["acquisition_id"]
+            _wait_files(out, at_least=2)
+            _ok("/api/acquisition/cancel", {"acquisition_id": acq_id})
         deadline = time.time() + 30
         while time.time() < deadline:
             st = _ok("/api/acquisition/status", {"acquisition_id": acq_id})["acquisition_status"]
@@ -449,19 +472,21 @@ class TestS3Backend:
         (tmp_path / "server-spill").mkdir()
         proto["machine_config"] = [dict(defaults["storage.base_image_output_dir"], value=str(tmp_path / "server-spill"))]
         try:
-            _ok("/api/action/machine_config_flush", {"privileged": True, "machine_config": [
-                dict(defaults["storage.backend"], value="s3"),
-                dict(defaults["storage.s3.bucket"], value=minio_s3["bucket"]),
-                dict(defaults["storage.s3.prefix"], value=f"{run_id}/builtin"),
-                dict(defaults["storage.s3.endpoint_url"], value=minio_s3["endpoint_url"]),
-            ]})
-            resp = _ok("/api/acquisition/start", {"config_file": proto})
-            final = _wait_for_acquisition(resp["acquisition_id"])
+            with _leased("builtin s3 run") as token:
+                _ok("/api/action/machine_config_flush", {"privileged": True, "machine_config": [
+                    dict(defaults["storage.backend"], value="s3"),
+                    dict(defaults["storage.s3.bucket"], value=minio_s3["bucket"]),
+                    dict(defaults["storage.s3.prefix"], value=f"{run_id}/builtin"),
+                    dict(defaults["storage.s3.endpoint_url"], value=minio_s3["endpoint_url"]),
+                ]}, token=token)
+                resp = _ok("/api/acquisition/start", {"config_file": proto}, token=token)
+                final = _wait_for_acquisition(resp["acquisition_id"])
             assert final["acquisition_status"] == "completed", final
             assert final["acquisition_progress"]["last_image"]["storage_path"].startswith(f"s3://{minio_s3['bucket']}/{run_id}/builtin/")
         finally:
-            _ok("/api/action/machine_config_flush", {"privileged": True, "machine_config": originals})
-            _ok("/api/action/machine_config_flush", {"machine_config": [defaults["storage.base_image_output_dir"]]})
+            with _leased("s3 cleanup") as token:
+                _ok("/api/action/machine_config_flush", {"privileged": True, "machine_config": originals}, token=token)
+                _ok("/api/action/machine_config_flush", {"machine_config": [defaults["storage.base_image_output_dir"]]}, token=token)
         builtin_keys = self._keys(minio_s3, f"{run_id}/builtin")
         assert set(builtin_keys) == set(script_keys), (sorted(builtin_keys), sorted(script_keys))
         assert not list((tmp_path / "server-spill").rglob("*.tiff")), "server did not need to spill"

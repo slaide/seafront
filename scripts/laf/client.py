@@ -2,33 +2,74 @@
 
 from __future__ import annotations
 
+import atexit
+import getpass
 import json
+import socket
 import urllib.error
 import urllib.request
 
 
 class SeafrontClient:
-    """Client for interacting with the Seafront microscope server."""
+    """
+    Client for interacting with the Seafront microscope server.
 
-    def __init__(self, base_url: str, microscope_name: str):
+    Hardware commands need the server's device lease (seafront/server/lock.py), so the client
+    takes one the first time it drives anything and gives it back when the script exits. If
+    somebody else holds the lease the server answers 423 and the request fails - that is the
+    point of the lease, so it is not retried or broken automatically.
+    """
+
+    def __init__(self, base_url: str, microscope_name: str, owner: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.microscope_name = microscope_name
+        self.owner = owner or f"laf scripts ({getpass.getuser()}@{socket.gethostname()})"
+        self.lock_token: str | None = None
 
-    def _post(self, endpoint: str, data: dict | None = None) -> dict:
+    def _post(self, endpoint: str, data: dict | None = None, take_lease: bool = True) -> dict:
         """Make a POST request to the server."""
         url = f"{self.base_url}{endpoint}"
         if data is None:
             data = {}
         data["target_device"] = self.microscope_name
+        if self.lock_token is not None:
+            data["lock_token"] = self.lock_token
 
         req = urllib.request.Request(url)
         req.method = "POST"
         req.add_header("Content-Type", "application/json")
         req.data = json.dumps(data).encode("utf-8")
 
-        with urllib.request.urlopen(req, timeout=60) as response:
-            body = response.read().decode()
-            return json.loads(body) if body else {}
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                body = response.read().decode()
+                return json.loads(body) if body else {}
+        except urllib.error.HTTPError as e:
+            if e.code != 423 or not take_lease:
+                raise
+            detail = json.loads(e.read().decode() or "{}").get("detail", {})
+            if detail.get("reason") != "not_held":
+                raise  # somebody else has the microscope: their call, not ours to take
+            self.acquire_lock()
+            return self._post(endpoint, data, take_lease=False)
+
+    def acquire_lock(self, ttl_s: float = 600.0) -> None:
+        """Take the device lease, and give it back when this process exits."""
+        lease = self._post(
+            "/api/lock/acquire", {"owner": self.owner, "ttl_s": ttl_s}, take_lease=False
+        )
+        self.lock_token = lease["token"]
+        atexit.register(self.release_lock)
+
+    def release_lock(self) -> None:
+        """Give the device lease back; harmless when we do not hold one."""
+        if self.lock_token is None:
+            return
+        try:
+            self._post("/api/lock/release", take_lease=False)
+        except urllib.error.HTTPError:
+            pass  # already broken or expired
+        self.lock_token = None
 
     def get_current_state(self) -> dict:
         return self._post("/api/get_info/current_state")

@@ -70,22 +70,30 @@ def running_server(request):
         proc.wait()
 
 
-def make_request(url: str, method: str = "POST", data: dict | None = None) -> tuple[int, dict | None]:
+def make_request(
+    url: str, method: str = "POST", data: dict | None = None, token: str | None = None
+) -> tuple[int, dict | None]:
     """Helper to make HTTP requests and return status code and JSON response.
 
     All API endpoints except /api/health require:
     - POST method
     - target_device field in JSON body
+
+    Routes that drive the hardware also require the device lease: pass `token` (see the
+    hardware_lease fixture below, and tests/test_lock_enforcement.py for the rule itself).
     """
     req = urllib.request.Request(url)
     req.method = method
 
-    # Ensure data dict exists and has target_device for POST requests
+    # Ensure data dict exists and has target_device for POST requests. A copy: callers pass
+    # shared payload constants, and a token injected into one of those would travel to every
+    # later caller that reuses it.
     if method == "POST":
-        if data is None:
-            data = {}
+        data = dict(data or {})
         if "target_device" not in data:
             data["target_device"] = MOCK_MICROSCOPE_NAME
+        if token is not None and "lock_token" not in data:
+            data["lock_token"] = token
 
     if data is not None:
         req.add_header("Content-Type", "application/json")
@@ -98,6 +106,19 @@ def make_request(url: str, method: str = "POST", data: dict | None = None) -> tu
     except urllib.error.HTTPError as e:
         body = e.read().decode() if e.fp else ""
         return e.code, json.loads(body) if body else None
+
+
+@pytest.fixture(scope="class")
+def hardware_lease(request, running_server):
+    """Hold the device lease for the class: hardware routes refuse requests without it."""
+    url = request.cls.server_url
+    status, body = make_request(f"{url}/api/lock/acquire", data={"owner": "test_api_operations"})
+    assert status == 200, f"could not take the device lease: {status} {body}"
+    assert body is not None
+    request.cls.lease = body["token"]
+    yield body["token"]
+    make_request(f"{url}/api/lock/break", data={"reason": "test class teardown"})
+    request.cls.lease = None
 
 
 @pytest.mark.usefixtures("running_server")
@@ -200,7 +221,7 @@ class TestMachineDefaultsEndpoint:
             assert "handle" in item, f"Config item missing handle: {item}"
 
 
-@pytest.mark.usefixtures("running_server")
+@pytest.mark.usefixtures("running_server", "hardware_lease")
 class TestMovementEndpoints:
     """Tests for movement-related API endpoints."""
 
@@ -211,6 +232,7 @@ class TestMovementEndpoints:
             f"{self.server_url}/api/action/move_to",
             method="POST",
             data={"x_mm": 50.0, "y_mm": 40.0, "z_mm": 1.0},
+            token=self.lease,
         )
         assert status == 200, f"Expected 200, got {status}: {data}"
 
@@ -222,6 +244,7 @@ class TestMovementEndpoints:
             f"{self.server_url}/api/action/move_to",
             method="POST",
             data={"x_mm": target_x, "y_mm": target_y, "z_mm": target_z},
+            token=self.lease,
         )
         assert status == 200
 
@@ -241,6 +264,7 @@ class TestMovementEndpoints:
             f"{self.server_url}/api/action/move_by",
             method="POST",
             data={"axis": "x", "distance_mm": 1.0},
+            token=self.lease,
         )
         assert status == 200, f"Expected 200, got {status}: {data}"
 
@@ -258,6 +282,7 @@ class TestMovementEndpoints:
             f"{self.server_url}/api/action/move_by",
             method="POST",
             data={"axis": "x", "distance_mm": move_distance},
+            token=self.lease,
         )
         assert status == 200
 
@@ -269,7 +294,7 @@ class TestMovementEndpoints:
         assert abs(new_x - (initial_x + move_distance)) < 0.01
 
 
-@pytest.mark.usefixtures("running_server")
+@pytest.mark.usefixtures("running_server", "hardware_lease")
 class TestLoadingPositionEndpoints:
     """Tests for loading position operations."""
 
@@ -278,6 +303,7 @@ class TestLoadingPositionEndpoints:
         status, data = make_request(
             f"{self.server_url}/api/action/enter_loading_position",
             method="POST",
+            token=self.lease,
         )
         assert status == 200, f"Expected 200, got {status}: {data}"
 
@@ -287,6 +313,7 @@ class TestLoadingPositionEndpoints:
         status, data = make_request(
             f"{self.server_url}/api/action/enter_loading_position",
             method="POST",
+            token=self.lease,
         )
         assert status == 200, f"Expected 200, got {status}: {data}"
 
@@ -302,12 +329,14 @@ class TestLoadingPositionEndpoints:
         make_request(
             f"{self.server_url}/api/action/enter_loading_position",
             method="POST",
+            token=self.lease,
         )
 
         # Then leave
         status, data = make_request(
             f"{self.server_url}/api/action/leave_loading_position",
             method="POST",
+            token=self.lease,
         )
         assert status == 200, f"Expected 200, got {status}: {data}"
 
@@ -317,10 +346,12 @@ class TestLoadingPositionEndpoints:
         make_request(
             f"{self.server_url}/api/action/enter_loading_position",
             method="POST",
+            token=self.lease,
         )
         make_request(
             f"{self.server_url}/api/action/leave_loading_position",
             method="POST",
+            token=self.lease,
         )
 
         # Check state
@@ -330,7 +361,7 @@ class TestLoadingPositionEndpoints:
         assert data["adapter_state"]["is_in_loading_position"] is False
 
 
-@pytest.mark.usefixtures("running_server")
+@pytest.mark.usefixtures("running_server", "hardware_lease")
 class TestIlluminationEndpoint:
     """Tests for illumination control."""
 
@@ -339,6 +370,7 @@ class TestIlluminationEndpoint:
         status, data = make_request(
             f"{self.server_url}/api/action/turn_off_all_illumination",
             method="POST",
+            token=self.lease,
         )
         assert status == 200, f"Expected 200, got {status}: {data}"
 
@@ -360,7 +392,7 @@ class TestAcquisitionConfigEndpoints:
         assert isinstance(data["configs"], list)
 
 
-@pytest.mark.usefixtures("running_server")
+@pytest.mark.usefixtures("running_server", "hardware_lease")
 class TestMachineConfigFlushPrivilege:
     """/api/action/machine_config_flush: privileged handles need explicit privilege.
 
@@ -377,7 +409,7 @@ class TestMachineConfigFlushPrivilege:
         body: dict = {"machine_config": items}
         if privileged is not None:
             body["privileged"] = privileged
-        return make_request(f"{self.server_url}/api/action/machine_config_flush", data=body)
+        return make_request(f"{self.server_url}/api/action/machine_config_flush", data=body, token=self.lease)
 
     def test_machine_defaults_expose_privileged_flag(self):
         by_handle = self._defaults()
@@ -439,7 +471,12 @@ class TestMachineConfigFlushPrivilege:
 
 @pytest.mark.usefixtures("running_server")
 class TestDeviceLock:
-    """/api/lock/*: one client at a time across requests; cancel and reads are never gated."""
+    """
+    /api/lock/*: the lease lifecycle end to end - take it, drive the hardware, give it back.
+
+    The systematic proof that every hardware route is gated (and that reads and cancel are
+    not) lives in tests/test_lock_enforcement.py; this is the narrative version.
+    """
 
     def _post(self, path: str, data: dict | None = None) -> tuple[int, dict | None]:
         return make_request(f"{self.server_url}{path}", data=data or {})
@@ -451,12 +488,13 @@ class TestDeviceLock:
         return self._post("/api/lock/acquire", body)
 
     def test_full_lifecycle(self):
-        # nothing held: moves work without a token, status says so
+        # nothing held: the hardware is closed to everyone, status says so
         status, data = self._post("/api/lock/status")
         assert status == 200 and data is not None
         assert data["held"] is False and data["token_matches"] is False
-        status, _ = self._post("/api/action/move_to", {"x_mm": 60.0, "y_mm": 40.0})
-        assert status == 200
+        status, data = self._post("/api/action/move_to", {"x_mm": 60.0, "y_mm": 40.0})
+        assert status == 423, (status, data)
+        assert data is not None and data["detail"]["reason"] == "not_held"
 
         status, lease = self._acquire("alice")
         assert status == 200 and lease is not None
@@ -510,6 +548,9 @@ class TestDeviceLock:
         assert status == 200
         status, data = self._post("/api/lock/status")
         assert data is not None and data["held"] is False
+        # and the old token buys nothing now that the lease is gone
+        status, data = self._post("/api/action/move_to", {"x_mm": 60.0, "y_mm": 40.0, "lock_token": token})
+        assert status == 423 and data is not None and data["detail"]["reason"] == "not_held"
 
     def test_break_is_open_to_anyone(self):
         status, lease = self._acquire("alice")

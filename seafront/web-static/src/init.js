@@ -238,6 +238,23 @@ const generate_alpine_object=() => ({
         if (!s.held || !s.expires_at) return '';
         return `until ${new Date(s.expires_at).toLocaleTimeString()}`;
     },
+    /**
+     * in-flight lockAcquire, if any. hardware commands take the lease on demand, so several
+     * commands fired at once would otherwise each start their own acquire; they share this one.
+     * @type {Promise<void>|null}
+     */
+    _leaseInFlight: null,
+    /**
+     * make sure this tab holds the device lease, taking it if nobody does. this is what the
+     * api client calls when the server refuses a hardware command with reason `not_held`.
+     * @returns {Promise<void>}
+     */
+    async ensureLease() {
+        if (!this._leaseInFlight) {
+            this._leaseInFlight = this.lockAcquire().finally(() => { this._leaseInFlight = null; });
+        }
+        return this._leaseInFlight;
+    },
     /** take (or renew) the device lease for this tab */
     async lockAcquire() {
         const owner = (this.lock.owner || '').trim() || 'web ui';
@@ -1495,6 +1512,7 @@ const generate_alpine_object=() => ({
                 onError: (title, message) => this.showError(title, message),
                 getTargetDevice: () => this.getMicroscopeName() || '',
                 getLockToken: () => this.lock.token,
+                ensureLease: () => this.ensureLease(),
             });
 
             this._wsManager = new WebSocketManager(this.server_url, {
@@ -1515,6 +1533,8 @@ const generate_alpine_object=() => ({
             this._api = new MockAPIClient(this.server_url, {
                 onError: (title, message) => this.showError(title, message),
                 getTargetDevice: () => this.getMicroscopeName() || 'Mock Microscope (Offline)',
+                getLockToken: () => this.lock.token,
+                ensureLease: () => this.ensureLease(),
             });
             this._wsManager = new MockWebSocketManager();
             useMockMode = true;

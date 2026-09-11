@@ -5,6 +5,7 @@
  * @property {(title: string, message: string) => void} [onError] - Error callback
  * @property {() => string} [getTargetDevice] - Function that returns the target device name for request routing
  * @property {() => (string|null)} [getLockToken] - Function that returns this client's device lease token (sent as lock_token), if any
+ * @property {() => Promise<void>} [ensureLease] - Take the device lease for this client. Called when the server refuses a hardware request because nobody holds the lease, after which the request is retried once.
  */
 
 /**
@@ -21,6 +22,8 @@
 /**
  * @typedef {Object} LockedErrorDetail
  * @property {string} message
+ * @property {'not_held'|'held_by_other'} reason - Why the request was refused
+ * @property {boolean} held - Whether anyone holds the lease
  * @property {string|null} owner - Label the lease holder gave on acquire
  * @property {string|null} lock_id - Public id of the lease
  * @property {string|null} expires_at - ISO-8601 UTC
@@ -28,7 +31,7 @@
 
 /**
  * @typedef {Object} LockedErrorModel
- * @property {LockedErrorDetail} detail - 423 Locked: another client holds the device lease
+ * @property {LockedErrorDetail} detail - 423 Locked: hardware commands need the device lease, and this request did not have it
  */
 
 /**
@@ -79,6 +82,7 @@ class APIClient {
         this.onError = options.onError || (() => {});
         this.getTargetDevice = options.getTargetDevice || (() => '');
         this.getLockToken = options.getLockToken || (() => null);
+        this.ensureLease = options.ensureLease || null;
     }
 
     /**
@@ -128,13 +132,15 @@ class APIClient {
                 }
                 throw new Error(error);
             } else if (response.status === 423) {
-                // Device lease held by another client
+                // Hardware request without the device lease
                 /** @type {LockedErrorModel} */
                 const errorBody = await response.json();
                 const d = errorBody.detail;
                 const until = d.expires_at ? ` (until ${new Date(d.expires_at).toLocaleTimeString()})` : '';
-                const userMessage = `The microscope is locked by '${d.owner ?? 'another client'}'${until}. `
-                    + `Only the lock holder can drive the hardware; acquire the lock from the server panel, or take it over via the cancel dialog.`;
+                const userMessage = d.reason === 'not_held'
+                    ? `This command needs the device lock, and nobody holds it. Acquire it from the server panel and try again.`
+                    : `The microscope is locked by '${d.owner ?? 'another client'}'${until}. `
+                        + `Only the lock holder can drive the hardware; take it over via the cancel dialog.`;
 
                 const error = `${context} failed with ${response.statusText} ${response.status} because: ${userMessage}`;
                 console.error(error);
@@ -171,12 +177,14 @@ class APIClient {
      * @param {Object} [options] - Additional options
      * @param {string} [options.context='API request'] - Context for error messages
      * @param {boolean} [options.showError=true] - Whether to show error UI on failure
+     * @param {boolean} [options.leaseRetry=true] - Whether to take the device lease and retry once if the server says nobody holds it
      * @returns {Promise<TResponse>} - Response data from server
      */
     async post(endpoint, body, options = {}) {
         const {
             context = 'API request',
             showError = true,
+            leaseRetry = true,
         } = options;
 
         // Inject target_device (routing) and, while this client holds the device lease, lock_token
@@ -193,6 +201,19 @@ class APIClient {
             body: JSON.stringify(requestBody),
             headers: [['Content-Type', 'application/json']],
         });
+
+        // Hardware commands need the lease, and this client takes one the first time it needs
+        // it rather than making the user press a button first. Only `not_held` is retried:
+        // a lease somebody else holds is theirs until they release it or we break it. The
+        // refused request did nothing, so replaying it is safe.
+        if (response.status === 423 && leaseRetry && this.ensureLease) {
+            /** @type {LockedErrorModel} */
+            const errorBody = await response.clone().json();
+            if (errorBody.detail?.reason === 'not_held') {
+                await this.ensureLease();
+                return this.post(endpoint, body, { ...options, leaseRetry: false });
+            }
+        }
 
         return this.handleResponse(response, context, showError);
     }

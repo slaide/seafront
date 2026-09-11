@@ -8,7 +8,7 @@ import seaconfig as sc
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from seafront.server.lock import LockState
+from seafront.server.lock import LockDecision, LockReason, LockState
 
 from seafront.config.basics import GlobalConfigHandler
 from seafront.config.handles import ProtocolConfig
@@ -63,6 +63,22 @@ class ConflictErrorModel(BaseModel):
     detail: ConflictErrorDetail
 
 
+class LockedErrorDetail(BaseModel):
+    "423 Locked: the request may not drive the hardware without the device lease"
+
+    message: str
+    reason: LockReason
+    "`not_held` (nobody holds it: acquire one) or `held_by_other` (the fields below say who)"
+    held: bool
+    owner: str | None = None
+    lock_id: str | None = None
+    expires_at: str | None = None
+
+
+class LockedErrorModel(BaseModel):
+    detail: LockedErrorDetail
+
+
 def error_internal(detail: str) -> tp.NoReturn:
     """raise an HTTPException with specified detail"""
     logger.debug(f"error_internal - {detail=}")
@@ -87,17 +103,26 @@ def error_microscope_busy(busy_reasons: list[str]) -> tp.NoReturn:
     )
 
 
-def error_device_locked(lock_state: "LockState") -> tp.NoReturn:
-    """raise an HTTPException (423 Locked): another client holds the device lease"""
-    logger.debug(f"error_device_locked - {lock_state=}")
+def error_device_locked(decision: LockDecision) -> tp.NoReturn:
+    """
+    raise an HTTPException (423 Locked): this request may not drive the hardware
 
+    Either nobody holds the device lease (`not_held` - hardware commands always need one) or
+    somebody else does (`held_by_other`). Clients tell the two apart by `detail.reason`: the
+    first is fixed by acquiring a lease, the second by waiting or breaking it.
+    """
+    logger.debug(f"error_device_locked - {decision=}")
+
+    state = decision.state
     raise HTTPException(
         status_code=423,
         detail={
-            "message": f"microscope is locked by '{lock_state.owner}'",
-            "owner": lock_state.owner,
-            "lock_id": lock_state.lock_id,
-            "expires_at": lock_state.expires_at,
+            "message": decision.message,
+            "reason": decision.reason,
+            "held": state.held,
+            "owner": state.owner,
+            "lock_id": state.lock_id,
+            "expires_at": state.expires_at,
         },
     )
 

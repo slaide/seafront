@@ -16,6 +16,7 @@ production code.
 
 import json
 import os
+import socket
 import subprocess
 import threading
 import time
@@ -29,20 +30,28 @@ MOCK_MICROSCOPE_NAME = "mocroscope"
 
 
 def make_request(
-    url: str, method: str = "POST", data: dict | None = None, timeout: float = 15
+    url: str,
+    method: str = "POST",
+    data: dict | None = None,
+    timeout: float = 15,
+    token: str | None = None,
 ) -> tuple[int, dict | None]:
     """POST helper mirroring tests/test_api_operations.py, with a caller-set timeout.
 
-    target_device is auto-injected. Returns (status_code, parsed_json_or_None).
+    target_device is auto-injected; `token` carries the device lease that hardware routes
+    require (see the hardware_lease fixture). Returns (status_code, parsed_json_or_None).
     """
     req = urllib.request.Request(url)
     req.method = method
 
     if method == "POST":
-        if data is None:
-            data = {}
+        # a copy: callers pass shared payload constants, and a token injected into one of
+        # those would travel to every later caller that reuses it
+        data = dict(data or {})
         if "target_device" not in data:
             data["target_device"] = MOCK_MICROSCOPE_NAME
+        if token is not None and "lock_token" not in data:
+            data["lock_token"] = token
 
     if data is not None:
         req.add_header("Content-Type", "application/json")
@@ -57,17 +66,39 @@ def make_request(
         return e.code, json.loads(body) if body else None
 
 
+def _wait_for_free_port(timeout_s: float = 20) -> None:
+    """Wait for port 5000 to be free.
+
+    The previous class's server is terminated at teardown but takes a moment to let go of
+    the port. Starting before then gives a server that cannot bind and dies, while the
+    readiness probe below happily talks to the dying one instead.
+    """
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", 5000)) != 0:
+                return
+        time.sleep(0.2)
+    pytest.fail("port 5000 is still in use; another seafront is running")
+
+
 @pytest.fixture(scope="class")
-def running_server_with_delays(request):
+def running_server_with_delays(request, tmp_path_factory):
     """Start the mock server WITH realistic delays (unlike test_api_operations, which
     sets MOCK_NO_DELAYS=1). Delays make a move take real wall-clock time, which is what
     lets these tests observe a command in flight."""
     env = os.environ.copy()
     env["MOCK_NO_DELAYS"] = "0"  # delays ON, so a move takes observable wall-clock time
 
+    _wait_for_free_port()
+    # Output goes to a file, never a PIPE: these tests fire thousands of requests, and an
+    # unread pipe fills up after a few hundred access log lines and then blocks the server's
+    # event loop on every further log write - which looks exactly like the server hanging.
+    log_path = tmp_path_factory.mktemp("server-log") / "server.log"
+    log = log_path.open("w")
     proc = subprocess.Popen(
         ["uv", "run", "python", "-m", "seafront", "--microscope", MOCK_MICROSCOPE_NAME],
-        stdout=subprocess.PIPE,
+        stdout=log,
         stderr=subprocess.STDOUT,
         text=True,
         env=env,
@@ -87,7 +118,8 @@ def running_server_with_delays(request):
     if not server_ready:
         proc.terminate()
         proc.wait()
-        pytest.fail("Server did not start within timeout")
+        log.close()
+        pytest.fail(f"Server did not start within timeout; log at {log_path}")
 
     request.cls.server_url = "http://127.0.0.1:5000"
 
@@ -99,6 +131,20 @@ def running_server_with_delays(request):
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+    log.close()
+
+
+@pytest.fixture(scope="class")
+def hardware_lease(request, running_server_with_delays):
+    """Hold the device lease for the class: hardware routes refuse requests without it."""
+    url = request.cls.server_url
+    status, body = make_request(f"{url}/api/lock/acquire", data={"owner": "test_concurrency"})
+    assert status == 200, f"could not take the device lease: {status} {body}"
+    assert body is not None
+    request.cls.lease = body["token"]
+    yield body["token"]
+    make_request(f"{url}/api/lock/break", data={"reason": "test class teardown"})
+    request.cls.lease = None
 
 
 # start/end coordinates for a move long enough (~70mm) to leave a clear busy window,
@@ -107,7 +153,7 @@ _START = {"x_mm": 30.0, "y_mm": 40.0, "z_mm": 1.0}
 _FAR = {"x_mm": 100.0, "y_mm": 40.0, "z_mm": 1.0}
 
 
-@pytest.mark.usefixtures("running_server_with_delays")
+@pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
 class TestRejectOnBusy:
     """The core rule: busy hardware rejects, it does not queue; status stays live."""
 
@@ -130,14 +176,15 @@ class TestRejectOnBusy:
         """Move to a known start (this first command also triggers homing), then kick
         off a long move on a background thread. Returns the thread and a result dict
         that the thread fills in when the long move returns."""
-        status, data = make_request(self._url("/api/action/move_to"), data=_START, timeout=30)
+        status, data = make_request(self._url("/api/action/move_to"), data=_START, timeout=30, token=self.lease)
         assert status == 200, f"setup move failed: {status} {data}"
 
         result: dict = {}
 
         def long_move():
             result["status"], result["data"] = make_request(
-                self._url("/api/action/move_to"), data=_FAR, timeout=30
+                self._url("/api/action/move_to"), data=_FAR, timeout=30,
+                token=self.lease,
             )
 
         thread = threading.Thread(target=long_move)
@@ -155,6 +202,7 @@ class TestRejectOnBusy:
                 self._url("/api/action/move_by"),
                 data={"axis": "x", "distance_mm": 1.0},
                 timeout=5,
+                token=self.lease,
             )
             assert status == 409, f"expected 409 (rejected as busy), got {status}: {data}"
         finally:
@@ -220,7 +268,7 @@ def _cancellable_config() -> dict:
     return cfg
 
 
-@pytest.mark.usefixtures("running_server_with_delays")
+@pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
 class TestStreamingRejectsAndLifecycle:
     """Streaming is exclusive (snap during it is rejected) and its stop path is clean
     enough to begin again — the stop-path deadlock is the risk this guards."""
@@ -231,36 +279,38 @@ class TestStreamingRejectsAndLifecycle:
     def test_snap_during_streaming_is_rejected(self):
         channel = _one_channel()
         status, data = make_request(
-            self._url("/api/action/stream_channel_begin"), data={"channel": channel}
+            self._url("/api/action/stream_channel_begin"), data={"channel": channel},
+            token=self.lease,
         )
         assert status == 200, f"stream begin failed: {status} {data}"
         try:
             status, data = make_request(
-                self._url("/api/action/snap_channel"), data={"channel": channel}
+                self._url("/api/action/snap_channel"), data={"channel": channel},
+                token=self.lease,
             )
             # rejected by the streaming gate (400) — a different path from the 409 busy lock
             assert status == 400, f"expected 400 (rejected during streaming), got {status}: {data}"
         finally:
-            make_request(self._url("/api/action/stream_channel_end"), data={"channel": channel})
+            make_request(self._url("/api/action/stream_channel_end"), data={"channel": channel}, token=self.lease)
 
     def test_stream_begin_end_begin_again(self):
         channel = _one_channel()
 
-        s1, d1 = make_request(self._url("/api/action/stream_channel_begin"), data={"channel": channel})
+        s1, d1 = make_request(self._url("/api/action/stream_channel_begin"), data={"channel": channel}, token=self.lease)
         assert s1 == 200, f"first begin failed: {s1} {d1}"
 
-        s2, d2 = make_request(self._url("/api/action/stream_channel_end"), data={"channel": channel})
+        s2, d2 = make_request(self._url("/api/action/stream_channel_end"), data={"channel": channel}, token=self.lease)
         assert s2 == 200, f"end failed: {s2} {d2}"
 
         # begin again after a clean end must work — a stop that left bad state would fail here
-        s3, d3 = make_request(self._url("/api/action/stream_channel_begin"), data={"channel": channel})
+        s3, d3 = make_request(self._url("/api/action/stream_channel_begin"), data={"channel": channel}, token=self.lease)
         assert s3 == 200, f"second begin failed (stop left bad state?): {s3} {d3}"
 
-        s4, _ = make_request(self._url("/api/action/stream_channel_end"), data={"channel": channel})
+        s4, _ = make_request(self._url("/api/action/stream_channel_end"), data={"channel": channel}, token=self.lease)
         assert s4 == 200, f"final end failed: {s4}"
 
 
-@pytest.mark.usefixtures("running_server_with_delays")
+@pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
 class TestAcquisitionCancel:
     """Cancel applies to a full acquisition run: once cancelled it reaches CANCELLED,
     not COMPLETED."""
@@ -279,7 +329,8 @@ class TestAcquisitionCancel:
     def test_acquisition_cancel_reaches_cancelled(self):
         config = _cancellable_config()
         status, data = make_request(
-            self._url("/api/acquisition/start"), data={"config_file": config}, timeout=30
+            self._url("/api/acquisition/start"), data={"config_file": config}, timeout=30,
+            token=self.lease,
         )
         assert status == 200, f"start failed: {status} {data}"
         assert data is not None

@@ -396,14 +396,75 @@ const mockLock = {
     /** @type {string|null} */ token: null,
 };
 
+/**
+ * endpoints that drive the hardware and therefore need the device lease. mirrors the routes
+ * the real server marks x-requires-device-lease in /openapi.json; offline mode refuses them
+ * the same way so the UI's lease handling is exercised without a server.
+ */
+const MOCK_LEASE_REQUIRED = new Set([
+    '/api/acquisition/start',
+    '/api/action/calibrate_stage_xy_here',
+    '/api/action/enter_loading_position',
+    '/api/action/establish_hardware_connection',
+    '/api/action/laser_autofocus_calibrate',
+    '/api/action/laser_autofocus_measure_displacement',
+    '/api/action/laser_autofocus_move_to_target_offset',
+    '/api/action/laser_autofocus_warm_up_laser',
+    '/api/action/leave_loading_position',
+    '/api/action/machine_config_flush',
+    '/api/action/move_by',
+    '/api/action/move_to',
+    '/api/action/move_to_well',
+    '/api/action/snap_channel',
+    '/api/action/snap_reflection_autofocus',
+    '/api/action/snap_selected_channels',
+    '/api/action/stream_channel_begin',
+    '/api/action/stream_channel_end',
+    '/api/action/turn_off_all_illumination',
+]);
+
+/**
+ * refuse a hardware endpoint the way the real server's 423 does
+ * @param {'not_held'|'held_by_other'} reason
+ * @returns {Error}
+ */
+function mockLockedError(reason) {
+    const message = reason === 'not_held'
+        ? 'hardware commands need the device lease; POST /api/lock/acquire first (mock)'
+        : `microscope is locked by '${mockLock.owner}' (mock)`;
+    const error = new Error(message);
+    // @ts-ignore - mirrors the shape the real client reads off a 423 response
+    error.status = 423;
+    // @ts-ignore
+    error.detail = {
+        message,
+        reason,
+        held: mockLock.held,
+        owner: mockLock.owner,
+        lock_id: mockLock.lock_id,
+        expires_at: mockLock.expires_at,
+    };
+    return error;
+}
+
+/**
+ * @param {string} endpoint
+ * @param {*} body
+ */
+function checkMockLease(endpoint, body) {
+    if (!MOCK_LEASE_REQUIRED.has(endpoint)) return;
+    if (!mockLock.held) throw mockLockedError('not_held');
+    if ((body?.lock_token ?? null) !== mockLock.token) throw mockLockedError('held_by_other');
+}
+
 class MockAPIClient {
     constructor(baseURL, options = {}) {
         this.mockState = sharedMockState;
         this.baseURL = baseURL || '';
         this.onError = options.onError || (() => {});
         this.getTargetDevice = options.getTargetDevice || (() => 'Mock Microscope (Offline)');
-        /** the mock never holds a real lease token; present for API parity with APIClient */
-        this.getLockToken = () => null;
+        this.getLockToken = options.getLockToken || (() => null);
+        this.ensureLease = options.ensureLease || null;
     }
 
     /**
@@ -582,7 +643,7 @@ class MockAPIClient {
         if (endpoint === '/api/lock/acquire') {
             const token = body?.lock_token ?? null;
             if (mockLock.held && token !== mockLock.token) {
-                throw new Error(`The microscope is locked by '${mockLock.owner}' (mock)`);
+                throw mockLockedError('held_by_other');
             }
             if (!mockLock.held) {
                 mockLock.token = `mock-token-${Date.now()}`;
@@ -595,7 +656,7 @@ class MockAPIClient {
         }
         if (endpoint === '/api/lock/release') {
             if (mockLock.held && (body?.lock_token ?? null) !== mockLock.token) {
-                throw new Error(`The microscope is locked by '${mockLock.owner}' (mock)`);
+                throw mockLockedError('held_by_other');
             }
             Object.assign(mockLock, { held: false, owner: null, lock_id: null, expires_at: null, token: null });
             return {};
@@ -951,12 +1012,22 @@ class MockAPIClient {
         const {
             context = 'API request',
             showError = true,
+            leaseRetry = true,
         } = options;
+
+        const lockToken = this.getLockToken();
+        const requestBody = { ...body, ...(lockToken ? { lock_token: lockToken } : {}) };
 
         try {
             // Instant response (<1ms) - no artificial delay
-            return await this.getMockResponse(endpoint, body);
+            checkMockLease(endpoint, requestBody);
+            return await this.getMockResponse(endpoint, requestBody);
         } catch (error) {
+            // Nobody holds the lease: take it and replay, exactly like APIClient.post
+            if (error.status === 423 && error.detail?.reason === 'not_held' && leaseRetry && this.ensureLease) {
+                await this.ensureLease();
+                return this.post(endpoint, body, { ...options, leaseRetry: false });
+            }
             // Handle 409 Conflict errors (microscope busy)
             if (error.status === 409 && showError) {
                 if (error.detail && error.detail.busy_reasons) {

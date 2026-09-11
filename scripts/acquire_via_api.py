@@ -4,7 +4,8 @@ Run an imaging protocol from the outside, one API request at a time.
 
 This performs the same steps as the server's built-in acquisition
 (seafront/server/protocol.py: ProtocolGenerator.generate) but issues each of them as a
-plain HTTP request from a client, including taking the device lock first. The output
+plain HTTP request from a client, starting with the device lock every hardware route
+requires (see seafront/server/lock.py). The output
 directory layout, file names and OME-TIFF metadata match what the server writes. The point
 is to demonstrate that an external client has exactly the capabilities of the built-in
 protocol; nothing here touches hardware directly, and the only seafront code reused is pure

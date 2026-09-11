@@ -104,6 +104,7 @@ from seafront.server.commands import (
     ImageStoreInfo,
     InternalErrorModel,
     ConflictErrorModel,
+    LockedErrorModel,
     LaserAutofocusCalibrate,
     CameraInfo,
     LockAcquireResponse,
@@ -127,7 +128,7 @@ from seafront.server.protocol import (
     build_ome_instrument,
     make_unique_acquisition_id,
 )
-from seafront.server.lock import DeviceLock
+from seafront.server.lock import DeviceLock, LockDecision, LockReason
 from seafront.server.worker import MicroscopeWorker
 
 
@@ -214,10 +215,26 @@ class CustomRoute(BaseModel):
     # Set by route_wrapper - the dynamically created Pydantic model for request parameters
     request_model: type[BaseModel] | None = None
 
+    # Set by route_wrapper - whether this route needs the caller to hold the device lease.
+    # Published in the openapi schema as x-requires-device-lease, which is what clients (and
+    # the enforcement tests) read to know which routes are hardware writes.
+    requires_lock: bool = True
+
+    # Set at registration for ungated routes that can still answer 423 (acquiring or releasing
+    # a lease somebody else holds). Purely for the openapi schema.
+    may_refuse_locked: bool = False
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 custom_route_handlers: dict[str, CustomRoute] = {}
+
+websocket_routes_requiring_lease: set[str] = set()
+"""
+websocket paths that drive the hardware and therefore need the device lease (sent as
+`lock_token` in the socket's first message). Kept next to `custom_route_handlers` so the
+openapi schema can advertise the requirement for sockets the same way it does for routes.
+"""
 
 
 class SquidError(Exception):
@@ -390,16 +407,27 @@ class Core:
             allow_while_acquisition_is_running: bool = True,
             allow_while_streaming: bool = True,
             requires_lock: bool = True,
+            may_refuse_locked: bool = False,
             summary: str | None = None,
             **kwargs_static,
         ):
             """
-            requires_lock: while another client holds the device lease, refuse this route with
-            423 unless the request carries the lease token (`lock_token`). Default on; opt out
-            for reads, cancel (safety hatch, always allowed) and the lock routes themselves.
+            requires_lock: this route drives the hardware, so the caller must hold the device
+            lease: refuse it with 423 unless the request carries the lease token
+            (`lock_token`). Default on, so a new route is gated until someone decides
+            otherwise. Opt out for reads, for cancel (safety hatch, always allowed) and for
+            the lock routes themselves.
             """
             if methods is None:
                 methods = ["GET"]
+            if requires_lock and "GET" in methods:
+                # A GET carries no body, so it cannot carry lock_token, so a gated GET route
+                # could never be satisfied. Catch it here instead of at the first request.
+                raise ValueError(
+                    f"{path}: a route requiring the device lease must be POST (GET cannot carry lock_token)"
+                )
+            route.requires_lock = requires_lock
+            route.may_refuse_locked = may_refuse_locked
             custom_route_handlers[path] = route
 
             target_func = route.handler
@@ -557,13 +585,14 @@ class Core:
                         status_code=421,  # Misdirected Request
                     )
 
-                # Device lease: a token renews the lease on every use; a gated route is refused
-                # while someone else holds the lease.
+                # Device lease. Every request goes through check() so that a holder's lease is
+                # renewed by whatever it does (reads included); hardware routes additionally
+                # require the decision to come back permitted - no lease at all is a refusal,
+                # not a free pass.
                 lock_token = request_data.pop("lock_token", None)
-                if lock_token:
-                    self.lock.touch(lock_token)
-                if requires_lock and not self.lock.allows(lock_token):
-                    error_device_locked(self.lock.state())
+                lock_decision = self.lock.check(lock_token)
+                if requires_lock and not lock_decision.permitted:
+                    error_device_locked(lock_decision)
                 if handler_accepts_lock_token:
                     request_data["lock_token"] = lock_token
 
@@ -848,12 +877,14 @@ class Core:
             CustomRoute(handler=self.lock_acquire, tags=[RouteTag.LOCK.value]),
             methods=["POST"],
             requires_lock=False,
+            may_refuse_locked=True,
         )
         route_wrapper(
             "/api/lock/release",
             CustomRoute(handler=self.lock_release, tags=[RouteTag.LOCK.value]),
             methods=["POST"],
             requires_lock=False,
+            may_refuse_locked=True,
         )
         route_wrapper(
             "/api/lock/status",
@@ -925,12 +956,16 @@ class Core:
             except WebSocketDisconnect:
                 pass
 
+        websocket_routes_requiring_lease.add("/ws/action/snap_selected_channels_progressive")
+
         @app.websocket("/ws/action/snap_selected_channels_progressive")
         async def ws_snap_selected_channels_progressive(ws: WebSocket):
             """
             Progressive channel snapping with real-time updates.
 
-            First message must be JSON with target_device field for routing validation.
+            First message must be JSON with target_device field for routing validation and
+            lock_token holding the device lease (this socket drives the hardware, so it is
+            gated exactly like POST /api/action/snap_selected_channels).
             Second message should be AcquisitionConfig, server responds with status updates
             as each channel completes. Each completed channel image is immediately
             available via the normal image retrieval endpoints.
@@ -948,6 +983,19 @@ class Core:
                         "message": f"target_device mismatch: request targets '{target_device}' but this server is '{self.microscope_name}'",
                     })
                     await ws.close(code=4421)  # Custom close code for misdirected request
+                    return
+
+                # Same lease rule as the hardware routes, in websocket clothing: 4423 mirrors
+                # the 423 a POST would have got.
+                lock_decision = self.lock.check(init_msg.get("lock_token"))
+                if not lock_decision.permitted:
+                    await _safe_send_json(ws, {
+                        "error": "device_locked",
+                        "reason": lock_decision.reason,
+                        "owner": lock_decision.state.owner,
+                        "message": lock_decision.message,
+                    })
+                    await ws.close(code=4423)
                     return
 
                 # Receive the configuration
@@ -1537,18 +1585,24 @@ class Core:
         """
         take the device lease
 
-        while you hold it, every hardware command (moves, snaps, streaming, acquisition start,
-        machine config flush, ...) from a request without your `lock_token` is refused with 423.
-        status reads and cancel are never refused. the lease expires `ttl_s` seconds after the
-        last request that carried the token, but never while a command is running on the
-        hardware. calling this with your own token renews (and re-labels) the lease.
+        a lease is required for every hardware command (moves, snaps, streaming, acquisition
+        start, machine config flush, ...): without one they are refused with 423, and while
+        you hold one they are refused for everybody else. status reads and cancel are never
+        refused. the lease expires `ttl_s` seconds after the last request that carried the
+        token, but never while a command is running on the hardware. calling this with your
+        own token renews (and re-labels) the lease.
         """
-        lease = self.lock.acquire(owner=owner, ttl_s=ttl_s, token=lock_token)
-        if lease is None:
-            error_device_locked(self.lock.state())
-        logger.info(f"device lock acquired by '{lease.owner}' (lock {lease.lock_id})")
+        # the refusal comes back from acquire() itself: reading the lock again to find out who
+        # refused could name a client that took the lease in the meantime
+        outcome = self.lock.acquire(owner=owner, ttl_s=ttl_s, token=lock_token)
+        if isinstance(outcome, LockDecision):
+            error_device_locked(outcome)
+        logger.info(f"device lock acquired by '{outcome.owner}' (lock {outcome.lock_id})")
         return LockAcquireResponse(
-            token=lease.token, lock_id=lease.lock_id, owner=lease.owner, expires_at=lease.expires_at
+            token=outcome.token,
+            lock_id=outcome.lock_id,
+            owner=outcome.owner,
+            expires_at=outcome.expires_at,
         )
 
     def lock_release(self, lock_token: str | None = None) -> BasicSuccessResponse:
@@ -1557,24 +1611,32 @@ class Core:
 
         idempotent when nothing is held; 423 if someone else holds it (use /api/lock/break).
         """
-        before = self.lock.state()
-        if not self.lock.release(lock_token):
-            error_device_locked(before)
-        if before.held:
-            logger.info(f"device lock released by '{before.owner}' (lock {before.lock_id})")
+        outcome = self.lock.release(lock_token)
+        match outcome.reason:
+            case LockReason.HELD_BY_OTHER:
+                error_device_locked(outcome)
+            case LockReason.OK:
+                released = outcome.state
+                logger.info(
+                    f"device lock released by '{released.owner}' (lock {released.lock_id})"
+                )
+            case LockReason.NOT_HELD:
+                pass  # nothing was held, so there is nothing to give back
         return BasicSuccessResponse()
 
     def lock_status(self, lock_token: str | None = None) -> LockStatusResponse:
         """
         who holds the device lease, and whether the `lock_token` you sent is the holder's
         """
-        state = self.lock.state()
+        # one read, not two: who holds it and whether it is yours have to be the same snapshot
+        decision = self.lock.check(lock_token, renew=False)
+        state = decision.state
         return LockStatusResponse(
             held=state.held,
             owner=state.owner,
             lock_id=state.lock_id,
             expires_at=state.expires_at,
-            token_matches=self.lock.matches(lock_token),
+            token_matches=decision.permitted,
         )
 
     def lock_break(self, reason: str = "") -> BasicSuccessResponse:
@@ -2319,6 +2381,10 @@ def custom_openapi():
             return {"type": "object"}
         elif inspect.isclass(t) and issubclass(t, BaseModel):  # type:ignore
             return register_pydantic_schema(t)  # type:ignore
+        elif inspect.isclass(t) and issubclass(t, Enum):  # type:ignore
+            # closed sets (LockReason, ...) publish their members, so a client does not have
+            # to guess which strings are legal
+            return {"type": "string", "enum": [member.value for member in t]}
         else:
             origin = tp.get_origin(t)
             if origin in (list,):
@@ -2361,6 +2427,23 @@ def custom_openapi():
         parameters = []
         customroute = custom_route_handlers.get(route_path)
         endpoint = route.endpoint  # type:ignore
+
+        # x-requires-device-lease is the machine-readable answer to "is this a hardware write?".
+        # Clients use it to know what needs a lease; tests/test_lock_enforcement.py uses it to
+        # prove every write route actually refuses without one.
+        if customroute is not None:
+            requires_lease = customroute.requires_lock
+            documents_423 = customroute.requires_lock or customroute.may_refuse_locked
+        else:
+            requires_lease = route_path in websocket_routes_requiring_lease
+            documents_423 = requires_lease
+        if documents_423:
+            responses["423"] = {
+                "description": "device lease missing or held by another client",
+                "content": {
+                    "application/json": {"schema": register_pydantic_schema(LockedErrorModel)}
+                },
+            }
 
         # Extract parameters from the RequestModel (set by route_wrapper, includes target_device)
         if customroute and customroute.request_model:
@@ -2437,6 +2520,7 @@ def custom_openapi():
             "parameters": parameters,
             "responses": responses,
             "tags": tags,
+            "x-requires-device-lease": requires_lease,
         }
 
     app.openapi_schema = openapi_schema
