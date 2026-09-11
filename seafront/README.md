@@ -243,20 +243,34 @@ error used throughout.
 
 This is the subtle part and the source of past deadlocks.
 
-**One OS thread per request.** `handler_logic_*` runs the actual work via
-`await asyncio.to_thread(asyncio.run, callfunc(...))`. Each in-flight request is therefore a
-**real OS thread running its own event loop**. This is deliberate: the hardware lock is a
-`threading.RLock`, and FastAPI would otherwise service concurrent requests on the *same*
-thread, breaking RLock's per-thread semantics.
+**One owner.** `MicroscopeWorker` (`server/worker.py`) is a daemon thread that owns the
+microscope and runs one thing at a time. Route handlers stay on the event loop and hand work
+over with `submit` / `submit_job`, then `await asyncio.wrap_future(...)` for the result. The
+single in-flight slot is a `threading.Lock` claimed by the submitter and released by the
+worker when the work finishes; claiming it *is* the reject-on-busy gate, and holding it *is*
+`is_busy`.
 
-**`Locked[T]` and `Microscope.lock()`.** `Locked[T]` (in `microscope.py`) wraps a value with
-an `RLock` and a `locked(blocking=...)` context manager that yields `None` if it can't
-acquire. `SquidAdapter.lock(reason=...)` takes the top-level lock plus the camera(s) and
-microcontroller sub-locks, and pushes `reason` onto `_lock_reasons`.
+**One request, one claim.** A request that drives the hardware claims the worker once, for
+everything it does — `submit(command)` runs the lazy `EstablishHardwareConnection` and the
+command itself inside the same claim, and the orchestrations (`snap_selected_channels`, an
+acquisition run) do the same through `submit_job`. This is load-bearing, not tidiness:
+claiming twice leaves a hole between the claims where another command runs inside the
+request, where `is_busy` reads false while the request is still going, and where the request
+that got there first comes back 409 because a later one took the slot it had just released.
+`tests/test_concurrency.py::TestOneRequestIsOneClaim` watches for exactly that from outside.
 
-**409 = lock held.** Command routes call `microscope.lock(blocking=False)`. A failed acquire
-returns the current `get_lock_reasons()` stack as a 409 body — so a 409 tells you *which
-command is currently holding the hardware*.
+**409 = busy.** `submit` / `submit_job` return `None` when the slot is taken, and the route
+turns that into a 409 whose body carries `_busy_reasons()` — the in-flight job's label, so
+the rejection names *what* the hardware is doing (`hardware busy: MoveTo`,
+`hardware busy: acquisition:<id>`). Not to be confused with 423, which is the client-held
+device lease (see below): 409 is "the hardware is busy right now", 423 is "this is not your
+microscope".
+
+**Kept locks.** `Locked[T]` (in `microscope.py`) wraps a value with an `RLock` and a
+`locked(blocking=...)` context manager that yields `None` if it can't acquire; it survives for
+the per-camera guards that are read off the worker thread (e.g. `get_hardware_limits`),
+alongside the microcontroller's own internal lock and the narrow stream-callback lock. The
+old nested `Microscope.lock()` / `get_lock_reasons()` hierarchy is gone.
 
 **Rules for anything running on a hardware/SDK-owned thread (e.g. a camera streaming
 callback):**

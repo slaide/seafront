@@ -96,16 +96,28 @@ class MicroscopeWorker:
     def submit(
         self, command: cmd.BaseCommand[tp.Any]
     ) -> tuple[concurrent.futures.Future[tp.Any], threading.Event] | None:
-        """Hand a command to the worker.
+        """Hand a command to the worker: connect if needed, then run it, as ONE claim.
 
         Returns `(future, cancel)` on acceptance, or `None` if a command is
         already in flight (reject-on-busy) or the worker is shutting down. The
         caller resolves `future` for the result and may `cancel.set()` to request
         cooperative cancellation.
+
+        The lazy connect runs inside the same claim on purpose. Submitting it as its own
+        command first would hand the hardware back in between the two: whatever claimed the
+        slot in that gap would run in the middle of this caller's request, status would blink
+        idle while the request was still going, and this command could then be rejected as
+        busy by the very command that took the slot it had just let go of. One request, one
+        claim.
         """
-        return self.submit_job(
-            lambda: self._scope.execute(command), type(command).__qualname__
-        )
+
+        async def connect_and_run() -> tp.Any:
+            await self._scope.execute(cmd.EstablishHardwareConnection())
+            return await self._scope.execute(command)
+
+        # labelled with the caller's command, not the connect step: that is what the client
+        # asked for and what a busy rejection should name for the whole claim
+        return self.submit_job(connect_and_run, type(command).__qualname__)
 
     def submit_job(
         self,

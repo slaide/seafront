@@ -439,18 +439,15 @@ class Core:
                     instance = target_func(**request_data)
                     arg = instance
                     if isinstance(instance, BaseCommand):
-                        async def run_on_worker(command):
-                            # Single hardware owner: submit() returns None when a
-                            # command is already in flight (reject-on-busy).
-                            submitted = self.worker.submit(command)
-                            if submitted is None:
-                                error_microscope_busy(self._busy_reasons())
-                            return await asyncio.wrap_future(submitted[0])
-
+                        # Single hardware owner, claimed once for the whole request: submit()
+                        # connects and runs the command inside one hold of the worker, and
+                        # returns None when something else is already in flight
+                        # (reject-on-busy).
+                        submitted = self.worker.submit(instance)
+                        if submitted is None:
+                            error_microscope_busy(self._busy_reasons())
                         try:
-                            # lazy-connect, then run the command — both on the worker
-                            await run_on_worker(EstablishHardwareConnection())
-                            result = await run_on_worker(instance)
+                            result = await asyncio.wrap_future(submitted[0])
                         except DisconnectError:
                             error_internal("hardware disconnected")
                         except OperationCancelledError:

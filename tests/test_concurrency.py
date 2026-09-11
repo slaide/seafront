@@ -14,6 +14,7 @@ takes long enough to observe the busy window. No real hardware, no test hooks in
 production code.
 """
 
+import http.client
 import json
 import os
 import socket
@@ -227,6 +228,202 @@ class TestRejectOnBusy:
             )
         finally:
             thread.join()
+
+
+# a move short enough to keep the status samples below to a few thousand, long enough that
+# the hardware is visibly held for a while afterwards (~0.5s at the mock's 40mm/s)
+_NEAR = {"x_mm": 50.0, "y_mm": 40.0, "z_mm": 1.0}
+
+@pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
+class TestOneRequestIsOneClaim:
+    """
+    A request that drives the hardware claims it once, for the whole request.
+
+    A request that claims the worker, hands it back, and claims again has a hole in the
+    middle. Another command can run inside it, a client watching status sees the microscope
+    blink idle while a move is still going, and the request that got there first can come
+    back 409 because a later one took the slot it had just let go of.
+
+    The hole is only visible from outside, and only to a client that looks often enough: it
+    is well under a millisecond wide, so these tests watch over one kept-alive connection
+    (a fresh connection per sample is ten times too slow to see it).
+    """
+
+    ROUNDS = 3
+
+    def _url(self, path: str) -> str:
+        return f"{self.server_url}{path}"
+
+    def _settle_at(self, position: dict) -> None:
+        status, data = make_request(self._url("/api/action/move_to"), data=position, timeout=30, token=self.lease)
+        assert status == 200, f"setup move failed: {status} {data}"
+
+    def _running_command(self) -> list[str]:
+        status, data = make_request(self._url("/api/get_info/current_state"), timeout=5)
+        assert status == 200 and data is not None, f"status read failed: {status} {data}"
+        return list(data["busy_reasons"]) if data["is_busy"] else []
+
+    def _watch_one_move(self) -> list[tuple[bool, tuple[str, ...]]]:
+        """
+        Run one move and sample status flat out from before it is sent until after it returns.
+
+        The samples therefore cover the request's whole life on the hardware, including the
+        moment it takes the hardware - which is where a second claim shows up.
+        """
+        self._settle_at(_START)
+        samples: list[tuple[bool, tuple[str, ...]]] = []
+        stop = threading.Event()
+
+        def poll():
+            conn = http.client.HTTPConnection("127.0.0.1", 5000, timeout=10)
+            body = json.dumps({"target_device": MOCK_MICROSCOPE_NAME})
+            headers = {"Content-Type": "application/json"}
+            try:
+                while not stop.is_set():
+                    conn.request("POST", "/api/get_info/current_state", body, headers)
+                    state = json.loads(conn.getresponse().read().decode())
+                    samples.append((state["is_busy"], tuple(state["busy_reasons"])))
+            finally:
+                conn.close()
+
+        poller = threading.Thread(target=poll)
+        poller.start()
+        try:
+            time.sleep(0.05)  # let the poller get going before the move is sent
+            status, data = make_request(
+                self._url("/api/action/move_to"), data=_NEAR, timeout=30, token=self.lease
+            )
+            assert status == 200, f"the move was rejected: {status} {data}"
+        finally:
+            stop.set()
+            poller.join()
+
+        busy = [i for i, (is_busy, _) in enumerate(samples) if is_busy]
+        assert len(busy) >= 50, f"never saw the move run ({len(samples)} samples)"
+        return samples
+
+    @staticmethod
+    def _claims(samples: list[tuple[bool, tuple[str, ...]]]) -> int:
+        """how many times the hardware went from free to taken across these samples"""
+        return sum(
+            1
+            for i, (is_busy, _) in enumerate(samples)
+            if is_busy and (i == 0 or not samples[i - 1][0])
+        )
+
+    def test_a_request_claims_the_hardware_once(self):
+        """
+        One move request, one claim.
+
+        A second claim inside the same request means the hardware was handed back and taken
+        again halfway through, and whoever was watching or waiting in between found a
+        microscope that was free when it was not.
+        """
+        for round_no in range(self.ROUNDS):
+            samples = self._watch_one_move()
+            claims = self._claims(samples)
+            assert claims == 1, (
+                f"round {round_no}: the request took the hardware {claims} times, not once "
+                f"(seen: {sorted({r for _, rs in samples for r in rs})})"
+            )
+
+    def test_busy_never_blinks_idle_inside_a_request(self):
+        """
+        Status is live, so a client watching it sees the hole too: the microscope must not
+        read as free in the middle of a move that is still going.
+        """
+        for round_no in range(self.ROUNDS):
+            samples = self._watch_one_move()
+            busy_at = [i for i, (is_busy, _) in enumerate(samples) if is_busy]
+            window = samples[busy_at[0] : busy_at[-1] + 1]
+            idle = [i for i, (is_busy, _) in enumerate(window) if not is_busy]
+            assert not idle, (
+                f"round {round_no}: is_busy read false {len(idle)} time(s) in the middle of a "
+                f"running move ({len(window)} samples between the first and last busy read)"
+            )
+
+    def test_busy_reason_names_the_command_the_client_asked_for(self):
+        """
+        The whole time a move request holds the hardware, the reason says MoveTo.
+
+        Another command's name in there is the second claim wearing a label: the request ran
+        as several claims, and the gaps between them are the hole. (The generic reason is the
+        same claim before the worker thread has picked it up, so it is not a second claim.)
+        """
+        seen: set[str] = set()
+        for _ in range(self.ROUNDS):
+            seen.update(r for _, reasons in self._watch_one_move() for r in reasons)
+        named = {r for r in seen if r != "hardware command in progress"}
+        assert named == {"hardware busy: MoveTo"}, f"one request, several claims: {sorted(named)}"
+
+    def test_no_other_command_runs_while_one_is_running(self):
+        """
+        While a move is running, every other command is refused with 409.
+
+        The probe window ends well before the move does, and the move is checked to be still
+        running afterwards, so a 200 here cannot be the harmless one a probe gets once the
+        move has finished and the worker is free again.
+        """
+        self._settle_at(_START)
+        result: dict = {}
+
+        def run():
+            result["status"], result["data"] = make_request(
+                self._url("/api/action/move_to"), data=_FAR, timeout=30, token=self.lease
+            )
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        attempts, accepted = 0, []
+        try:
+            deadline = time.monotonic() + 10
+            while self._running_command() != ["hardware busy: MoveTo"]:
+                assert time.monotonic() < deadline, f"the move never ran: {result}"
+            deadline = time.monotonic() + 1.0  # the move still has ~0.7s to go after this
+            while time.monotonic() < deadline:
+                status, data = make_request(
+                    self._url("/api/action/turn_off_all_illumination"), timeout=10, token=self.lease
+                )
+                attempts += 1
+                if status != 409:
+                    accepted.append((status, data))
+            still_moving = self._running_command() == ["hardware busy: MoveTo"]
+        finally:
+            thread.join()
+
+        assert still_moving, "the move ended before the probe window did; nothing was proven"
+        assert attempts >= 5, f"too few probes to prove anything ({attempts})"
+        assert not accepted, f"{len(accepted)} of {attempts} commands ran inside the move: {accepted[:3]}"
+
+    def test_a_request_that_has_the_hardware_is_not_rejected(self):
+        """
+        Once a request holds the hardware, hammering the server must not make it fail.
+
+        The probes start only after the server reports the move's claim, so the move was
+        there first; a 409 for it means it lost hardware it already held to one of them.
+        """
+        for round_no in range(self.ROUNDS):
+            self._settle_at(_START)
+            move: dict = {}
+
+            def run(slot: dict = move):
+                slot["status"], slot["data"] = make_request(
+                    self._url("/api/action/move_to"), data=_FAR, timeout=30, token=self.lease
+                )
+
+            thread = threading.Thread(target=run)
+            thread.start()
+            try:
+                deadline = time.monotonic() + 10
+                while not self._running_command():
+                    assert time.monotonic() < deadline, f"the move never ran: {move}"
+                while thread.is_alive():
+                    make_request(
+                        self._url("/api/action/turn_off_all_illumination"), timeout=10, token=self.lease
+                    )
+            finally:
+                thread.join()
+            assert move["status"] == 200, f"round {round_no}: the accepted move was rejected: {move}"
 
 
 # --- config helpers for the streaming and acquisition tests -----------------------
