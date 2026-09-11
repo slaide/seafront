@@ -1149,12 +1149,14 @@ class Core:
             return False
 
         def register_stream_begin(begin: ChannelStreamBegin, res: StreamingStartedResponse):
+            # Channel first, then the callback: status reports the channel only while the
+            # callback is installed (see get_current_state), so setting them in this order is
+            # what keeps a status read from ever catching a stream with no channel.
+            self._streaming_channel = begin.channel
             # Wire the server-side frame handler under the narrow stream-callback lock (the
             # SDK acquisition thread reads it). The ChannelStreamBegin command already ran on
             # the worker and started the camera stream; frames are dropped until this is set.
             self.microscope.set_stream_callback(handle_image)
-            # store channel info, used inside the streaming callback to store images properly
-            self._streaming_channel = begin.channel
 
         route_wrapper(
             "/api/action/stream_channel_begin",
@@ -1554,8 +1556,13 @@ class Core:
         except DisconnectError:
             error_internal("hardware disconnect")
 
-        # Check if streaming is currently active by looking at the stream callback
+        # Check if streaming is currently active by looking at the stream callback. Read once
+        # and report the channel from that same read: the two are set together on the way in,
+        # but on the way out the stream is stopped by the command on the worker while the
+        # channel is cleared by the route callback that follows it. A status read landing in
+        # between must not hand a client a channel that is no longer streaming.
         is_streaming = self.microscope.stream_callback is not None
+        streaming_channel = self._streaming_channel if is_streaming else None
 
         # Busy state is owned by the single-owner worker (reject-on-busy): a command
         # in flight == busy. The status hatch reads it directly, never queuing.
@@ -1567,7 +1574,7 @@ class Core:
             latest_imgs={key: entry.info for key, entry in self.latest_images.items()},
             current_acquisition_id=current_acquisition_id,
             is_streaming=is_streaming,
-            streaming_channel_handle=self._streaming_channel.handle if self._streaming_channel is not None else None,
+            streaming_channel_handle=streaming_channel.handle if streaming_channel is not None else None,
             is_busy=is_busy,
             busy_reasons=busy_reasons,
             last_acquisition_error=self._last_acquisition_error,

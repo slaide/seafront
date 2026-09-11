@@ -234,6 +234,11 @@ class TestRejectOnBusy:
 # the hardware is visibly held for a while afterwards (~0.5s at the mock's 40mm/s)
 _NEAR = {"x_mm": 50.0, "y_mm": 40.0, "z_mm": 1.0}
 
+# a millimetre apart: for tests that care how many commands run, not how long each one takes
+_HOP_A = {"x_mm": 60.0, "y_mm": 40.0, "z_mm": 1.0}
+_HOP_B = {"x_mm": 61.0, "y_mm": 40.0, "z_mm": 1.0}
+
+
 @pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
 class TestOneRequestIsOneClaim:
     """
@@ -424,6 +429,141 @@ class TestOneRequestIsOneClaim:
             finally:
                 thread.join()
             assert move["status"] == 200, f"round {round_no}: the accepted move was rejected: {move}"
+
+
+@pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
+class TestStatusNeverContradictsItself:
+    """
+    Every status read is one snapshot, and a snapshot must not disagree with itself.
+
+    Two fields describing the same thing are two fields that can be updated a moment apart,
+    and a client polling in that moment reads a microscope that is streaming nothing, or busy
+    with no reason, or locked by nobody. These sample status flat out across the transitions
+    where that gap would open.
+    """
+
+    CYCLES = 12
+
+    def _url(self, path: str) -> str:
+        return f"{self.server_url}{path}"
+
+    @staticmethod
+    def _contradictions(state: dict) -> list[str]:
+        """everything in one status snapshot that cannot be true at the same time"""
+        wrong = []
+        if state["is_busy"] != bool(state["busy_reasons"]):
+            wrong.append(f"is_busy={state['is_busy']} but busy_reasons={state['busy_reasons']}")
+        if state["is_streaming"] != (state["streaming_channel_handle"] is not None):
+            wrong.append(
+                f"is_streaming={state['is_streaming']} but "
+                f"streaming_channel_handle={state['streaming_channel_handle']!r}"
+            )
+        lock = state["lock"]
+        if lock["held"] != (lock["owner"] is not None):
+            wrong.append(f"lock held={lock['held']} but owner={lock['owner']!r}")
+        if lock["held"] != (lock["expires_at"] is not None):
+            wrong.append(f"lock held={lock['held']} but expires_at={lock['expires_at']!r}")
+        return wrong
+
+    def _poll_while(self, work) -> tuple[int, list[str]]:
+        """run `work` while sampling status over a kept-alive connection"""
+        samples = 0
+        wrong: list[str] = []
+        stop = threading.Event()
+
+        def poll():
+            nonlocal samples
+            conn = http.client.HTTPConnection("127.0.0.1", 5000, timeout=10)
+            body = json.dumps({"target_device": MOCK_MICROSCOPE_NAME})
+            headers = {"Content-Type": "application/json"}
+            try:
+                while not stop.is_set():
+                    conn.request("POST", "/api/get_info/current_state", body, headers)
+                    state = json.loads(conn.getresponse().read().decode())
+                    samples += 1
+                    wrong.extend(f"{c} (sample {samples})" for c in self._contradictions(state))
+            finally:
+                conn.close()
+
+        poller = threading.Thread(target=poll)
+        poller.start()
+        try:
+            work()
+        finally:
+            stop.set()
+            poller.join()
+        return samples, wrong
+
+    def test_streaming_transitions_never_show_half_a_stream(self):
+        """
+        Start and stop streaming over and over while watching.
+
+        `is_streaming` and the channel handle are set and cleared a moment apart - the stream
+        is stopped by the command on the worker, the bookkeeping by the route callback that
+        follows - so a client polling in between sees a stream with no channel, or a channel
+        that is not streaming.
+        """
+        channel = _one_channel()
+
+        def cycles():
+            for i in range(self.CYCLES):
+                s1, d1 = make_request(
+                    self._url("/api/action/stream_channel_begin"),
+                    data={"channel": channel, "framerate_hz": 5.0}, timeout=30, token=self.lease,
+                )
+                assert s1 == 200, f"cycle {i}: begin failed: {s1} {d1}"
+                s2, d2 = make_request(
+                    self._url("/api/action/stream_channel_end"),
+                    data={"channel": channel}, timeout=30, token=self.lease,
+                )
+                assert s2 == 200, f"cycle {i}: end failed: {s2} {d2}"
+
+        samples, wrong = self._poll_while(cycles)
+        assert samples >= 100, f"too few status samples to prove anything ({samples})"
+        assert not wrong, f"{len(wrong)} of {samples} status reads contradicted themselves: {wrong[:5]}"
+
+    def test_command_transitions_never_show_half_a_command(self):
+        """the same watch across ordinary command starts and finishes"""
+
+        def commands():
+            for i in range(self.CYCLES * 3):
+                target = _HOP_A if i % 2 else _HOP_B
+                status, data = make_request(
+                    self._url("/api/action/move_to"), data=target, timeout=30, token=self.lease
+                )
+                assert status == 200, f"cycle {i}: move failed: {status} {data}"
+
+        samples, wrong = self._poll_while(commands)
+        assert samples >= 100, f"too few status samples to prove anything ({samples})"
+        assert not wrong, f"{len(wrong)} of {samples} status reads contradicted themselves: {wrong[:5]}"
+
+    def test_lease_transitions_never_show_half_a_lease(self):
+        """and across lease churn, which the status broadcast also carries"""
+
+        def churn():
+            for i in range(self.CYCLES * 20):
+                status, body = make_request(
+                    self._url("/api/lock/acquire"), data={"owner": f"churn-{i}"}, timeout=10
+                )
+                assert status == 200, f"acquire failed: {status} {body}"
+                assert body is not None
+                status, _ = make_request(
+                    self._url("/api/lock/release"), data={"lock_token": body["token"]}, timeout=10
+                )
+                assert status == 200
+
+        # this test owns the lease for its own churn, so hand the class lease back first
+        make_request(self._url("/api/lock/break"), data={"reason": "lease churn test"})
+        try:
+            samples, wrong = self._poll_while(churn)
+        finally:
+            status, body = make_request(
+                self._url("/api/lock/acquire"), data={"owner": "test_concurrency"}, timeout=10
+            )
+            assert status == 200 and body is not None
+            type(self).lease = body["token"]
+        assert samples >= 100, f"too few status samples to prove anything ({samples})"
+        assert not wrong, f"{len(wrong)} of {samples} status reads contradicted themselves: {wrong[:5]}"
 
 
 # --- config helpers for the streaming and acquisition tests -----------------------
