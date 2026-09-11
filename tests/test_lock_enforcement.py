@@ -18,6 +18,7 @@ import re
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import typing as tp
 import urllib.error
@@ -501,3 +502,144 @@ class TestHardwareWebsocket:
             except ConnectionClosed as e:
                 pytest.fail(f"holder was closed out with {e.rcvd.code if e.rcvd else '?'}")
             assert reply is None or reply.get("error") != "device_locked", reply
+
+
+class TestLeaseUnderConcurrentClients:
+    """
+    The lease decides who owns the microscope, so two clients believing they own it is the
+    worst outcome the whole mechanism can have. These hammer the decision points - several
+    clients acquiring at once, breaking and taking over at once, a released token still in
+    use - and check the one thing that must always hold: at most one holder, and only that
+    holder's token works.
+    """
+
+    THREADS = 8
+
+    def test_simultaneous_acquires_produce_exactly_one_holder(self, unlocked, bodies):
+        """eight clients, one instant, one lease"""
+        results: list[tuple[int, tp.Any]] = []
+        barrier = threading.Barrier(self.THREADS)
+
+        def contend(n: int):
+            barrier.wait()
+            results.append(acquire(f"client-{n}"))
+
+        threads = [threading.Thread(target=contend, args=(n,)) for n in range(self.THREADS)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        won = [body for status, body in results if status == 200]
+        lost = [(status, body) for status, body in results if status != 200]
+        assert len(won) == 1, f"{len(won)} clients were given the lease at once: {won}"
+        assert all(status == 423 for status, _ in lost), lost
+        assert all(body["detail"]["reason"] == LockReason.HELD_BY_OTHER for _, body in lost)
+
+        # the winner drives the hardware; every loser is refused, naming the winner
+        token = won[0]["token"]
+        move = bodies["/api/action/move_to"]
+        assert post("/api/action/move_to", move, token=token)[0] == 200
+        for _, body in lost:
+            assert body["detail"]["owner"] == won[0]["owner"]
+        status, response = post("/api/action/move_to", move)
+        assert status == 423 and response["detail"]["owner"] == won[0]["owner"]
+
+    def test_break_and_acquire_storm_leaves_one_consistent_holder(self, unlocked, bodies):
+        """
+        Four clients taking the microscope from each other as fast as they can.
+
+        Breaking is open to anyone, so this is the messiest legal sequence there is. However
+        it interleaves, the lease must never report itself half-held, and when the dust
+        settles exactly one client may drive the hardware.
+        """
+        rounds = 25
+        owners: list[str] = []
+        contradictions: list[dict] = []
+
+        def churn(n: int):
+            for _ in range(rounds):
+                post("/api/lock/break", {"reason": f"client-{n} taking over"})
+                status, body = acquire(f"client-{n}")
+                if status == 200:
+                    owners.append(body["owner"])
+                state = post("/api/lock/status")[1]
+                if state["held"] != (state["owner"] is not None) or state["held"] != (
+                    state["lock_id"] is not None
+                ):
+                    contradictions.append(state)
+
+        threads = [threading.Thread(target=churn, args=(n,)) for n in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not contradictions, f"the lease reported itself half-held: {contradictions[:3]}"
+        assert owners, "nobody ever got the lease"
+
+        # settle it: whoever holds it now is the only one who can drive
+        state = post("/api/lock/status")[1]
+        assert state["held"] is True and state["owner"] is not None
+        assert post("/api/action/move_to", bodies["/api/action/move_to"])[0] == 423
+
+        break_lease()
+        final = lease(owner="the last one standing")
+        assert post("/api/action/move_to", bodies["/api/action/move_to"], token=final)[0] == 200
+
+    def test_a_released_token_is_dead_even_when_reused_at_once(self, unlocked, bodies):
+        """
+        A token that has been given back must not work again, including from requests that
+        were already on their way out when it was released.
+        """
+        token = lease(owner="alice")
+        assert post("/api/lock/release", token=token)[0] == 200
+
+        refusals: list[tuple[int, tp.Any]] = []
+        barrier = threading.Barrier(self.THREADS)
+        move = bodies["/api/action/move_to"]
+
+        def reuse():
+            barrier.wait()
+            refusals.append(post("/api/action/move_to", move, token=token))
+
+        threads = [threading.Thread(target=reuse) for _ in range(self.THREADS)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert all(status == 423 for status, _ in refusals), refusals
+        assert all(body["detail"]["reason"] == LockReason.NOT_HELD for _, body in refusals)
+
+    def test_the_holder_keeps_the_lease_while_everyone_else_pushes(self, unlocked, bodies):
+        """
+        Being hammered by other clients must not cost the holder its lease.
+
+        Every refused request goes through the same check as the holder's, so a check that
+        renewed - or dropped - the lease for the wrong client would show up here.
+        """
+        token = lease(owner="alice", ttl_s=5)
+        stop = threading.Event()
+
+        def outsiders():
+            while not stop.is_set():
+                post("/api/action/move_to", bodies["/api/action/move_to"])
+                acquire("gatecrasher")
+                post("/api/lock/status")
+
+        pushers = [threading.Thread(target=outsiders) for _ in range(3)]
+        for t in pushers:
+            t.start()
+        try:
+            deadline = time.time() + 7  # longer than the 5s TTL: alice's own use must renew it
+            while time.time() < deadline:
+                status, response = post("/api/action/move_to", bodies["/api/action/move_to"], token=token)
+                assert status == 200, f"the holder lost its own lease: {status} {response}"
+        finally:
+            stop.set()
+            for t in pushers:
+                t.join()
+
+        state = post("/api/lock/status", token=token)[1]
+        assert state["held"] is True and state["owner"] == "alice" and state["token_matches"] is True

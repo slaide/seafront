@@ -140,3 +140,135 @@ def test_worker_reports_exception_through_future():
         assert worker.submit(cmd.MoveTo(x_mm=2.0)) is not None
     finally:
         worker.stop()
+
+
+class _CountingScope:
+    """Scope stand-in that records what it was asked to run and can be held mid-command."""
+
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.cancels: list[threading.Event | None] = []
+
+    def set_current_cancel(self, cancel):
+        self.cancels.append(cancel)
+
+    async def execute(self, command):
+        self.commands.append(type(command).__qualname__)
+        self.started.set()
+        assert self.release.wait(timeout=10), "release was never set"
+        return "done"
+
+
+class TestWorkerUnderConcurrency:
+    """
+    The single-slot handoff, hammered.
+
+    These are the races that an occasional red test in a bigger suite would be blamed on: two
+    submits landing together, a cancel arriving as a command ends, a resubmit the instant a
+    result comes back. All of it is synchronised with events and barriers rather than sleeps,
+    so a failure here is a real defect and not a slow machine.
+    """
+
+    def test_simultaneous_submits_accept_exactly_one(self):
+        """Eight threads submitting at the same instant: one runs, seven are told busy."""
+        scope = _CountingScope()
+        worker = MicroscopeWorker(scope)  # type: ignore[arg-type]
+        worker.start()
+        try:
+            accepted = []
+            barrier = threading.Barrier(8)
+
+            def contend(n: int):
+                barrier.wait()
+                submitted = worker.submit(cmd.MoveTo(x_mm=float(n)))
+                if submitted is not None:
+                    accepted.append(submitted)
+
+            threads = [threading.Thread(target=contend, args=(n,)) for n in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            assert len(accepted) == 1, f"{len(accepted)} submits were accepted, not 1"
+            assert worker.is_busy
+            scope.release.set()
+            assert accepted[0][0].result(timeout=10) == "done"
+        finally:
+            scope.release.set()
+            worker.stop()
+
+    def test_a_cancel_cannot_reach_the_next_command(self):
+        """
+        A cancel aimed at the running command must not carry over to the one after it.
+
+        Cancel is a hatch: it reads whatever is in flight and sets its event. If the event
+        were reused, a cancel arriving just as a command ends would kill the next one - the
+        kind of failure that shows up once in fifty runs and gets called flaky.
+        """
+        scope = _CountingScope()
+        worker = MicroscopeWorker(scope)  # type: ignore[arg-type]
+        worker.start()
+        try:
+            first = worker.submit(cmd.MoveTo(x_mm=1.0))
+            assert first is not None
+            assert scope.started.wait(timeout=10)
+
+            # cancel the in-flight command the way /api/action/cancel_current does
+            in_flight = worker.current_cancel()
+            assert in_flight is not None
+            in_flight.set()
+
+            scope.release.set()
+            assert first[0].result(timeout=10) == "done"
+
+            # idle: nothing in flight to cancel, and nothing half-cleared
+            assert worker.current_cancel() is None
+            assert worker.current_label() is None
+            assert not worker.is_busy
+
+            scope.started.clear()
+            second = worker.submit(cmd.MoveTo(x_mm=2.0))
+            assert second is not None
+            assert scope.started.wait(timeout=10)
+            assert not second[1].is_set(), "the next command started out already cancelled"
+            assert second[1] is not in_flight, "the cancel event was reused across commands"
+            assert second[0].result(timeout=10) == "done"
+        finally:
+            scope.release.set()
+            worker.stop()
+
+    def test_back_to_back_submits_are_always_accepted(self, mock_scope):
+        """
+        Resubmitting the instant a result arrives must never be refused.
+
+        The slot is released before the caller's future resolves precisely so this holds; if
+        that order ever flips, this fails intermittently instead of silently costing every
+        client a retry.
+        """
+        worker = MicroscopeWorker(mock_scope)
+        worker.start()
+        try:
+            for i in range(25):
+                submitted = worker.submit(cmd.MoveTo(x_mm=10.0 + i * 0.1, y_mm=10.0, z_mm=1.0))
+                assert submitted is not None, f"submit {i} was refused right after the previous result"
+                submitted[0].result(timeout=10)
+        finally:
+            worker.stop()
+
+    def test_nothing_is_in_flight_between_commands(self, mock_scope):
+        """label, cancel and busy agree with each other, before and after every command"""
+        worker = MicroscopeWorker(mock_scope)
+        worker.start()
+        try:
+            for i in range(10):
+                assert not worker.is_busy
+                assert worker.current_label() is None
+                assert worker.current_cancel() is None
+                submitted = worker.submit(cmd.MoveTo(x_mm=10.0 + i * 0.1, y_mm=10.0, z_mm=1.0))
+                assert submitted is not None
+                submitted[0].result(timeout=10)
+        finally:
+            worker.stop()

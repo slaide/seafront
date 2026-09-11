@@ -432,6 +432,113 @@ class TestOneRequestIsOneClaim:
 
 
 @pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
+class TestUnderLoad:
+    """
+    Repetition and contention, because a race that shows up once in fifty runs shows up every
+    run if you do it fifty times. Each test states an outcome that must hold for *every*
+    attempt, so there is no threshold to argue about afterwards.
+    """
+
+    def _url(self, path: str) -> str:
+        return f"{self.server_url}{path}"
+
+    def test_every_answer_is_either_done_or_busy(self):
+        """
+        Six clients, one lease, all pushing at once: every single response is 200 or 409.
+
+        Anything else - a 423 because the lease got lost, a 500 from two commands meeting -
+        means contention produced something other than "your turn" or "not now".
+        """
+        answers: list[tuple[int, dict | None]] = []
+        answers_lock = threading.Lock()
+        barrier = threading.Barrier(6)
+
+        def client(n: int):
+            barrier.wait()
+            mine = []
+            for i in range(12):
+                target = {"x_mm": 60.0 + n * 0.1, "y_mm": 40.0 + i * 0.1, "z_mm": 1.0}
+                mine.append(make_request(self._url("/api/action/move_to"), data=target, timeout=30, token=self.lease))
+            with answers_lock:
+                answers.extend(mine)
+
+        threads = [threading.Thread(target=client, args=(n,)) for n in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        unexpected = [(s, d) for s, d in answers if s not in (200, 409)]
+        assert not unexpected, f"{len(unexpected)} of {len(answers)} answers were neither done nor busy: {unexpected[:3]}"
+        assert any(s == 200 for s, _ in answers), "nothing ran at all"
+        assert any(s == 409 for s, _ in answers), "no contention happened; the test proved nothing"
+
+        # the hardware is free afterwards, and still ours
+        status, data = make_request(self._url("/api/get_info/current_state"), timeout=5)
+        assert status == 200 and data is not None and data["is_busy"] is False
+        status, _ = make_request(self._url("/api/action/turn_off_all_illumination"), timeout=30, token=self.lease)
+        assert status == 200, "the hardware never came back after the storm"
+
+    def test_rapid_cycles_never_leak_the_hardware(self):
+        """
+        Forty commands back to back, each waited for: all forty must run.
+
+        A claim that is not released on some path shows up here as the first 409 that should
+        never have happened, rather than as a server that mysteriously stops responding a
+        week later.
+        """
+        for i in range(40):
+            target = _HOP_A if i % 2 else _HOP_B
+            status, data = make_request(self._url("/api/action/move_to"), data=target, timeout=30, token=self.lease)
+            assert status == 200, f"command {i} was refused: {status} {data}"
+
+    def test_cancelling_at_any_moment_leaves_the_hardware_usable(self):
+        """
+        Cancel fired continuously while commands come and go.
+
+        Cancel is the one hatch that reaches into a running command from outside, so a cancel
+        landing on the boundary between two commands is the likeliest way to wedge the worker
+        or to kill a command nobody asked to stop. Every answer must still be a clean one,
+        and the hardware must still work afterwards.
+        """
+        stop = threading.Event()
+
+        def cancel_storm():
+            while not stop.is_set():
+                status, _ = make_request(self._url("/api/action/cancel_current"), timeout=10)
+                assert status == 200, f"the cancel hatch itself was refused: {status}"
+
+        storm = threading.Thread(target=cancel_storm)
+        storm.start()
+        answers: list[tuple[int, dict | None]] = []
+        try:
+            for i in range(15):
+                target = _START if i % 2 else _NEAR
+                answers.append(make_request(self._url("/api/action/move_to"), data=target, timeout=30, token=self.lease))
+        finally:
+            stop.set()
+            storm.join()
+
+        for status, data in answers:
+            if status == 200:
+                continue
+            assert status == 500 and data is not None, f"unexpected answer under cancel: {status} {data}"
+            assert "cancel" in str(data.get("detail", "")).lower(), f"500 that was not a cancellation: {data}"
+
+        # not wedged: the worker is free and takes work again
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            status, data = make_request(self._url("/api/get_info/current_state"), timeout=5)
+            assert status == 200 and data is not None
+            if not data["is_busy"]:
+                break
+        else:
+            pytest.fail("the worker never went idle after the cancel storm")
+        status, data = make_request(self._url("/api/action/move_to"), data=_START, timeout=30, token=self.lease)
+        assert status == 200, f"the hardware was left unusable: {status} {data}"
+
+
+@pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
 class TestStatusNeverContradictsItself:
     """
     Every status read is one snapshot, and a snapshot must not disagree with itself.
