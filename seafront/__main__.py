@@ -1863,7 +1863,9 @@ class Core:
 
         if self.acquisition_future is not None:
             if not self.acquisition_future.done():
-                error_internal(detail="acquisition already running")
+                # a run in progress is busy hardware, not a server fault: 409 like every other
+                # command that arrives while something else has the microscope
+                error_microscope_busy(self._busy_reasons())
             else:
                 self.acquisition_future = None
 

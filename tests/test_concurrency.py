@@ -804,3 +804,139 @@ class TestAcquisitionCancel:
                 break
             time.sleep(0.1)
         assert final == "cancelled", f"expected cancelled, got {final}"
+
+
+@pytest.mark.usefixtures("running_server_with_delays", "hardware_lease")
+class TestAcquisitionLifecycle:
+    """
+    An acquisition holds the hardware for minutes, so it is the longest window in which
+    anything else can go wrong: a second run started on top of it, progress read while images
+    are being written, state left behind by a cancelled run. Each test states what must be
+    true for the whole window, not just at the end.
+    """
+
+    def _url(self, path: str) -> str:
+        return f"{self.server_url}{path}"
+
+    def _start(self, config: dict) -> tuple[int, dict | None]:
+        return make_request(
+            self._url("/api/acquisition/start"), data={"config_file": config}, timeout=30, token=self.lease
+        )
+
+    def _status(self, acq_id: str) -> dict:
+        status, data = make_request(
+            self._url("/api/acquisition/status"), data={"acquisition_id": acq_id}, timeout=10
+        )
+        assert status == 200, f"status query failed: {status} {data}"
+        assert data is not None
+        return data
+
+    def _wait_for_end(self, acq_id: str, timeout_s: float = 120) -> str:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            state = self._status(acq_id)["acquisition_status"]
+            if state not in ("running", "scheduled"):
+                return state
+        pytest.fail(f"acquisition {acq_id} never finished")
+
+    def _cancel(self, acq_id: str) -> None:
+        status, data = make_request(
+            self._url("/api/acquisition/cancel"), data={"acquisition_id": acq_id}, timeout=10
+        )
+        assert status == 200, f"cancel failed: {status} {data}"
+
+    def test_a_second_acquisition_cannot_start_on_top_of_one(self):
+        """
+        The first run owns the hardware until it is done.
+
+        A second start must be refused while it runs - and refusing it must not disturb the
+        run that is already going.
+        """
+        status, data = self._start(_cancellable_config())
+        assert status == 200 and data is not None, f"first start failed: {status} {data}"
+        acq_id = data["acquisition_id"]
+        try:
+            refusals = []
+            for _ in range(5):
+                refusals.append(self._start(_cancellable_config()))
+            assert all(s == 409 for s, _ in refusals), f"a second run was accepted: {refusals}"
+            assert self._status(acq_id)["acquisition_status"] in ("running", "scheduled")
+        finally:
+            self._cancel(acq_id)
+        assert self._wait_for_end(acq_id) == "cancelled"
+
+    def test_a_cancelled_run_leaves_nothing_behind(self):
+        """
+        Cancel, then start again: the second run must behave like the first.
+
+        A run that leaves its future, its map entry or the worker claim behind is the reason
+        the *next* acquisition fails for no visible reason.
+        """
+        status, data = self._start(_cancellable_config())
+        assert status == 200 and data is not None
+        first = data["acquisition_id"]
+        # let it actually get going before pulling the rug
+        deadline = time.monotonic() + 15
+        while self._status(first)["acquisition_progress"]["current_num_images"] < 1:
+            assert time.monotonic() < deadline, "the first run never produced an image"
+        self._cancel(first)
+        assert self._wait_for_end(first) == "cancelled"
+
+        # the hardware comes back: a cancelled run keeps the worker while it tears down, so a
+        # client waits for the microscope to report itself free before starting the next one
+        deadline = time.monotonic() + 30
+        while True:
+            status, data = make_request(self._url("/api/get_info/current_state"), timeout=5)
+            assert status == 200 and data is not None
+            if not data["is_busy"] and data["current_acquisition_id"] is None:
+                break
+            assert time.monotonic() < deadline, f"the cancelled run never let go: {data['busy_reasons']}"
+
+        config = _cancellable_config()
+        config["channels"][0]["num_z_planes"] = 2  # short enough to run to the end
+        status, data = self._start(config)
+        assert status == 200 and data is not None, f"the run after a cancel was refused: {status} {data}"
+        second = data["acquisition_id"]
+        assert second != first
+        assert self._wait_for_end(second) == "completed"
+
+    def test_reads_and_cancel_stay_open_while_an_acquisition_runs(self):
+        """
+        The run owns the hardware, not the server: everyone can still look, and anyone can
+        still stop it.
+        """
+        status, data = self._start(_cancellable_config())
+        assert status == 200 and data is not None
+        acq_id = data["acquisition_id"]
+        try:
+            for path, body in (
+                ("/api/get_info/current_state", {}),
+                ("/api/get_features/hardware_capabilities", {}),
+                ("/api/acquisition/config_list", {}),
+                ("/api/lock/status", {}),
+            ):
+                status, response = make_request(self._url(path), data=body, timeout=10)
+                assert status == 200, f"{path} was refused during an acquisition: {status} {response}"
+
+            # hardware commands are not: the run holds the worker
+            status, _ = make_request(self._url("/api/action/move_to"), data=_START, timeout=10, token=self.lease)
+            assert status in (400, 409), f"a command ran during an acquisition: {status}"
+        finally:
+            # cancel needs no lease: it is the safety hatch
+            status, data = make_request(
+                self._url("/api/acquisition/cancel"), data={"acquisition_id": acq_id}, timeout=10
+            )
+            assert status == 200, f"cancel was refused: {status} {data}"
+        assert self._wait_for_end(acq_id) == "cancelled"
+
+    def test_asking_about_an_acquisition_that_does_not_exist_is_an_error_not_a_crash(self):
+        status, data = make_request(
+            self._url("/api/acquisition/status"), data={"acquisition_id": "no-such-run"}, timeout=10
+        )
+        assert status >= 400 and data is not None
+        assert "acquisition_id" in str(data.get("detail", "")).lower(), data
+        status, data = make_request(
+            self._url("/api/acquisition/cancel"), data={"acquisition_id": "no-such-run"}, timeout=10
+        )
+        assert status >= 400 and data is not None
+        assert "acquisition_id" in str(data.get("detail", "")).lower(), data
