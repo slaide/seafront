@@ -565,6 +565,18 @@ class TestStatusNeverContradictsItself:
                 f"is_streaming={state['is_streaming']} but "
                 f"streaming_channel_handle={state['streaming_channel_handle']!r}"
             )
+        busy_with_run = [r for r in state["busy_reasons"] if r.startswith("hardware busy: acquisition:")]
+        if busy_with_run:
+            running = busy_with_run[0].split("acquisition:", 1)[1]
+            if state["current_acquisition_id"] != running:
+                wrong.append(
+                    f"busy with acquisition {running} but "
+                    f"current_acquisition_id={state['current_acquisition_id']!r}"
+                )
+        elif state["current_acquisition_id"] is not None and not state["is_busy"]:
+            wrong.append(
+                f"current_acquisition_id={state['current_acquisition_id']!r} with an idle microscope"
+            )
         lock = state["lock"]
         if lock["held"] != (lock["owner"] is not None):
             wrong.append(f"lock held={lock['held']} but owner={lock['owner']!r}")
@@ -641,6 +653,46 @@ class TestStatusNeverContradictsItself:
                 assert status == 200, f"cycle {i}: move failed: {status} {data}"
 
         samples, wrong = self._poll_while(commands)
+        assert samples >= 100, f"too few status samples to prove anything ({samples})"
+        assert not wrong, f"{len(wrong)} of {samples} status reads contradicted themselves: {wrong[:5]}"
+
+    def test_acquisition_transitions_never_show_half_a_run(self):
+        """
+        Start a run, let it get going, cancel it, and watch the whole thing.
+
+        Both ends of a run are windows: the job is on the worker before its bookkeeping says
+        so, and its bookkeeping stops saying so while the worker still holds it. A client
+        polling in either window sees a microscope busy with an acquisition it cannot name.
+        """
+        config = _cancellable_config()
+
+        def run():
+            status, data = make_request(
+                self._url("/api/acquisition/start"), data={"config_file": config}, timeout=30, token=self.lease
+            )
+            assert status == 200 and data is not None, f"start failed: {status} {data}"
+            acq_id = data["acquisition_id"]
+            deadline = time.monotonic() + 30
+            while True:
+                status, state = make_request(
+                    self._url("/api/acquisition/status"), data={"acquisition_id": acq_id}, timeout=10
+                )
+                assert status == 200 and state is not None
+                if state["acquisition_progress"]["current_num_images"] >= 2:
+                    break
+                assert time.monotonic() < deadline, "the run never produced images"
+            make_request(
+                self._url("/api/acquisition/cancel"), data={"acquisition_id": acq_id}, timeout=10
+            )
+            while time.monotonic() < deadline:
+                status, state = make_request(
+                    self._url("/api/acquisition/status"), data={"acquisition_id": acq_id}, timeout=10
+                )
+                if state is not None and state["acquisition_status"] not in ("running", "scheduled"):
+                    return
+            pytest.fail("the run never ended")
+
+        samples, wrong = self._poll_while(run)
         assert samples >= 100, f"too few status samples to prove anything ({samples})"
         assert not wrong, f"{len(wrong)} of {samples} status reads contradicted themselves: {wrong[:5]}"
 
@@ -864,6 +916,55 @@ class TestAcquisitionLifecycle:
         finally:
             self._cancel(acq_id)
         assert self._wait_for_end(acq_id) == "cancelled"
+
+    def test_progress_only_moves_forward_while_images_are_written(self):
+        """
+        Poll progress flat out for the length of a run.
+
+        Status is read from the same server-side state the acquisition is writing to, so this
+        is where a read of half-written bookkeeping would show up: a count that goes
+        backwards, a total that changes under it, or a status read that simply fails.
+        """
+        status, data = self._start(_cancellable_config())
+        assert status == 200 and data is not None, f"start failed: {status} {data}"
+        acq_id = data["acquisition_id"]
+        try:
+            seen = 0
+            total: int | None = None
+            polls = 0
+            while True:
+                state = self._status(acq_id)
+                progress = state["acquisition_progress"]
+                done = progress["current_num_images"]
+                assert done >= seen, f"progress went backwards: {seen} then {done}"
+                seen = done
+                if total is None:
+                    total = state["acquisition_meta_information"]["total_num_images"]
+                assert state["acquisition_meta_information"]["total_num_images"] == total, (
+                    "the image total changed mid-run"
+                )
+                polls += 1
+                # the whole-state read is served from the same bookkeeping; it must also hold
+                # up, and name the run inside one snapshot: a microscope that reports itself
+                # busy with an acquisition has to be able to say which one
+                status, current = make_request(self._url("/api/get_info/current_state"), timeout=5)
+                assert status == 200, f"a status read failed during the acquisition: {status} {current}"
+                assert current is not None
+                busy_with = [r for r in current["busy_reasons"] if r.startswith("hardware busy: acquisition:")]
+                if busy_with:
+                    running_id = busy_with[0].split("acquisition:", 1)[1]
+                    assert current["current_acquisition_id"] == running_id, (
+                        f"busy with {running_id} but current_acquisition_id="
+                        f"{current['current_acquisition_id']!r}"
+                    )
+                if state["acquisition_status"] not in ("running", "scheduled"):
+                    break
+            assert polls >= 10, f"the run ended too fast to prove anything ({polls} polls)"
+            assert seen > 0, "no images were reported at all"
+        finally:
+            if self._status(acq_id)["acquisition_status"] in ("running", "scheduled"):
+                self._cancel(acq_id)
+                self._wait_for_end(acq_id)
 
     def test_a_cancelled_run_leaves_nothing_behind(self):
         """

@@ -229,6 +229,13 @@ class CustomRoute(BaseModel):
 
 custom_route_handlers: dict[str, CustomRoute] = {}
 
+ACQUISITION_LABEL_PREFIX = "acquisition:"
+"""
+how an acquisition job is labelled on the worker. The label is what status reports as the
+busy reason AND what it reports as the running acquisition, so both come from one read and
+cannot disagree about whether a run is in progress.
+"""
+
 websocket_routes_requiring_lease: set[str] = set()
 """
 websocket paths that drive the hardware and therefore need the device lease (sent as
@@ -1540,16 +1547,6 @@ class Core:
         for details see fields of return value
         """
 
-        current_acquisition_id = None
-        if self.acquisition_is_running:
-            for acq_id, acquisition_status in self.acquisition_map.items():
-                if acquisition_status.thread_is_running:
-                    if current_acquisition_id is not None:
-                        logger.warning(
-                            f"more than one acquisition is running at a time?! {current_acquisition_id} and {acq_id}"
-                        )
-
-                    current_acquisition_id = acq_id
 
         try:
             microscope_adapter_state = await self.microscope.get_current_state()
@@ -1566,12 +1563,25 @@ class Core:
 
         # Busy state is owned by the single-owner worker (reject-on-busy): a command
         # in flight == busy. The status hatch reads it directly, never queuing.
+        # One read of the worker for all three: whether the microscope is busy, what with,
+        # and - when that is an acquisition - which one. Derived separately they disagree at
+        # the edges of a run, because the bookkeeping flags are set inside the job while the
+        # worker holds it for a moment longer either side.
+        label = self.worker.current_label()
         is_busy = self.worker.is_busy
-        busy_reasons: list[str] = self._busy_reasons() if is_busy else []
+        busy_reasons: list[str] = self._busy_reasons(label) if is_busy else []
+        current_acquisition_id = (
+            label[len(ACQUISITION_LABEL_PREFIX) :]
+            if is_busy and label is not None and label.startswith(ACQUISITION_LABEL_PREFIX)
+            else None
+        )
 
         return CoreCurrentState(
             adapter_state=microscope_adapter_state,
-            latest_imgs={key: entry.info for key, entry in self.latest_images.items()},
+            # dict() first: this map is written from the worker thread and the image-store
+            # pool, and walking it directly raises if a new channel appears mid-iteration -
+            # in a status read, which must never fail
+            latest_imgs={key: entry.info for key, entry in dict(self.latest_images).items()},
             current_acquisition_id=current_acquisition_id,
             is_streaming=is_streaming,
             streaming_channel_handle=streaming_channel.handle if streaming_channel is not None else None,
@@ -1698,10 +1708,14 @@ class Core:
             cancel.set()
         return BasicSuccessResponse()
 
-    def _busy_reasons(self) -> list[str]:
+    def _busy_reasons(self, label: str | None = None) -> list[str]:
         """Busy (409) reason: name what the hardware worker is currently running, so the
-        rejection says WHY (e.g. "hardware busy: acquisition:<id>") instead of a generic string."""
-        label = self.worker.current_label()
+        rejection says WHY (e.g. "hardware busy: acquisition:<id>") instead of a generic string.
+
+        Pass `label` to describe a worker read the caller has already taken, so that what a
+        status response says is busy and what it says is running come from the same instant."""
+        if label is None:
+            label = self.worker.current_label()
         if label is not None:
             return [f"hardware busy: {label}"]
         return ["hardware command in progress"]
@@ -2004,15 +2018,19 @@ class Core:
         # for its entire duration, so every other command is rejected (409) meanwhile —
         # which is exactly what allow_while_acquisition_is_running=False expects. Cancel via
         # the worker's cancel event (cancel_acquisition sets it; handle_q_in checks it).
+        # Flagged as running BEFORE the job is handed over: the moment the worker takes it,
+        # status reports the microscope busy with this acquisition, and a client reading
+        # `current_acquisition_id` in that instant must find the run that is making it busy
+        # rather than nothing at all. Undone again if the handover is refused.
+        acquisition_status.thread_is_running = True
         submitted = self.worker.submit_job(
             lambda: self._run_acquisition_impl(protocol, acquisition_status),
-            f"acquisition:{acquisition_id}",
+            f"{ACQUISITION_LABEL_PREFIX}{acquisition_id}",
         )
         if submitted is None:
+            acquisition_status.thread_is_running = False
             error_microscope_busy(self._busy_reasons())
         self.acquisition_future = submitted[0]
-
-        acquisition_status.thread_is_running = True
 
         return AcquisitionStartResponse(acquisition_id=acquisition_id)
 
