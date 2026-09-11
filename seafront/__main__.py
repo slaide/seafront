@@ -2260,8 +2260,21 @@ def custom_openapi():
         "tags": openapi_tags,
     }
 
+    registered_schemas: set[str] = set()
+
     def register_pydantic_schema(t):
         assert issubclass(t, BaseModel)
+
+        ref = {"$ref": f"#/components/schemas/{t.__name__}"}
+        if t.__name__ in registered_schemas:
+            # Already derived: the components entry and everything it references are in place,
+            # and deriving it again is pure work - every pass re-serialises the model schema
+            # and re-parses it through json5. The error models below are attached to every
+            # route, so without this the whole schema is rebuilt per route and /openapi.json
+            # takes seconds. Marked before recursing, which is also what keeps a
+            # self-referencing model from recursing forever.
+            return ref
+        registered_schemas.add(t.__name__)
 
         for field in t.model_fields.values():
             # register field types
@@ -2290,7 +2303,7 @@ def custom_openapi():
             model_schema
         )
 
-        return {"$ref": f"#/components/schemas/{t.__name__}"}
+        return ref
 
     def type_to_schema(t):
         if isinstance(t, FieldInfo):
