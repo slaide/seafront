@@ -42,6 +42,21 @@ class MicrocontrollerTimeoutInfo:
 class MicrocontrollerTimeout(BaseException):
     info: MicrocontrollerTimeoutInfo | None = None
 
+    packets_seen: int = 0
+    """
+    how many status packets arrived while waiting, which is what separates the two very
+    different things a timeout can mean
+
+    This firmware does not acknowledge the execution of every command: the write goes out,
+    the command runs, and no packet ever names it. Waiting for one therefore times out as a
+    matter of course, and that is not a fault - the device is streaming status the whole
+    time. A device that has actually stopped is silent, and that IS a fault.
+
+    Without this count the two are indistinguishable, which is the whole of "we cannot tell
+    slow from dead": one is routine and must be tolerated, the other means the stage is not
+    where anybody thinks it is.
+    """
+
 
 class HandleIsNone(Exception):
     """
@@ -1151,7 +1166,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         try:
             self._read_packets(until=read_packet, timeout_s=timeout_s)
         except MicrocontrollerTimeout as mte:
-            logger.debug("_read_packets timed out")
+            logger.debug(f"_read_packets timed out after {mte.packets_seen} packets")
             if mte.info is None:
                 mte.info = timeoutinfo
             elif timeoutinfo is not None:
@@ -1179,6 +1194,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         start_time = time.time()
 
         last_packet: MicrocontrollerStatusPackage | None = None
+        packets_seen = 0
 
         self.terminate_reading_received_packet_thread = False
         while not self.terminate_reading_received_packet_thread:
@@ -1186,10 +1202,14 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
 
             # time out at loop iteration start
             if (wait_time_s := (time.time() - start_time)) > timeout_s:
-                logger.critical(
-                    f"timed out after {wait_time_s:.3f} with {timeout_s=} {last_packet=}"
+                # debug, not critical: with this firmware most of these are a command that
+                # simply is never acknowledged. send_cmd decides which kind it was and says
+                # so loudly when it is the kind that matters.
+                logger.debug(
+                    f"timed out after {wait_time_s:.3f} with {timeout_s=} "
+                    f"{packets_seen=} {last_packet=}"
                 )
-                raise MicrocontrollerTimeout(info=None)
+                raise MicrocontrollerTimeout(info=None, packets_seen=packets_seen)
 
             if self.handle is None:
                 logger.warning("self.handle is None ")
@@ -1213,6 +1233,8 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
 
             data = self._usb_receive(firmware_config.READ_PACKET_LENGTH)
             packet = MicrocontrollerStatusPackage(data)
+            last_packet = packet
+            packets_seen += 1
 
             # save current position as last known position
             self.last_position = packet.pos
@@ -1266,9 +1288,6 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         else:
             cmds = [cmd_in]
 
-        # make more than one attempt at completing a command
-        NUM_CMD_REPEATS_MAX = 5
-
         for cmd in cmds:
             # generate command id
             cmd.set_id(self._get_next_cmd_id())
@@ -1299,24 +1318,49 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                 self._usb_send(cmd.bytes)
 
                 if cmd.wait_for_completion:
-                    for cmd_repeat_attempt in range(NUM_CMD_REPEATS_MAX):
-                        logger.debug(
-                            f"awaiting {CommandName(cmd[1])} the {cmd_repeat_attempt}th time"
+                    logger.debug(f"awaiting {CommandName(cmd[1])}")
+                    try:
+                        self._wait_until_cmd_is_finished(
+                            cmd,
+                            # allow more time for a move command to finish
+                            timeout_s=5.0 if cmd.is_move_cmd else 1.0,
+                            # reset command also resets the command id to zero, so we need to ignore the command id then
+                            _ignore_cmd_id=cmd[1] == Command.reset()[1],
                         )
-                        try:
-                            self._wait_until_cmd_is_finished(
-                                cmd,
-                                # allow more time for a move command to finish
-                                timeout_s=5.0 if cmd.is_move_cmd else 1.0,
-                                # reset command also resets the command id to zero, so we need to ignore the command id then
-                                _ignore_cmd_id=cmd[1] == Command.reset()[1],
+                    except MicrocontrollerTimeout as mte:
+                        # Two very different things, told apart by whether the device was
+                        # saying anything at all.
+                        #
+                        # Packets arriving: this firmware does not acknowledge the execution
+                        # of every command. The write went out, the command ran, and no
+                        # packet ever named it. Routine, and the only thing to do is carry
+                        # on - there is nothing better to wait for.
+                        #
+                        # No packets at all: the device has stopped talking. Returning here
+                        # would tell the caller a move completed when the stage may never
+                        # have moved, and every relative move after it compounds the error.
+                        # That is the one case that must not look like success.
+                        if mte.packets_seen == 0:
+                            logger.critical(
+                                f"microcontroller sent nothing at all while awaiting "
+                                f"{CommandName(cmd[1])}: it is not responding ({mte.info})"
                             )
-                        except MicrocontrollerTimeout as mte:
-                            logger.warning(
-                                f"microcontroller timed out while waiting for a command to finish with info: {mte.info}"
-                            )
-
-                        break
+                            # IOError rather than re-raising: a device that has stopped
+                            # talking is a disconnect, and the layers above already know what
+                            # to do with one. SquidAdapter.execute turns an IOError into
+                            # DisconnectError, which closes the connections and reaches a
+                            # client as "hardware disconnected"; an acquisition catches it
+                            # and lands on CRASHED. Re-raising MicrocontrollerTimeout would
+                            # reach none of that - it derives from BaseException, so it goes
+                            # straight past every `except Exception` on the way up.
+                            raise OSError(
+                                f"microcontroller is not responding: no status packets "
+                                f"received while awaiting {CommandName(cmd[1])}"
+                            ) from mte
+                        logger.debug(
+                            f"{CommandName(cmd[1])} was never acknowledged, but the device is "
+                            f"streaming status ({mte.packets_seen} packets): {mte.info}"
+                        )
             except Exception as e:
                 logger.warning(f"unknown error {e}")
                 raise
