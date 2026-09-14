@@ -272,3 +272,176 @@ class TestWorkerUnderConcurrency:
                 submitted[0].result(timeout=10)
         finally:
             worker.stop()
+
+
+class TestWorkerTiming:
+    """
+    When the slot is taken and when it is given back.
+
+    Two orderings in `_run` are load-bearing and invisible from outside unless something
+    checks them. Both are written down as comments in the worker; comments do not fail.
+    """
+
+    def test_the_slot_is_taken_before_the_worker_thread_has_seen_the_command(self):
+        """
+        `is_busy` covers the handoff window
+
+        `submit` claims the slot and *then* posts the item; the worker thread picks it up
+        whenever it gets round to it. If `is_busy` were derived from the thread having
+        started the command, there would be a window where a submitted command reports the
+        microscope idle - and a status read landing there tells a client the hardware is
+        free while a move is on its way to it.
+        """
+        scope = _CountingScope()
+        worker = MicroscopeWorker(scope)  # type: ignore[arg-type]
+        worker.start()
+        try:
+            submitted = worker.submit(cmd.MoveTo(x_mm=1.0))
+            assert submitted is not None
+            # no wait: this is the instant after submit returns
+            assert worker.is_busy, "the slot was not claimed by the time submit() returned"
+            scope.release.set()
+            submitted[0].result(timeout=10)
+        finally:
+            scope.release.set()
+            worker.stop()
+
+    def test_a_second_submit_in_that_window_is_already_refused(self):
+        """the same window, from the other side: reject-on-busy covers it too"""
+        scope = _CountingScope()
+        worker = MicroscopeWorker(scope)  # type: ignore[arg-type]
+        worker.start()
+        try:
+            first = worker.submit(cmd.MoveTo(x_mm=1.0))
+            assert first is not None
+            assert worker.submit(cmd.MoveTo(x_mm=2.0)) is None
+            scope.release.set()
+            first[0].result(timeout=10)
+        finally:
+            scope.release.set()
+            worker.stop()
+
+    def test_the_slot_is_free_by_the_time_the_result_arrives(self):
+        """
+        the ordering that makes await-then-resubmit work
+
+        `_run` releases the slot *before* completing the future, so a caller that awaits a
+        result and immediately submits the next command finds the worker free. Completing
+        the future first would make every back-to-back pair of commands a coin flip between
+        working and coming back 409.
+        """
+        scope = _CountingScope()
+        worker = MicroscopeWorker(scope)  # type: ignore[arg-type]
+        worker.start()
+        try:
+            for n in range(25):
+                scope.release.clear()
+                scope.started.clear()
+                submitted = worker.submit(cmd.MoveTo(x_mm=float(n)))
+                assert submitted is not None, f"round {n}: the slot was still held"
+                scope.release.set()
+                submitted[0].result(timeout=10)
+                # immediately, with no settling time at all
+                assert not worker.is_busy, f"round {n}: slot still held when the result arrived"
+        finally:
+            scope.release.set()
+            worker.stop()
+
+    def test_the_job_handle_is_gone_by_the_time_the_result_arrives(self):
+        """status must not still be naming a command whose result the caller already has"""
+        scope = _CountingScope()
+        worker = MicroscopeWorker(scope)  # type: ignore[arg-type]
+        worker.start()
+        try:
+            submitted = worker.submit(cmd.MoveTo(x_mm=1.0))
+            assert submitted is not None
+            scope.release.set()
+            submitted[0].result(timeout=10)
+            assert worker.current_job() is None
+            assert worker.current_label() is None
+        finally:
+            scope.release.set()
+            worker.stop()
+
+    def test_a_failing_command_frees_the_slot_too(self):
+        """the exception path releases in the same order as the success path"""
+
+        class _Exploding:
+            def set_current_cancel(self, cancel):
+                pass
+
+            async def execute(self, command):
+                raise RuntimeError("boom")
+
+        worker = MicroscopeWorker(_Exploding())  # type: ignore[arg-type]
+        worker.start()
+        try:
+            submitted = worker.submit(cmd.MoveTo(x_mm=1.0))
+            assert submitted is not None
+            with pytest.raises(RuntimeError, match="boom"):
+                submitted[0].result(timeout=10)
+            assert not worker.is_busy, "a failed command left the slot held"
+            assert worker.current_job() is None
+            # and the worker still takes work afterwards
+            again = worker.submit(cmd.MoveTo(x_mm=2.0))
+            assert again is not None
+            with pytest.raises(RuntimeError):
+                again[0].result(timeout=10)
+        finally:
+            worker.stop()
+
+    def test_a_cancelled_command_gives_the_slot_back_promptly(self, mock_scope):
+        """
+        cancel latency, bounded
+
+        A long move polls its cancel event at checkpoints. What matters for the client is
+        that the worker is usable again shortly after the cancel, not eventually.
+        """
+        worker = MicroscopeWorker(mock_scope)
+        worker.start()
+        try:
+            os.environ.pop("MOCK_NO_DELAYS", None)
+            submitted = worker.submit(cmd.MoveTo(x_mm=100.0, y_mm=70.0))
+            assert submitted is not None
+            time.sleep(0.05)
+
+            running = worker.current_job()
+            assert running is not None
+            started = time.monotonic()
+            running.cancel.set()
+
+            with pytest.raises((OperationCancelledError, Exception)):
+                submitted[0].result(timeout=10)
+            freed = time.monotonic() - started
+
+            assert not worker.is_busy
+            assert freed < 5.0, f"the worker stayed busy {freed:.1f}s after the cancel"
+        finally:
+            os.environ["MOCK_NO_DELAYS"] = "1"
+            worker.stop()
+
+    def test_stop_waits_for_the_command_in_flight(self):
+        """`stop()` drains rather than abandoning: the command finishes before the join"""
+        scope = _CountingScope()
+        worker = MicroscopeWorker(scope)  # type: ignore[arg-type]
+        worker.start()
+        submitted = worker.submit(cmd.MoveTo(x_mm=1.0))
+        assert submitted is not None
+        assert scope.started.wait(timeout=10)
+
+        stopped = threading.Event()
+
+        def stop_it():
+            worker.stop()
+            stopped.set()
+
+        stopper = threading.Thread(target=stop_it, daemon=True)
+        stopper.start()
+        try:
+            assert not stopped.wait(timeout=0.3), "stop() abandoned a command in flight"
+            scope.release.set()
+            assert stopped.wait(timeout=10), "stop() never returned after the command finished"
+            assert submitted[0].result(timeout=10) == "done"
+        finally:
+            scope.release.set()
+            stopper.join(timeout=10)

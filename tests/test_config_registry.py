@@ -432,3 +432,54 @@ class TestConfigHandleEnumAccess:
 
         assert mc_id == "test-mc-id"
         assert mc_driver == "teensy"
+
+
+class TestSetValue:
+    """
+    The one accessor that used to disagree with the others.
+
+    `get`, `get_value` and `is_privileged` all take `str | Enum`. `set_value` took only
+    `str`, and did nothing at all when handed anything it did not recognise - so passing one
+    of the `config/handles.py` enums the rest of the codebase is written in wrote nothing and
+    reported nothing. A setter that silently declines is worse than one that raises: the next
+    read returns the old value and looks like the write simply had no effect.
+    """
+
+    def setup_method(self):
+        ConfigRegistry.reset()
+
+    def teardown_method(self):
+        ConfigRegistry.reset()
+
+    def _register(self):
+        ConfigRegistry.init({})
+        ConfigRegistry.register(
+            config_item(handle="test.item", name="Test", value_kind="text", default="before"),
+        )
+
+    def test_it_accepts_a_string_handle(self):
+        self._register()
+        ConfigRegistry.set_value("test.item", "after")
+        assert ConfigRegistry.get_value("test.item") == "after"
+
+    def test_it_accepts_an_enum_handle(self):
+        from enum import Enum
+
+        class TestHandle(Enum):
+            ITEM = "test.item"
+
+        self._register()
+        ConfigRegistry.set_value(TestHandle.ITEM, "after")
+        assert ConfigRegistry.get_value("test.item") == "after"
+
+    def test_an_unregistered_handle_raises_rather_than_doing_nothing(self):
+        self._register()
+        with pytest.raises(KeyError, match=r"never\.registered"):
+            ConfigRegistry.set_value("never.registered", "value")
+
+    def test_a_mistyped_handle_does_not_look_like_a_successful_write(self):
+        """the failure this replaces: write, read back, and find the old value"""
+        self._register()
+        with pytest.raises(KeyError):
+            ConfigRegistry.set_value("test.itemm", "after")
+        assert ConfigRegistry.get_value("test.item") == "before"

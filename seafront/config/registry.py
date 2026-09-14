@@ -138,10 +138,19 @@ class ConfigRegistry:
         return set(cls._persistent_handles)
 
     @classmethod
-    def set_value(cls, handle: str, value: tp.Any) -> None:
-        """Update a config item's value at runtime (no validation, no privilege check)."""
-        if handle in cls._items:
-            cls._items[handle].value = value
+    def set_value(cls, handle: str | Enum, value: tp.Any) -> None:
+        """
+        Update a config item's value at runtime (no validation, no privilege check).
+
+        Takes a string or a ConfigHandle the same way `get`/`get_value`/`is_privileged` do,
+        and raises on a handle nobody registered. It used to take only `str` and silently do
+        nothing otherwise, which meant passing one of the enums the rest of the codebase is
+        written in - or mistyping a handle - wrote nothing and said nothing.
+        """
+        key = handle.value if isinstance(handle, Enum) else handle
+        if key not in cls._items:
+            raise KeyError(f"no config item registered under {key!r}")
+        cls._items[key].value = value
 
     @classmethod
     def is_privileged(cls, handle: str | Enum) -> bool:
