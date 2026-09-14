@@ -13,15 +13,27 @@ abstraction — so you can navigate `__main__.py` without reading all ~2500 line
 
 ```
 seafront/
-├── __main__.py            FastAPI app: all HTTP/WS routes, request plumbing,
-│                          acquisition orchestration, custom OpenAPI generator (~2500 lines)
+├── __main__.py            entry point: pick a microscope, build the Core, serve (~270 lines)
 ├── logger.py              loguru setup (stderr INFO, ~/seafront/logs/log.txt DEBUG)
 ├── debug_introspect.py    "where is everybody executing?" thread/task stack dumps
 │
 ├── server/
+│   ├── app.py             the FastAPI app: routers, static files, error handlers
+│   ├── core.py            Core — everything the server can do to the microscope, no HTTP
+│   ├── asyncapi.py        /asyncapi.json, generated from the socket declarations
 │   ├── commands.py        Pydantic request/response models + BaseCommand[T] hierarchy
-│   └── protocol.py        acquisition protocol: well/site/channel iteration, Z-stacks,
-│                          OME metadata, file storage, AsyncThreadPool
+│   ├── lock.py            DeviceLock — the client-held lease above the worker
+│   ├── worker.py          MicroscopeWorker — single owner of the hardware
+│   ├── protocol.py        acquisition protocol: well/site/channel iteration, Z-stacks,
+│   │                      OME metadata, file storage, AsyncThreadPool
+│   └── api/
+│       ├── routing.py     Policy + the gate every request passes through
+│       ├── envelope.py    Envelope (target_device, lock_token) and command_of
+│       ├── requests.py    the request body of every route, declared once
+│       ├── messages.py    what travels over the websockets
+│       ├── socketspec.py  how a socket declares its frames
+│       ├── tags.py        /docs grouping
+│       ├── info.py  actions.py  acquisition.py  lock.py  sockets.py   the route table
 │
 ├── config/
 │   ├── registry.py        ConfigRegistry — decentralized config registration
@@ -43,15 +55,14 @@ seafront/
 
 Three data paths share the one `Microscope` instance:
 
-1. **Synchronous commands** — `POST /api/action/*` and `/api/get_*`. Request → thread →
-   lock → `execute()` → JSON response. This is the bulk of the API, and the path traced
+1. **Synchronous commands** — `POST /api/action/*` and `/api/get_*`. Request → policy gate →
+   worker → `execute()` → JSON response. This is the bulk of the API, and the path traced
    below.
 2. **Live preview** — `stream_channel_begin` puts the camera in continuous mode; each frame
    is stored into `latest_images`, and the client pulls frames over the
    `/ws/get_info/acquired_image` WebSocket (JSON metadata, then a binary blob).
-3. **Background acquisition** — a long-running protocol runs on a dedicated worker event
-   loop (`self.acqusition_eventloop`), driven via a command queue, reporting progress over
-   `/ws/acquisition/status`.
+3. **Background acquisition** — a long-running protocol is submitted to the same worker as a
+   labelled job, reporting progress over `/ws/acquisition/status`.
 
 Here is a *concrete* trace of path 1 — `POST /api/action/snap_channel` (take one image on one
 channel) — from the HTTP boundary down to the USB hardware and back. Every hop cites the code
@@ -61,22 +72,23 @@ so you can follow it.
 sequenceDiagram
     autonumber
     participant C as Client (JS)
-    participant F as FastAPI handler_logic_post
-    participant W as Worker OS thread (asyncio.run)
-    participant CF as callfunc + microscope.lock
+    participant F as FastAPI route (server/api/actions.py)
+    participant G as admit (server/api/routing.py)
+    participant W as MicroscopeWorker (single owner)
     participant EX as SquidAdapter.execute
     participant MC as Teensy (pyserial)
     participant CAM as Camera (gxipy, ctypes)
     participant HW as USB hardware
     participant S as latest_images store
 
-    C->>F: POST /api/action/snap_channel (RequestModel body)
-    F->>F: validate body, gating check, target_device check
-    F->>W: asyncio.to_thread(asyncio.run, callfunc)
-    W->>CF: instantiate ChannelSnapshot(request_data)
-    CF->>CF: microscope.lock(blocking=False, reason)
-    Note over CF: could not acquire → 409 + lock reasons
-    CF->>EX: await execute(ChannelSnapshot)
+    C->>F: POST /api/action/snap_channel (SnapChannelRequest body)
+    F->>F: FastAPI validates the body against the model (422 if not)
+    F->>G: admit(core, body, HARDWARE_NOT_STREAMING)
+    Note over G: 400 streaming / 421 wrong device / 423 no lease
+    F->>F: command_of(body, ChannelSnapshot) - envelope off
+    F->>W: core.run(command) - worker.submit
+    Note over W: already busy → 409 + busy reasons
+    W->>EX: await execute(ChannelSnapshot)
     EX->>EX: microcontroller.locked(), dispatch _execute_ChannelSnapshot
     EX->>MC: illumination_begin, send_cmd
     MC->>HW: serial.write(command packet + CRC)
@@ -86,20 +98,21 @@ sequenceDiagram
     HW-->>CAM: raw frame bytes
     CAM-->>EX: numpy array, _process_image (crop/pad)
     EX->>MC: illumination_end
-    EX-->>CF: ImageAcquiredResponse (_img = array)
-    CF->>S: route.callback write_image, _store_new_image
-    CF-->>F: response model (metadata only, no pixels)
-    F-->>C: 200 JSON (channel handle)
+    EX-->>W: ImageAcquiredResponse (_img = array)
+    W-->>F: result
+    F->>S: core.store_snapped_image(command, result)
+    F-->>C: 200 JSON (metadata only, no pixels)
     C->>S: WS /ws/get_info/acquired_image (channel handle)
     S-->>C: JSON metadata, then binary pixel blob
 ```
 
 What the diagram compresses:
 
-- **Thread-per-request** (`F→W`): each request gets its own OS thread + event loop, required
-  for the `RLock` hardware lock (see Concurrency).
-- **409 = busy**: `microscope.lock(blocking=False)` failing returns `get_lock_reasons()`,
-  naming the command that currently holds the hardware.
+- **One hardware owner** (`F→W`): commands do not run on the request's event loop. They are
+  submitted to `MicroscopeWorker`, which holds the hardware for the whole command (see
+  Concurrency).
+- **409 = busy**: `worker.submit` answering `None` means something else is in flight;
+  `Core.run` turns that into a 409 naming the busy reasons. Requests are never queued.
 - **Microcontroller hop** (`teensy_microcontroller.py`): `illumination_begin` builds a
   fixed-length packet (opcode + args + cmd id + CRC), `send_cmd` writes it over pyserial,
   then polls status packets until the Teensy echoes the matching cmd id — bounded by a 1–5 s
@@ -107,8 +120,8 @@ What the diagram compresses:
 - **Camera hop** (`galaxy_camera.py`): `snap` triggers, then
   `get_image(timeout=exposure+2000ms)` → `gxipy` → `ctypes` → `libgxiapi.so` → USB;
   `_process_image` crops/pads. That timeout is the *only* bound on a hung camera.
-- **Pixels return separately**: the HTTP response is metadata only. `write_image` stores the
-  array in `latest_images`; the client fetches the downsampled frame as a binary blob over
+- **Pixels return separately**: the HTTP response is metadata only. `store_snapped_image`
+  puts the array in `latest_images`; the client fetches the downsampled frame as a binary blob over
   `/ws/get_info/acquired_image`, keeping multi-MB data off the JSON path.
 
 ### Two hardware transports
@@ -124,111 +137,87 @@ What the diagram compresses:
 The mocks (`mock_microscope.py`, `mock_camera.py`) replace both transports with synthetic
 images and simulated motion, so the whole flow runs with no hardware (`--microscope mocroscope`).
 
-## Request routing — `route_wrapper`
+## Request routing — one declaration per endpoint
 
-Almost every endpoint is registered through `Core.route_wrapper(path, CustomRoute(...), ...)`
-rather than a plain FastAPI decorator. This is what lets a single mechanism drive both the
-runtime handler and the OpenAPI schema. Given a `CustomRoute`, `route_wrapper`:
-
-1. **Introspects the handler** (`get_return_type`). A handler is either a `BaseCommand`
-   subclass (response type read from its `_ReturnValue` private attr) or a plain
-   function/coroutine (response type from its return annotation).
-2. **Builds a request model dynamically** (`create_model`). It walks the handler's
-   constructor/signature parameters, turns each into a Pydantic field (respecting defaults),
-   and always appends `target_device: str`. The model is cached in `request_models` and
-   stashed on `route.request_model` for the schema generator.
-3. **Wraps two handlers**, `handler_logic_get` and `handler_logic_post`, which both:
-   - run `check_operation_allowed(...)` — rejects with 400 if the command isn't allowed
-     while acquisition/streaming is active,
-   - validate `target_device` against `self.microscope_name` (421 Misdirected Request on
-     mismatch),
-   - and then hand off to `callfunc` **inside a fresh OS thread**.
-4. **Registers the route** on the FastAPI `app` and records the `CustomRoute` in the
-   module-level `custom_route_handlers[path]` registry — the single source of truth the
-   OpenAPI generator reads later.
-
-`callfunc` is where a request becomes a hardware command:
-
-```
-callfunc(request_data):
-    if handler is a BaseCommand class:
-        instance = Handler(**request_data)
-        if route.require_hardware_lock:
-            with microscope.lock(blocking=False, reason="executing command: <name>") as m:
-                if m is None: -> 409 (with get_lock_reasons())
-                await m.execute(EstablishHardwareConnection())
-                result = await m.execute(instance)
-        else:                        # e.g. ChannelStreamEnd — just flips a flag
-            result = await microscope.execute(instance)
-    elif handler is a coroutine/function:
-        result = await handler(**request_data)
-    if route.callback: route.callback(arg, result)   # e.g. register_stream_begin
-    inject microscope_name into result
-```
-
-## OpenAPI generation — the complex part
-
-FastAPI's built-in schema generation is **replaced entirely**. At the bottom of
-`__main__.py`:
+Every `/api` route is registered through `Api.post` in `server/api/routing.py`, which states
+the route's **policy** next to the handler:
 
 ```python
-app.openapi = custom_openapi
+@api.post("/api/action/move_to", policy=HARDWARE)
+async def move_to(body: MoveToRequest, core: CoreDep) -> BasicSuccessResponse:
+    """move to target coordinates"""
+    return await core.run(command_of(body, MoveTo))
 ```
 
-Why hand-roll it? The endpoints are generated dynamically (dynamic `RequestModel`s,
-`BaseCommand` classes whose response type lives in a `_ReturnValue` private attribute,
-plain functions). FastAPI's inference doesn't see through that indirection, so the spec is
-built manually from the `custom_route_handlers` registry that `route_wrapper` populated.
+That one line of policy does three jobs that used to be done in three places: it is enforced
+at request time, it decides which error responses the route documents, and it is published as
+`x-requires-device-lease` in the schema. They cannot drift, because they are the same object.
 
-```mermaid
-flowchart LR
-    subgraph reg["At import / Core.__init__"]
-        RW["route_wrapper"] -->|create_model| RM["RequestModel<br/>fields + target_device"]
-        RW -->|store| CRH[("custom_route_handlers<br/>path -> CustomRoute")]
-        RM -->|"stash on"| CRH
-        RW -->|app.add_api_route| ROUTES[("app.routes")]
-    end
+The six policies are the whole access model:
 
-    subgraph gen["On first /openapi.json request"]
-        CO["custom_openapi"] --> WALK["for route in app.routes"]
-        WALK --> LOOKUP["custom_route_handlers.get(path)"]
-        LOOKUP -->|"request_model.model_fields"| PARAMS["query/body parameters"]
-        LOOKUP -->|"handler is BaseCommand"| RET["_ReturnValue -> 200 schema"]
-        LOOKUP -->|"handler is function"| RETF["return annotation -> 200 schema"]
-        PARAMS --> RPS
-        RET --> RPS
-        RETF --> RPS
-        RPS["register_pydantic_schema"] --> SCHEMA[("openapi_schema<br/>paths + components/schemas")]
-    end
+| Policy | lease | during an acquisition | during a live stream |
+|---|---|---|---|
+| `HARDWARE` | yes | yes | yes |
+| `HARDWARE_NOT_STREAMING` | yes | yes | no |
+| `HARDWARE_NOT_ACQUIRING` | yes | no | yes |
+| `HARDWARE_IDLE` | yes | no | no |
+| `READ` | no | yes | yes |
+| `LEASE_ADMIN` | no (but answers 423) | yes | yes |
 
-    CRH -.read.-> LOOKUP
+What a request passes through, in order:
+
+```
+body        422   the body does not match the route's request model (FastAPI)
+state       400   the microscope is acquiring or streaming, and this route may not run then
+routing     421   the request names a different microscope than this server drives
+lease       423   the caller does not hold the device lease (hardware routes only)
+handler           a Core method, or a command submitted to the worker
+worker      409   a command is already in flight (reject-on-busy, raised by Core.run)
 ```
 
-`custom_openapi()` (in `__main__.py`) does the following for every route:
+Body validation happens first, so a malformed request is refused before the gate is
+consulted — an invalid body can never be mistaken for a lease refusal.
 
-- **Parameters**: if the route has a `request_model`, each field becomes a parameter via
-  `type_to_schema`. Routes not created by `route_wrapper` (e.g. `/api/health`, `/docs`)
-  fall back to signature introspection.
-- **Responses**: `200` schema comes from the `BaseCommand._ReturnValue` (or the function's
-  return annotation); `409` (`ConflictErrorModel`) and `500` (`InternalErrorModel`) are
-  attached to every route. WebSocket routes additionally get a `101` response.
-- **Schema materialization** (`register_pydantic_schema`): the tricky bit. Pydantic emits
-  `model_json_schema(mode="serialization")` using `#/$defs/` references, but OpenAPI wants
-  `#/components/schemas/`. Rather than recursively rewriting the tree, the code does a
-  **dump → string-replace `#/$defs/` → reparse**, then hoists the `$defs` block into
-  `components/schemas`. `type_to_schema` maps primitives/lists/`BaseModel`s and recurses
-  into nested models (registering each as it goes). `handle_anyof_nullable` massages
-  Pydantic's `anyOf: [T, null]` nullable representation.
+### The envelope
 
-**Consequences worth knowing:**
+Every request body is `Envelope` + the payload:
 
-- The spec is built once and cached in `app.openapi_schema`; it is *not* regenerated per
-  request.
-- To add an endpoint to the spec correctly, register it via `route_wrapper` (so it lands in
-  `custom_route_handlers`). A route added with a bare `@app.get`/`@app.websocket` falls into
-  the introspection fallback and gets a thinner schema.
-- The response model of a command is declared **only** by its `_ReturnValue` private attr in
-  `commands.py` — the generator reads that, not the method return type.
+```python
+class MoveToRequest(Envelope, MoveTo):
+    pass
+```
+
+`Envelope` carries `target_device` and `lock_token`; the payload half *is* the command class
+from `commands.py`, so a field is defined exactly once. On the wire the body stays flat.
+`command_of(body, MoveTo)` takes the envelope back off at the boundary, so the hardware layer
+only ever sees a command that knows nothing about HTTP.
+
+Handlers read top to bottom. There is no `callback=` indirection: what happens after a
+command (storing the image, installing the stream callback) is written after the command.
+
+## OpenAPI generation — there isn't any
+
+`/openapi.json` is FastAPI's own, generated from the request and response models the routes
+are annotated with. There is no second description of the API to keep in step.
+
+This used to be a ~240-line hand-rolled walker over `app.routes` that rebuilt the schema from
+introspection, and it was wrong: it published every POST body as query parameters, emitted no
+`requestBody` at all, and typed 83 of 107 parameters as bare `string` because its
+`type_to_schema` fell through to `{"type": "string"}` for anything it did not recognise. A
+client generated from that document could not call the API.
+
+What holds it correct now:
+
+- Request bodies are explicit models in `server/api/requests.py`, not models synthesised from
+  a handler signature — so FastAPI can describe them.
+- Response models are inferred from each handler's return annotation, which is also what
+  FastAPI validates the response against. The documented response *is* the enforced one.
+- `separate_input_output_schemas=False` keeps one schema per model rather than an
+  `-Input`/`-Output` pair, so clients get one name per thing.
+- `scripts/generate_api_types.py` derives the browser's TypeScript types from the same
+  documents, and `scripts/check.py` fails if the committed copy is stale.
+
+Websockets are published separately, as AsyncAPI — see below.
 
 ## The command model (`server/commands.py`)
 
@@ -302,9 +291,9 @@ ignored and reported (`OverrideResult`).
 ## Device lock (client lease)
 
 `seafront/server/lock.py` holds one lease per process (= per device): owner label, secret
-token, expiry. **The lease is required, not advisory.** `route_wrapper(requires_lock=True)`
-(the default) refuses a request with **423** unless it carries the current lease's
-`lock_token` (a synthetic body field like `target_device`) - an unheld lease denies everyone
+token, expiry. **The lease is required, not advisory.** A route whose policy sets
+`requires_lease` (the default) refuses a request with **423** unless it carries the current
+lease's `lock_token` (an envelope field, like `target_device`) - an unheld lease denies everyone
 (`reason: "not_held"`) rather than letting everyone through, and a lease somebody else holds
 denies with `reason: "held_by_other"` plus the owner. Opted out: reads, `acquisition/cancel`,
 `cancel_current` (safety hatch: cancel is never gated), the acquisition config file routes
@@ -315,25 +304,46 @@ step; every request calls it, so a holder's lease is kept alive by anything it d
 not. Expiry is lazy and never fires while the worker is busy. `/api/lock/break` is open to
 anyone and logs owner + reason at WARNING. Coordination, not auth.
 
-A gated route must be POST (a GET cannot carry `lock_token`); `route_wrapper` raises at
-registration if you try, so the mistake shows up at startup rather than at the first request.
+A gated route is POST: a GET carries no body, so it could never carry `lock_token`.
 `/ws/action/snap_selected_channels_progressive` drives hardware too and takes the token in its
-first message, closing with **4423** instead of answering 423. Every route publishes
-`x-requires-device-lease` in `/openapi.json`, which is what the UI and
-`tests/test_lock_enforcement.py` read - that test sweeps the schema, so a hardware route added
-later is covered without anyone remembering to list it.
+handshake, closing with **4423** instead of answering 423. Every route publishes
+`x-requires-device-lease` in `/openapi.json` and every channel publishes it in
+`/asyncapi.json`, which is what the UI and `tests/test_lock_enforcement.py` read - that test
+sweeps both schemas, so a hardware route added later is covered without anyone remembering to
+list it.
 
 ## WebSocket data flows
 
-| Endpoint | Purpose | Shape |
-|---|---|---|
-| `/ws/get_info/current_state` | poll stage/hardware state | repeated JSON, client-paced |
-| `/ws/get_info/acquired_image` | live preview frames | JSON metadata, then a downsampled binary blob per frame |
-| `/ws/acquisition/status` | acquisition progress | JSON status updates |
-| `/ws/action/snap_selected_channels_progressive` | progressive multi-channel snap | JSON progress + registered callback |
+Sockets are published as **AsyncAPI 3.0** at `/asyncapi.json`, not in the OpenAPI document —
+OpenAPI has no vocabulary for "the server pushes one of these until you go away". The
+document is generated from what each handler declares, the same way routes generate theirs:
 
-All WS endpoints validate `target_device` in their first message (custom close code 4421 on
-mismatch), mirroring the HTTP `target_device` check.
+```python
+@socket(
+    router,
+    "/ws/action/snap_selected_channels_progressive",
+    requires_lease=True,
+    receive=[HANDSHAKE, Frame("protocol", "the config whose channels to snap", ProgressiveSnapRequest)],
+    send=[Frame("progress", "one update per channel", ChannelSnapProgressiveStatus), ...],
+    close_codes=MISDIRECTED_CLOSE | {4423: "device lease missing or held by another client"},
+)
+```
+
+| Channel | Purpose | Needs the lease |
+|---|---|---|
+| `/ws/get_info/current_state` | poll stage/hardware state | no |
+| `/ws/get_info/acquired_image` | live preview frames | no |
+| `/ws/acquisition/status` | acquisition progress | no |
+| `/ws/action/snap_selected_channels_progressive` | progressive multi-channel snap | yes |
+
+Every socket opens with a `SocketHandshake` naming the target device (close code 4421 on
+mismatch), and the one that drives the hardware also reads `lock_token` from it (4423,
+mirroring the HTTP 423). Every inbound message afterwards is parsed through a model in
+`server/api/messages.py` before anything acts on it — a socket takes client JSON exactly as
+sceptically as a POST body does.
+
+`x-requires-device-lease` means the same in both documents, so
+`tests/test_lock_enforcement.py` sweeps routes and channels the same way.
 
 ## Debugging a hang
 
