@@ -940,6 +940,18 @@ class SquidAdapter(Microscope):
             px_per_mm, _x_reference = right_dot_regression
         else:
             px_per_mm, _x_reference = left_dot_regression
+
+        # A slope of zero means the spot did not move as z changed - the laser was off, or
+        # nothing was reflecting - so there is no scale to compute and dividing produces a
+        # ZeroDivisionError halfway through a calibration. Said plainly instead: the number
+        # this would have produced is the one every later displacement is multiplied by.
+        if px_per_mm == 0:
+            cmd.error_internal(
+                detail="laser autofocus calibration failed: the tracked dot did not move as z "
+                "changed (regression slope is zero), so there is no um/px scale to derive. "
+                "check that the autofocus laser is on and that a sample is in place."
+            )
+
         um_per_px = 1000 / px_per_mm
 
         # Measure reference position (x_reference is the tracked dot x at calibration position)
