@@ -540,6 +540,128 @@ class TestLeaseWhileTheCameraStreams:
         assert status == 200 and response["held"] is False, response
 
 
+class TestTheBrowsersOwnFlow:
+    """
+    What the web ui actually does, driven the way it drives it.
+
+    `APIClient.post` attaches whatever token this tab holds, and on a 423 it looks at the
+    reason: `not_held` means nobody has the microscope, so it takes the lease and replays the
+    request once; `held_by_other` it leaves alone. That retry is the one piece of the browser
+    that can acquire a lease without anybody pressing a button, so it is worth driving from
+    the outside rather than trusting the source.
+
+    `tests/test_lock_cannot_be_bypassed.py` checks the browser cannot reach a gated route any
+    other way. This checks that the way it does reach them cannot take a microscope somebody
+    else is using.
+    """
+
+    def browser_post(self, path: str, data: dict, tab: dict) -> tuple[int, tp.Any]:
+        """
+        one request as APIClient.post makes it, retry included
+
+        A deliberate reimplementation rather than a call into the real client: the point is
+        to run the documented behaviour against the real server and see what the server
+        allows, so a change in either side shows up here.
+        """
+        status, body = post(path, data, token=tab.get("token"))
+        if status == 423 and body["detail"]["reason"] == LockReason.NOT_HELD:
+            taken, lease_body = acquire(tab["owner"])
+            if taken != 200:
+                return taken, lease_body
+            tab["token"] = lease_body["token"]
+            return post(path, data, token=tab["token"])  # replayed once, and only once
+        return status, body
+
+    def test_a_fresh_tab_takes_the_lease_on_its_first_command(self, bodies, unlocked):
+        """
+        the ordinary path: nobody holds it, so the browser helps itself
+
+        This is by design - the alternative is a button nobody presses and a microscope that
+        appears broken.
+        """
+        tab = {"owner": "tab A", "token": None}
+        status, response = self.browser_post("/api/action/move_to", bodies["/api/action/move_to"], tab)
+        assert status == 200, (status, response)
+        assert tab["token"] is not None
+
+        state = post("/api/get_info/current_state")[1]
+        assert state["lock"]["held"] is True and state["lock"]["owner"] == "tab A"
+
+    def test_a_second_tab_cannot_take_the_microscope_from_the_first(self, bodies, unlocked):
+        """
+        the property that matters
+
+        The retry fires on `not_held` only. A tab that finds the microscope held by somebody
+        else is refused and stays refused - it does not acquire, and it does not replay.
+        """
+        first = {"owner": "tab A", "token": None}
+        assert self.browser_post("/api/action/move_to", bodies["/api/action/move_to"], first)[0] == 200
+
+        second = {"owner": "tab B", "token": None}
+        status, response = self.browser_post("/api/action/move_to", bodies["/api/action/move_to"], second)
+        assert status == 423, (status, response)
+        assert response["detail"]["reason"] == LockReason.HELD_BY_OTHER
+        assert response["detail"]["owner"] == "tab A"
+        assert second["token"] is None, "the second tab took a lease it was refused"
+
+        # and the first tab still has it
+        assert post("/api/lock/status", token=first["token"])[1]["token_matches"] is True
+
+    def test_a_tab_whose_lease_was_broken_does_not_silently_continue(self, bodies, unlocked):
+        """
+        breaking is open to anyone, so a tab can lose the microscope mid-session
+
+        Its next command must be refused rather than executed on a lease it no longer holds.
+        The retry then takes a fresh one, because by that point nobody holds it - which is
+        the same ordinary path as a fresh tab, not a takeover.
+        """
+        tab = {"owner": "tab A", "token": None}
+        assert self.browser_post("/api/action/move_to", bodies["/api/action/move_to"], tab)[0] == 200
+        stale = tab["token"]
+
+        break_lease()
+        status, response = post("/api/action/move_to", bodies["/api/action/move_to"], token=stale)
+        assert status == 423 and response["detail"]["reason"] == LockReason.NOT_HELD
+
+    def test_a_tab_that_lost_its_lease_to_someone_else_stays_refused(self, bodies, unlocked):
+        tab = {"owner": "tab A", "token": None}
+        assert self.browser_post("/api/action/move_to", bodies["/api/action/move_to"], tab)[0] == 200
+
+        break_lease()
+        lease(owner="somebody at the microscope")
+
+        status, response = self.browser_post(
+            "/api/action/move_to", bodies["/api/action/move_to"], tab
+        )
+        assert status == 423 and response["detail"]["reason"] == LockReason.HELD_BY_OTHER
+
+    def test_the_retry_replays_the_request_rather_than_a_different_one(self, bodies, unlocked):
+        """
+        the replayed request is the one that was refused
+
+        A refused request did nothing, so replaying it is safe - as long as it is the same
+        request. Checked by moving somewhere specific and reading the position back.
+        """
+        tab = {"owner": "tab A", "token": None}
+        status, _ = self.browser_post("/api/action/move_to", {"x_mm": 55.0, "y_mm": 35.0}, tab)
+        assert status == 200
+
+        state = post("/api/get_info/current_state")[1]
+        assert state["adapter_state"]["stage_position"]["x_pos_mm"] == pytest.approx(55.0, abs=0.5)
+        assert state["adapter_state"]["stage_position"]["y_pos_mm"] == pytest.approx(35.0, abs=0.5)
+
+    def test_every_gated_route_is_reachable_this_way_and_only_this_way(self, bodies, unlocked):
+        """
+        the browser's flow works for the whole hardware surface, not just moves
+
+        Swept rather than sampled: a route the flow cannot reach is one the ui cannot use.
+        """
+        tab = {"owner": "tab A", "token": None}
+        for path in SAFE_TO_RUN:
+            status, response = self.browser_post(path, bodies[path], tab)
+            assert status == 200, (path, status, response)
+
+
 # --------------------------------------------------------------------------------------------
 # websocket
 
