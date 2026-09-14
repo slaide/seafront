@@ -275,6 +275,21 @@ class PowerCalibration(BaseModel):
             raise ValueError("DAC percent values must be between 0 and 100")
         if not all(p >= 0 for p in self.optical_power_mw):
             raise ValueError("Optical power values must be non-negative")
+        # normalising divides by the largest measured power, so an all-zero table produces
+        # nan for every request
+        if max(self.optical_power_mw) <= 0:
+            raise ValueError("At least one optical power value must be positive")
+        # np.interp documents that its x values must increase, and does not check: given a
+        # table sorted any other way it interpolates between the wrong pair of points and
+        # returns a perfectly plausible number. On a laser that is an unknown amount of light.
+        if any(
+            later <= earlier
+            for earlier, later in zip(self.optical_power_mw, self.optical_power_mw[1:], strict=False)
+        ):
+            raise ValueError(
+                "Optical power values must be strictly increasing "
+                f"(got {self.optical_power_mw}); the curve is interpolated against them"
+            )
 
 
 class ChannelConfig(BaseModel):

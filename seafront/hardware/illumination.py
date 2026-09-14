@@ -1,4 +1,6 @@
 
+import math
+
 import numpy as np
 
 from seafront.config.basics import ChannelConfig
@@ -21,38 +23,55 @@ class IlluminationController:
         self.channels = {ch.handle: ch for ch in channels}
         self.intensity_luts: dict[str, dict[str, np.ndarray]] = {}
         self.max_power: dict[str, float] = {}
+        self.broken_calibration: dict[str, str] = {}
+        "channels that asked for calibration and could not have it, and why"
 
         self._build_calibration_data()
 
     def _build_calibration_data(self):
         """Build calibration lookup tables from channel configuration data"""
         for handle, channel in self.channels.items():
-            if channel.use_power_calibration and channel.power_calibration is not None:
-                try:
-                    # Validate calibration data
-                    channel.validate_calibration()
+            if not channel.use_power_calibration:
+                continue
 
-                    cal = channel.power_calibration
+            if channel.power_calibration is None:
+                # asked for calibration and supplied none: the same mistake as supplying a
+                # broken one, and it must not fall through to uncalibrated output either
+                self.broken_calibration[handle] = "use_power_calibration is set but no calibration data was given"
+                logger.error(f"Channel {handle}: {self.broken_calibration[handle]}")
+                continue
 
-                    # Store max power for this channel
-                    self.max_power[handle] = max(cal.optical_power_mw)
+            try:
+                # Validate calibration data
+                channel.validate_calibration()
 
-                    # Create normalized power values (0-100%)
-                    power_values = np.array(cal.optical_power_mw)
-                    max_power = self.max_power[handle]
-                    normalized_power = power_values / max_power * 100
+                cal = channel.power_calibration
 
-                    # DAC values are already in range 0-100
-                    dac_percent = np.array(cal.dac_percent)
+                # Store max power for this channel
+                self.max_power[handle] = max(cal.optical_power_mw)
 
-                    self.intensity_luts[handle] = {
-                        "power_percent": normalized_power,
-                        "dac_percent": dac_percent,
-                    }
+                # Create normalized power values (0-100%)
+                power_values = np.array(cal.optical_power_mw)
+                max_power = self.max_power[handle]
+                normalized_power = power_values / max_power * 100
 
-                except Exception as e:
-                    logger.error(f"Failed to load calibration for channel {handle}: {e}")
-                    # Don't add to LUTs, will fall back to linear scaling
+                # DAC values are already in range 0-100
+                dac_percent = np.array(cal.dac_percent)
+
+                self.intensity_luts[handle] = {
+                    "power_percent": normalized_power,
+                    "dac_percent": dac_percent,
+                }
+
+            except Exception as e:
+                # Remembered rather than forgotten. A channel with
+                # use_power_calibration=True is one where somebody decided the requested
+                # percentage must NOT go to the hardware directly; falling back to doing
+                # exactly that, quietly, is the opposite of what the configuration asks
+                # for. The channel refuses when it is used instead, so a miscalibrated
+                # laser stops itself rather than the whole microscope.
+                logger.error(f"Failed to load calibration for channel {handle}: {e}")
+                self.broken_calibration[handle] = str(e)
 
     def _apply_lut(self, channel_handle: str, intensity_percent: float) -> float:
         """Convert desired power percentage to DAC value (0-100) using LUT."""
@@ -81,6 +100,20 @@ class IlluminationController:
         Returns:
             Calibrated intensity as percentage (0-100) to send to DAC
         """
+        if not math.isfinite(requested_intensity):
+            # clipping leaves nan alone, and nan is not a value to drive a light source with
+            raise ValueError(
+                f"Channel {channel_handle}: requested intensity {requested_intensity} "
+                "is not a finite number"
+            )
+
+        if channel_handle in self.broken_calibration:
+            raise ValueError(
+                f"Channel {channel_handle} is configured to use power calibration, but its "
+                f"calibration could not be loaded ({self.broken_calibration[channel_handle]}). "
+                "Refusing to drive it with an uncalibrated value."
+            )
+
         if channel_handle in self.intensity_luts:
             calibrated = self._apply_lut(channel_handle, requested_intensity)
             logger.debug(f"Channel {channel_handle}: {requested_intensity}% -> {calibrated:.1f}% (calibrated)")
