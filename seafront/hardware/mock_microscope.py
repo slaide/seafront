@@ -546,14 +546,14 @@ class MockMicroscope(Microscope):
 
         # Return properly typed HardwareLimits object
         return HardwareLimits(
-            imaging_exposure_time_ms=exposure_limits.to_dict(),
-            imaging_analog_gain_db=gain_limits.to_dict(),
-            imaging_focus_offset_um=focus_offset_limits.to_dict(),
-            imaging_illum_perc=generic_power_limits.to_dict(),
-            imaging_illum_perc_fluorescence=fluorescence_power_limits.to_dict(),
-            imaging_illum_perc_brightfield=brightfield_power_limits.to_dict(),
-            imaging_number_z_planes=z_planes_limits.to_dict(),
-            imaging_delta_z_um=z_spacing_limits.to_dict(),
+            imaging_exposure_time_ms=exposure_limits,
+            imaging_analog_gain_db=gain_limits,
+            imaging_focus_offset_um=focus_offset_limits,
+            imaging_illum_perc=generic_power_limits,
+            imaging_illum_perc_fluorescence=fluorescence_power_limits,
+            imaging_illum_perc_brightfield=brightfield_power_limits,
+            imaging_number_z_planes=z_planes_limits,
+            imaging_delta_z_um=z_spacing_limits,
         )
 
     def _validate_imaging_parameters(self, **params) -> None:
@@ -638,42 +638,25 @@ class MockMicroscope(Microscope):
                 'delta_z_um'
             )
 
-    def _validate_parameter_range(self, value: float, limit_dict: dict[str, float | int], param_name: str) -> None:
+    def _validate_parameter_range(
+        self, value: float, limit: HardwareLimitValue, param_name: str
+    ) -> None:
         """
-        Validate a single parameter against its limits.
-        
-        Args:
-            value: Value to validate
-            limit_dict: Dictionary with 'min', 'max', 'step' keys
-            param_name: Parameter name for error messages
-        
-        Raises:
-            HTTPException: If value is outside valid range or doesn't match step
-        """
-        min_val = limit_dict.get('min')
-        max_val = limit_dict.get('max')
-        step_val = limit_dict.get('step')
+        Validate a single parameter against the range the hardware accepts.
 
-        if min_val is not None and value < min_val:
+        Raises HTTPException if the value is outside that range. `step` is not enforced:
+        callers snap to it, and checking compliance here would fail on floating-point
+        representation alone.
+        """
+        if value < limit.min:
             cmd.error_internal(
-                detail=f"{param_name} value {value} is below minimum {min_val}"
+                detail=f"{param_name} value {value} is below minimum {limit.min}"
             )
 
-        if max_val is not None and value > max_val:
+        if value > limit.max:
             cmd.error_internal(
-                detail=f"{param_name} value {value} is above maximum {max_val}"
+                detail=f"{param_name} value {value} is above maximum {limit.max}"
             )
-
-        # Validate step increment (optional - some parameters may not have step validation)
-        if step_val is not None and step_val > 0:
-            if min_val is not None:
-                # Don't validate step compliance - just snap to nearest valid step
-                # This avoids floating-point precision issues with modulo operations
-                offset = value - min_val
-                snapped_offset = round(offset / step_val) * step_val
-                snapped_value = min_val + snapped_offset
-                # We could warn or adjust the value here if needed, but for now just accept it
-                # The caller should use: usedval = round((val - min_val) / step) * step + min_val
 
     def _validate_acquisition_config(self, config: sc.AcquisitionConfig) -> None:
         """

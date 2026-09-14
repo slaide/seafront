@@ -20,11 +20,13 @@ import json5
 import numpy as np
 import seaconfig as sc
 from fastapi import HTTPException
+from pydantic import ValidationError
 from seaconfig.acquisition import AcquisitionConfig
 
 from seafront.config.basics import (
     ChannelConfig,
     ConfigItem,
+    FilterConfig,
     GlobalConfigHandler,
     ImagingOrder,
     MicroscopeConfig,
@@ -32,6 +34,7 @@ from seafront.config.basics import (
 from seafront.config.handles import (
     CalibrationConfig,
     CameraConfig,
+    FilterWheelConfig,
     ImagingConfig,
     LaserAutofocusConfig,
     ProtocolConfig,
@@ -39,7 +42,7 @@ from seafront.config.handles import (
 )
 from seafront.config.registry import ConfigRegistry
 from seafront.debug_introspect import register_signal_dumper
-from seafront.hardware.forbidden_areas import ForbiddenAreaList
+from seafront.hardware.forbidden_areas import ForbiddenArea, ForbiddenAreaList
 from seafront.hardware.microscope import (
     DisconnectError,
     HardwareLimits,
@@ -869,11 +872,31 @@ class Core:
         except Exception as e:
             logger.debug(f"camera identity unavailable for hardware capabilities: {e}")
 
+        # Filter positions and forbidden areas are stored as config objects. Parsing them here
+        # means a client reads a typed list instead of digging through machine config for a
+        # value the config system can only describe as "some object".
+        filters: list[FilterConfig] = []
+        if ConfigRegistry.get(FilterWheelConfig.AVAILABLE).boolvalue:
+            filters = [
+                FilterConfig(**f)
+                for f in ConfigRegistry.get(FilterWheelConfig.CONFIGURATION).objectvalue  # type: ignore[misc]
+            ]
+
+        forbidden_areas: list[ForbiddenArea] = []
+        try:
+            forbidden_areas = ForbiddenAreaList.model_validate(
+                {"areas": ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue}
+            ).areas
+        except (KeyError, ValidationError) as e:
+            logger.warning(f"forbidden areas could not be read for hardware capabilities: {e}")
+
         return HardwareCapabilitiesResponse(
             main_camera=main_camera,
             wellplate_types=sc.Plates,
             main_camera_imaging_channels=acquisition_channels,
-            hardware_limits=hardware_limits_obj.to_dict(),
+            hardware_limits=hardware_limits_obj,
+            filters=filters,
+            forbidden_areas=forbidden_areas,
         )
 
     def get_machine_defaults(self) -> list[ConfigItem]:

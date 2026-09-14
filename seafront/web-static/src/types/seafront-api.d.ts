@@ -406,6 +406,33 @@ declare global {
         lock_token?: string | null;
     };
 
+    /** Configuration for a single filter wheel position */
+    type FilterConfig = {
+        name: string;
+        handle: string;
+        slot: number;
+    };
+
+    /**
+     * Represents a rectangular forbidden area in physical coordinates (mm).
+     * 
+     * Uses AABB (Axis-Aligned Bounding Box) representation for fast intersection checking.
+     */
+    type ForbiddenArea = {
+        /** Human-readable name for this forbidden area */
+        name: string;
+        /** Minimum X coordinate (left edge) in mm */
+        min_x_mm: number;
+        /** Maximum X coordinate (right edge) in mm */
+        max_x_mm: number;
+        /** Minimum Y coordinate (bottom edge) in mm */
+        min_y_mm: number;
+        /** Maximum Y coordinate (top edge) in mm */
+        max_y_mm: number;
+        /** Optional reason why this area is forbidden */
+        reason?: string;
+    };
+
     type HTTPValidationError = {
         detail?: ValidationError[];
     };
@@ -424,8 +451,37 @@ declare global {
         /** list of imaging channels that the microscope is capable of */
         main_camera_imaging_channels: AcquisitionChannelConfig[];
         /** numerical limits of configurable parameters based on actual hardware capabilities */
-        hardware_limits: { [key: string]: { [key: string]: number } };
+        hardware_limits: HardwareLimits;
+        /** filter wheel positions this microscope has, empty if it has no filter wheel */
+        filters?: FilterConfig[];
+        /** stage regions the server refuses to move into */
+        forbidden_areas?: ForbiddenArea[];
         microscope_name?: string;
+    };
+
+    /** the range a single hardware parameter accepts, and the granularity it accepts it in */
+    type HardwareLimitValue = {
+        min: number;
+        max: number;
+        step: number;
+    };
+
+    /**
+     * What this microscope will accept for each configurable imaging parameter.
+     * 
+     * Every field is a named range rather than an entry in a loose dict, so a client knows which
+     * limits exist without probing for them, and a limit renamed here reaches the browser's type
+     * checker rather than failing silently at runtime.
+     */
+    type HardwareLimits = {
+        imaging_exposure_time_ms: HardwareLimitValue;
+        imaging_analog_gain_db: HardwareLimitValue;
+        imaging_focus_offset_um: HardwareLimitValue;
+        imaging_illum_perc: HardwareLimitValue;
+        imaging_illum_perc_fluorescence: HardwareLimitValue;
+        imaging_illum_perc_brightfield: HardwareLimitValue;
+        imaging_number_z_planes: HardwareLimitValue;
+        imaging_delta_z_um: HardwareLimitValue;
     };
 
     /** /api/health: answered without touching the hardware, and without a target_device */
@@ -557,9 +613,9 @@ declare global {
     /** device lease status plus whether the token you sent is the holder's */
     type LockStatusResponse = {
         held: boolean;
-        owner?: string | null;
-        lock_id?: string | null;
-        expires_at?: string | null;
+        owner: string | null;
+        lock_id: string | null;
+        expires_at: string | null;
         token_matches: boolean;
         microscope_name?: string;
     };
@@ -569,9 +625,9 @@ declare global {
         message: string;
         reason: LockReason;
         held: boolean;
-        owner?: string | null;
-        lock_id?: string | null;
-        expires_at?: string | null;
+        owner: string | null;
+        lock_id: string | null;
+        expires_at: string | null;
     };
 
     type LockedErrorModel = {

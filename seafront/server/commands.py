@@ -10,11 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from seafront.server.lock import LockDecision, LockReason, LockState
 
-from seafront.config.basics import GlobalConfigHandler
+from seafront.config.basics import FilterConfig, GlobalConfigHandler
 from seafront.config.handles import ProtocolConfig
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import AdapterState, Position
-from seafront.hardware.forbidden_areas import ForbiddenAreaList
+from seafront.hardware.forbidden_areas import ForbiddenArea, ForbiddenAreaList
+from seafront.hardware.limits import HardwareLimits
 
 from ..logger import logger
 
@@ -70,9 +71,10 @@ class LockedErrorDetail(BaseModel):
     reason: LockReason
     "`not_held` (nobody holds it: acquire one) or `held_by_other` (the fields below say who)"
     held: bool
-    owner: str | None = None
-    lock_id: str | None = None
-    expires_at: str | None = None
+    owner: str | None
+    "null when nobody holds the lease; always present, like the rest of this detail"
+    lock_id: str | None
+    expires_at: str | None
 
 
 class LockedErrorModel(BaseModel):
@@ -343,9 +345,10 @@ class LockStatusResponse(BaseModel):
     "device lease status plus whether the token you sent is the holder's"
 
     held: bool
-    owner: str | None = None
-    lock_id: str | None = None
-    expires_at: str | None = None
+    owner: str | None
+    "null when nobody holds the lease; always present, so a client need not tell absent from null"
+    lock_id: str | None
+    expires_at: str | None
     token_matches: bool
     "True if the `lock_token` in this request is the current lease's token"
 
@@ -625,12 +628,29 @@ class HardwareCapabilitiesResponse(BaseModel):
         description="list of imaging channels that the microscope is capable of",
     )
     "list of imaging channels that the microscope is capable of"
-    hardware_limits: dict[str, dict[str, float | int]] = Field(
+    hardware_limits: HardwareLimits = Field(
         ...,
         title="Hardware Limits",
         description="numerical limits of configurable parameters based on actual hardware capabilities",
     )
     "numerical limits of configurable parameters based on actual hardware capabilities"
+    filters: list[FilterConfig] = Field(
+        default_factory=list,
+        title="Filters",
+        description="filter wheel positions this microscope has, empty if it has no filter wheel",
+    )
+    """
+    filter wheel positions this microscope has
+
+    Served here rather than left for a client to dig out of the machine config, where the
+    value is only typed as "some object".
+    """
+    forbidden_areas: list[ForbiddenArea] = Field(
+        default_factory=list,
+        title="Forbidden Areas",
+        description="stage regions the server refuses to move into",
+    )
+    "stage regions the server refuses to move into; same reason as `filters` for being here"
     microscope_name: str = ""
     "name of the device that processed this request"
 

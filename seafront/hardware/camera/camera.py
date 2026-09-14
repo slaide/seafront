@@ -7,22 +7,10 @@ import numpy as np
 from seaconfig import AcquisitionChannelConfig
 
 from seafront.config.basics import ConfigItem
+from seafront.hardware.limits import HardwareLimitValue
 from seafront.logger import logger
 
 
-@dataclass(frozen=True)
-class HardwareLimitValue:
-    """
-    Represents a hardware limit with min/max/step values.
-    Mirrors the TypeScript HardwareLimitValue type.
-    """
-    min: float | int
-    max: float | int
-    step: float | int
-
-    def to_dict(self) -> dict[str, float | int]:
-        """Convert to dictionary format for API responses."""
-        return {"min": self.min, "max": self.max, "step": self.step}
 
 
 class AcquisitionMode(str, Enum):

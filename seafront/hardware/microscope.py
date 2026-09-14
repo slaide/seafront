@@ -9,7 +9,6 @@ import abc
 import threading
 import typing as tp
 from contextlib import contextmanager
-from dataclasses import dataclass
 
 import numpy as np
 import seaconfig as sc
@@ -24,6 +23,7 @@ from seafront.config.basics import (
 )
 from seafront.config.handles import LaserAutofocusConfig
 from seafront.hardware.adapter import AdapterState
+from seafront.hardware.limits import HardwareLimits
 from seafront.server import commands as cmd
 
 
@@ -61,32 +61,6 @@ class Locked[T]:
             yield None
 
 
-@dataclass(frozen=True)
-class HardwareLimits:
-    """
-    Complete hardware limits structure that mirrors the TypeScript HardwareLimits type.
-    """
-    imaging_exposure_time_ms: dict[str, float | int]
-    imaging_analog_gain_db: dict[str, float | int]
-    imaging_focus_offset_um: dict[str, float | int]
-    imaging_illum_perc: dict[str, float | int]
-    imaging_illum_perc_fluorescence: dict[str, float | int]
-    imaging_illum_perc_brightfield: dict[str, float | int]
-    imaging_number_z_planes: dict[str, float | int]
-    imaging_delta_z_um: dict[str, float | int]
-
-    def to_dict(self) -> dict[str, dict[str, float | int]]:
-        """Convert to dictionary format for API responses."""
-        return {
-            "imaging_exposure_time_ms": self.imaging_exposure_time_ms,
-            "imaging_analog_gain_db": self.imaging_analog_gain_db,
-            "imaging_focus_offset_um": self.imaging_focus_offset_um,
-            "imaging_illum_perc": self.imaging_illum_perc,
-            "imaging_illum_perc_fluorescence": self.imaging_illum_perc_fluorescence,
-            "imaging_illum_perc_brightfield": self.imaging_illum_perc_brightfield,
-            "imaging_number_z_planes": self.imaging_number_z_planes,
-            "imaging_delta_z_um": self.imaging_delta_z_um,
-        }
 
 
 class Microscope(BaseModel, abc.ABC):

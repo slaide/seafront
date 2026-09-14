@@ -185,7 +185,7 @@ class TestMockMicroscopeHardwareLimits:
 
         mc = MockMicroscope.make()
         limits = mc.get_hardware_limits()
-        assert "imaging_exposure_time_ms" in limits.to_dict()
+        assert "imaging_exposure_time_ms" in limits.model_fields
 
     def test_exposure_limits_are_valid(self, mock_microscope_env):
         """Exposure time limits should have valid min/max/step."""
@@ -194,9 +194,9 @@ class TestMockMicroscopeHardwareLimits:
         mc = MockMicroscope.make()
         limits = mc.get_hardware_limits()
         exposure = limits.imaging_exposure_time_ms
-        assert exposure["min"] > 0
-        assert exposure["max"] > exposure["min"]
-        assert exposure["step"] > 0
+        assert exposure.min > 0
+        assert exposure.max > exposure.min
+        assert exposure.step > 0
 
 
 class TestMockMicroscopeMovement:

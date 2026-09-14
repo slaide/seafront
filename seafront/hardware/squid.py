@@ -1030,14 +1030,14 @@ class SquidAdapter(Microscope):
 
         # Return properly typed HardwareLimits object
         return HardwareLimits(
-            imaging_exposure_time_ms=exposure_limits.to_dict(),
-            imaging_analog_gain_db=gain_limits.to_dict(),
-            imaging_focus_offset_um=focus_offset_limits.to_dict(),
-            imaging_illum_perc=generic_power_limits.to_dict(),
-            imaging_illum_perc_fluorescence=fluorescence_power_limits.to_dict(),
-            imaging_illum_perc_brightfield=brightfield_power_limits.to_dict(),
-            imaging_number_z_planes=z_planes_limits.to_dict(),
-            imaging_delta_z_um=z_spacing_limits.to_dict(),
+            imaging_exposure_time_ms=exposure_limits,
+            imaging_analog_gain_db=gain_limits,
+            imaging_focus_offset_um=focus_offset_limits,
+            imaging_illum_perc=generic_power_limits,
+            imaging_illum_perc_fluorescence=fluorescence_power_limits,
+            imaging_illum_perc_brightfield=brightfield_power_limits,
+            imaging_number_z_planes=z_planes_limits,
+            imaging_delta_z_um=z_spacing_limits,
         )
 
     def is_position_forbidden(self, x_mm: float, y_mm: float) -> tuple[bool, str]:
@@ -1888,25 +1888,16 @@ class SquidAdapter(Microscope):
         else:
             cmd.error_internal(detail=f"Unsupported command type {type(command)}")
 
-    def _validate_parameter_range(self, value: float, limit_dict: dict, param_name: str) -> None:
-        """Validate a parameter is within specified range and step."""
-        min_val = limit_dict.get("min")
-        max_val = limit_dict.get("max")
-        step = limit_dict.get("step")
-
-        if min_val is not None and value < min_val:
-            cmd.error_internal(detail=f"{param_name} value {value} is below minimum {min_val}")
-        if max_val is not None and value > max_val:
-            cmd.error_internal(detail=f"{param_name} value {value} is above maximum {max_val}")
-        if step is not None and step > 0:
-            if min_val is not None:
-                # Don't validate step compliance - just snap to nearest valid step
-                # This avoids floating-point precision issues with modulo operations
-                offset = value - min_val
-                snapped_offset = round(offset / step) * step
-                snapped_value = min_val + snapped_offset
-                # We could warn or adjust the value here if needed, but for now just accept it
-                # The caller should use: usedval = round((val - min_val) / step) * step + min_val
+    def _validate_parameter_range(
+        self, value: float, limit: HardwareLimitValue, param_name: str
+    ) -> None:
+        """Validate a parameter is within the range the hardware accepts."""
+        if value < limit.min:
+            cmd.error_internal(detail=f"{param_name} value {value} is below minimum {limit.min}")
+        if value > limit.max:
+            cmd.error_internal(detail=f"{param_name} value {value} is above maximum {limit.max}")
+        # step is not enforced: callers snap with round((val - min) / step) * step + min, and
+        # checking compliance here would fail on floating-point representation alone
 
     def _validate_imaging_parameters(self, **params) -> None:
         """Validate imaging parameters against hardware limits."""
