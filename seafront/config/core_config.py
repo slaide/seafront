@@ -22,6 +22,47 @@ from seafront.config.handles import (
     IlluminationConfig,
 )
 
+DEVICE_ID_PLACEHOLDER = "CHANGE_ME"
+"default for the USB-id config items; a real config must replace it with the device serial"
+
+
+class UnconfiguredDeviceIdError(ValueError):
+    "a device id in the machine config is still the placeholder (or empty)"
+
+
+def unconfigured_device_ids() -> list[str]:
+    """
+    Handles of the device-id config items that are still at the placeholder or empty.
+
+    The laser autofocus camera id is only checked when the laser autofocus is available,
+    since its config items are not registered otherwise.
+    """
+    handles = [CameraConfig.MAIN_ID.value, MicrocontrollerConfig.ID.value]
+    if ConfigRegistry.get(LaserAutofocusConfig.AVAILABLE).boolvalue:
+        handles.append(LaserAutofocusConfig.CAMERA_ID.value)
+
+    return [
+        h for h in handles if ConfigRegistry.get(h).strvalue.strip() in ("", DEVICE_ID_PLACEHOLDER)
+    ]
+
+
+def check_device_ids_configured(*, microscope_name: str, config_file: str) -> None:
+    """
+    Raise UnconfiguredDeviceIdError naming the unset device ids, or return if all are set.
+
+    Call before opening any hardware, so an unconfigured microscope fails with an
+    actionable message instead of a driver error about a device that does not exist.
+    """
+    unset = unconfigured_device_ids()
+    if not unset:
+        return
+
+    raise UnconfiguredDeviceIdError(
+        f"microscope '{microscope_name}' has no device id for: {', '.join(unset)}. "
+        f"Set them in {config_file} to the USB serial numbers of the connected devices "
+        f"(`uv run python scripts/list_squid_hardware.py` lists them)."
+    )
+
 
 def register_core_config(default_image_dir: str, default_channels: list | str, default_forbidden_areas: list | str) -> None:
     """
@@ -60,7 +101,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
             handle=CameraConfig.MAIN_ID.value,
             name="main camera USB ID",
             value_kind="text",
-            default="CHANGE_ME",
+            default=DEVICE_ID_PLACEHOLDER,
             privileged=True,
             persistent=True,
         ),
@@ -455,7 +496,7 @@ def register_laser_autofocus_config() -> None:
             handle=LaserAutofocusConfig.CAMERA_ID.value,
             name="laser autofocus camera USB ID",
             value_kind="text",
-            default="CHANGE_ME",
+            default=DEVICE_ID_PLACEHOLDER,
             privileged=True,
             persistent=True,
         ),

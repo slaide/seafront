@@ -23,6 +23,7 @@ from seafront.config.basics import (
     GlobalConfigHandler,
     ImagingOrder,
 )
+from seafront.config.core_config import check_device_ids_configured
 from seafront.config.registry import ConfigRegistry
 from seafront.config.handles import (
     CalibrationConfig,
@@ -32,6 +33,7 @@ from seafront.config.handles import (
     ImagingConfig,
     LaserAutofocusConfig,
     MicrocontrollerConfig,
+    SystemConfig,
 )
 from seafront.hardware.microcontroller import (
     Microcontroller,
@@ -178,6 +180,12 @@ class SquidAdapter(Microscope):
 
     @classmethod
     def make(cls) -> "SquidAdapter":
+        # refuse placeholder / empty device ids before any driver is asked to find them
+        check_device_ids_configured(
+            microscope_name=ConfigRegistry.get(SystemConfig.MICROSCOPE_NAME).strvalue,
+            config_file=str(GlobalConfigHandler.home_config()),
+        )
+
         # Get device configuration (USB IDs and drivers)
         main_camera_id = ConfigRegistry.get(CameraConfig.MAIN_ID).strvalue
         main_camera_driver = ConfigRegistry.get(CameraConfig.MAIN_DRIVER).strvalue

@@ -384,3 +384,120 @@ class TestMicrocontrollerDriverConfig:
 
         assert driver == "teensy"
         assert mc_id == "test-mc-id"
+
+
+@pytest.fixture
+def placeholder_config(tmp_path):
+    """Config file with squid microscopes whose device ids are in various states of unset."""
+    config_file = tmp_path / "config.json"
+    common = {
+        "system.microscope_type": "squid",
+        "camera.main.driver": "galaxy",
+        "microcontroller.driver": "teensy",
+        "laser.autofocus.camera.driver": "galaxy",
+        "storage.base_image_output_dir": str(tmp_path / "images"),
+        "filter.wheel.available": "no",
+        "filter.wheel.configuration": [],
+        "imaging.channels": [],
+        "protocol.forbidden_areas": [],
+    }
+    config_data = {
+        "port": 5000,
+        "microscopes": [
+            {
+                **common,
+                "system.microscope_name": "unset-squid",
+                "camera.main.id": "CHANGE_ME",
+                "microcontroller.id": "",
+                "laser.autofocus.available": "yes",
+                "laser.autofocus.camera.id": "CHANGE_ME",
+            },
+            {
+                # camera.main.id omitted entirely: the registered default is the placeholder
+                **common,
+                "system.microscope_name": "no-laf-squid",
+                "microcontroller.id": "12769440",
+                "laser.autofocus.available": "no",
+            },
+            {
+                **common,
+                "system.microscope_name": "ready-squid",
+                "camera.main.id": "FCW23020121",
+                "microcontroller.id": "12769440",
+                "laser.autofocus.available": "yes",
+                "laser.autofocus.camera.id": "FCS22111429",
+            },
+        ],
+    }
+    config_file.write_text(json.dumps(config_data, indent=2))
+    return config_file
+
+
+class TestDeviceIdGuard:
+    """Placeholder / empty device ids must be refused before any hardware is opened."""
+
+    def setup_method(self):
+        ConfigRegistry.reset()
+
+    def teardown_method(self):
+        ConfigRegistry.reset()
+
+    @staticmethod
+    def _reset(config_file, microscope_name):
+        with patch.object(GlobalConfigHandler, "home_config", return_value=config_file):
+            GlobalConfigHandler.reset(microscope_name)
+
+    def test_reports_placeholder_and_empty_ids(self, placeholder_config):
+        from seafront.config.core_config import unconfigured_device_ids
+
+        self._reset(placeholder_config, "unset-squid")
+        assert unconfigured_device_ids() == [
+            "camera.main.id",
+            "microcontroller.id",
+            "laser.autofocus.camera.id",
+        ]
+
+    def test_missing_key_is_reported_and_laf_skipped_when_unavailable(self, placeholder_config):
+        from seafront.config.core_config import unconfigured_device_ids
+
+        self._reset(placeholder_config, "no-laf-squid")
+        assert unconfigured_device_ids() == ["camera.main.id"]
+
+    def test_configured_ids_pass(self, placeholder_config):
+        from seafront.config.core_config import check_device_ids_configured, unconfigured_device_ids
+
+        self._reset(placeholder_config, "ready-squid")
+        assert unconfigured_device_ids() == []
+        check_device_ids_configured(microscope_name="ready-squid", config_file="unused")
+
+    def test_check_raises_actionable_error(self, placeholder_config):
+        from seafront.config.core_config import UnconfiguredDeviceIdError, check_device_ids_configured
+
+        self._reset(placeholder_config, "unset-squid")
+        with pytest.raises(UnconfiguredDeviceIdError) as excinfo:
+            check_device_ids_configured(
+                microscope_name="unset-squid", config_file=str(placeholder_config)
+            )
+
+        msg = str(excinfo.value)
+        assert "unset-squid" in msg
+        assert str(placeholder_config) in msg
+        for handle in ("camera.main.id", "microcontroller.id", "laser.autofocus.camera.id"):
+            assert handle in msg
+        assert "list_squid_hardware" in msg
+
+    def test_squid_adapter_refuses_before_touching_hardware(self, placeholder_config):
+        from seafront.config.core_config import UnconfiguredDeviceIdError
+        from seafront.hardware.squid import SquidAdapter
+
+        self._reset(placeholder_config, "unset-squid")
+        with (
+            patch.object(GlobalConfigHandler, "home_config", return_value=placeholder_config),
+            patch("seafront.hardware.squid.camera_open") as camera_open,
+            patch("seafront.hardware.squid.microcontroller_open") as microcontroller_open,
+        ):
+            with pytest.raises(UnconfiguredDeviceIdError):
+                SquidAdapter.make()
+
+        camera_open.assert_not_called()
+        microcontroller_open.assert_not_called()

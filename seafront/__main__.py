@@ -56,6 +56,7 @@ from seafront.config.basics import (
     MicroscopeConfig,
     ServerConfig,
 )
+from seafront.config.core_config import UnconfiguredDeviceIdError
 from seafront.config.registry import ConfigRegistry
 from seafront.debug_introspect import format_stack_dump, register_signal_dumper
 from seafront.config.handles import (
@@ -2672,7 +2673,11 @@ def main():
 
     logger.info(f"✓ Default protocol found: {default_protocol_file}")
 
-    core = Core(selected_microscope)
+    try:
+        core = Core(selected_microscope)
+    except UnconfiguredDeviceIdError as e:
+        logger.critical(f"startup - {e}")
+        return
 
     # Define hardware connection function (but don't start it yet)
     def establish_hardware_connection():

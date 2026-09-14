@@ -585,20 +585,21 @@ class GlobalConfigHandler:
             ImagingConfig,
             ProtocolConfig,
         )
+        from seafront.config.core_config import DEVICE_ID_PLACEHOLDER
 
         return {
             SystemConfig.MICROSCOPE_NAME.value: "squid",
             SystemConfig.MICROSCOPE_TYPE.value: "squid",
-            CameraConfig.MAIN_ID.value: "CHANGE_ME",
+            CameraConfig.MAIN_ID.value: DEVICE_ID_PLACEHOLDER,
             CameraConfig.MAIN_DRIVER.value: "galaxy",
-            MicrocontrollerConfig.ID.value: "CHANGE_ME",
+            MicrocontrollerConfig.ID.value: DEVICE_ID_PLACEHOLDER,
             MicrocontrollerConfig.DRIVER.value: "teensy",
             StorageConfig.BASE_IMAGE_OUTPUT_DIR.value: str(GlobalConfigHandler.home() / "images"),
             CalibrationConfig.OFFSET_X_MM.value: 0.0,
             CalibrationConfig.OFFSET_Y_MM.value: 0.0,
             CalibrationConfig.OFFSET_Z_MM.value: 0.0,
             LaserAutofocusConfig.AVAILABLE.value: "yes",
-            LaserAutofocusConfig.CAMERA_ID.value: "CHANGE_ME",
+            LaserAutofocusConfig.CAMERA_ID.value: DEVICE_ID_PLACEHOLDER,
             LaserAutofocusConfig.CAMERA_DRIVER.value: "galaxy",
             FilterWheelConfig.AVAILABLE.value: "no",
             # Native objects for "object" type configs
