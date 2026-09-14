@@ -286,7 +286,7 @@ export class PlateNavigator {
     /**
      *
      * @param {HTMLElement} containerel
-     * @param {object} alpineComponent - Alpine.js component for updating reactive data
+     * @param {PlateNavigatorHost} alpineComponent - the Alpine component this navigator reports to
      * @returns
      */
     constructor(containerel, alpineComponent) {
@@ -748,13 +748,6 @@ export class PlateNavigator {
 
                 for (let i = 0; i < forbiddenAreas.length; i++) {
                     const area = forbiddenAreas[i];
-
-                    // Validate area bounds
-                    if (typeof area.min_x_mm !== 'number' || typeof area.max_x_mm !== 'number' ||
-                        typeof area.min_y_mm !== 'number' || typeof area.max_y_mm !== 'number') {
-                        console.warn(`Skipping invalid forbidden area: ${area.name || 'unnamed'}`);
-                        continue;
-                    }
 
                     // Transform backend coordinates to display coordinates
                     const minCoords = transformBackendToDisplayCoordinates(area.min_x_mm, area.min_y_mm, plate);
@@ -1317,27 +1310,23 @@ export class PlateNavigator {
     }
 
     /**
-     * Fetch forbidden areas configuration from server
-     * @returns {Promise<Array<object>>} Array of forbidden area objects
+     * Fetch the stage regions the server refuses to move into.
+     *
+     * These come from hardware capabilities, which serves them as ForbiddenArea objects. They
+     * used to be dug out of the machine config, where the value is only typed as "some
+     * object" and every field had to be re-checked by hand here.
+     *
+     * @returns {Promise<ForbiddenArea[]>}
      */
     async fetchForbiddenAreas() {
         try {
-            // Use the API client from the parent (Alpine component)
-            const configItems = await this.alpineComponent.api.post('/api/get_features/machine_defaults', {}, {
-                context: 'Fetch machine defaults for forbidden areas',
+            /** @type {HardwareCapabilitiesResponse} */
+            const capabilities = await this.alpineComponent.api.post('/api/get_features/hardware_capabilities', {}, {
+                context: 'Fetch forbidden areas',
                 showError: false
             });
 
-            // Find the forbidden areas config item
-            const forbiddenAreasItem = configItems.find(item => item.handle === 'protocol.forbidden_areas');
-
-            if (!forbiddenAreasItem || !forbiddenAreasItem.value) {
-                console.log('No forbidden areas configuration found');
-                return [];
-            }
-
-            // Get the forbidden areas config (native array from server)
-            return forbiddenAreasItem.value || [];
+            return capabilities.forbidden_areas ?? [];
 
         } catch (error) {
             console.warn('Error fetching forbidden areas:', error);

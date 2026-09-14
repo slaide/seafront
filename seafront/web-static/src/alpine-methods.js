@@ -108,7 +108,7 @@ export async function updateMicroscopeStatus(data) {
             displayMessage = `[${localTime}] ${data.last_acquisition_error}`;
         }
         this.showError('Acquisition Failed', displayMessage);
-        this._last_displayed_acquisition_error_timestamp = data.last_acquisition_error_timestamp;
+        this._last_displayed_acquisition_error_timestamp = data.last_acquisition_error_timestamp ?? null;
     }
 
     if (this._numOpenWebsockets < 1 && this.state.latest_imgs != null) {

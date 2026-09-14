@@ -57,6 +57,7 @@ export class ChannelImageView {
         // allow zooming in quite far, but not zoom out much (there is nothing to see outside the image)
         this.zoomLimit = { min: 0.05, max: 1.2 };
 
+        /** @type {{ active: boolean, x: float, y: float, sceneInfo: SceneInfo | null }} */
         this.drag = { active: false, x: 0, y: 0, sceneInfo: null };
 
         this._deactivateDrag = () => {

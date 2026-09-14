@@ -5,7 +5,7 @@
  * Shows error state when filter wheel is available, channel is enabled, but filter is unspecified.
  *
  * @param {HTMLSelectElement} el - The select element to validate
- * @param {() => object} getChannel - Function that returns the current channel object
+ * @param {() => AcquisitionChannelConfig} getChannel - Function that returns the current channel
  * @param {() => boolean} getIsFilterWheelAvailable - Function that returns if filter wheel is available
  */
 export function registerFilterSelect(el, getChannel, getIsFilterWheelAvailable) {

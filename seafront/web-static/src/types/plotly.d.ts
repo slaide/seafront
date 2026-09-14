@@ -223,6 +223,10 @@ declare global{
     type PlotlyAxis={
         title?:Label;
         type?:"log"|"date";
+        /** colour of the grid lines across the plot area */
+        gridcolor?:string;
+        /** colour of the zero line, drawn heavier than the rest of the grid */
+        zerolinecolor?:string;
         fixedrange?:boolean;
         /** min value allowed in range. Even explicitly setting range:[a,b] can't go past this. */
         minallowed?:number;

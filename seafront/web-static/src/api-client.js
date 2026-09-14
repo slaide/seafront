@@ -1,72 +1,50 @@
 "use strict";
 
-/**
- * @typedef {Object} APIClientOptions
- * @property {(title: string, message: string) => void} [onError] - Error callback
- * @property {() => string} [getTargetDevice] - Function that returns the target device name for request routing
- * @property {() => (string|null)} [getLockToken] - Function that returns this client's device lease token (sent as lock_token), if any
- * @property {() => Promise<void>} [ensureLease] - Take the device lease for this client. Called when the server refuses a hardware request because nobody holds the lease, after which the request is retried once.
- */
 
 /**
- * @typedef {Object} ConflictErrorDetail
- * @property {string} message - Error message describing the conflict
- * @property {string[]} busy_reasons - List of reasons why the resource is busy
+ * The message carried by something that was thrown.
+ *
+ * A `catch` binding is `unknown` - JavaScript lets anything be thrown - so every handler that
+ * wants to show the user what went wrong needs this one narrowing, in one place rather than
+ * at each catch.
+ *
+ * @param {unknown} error
+ * @returns {string}
  */
+function errorText(error) {
+    if (error instanceof Error) return error.message;
+    if (typeof error === 'string') return error;
+    return String(error);
+}
 
 /**
- * @typedef {Object} ConflictErrorModel
- * @property {ConflictErrorDetail} detail - Conflict error details from server
+ * A config item's value, as the kind it says it is.
+ *
+ * `ConfigItem.value` is a union - the config system stores ints, floats, text and whole
+ * objects under one field - and `value_kind` is what says which. These mirror the
+ * `strvalue` / `floatvalue` / `objectvalue` accessors the server's own ConfigItem has, so
+ * both sides narrow the same way instead of the browser guessing.
+ *
+ * @param {ConfigItem} item
+ * @returns {string}
  */
+function strvalue(item) {
+    if (typeof item.value !== 'string') {
+        throw new Error(`config ${item.handle} is ${item.value_kind}, not text`);
+    }
+    return item.value;
+}
 
 /**
- * @typedef {Object} LockedErrorDetail
- * @property {string} message
- * @property {'not_held'|'held_by_other'} reason - Why the request was refused
- * @property {boolean} held - Whether anyone holds the lease
- * @property {string|null} owner - Label the lease holder gave on acquire
- * @property {string|null} lock_id - Public id of the lease
- * @property {string|null} expires_at - ISO-8601 UTC
+ * @param {ConfigItem} item
+ * @returns {number}
  */
-
-/**
- * @typedef {Object} LockedErrorModel
- * @property {LockedErrorDetail} detail - 423 Locked: hardware commands need the device lease, and this request did not have it
- */
-
-/**
- * @typedef {Object} WebSocketManagerOptions
- * @property {number} [reconnectDelay=200] - Delay (ms) before reconnecting
- * @property {(message: string) => void} [onError] - Error callback
- * @property {(name: string, isConnected: boolean) => void} [onConnectionStateChange] - Connection state change callback
- * @property {() => string} [getTargetDevice] - Function that returns the target device name for request routing
- */
-
-/**
- * @typedef {Object} WebSocketConnectionOptions
- * @property {(event: MessageEvent) => void} [onMessage] - Message handler
- * @property {(ws: WebSocket) => void} [onOpen] - Open handler
- * @property {() => void} [onClose] - Close handler
- * @property {(event: Event) => void} [onError] - Error handler
- * @property {boolean} [autoReconnect=true] - Whether to auto-reconnect on error/close
- */
-
-/**
- * @typedef {Object} WebSocketConnectionData
- * @property {WebSocket} ws - The WebSocket instance
- * @property {string} endpoint - The WebSocket endpoint path
- * @property {WebSocketConnectionOptions} options - Connection options
- * @property {number} reconnectAttempts - Number of reconnection attempts made
- * @property {boolean} reconnectScheduled - Whether a reconnect is already scheduled
- * @property {number|null} reconnectTimer - Pending reconnect timer handle, if any
- */
-
-/**
- * @typedef {Object} WebSocketConnectionStatus
- * @property {boolean} connected - Whether the connection is OPEN
- * @property {number|null} readyState - WebSocket readyState (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)
- * @property {number} reconnectAttempts - Number of reconnection attempts made
- */
+function numvalue(item) {
+    if (typeof item.value !== 'number') {
+        throw new Error(`config ${item.handle} is ${item.value_kind}, not numeric`);
+    }
+    return item.value;
+}
 
 /**
  * Centralized API client for all server communication.
@@ -280,7 +258,7 @@ class WebSocketManager {
      * @param {string} name - Connection name (e.g., 'status', 'image', 'acquisition')
      * @param {string} endpoint - WebSocket endpoint path (e.g., '/ws/get_info/current_state')
      * @param {WebSocketConnectionOptions} [options] - Configuration options
-     * @returns {WebSocket|null} - The WebSocket instance, or null if creation failed
+     * @returns {AnySocket|null} - The socket, or null if creation failed
      */
     createConnection(name, endpoint, options = {}) {
         const {
@@ -371,7 +349,7 @@ class WebSocketManager {
     /**
      * Get an existing connection by name
      * @param {string} name - Connection name
-     * @returns {WebSocket|null} - The WebSocket instance, or null if not found
+     * @returns {AnySocket|null} - The socket, or null if not found
      */
     getConnection(name) {
         const connectionData = this.connections.get(name);
@@ -503,4 +481,4 @@ class WebSocketManager {
     }
 }
 
-export { APIClient, WebSocketManager };
+export { APIClient, WebSocketManager, errorText, strvalue, numvalue };

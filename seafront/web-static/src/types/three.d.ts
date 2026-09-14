@@ -151,6 +151,11 @@ declare module "three" {
         dispose(): void;
     }
 
+    /** a bare Object3D used only to group children, so they can be transformed together */
+    class Group extends Object3D {
+        constructor();
+    }
+
     class InstancedMesh extends Object3D {
         /**
          * 

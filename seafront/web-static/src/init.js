@@ -38,7 +38,7 @@ import {
     collapseAllNamespaces,
 } from "./namespace-parser.js";
 
-import { APIClient, WebSocketManager } from "./api-client.js";
+import { APIClient, WebSocketManager, errorText, strvalue, numvalue } from "./api-client.js";
 import { MockAPIClient, MockWebSocketManager } from "./mock-api-client.js";
 
 import {
@@ -139,19 +139,23 @@ const generate_alpine_object=() => ({
     /** url to microscope (hardware) server (default to same origin as gui) */
     server_url: window.location.origin,
 
-    // These will be initialized in the init() method
-    /** @type {APIClient?}  */
+    // These will be initialized in the init() method. Either the real client or the offline
+    // mock ends up here, so the declared type is both: whatever the app uses through these
+    // has to be something both actually provide.
+    /** @type {APIClient|MockAPIClient|null}  */
     _api: null,
     get api(){
         if(!this._api)throw new Error(`this._api is null`);
         return this._api;
     },
-    /** @type {WebSocketManager?} */
+    /** @type {WebSocketManager|MockWebSocketManager|null} */
     _wsManager: null,
     get wsManager(){
         if(!this._wsManager)throw new Error(`this._wsManager is null`);
         return this._wsManager;
     },
+    /** whether the offline mock is standing in for the server */
+    _useMockAPI: false,
 
     tooltipConfig,
     interfaceSettings,
@@ -258,7 +262,7 @@ const generate_alpine_object=() => ({
     /** take (or renew) the device lease for this tab */
     async lockAcquire() {
         const owner = (this.lock.owner || '').trim() || 'web ui';
-        /** @type {LockAcquireRequest} */
+        /** @type {ApiPayload<LockAcquireRequest>} */
         const body = { owner, ttl_s: 600 };
         /** @type {LockAcquireResponse} */
         const response = await this.api.post('/api/lock/acquire', body, { context: 'Acquire lock' });
@@ -285,7 +289,7 @@ const generate_alpine_object=() => ({
      * @param {string} reason
      */
     async lockBreak(reason) {
-        /** @type {LockBreakRequest} */
+        /** @type {ApiPayload<LockBreakRequest>} */
         const body = { reason };
         return this.api.post('/api/lock/break', body, { context: 'Break lock' });
     },
@@ -702,7 +706,7 @@ const generate_alpine_object=() => ({
             .filter((p) => {
                 if (this.protol_list_filters.comment) {
                     return (
-                        p.comment
+                        (p.comment ?? "")
                             .toLowerCase()
                             .indexOf(
                                 this.protol_list_filters.comment.toLowerCase(),
@@ -844,7 +848,8 @@ const generate_alpine_object=() => ({
      * @returns {MachineConfigItem|null}
      */
     getMachineConfigItem(name) {
-        for (const configitem of this.microscope_config.machine_config) {
+        // AcquisitionConfig.machine_config is optional: a protocol may carry none
+        for (const configitem of this.microscope_config.machine_config ?? []) {
             if (configitem.handle == name) {
                 return configitem;
             }
@@ -863,7 +868,7 @@ const generate_alpine_object=() => ({
         }
 
         console.log(`executing action: '${config.value}'`);
-        const response = await this.api.post(config.value, {}, {
+        const response = await this.api.post(strvalue(config), {}, {
             context: `Execute action: ${config.handle}`
         });
         // actions such as stage calibration write privileged config server-side
@@ -1138,7 +1143,7 @@ const generate_alpine_object=() => ({
 
                 latest_imgs:{},
                 is_streaming:false,
-                current_acquisition_id:undefined,
+                current_acquisition_id:null,
                 last_acquisition_error:null,
                 last_acquisition_error_timestamp:null,
                 lock: { held: false, owner: null, lock_id: null, expires_at: null },
@@ -1187,15 +1192,20 @@ const generate_alpine_object=() => ({
     },
 
     /**
-     * Parse available filters from machine config
-     * @returns {Array<{name: string, handle: string, slot: number}>}
+     * Filter wheel positions, read from the machine config this client holds.
+     *
+     * The server also serves these as HardwareCapabilitiesResponse.filters; this getter is
+     * synchronous, so it reads the config copy already in hand and names the server's model
+     * rather than re-describing its shape.
+     *
+     * @returns {FilterConfig[]}
      */
     get availableFilters() {
         const filtersConfigItem = this.getMachineConfigItem('filter.wheel.configuration');
-        if (!filtersConfigItem || !filtersConfigItem.value) {
+        if (!filtersConfigItem || !Array.isArray(filtersConfigItem.value)) {
             return [];
         }
-        return Array.isArray(filtersConfigItem.value) ? filtersConfigItem.value : [];
+        return /** @type {FilterConfig[]} */ (filtersConfigItem.value);
     },
 
     /**
@@ -1249,7 +1259,7 @@ const generate_alpine_object=() => ({
     _statusRequestInFlight: false,
 
     // acquisition status websocket for monitoring acquisition progress
-    /** @type {WebSocket|null} */
+    /** @type {AnySocket|null} */
     acquisition_status_ws: null,
     server_url_input: "",
     /**
@@ -1529,7 +1539,7 @@ const generate_alpine_object=() => ({
             useMockMode = false;
         } catch (error) {
             // Server unavailable, use mock mode
-            console.warn('[Seafront] Server unavailable, using mock mode:', error.message);
+            console.warn('[Seafront] Server unavailable, using mock mode:', errorText(error));
             this._api = new MockAPIClient(this.server_url, {
                 onError: (title, message) => this.showError(title, message),
                 getTargetDevice: () => this.getMicroscopeName() || 'Mock Microscope (Offline)',
@@ -2109,7 +2119,7 @@ const generate_alpine_object=() => ({
                 (w) => w.selected && w.col >= 0 && w.row >= 0,
             );
 
-            /** @type {AcquisitionStartRequest} */
+            /** @type {ApiPayload<AcquisitionStartRequest>} */
             const backend_body = {
                 config_file: backend_config
             };
@@ -2244,7 +2254,7 @@ const generate_alpine_object=() => ({
         } catch (error) {
             console.error('Failed to get acquisition estimate:', error);
             // Show error but don't block - could still proceed with acquisition
-            this.showError('Estimate Failed', error.message || error.toString());
+            this.showError('Estimate Failed', errorText(error));
         }
     },
 
@@ -2621,7 +2631,7 @@ const generate_alpine_object=() => ({
             throw error;
         }
 
-        /** @type {StreamBeginRequest} */
+        /** @type {ApiPayload<StreamBeginRequest>} */
         const body = {
             channel: target_channel,
         };
@@ -2654,7 +2664,7 @@ const generate_alpine_object=() => ({
             throw error;
         }
 
-        /** @type {StreamEndRequest} */
+        /** @type {ApiPayload<StreamEndRequest>} */
         const body = {
             channel: target_channel,
         };
@@ -2697,7 +2707,7 @@ const generate_alpine_object=() => ({
     async machineConfigFlush(opts = {}) {
         const implicit = opts.implicit === true;
         const all = this.microscope_config.machine_config || [];
-        /** @type {MachineConfigFlushRequest} */
+        /** @type {ApiPayload<MachineConfigFlushRequest>} */
         const body = {
             machine_config: implicit ? all.filter(item => !item.privileged) : all,
             privileged: !implicit && this.machineConfigFlushPrivileged,
@@ -2821,7 +2831,7 @@ const generate_alpine_object=() => ({
             throw new Error(`machine config laser.autofocus.calibration.ref_z_mm has unexpected value kind ${laser_autofocus_calibration_refzmm.value_kind}`);
         }
 
-        const reference_z_mm = laser_autofocus_calibration_refzmm.value;
+        const reference_z_mm = numvalue(laser_autofocus_calibration_refzmm);
         return `set at z = ${reference_z_mm.toFixed(3)}`;
     },
     get laserAutofocusReferenceValue() {
@@ -3140,6 +3150,9 @@ const generate_alpine_object=() => ({
             ).value,
         });
 
+        // The autofocus camera does not image a plate site, so the site fields are zeroed.
+        // They are filled in at all because ImageStoreInfo.position is a SitePosition; before
+        // that type reached this file, this passed a bare Position and nobody noticed.
         const img = await this.fetch_image({
             channel: {
                 name: "",
@@ -3149,12 +3162,22 @@ const generate_alpine_object=() => ({
                 illum_perc: 0,
                 num_z_planes: 0,
                 z_offset_um: 0,
+                delta_z_um: 0,
                 enabled: true,
             },
             height_px: lafSnapRes.height_px,
             width_px: lafSnapRes.width_px,
             storage_path: "",
-            position: { x_pos_mm: 0, y_pos_mm: 0, z_pos_mm: 0 },
+            position: {
+                well_name: "",
+                site_x: 0,
+                site_y: 0,
+                site_z: 0,
+                x_offset_mm: 0,
+                y_offset_mm: 0,
+                z_offset_mm: 0,
+                position: { x_pos_mm: 0, y_pos_mm: 0, z_pos_mm: 0 },
+            },
             timestamp: 0,
         });
 
@@ -3676,7 +3699,7 @@ const generate_alpine_object=() => ({
             existingTooltips.forEach(tooltip => tooltip.remove());
 
             // Create error tooltip
-            /** @ts-ignore @type {HTMLElement&{_associatedElement:HTMLElement}} */
+            /** @type {HTMLElement} */
             const tooltip = document.createElement('div');
             tooltip.className = 'number-input-tooltip';
             tooltip.textContent = errorMessage; // Explicitly set the text content

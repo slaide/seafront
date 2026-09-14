@@ -1,5 +1,28 @@
 "use strict";
 
+import { errorText } from "./api-client.js";
+
+/**
+ * What the mock throws when it refuses a request.
+ *
+ * The real client reads `status` and `detail` off an error response, so the mock has to carry
+ * both. Declaring them on a class rather than bolting them onto an Error is what lets a catch
+ * narrow to this type instead of poking at properties TypeScript cannot see.
+ */
+class MockApiError extends Error {
+    /**
+     * @param {number} status - HTTP status the real server would have answered with
+     * @param {string} message
+     * @param {ConflictErrorDetail | LockedErrorDetail} detail - the server's `detail` body
+     */
+    constructor(status, message, detail) {
+        super(message);
+        this.name = 'MockApiError';
+        this.status = status;
+        this.detail = detail;
+    }
+}
+
 /**
  * Standard positions for the mock microscope
  */
@@ -8,7 +31,7 @@ const BOOTUP_POSITION = { x_pos_mm: 50, y_pos_mm: 30, z_pos_mm: 0 };
 
 /**
  * Shared mock state for all mock components
- * @type {Object}
+ * @type {MockState}
  */
 const sharedMockState = {
     // Current actual position (animated) - start at bootup position
@@ -25,7 +48,7 @@ const sharedMockState = {
     is_busy: false,
     is_streaming: false,
     is_in_loading_position: false,
-    current_acquisition_id: undefined,
+    current_acquisition_id: null,
     latest_imgs: {}, // Metadata only (ChannelInfo)
 
     // Image storage (raw image data + metadata)
@@ -64,7 +87,8 @@ function updateAnimatedPosition() {
     if (!sharedMockState.isMoving) return;
 
     const now = performance.now();
-    const deltaTime = (now - sharedMockState.lastUpdateTime) / 1000; // seconds since last update
+    // first frame of a move has no previous timestamp to measure against
+    const deltaTime = (now - (sharedMockState.lastUpdateTime ?? now)) / 1000;
     sharedMockState.lastUpdateTime = now;
 
     const current = sharedMockState.position;
@@ -110,13 +134,10 @@ function updateAnimatedPosition() {
  */
 function checkBusyState() {
     if (sharedMockState.is_busy || sharedMockState.isMoving) {
-        const error = new Error('Microscope is busy');
-        error.status = 409;
-        error.detail = {
+        throw new MockApiError(409, 'Microscope is busy', {
             message: 'Cannot execute command: microscope is busy',
             busy_reasons: sharedMockState.isMoving ? ['Stage is moving'] : ['Microscope is busy'],
-        };
-        throw error;
+        });
     }
 }
 
@@ -149,7 +170,7 @@ function generateNoiseImage(width, height, bitDepth) {
 
 /**
  * Store image for a channel
- * @param {Object} channel - Channel configuration
+ * @param {AcquisitionChannelConfig} channel - Channel configuration
  * @param {number} width - Image width
  * @param {number} height - Image height
  * @param {number} bitDepth - Bit depth
@@ -190,7 +211,7 @@ function storeChannelImage(channel, width = 640, height = 640, bitDepth = 16) {
 
 /**
  * Calculate total number of images for an acquisition
- * @param {*} config - Acquisition config
+ * @param {AcquisitionConfig} config - Acquisition config
  * @returns {number} Total number of images
  */
 function calculateTotalImages(config) {
@@ -214,7 +235,7 @@ function calculateTotalImages(config) {
 /**
  * Start an acquisition simulation
  * @param {string} acquisitionId - Unique acquisition ID
- * @param {*} config - Acquisition config
+ * @param {AcquisitionConfig} config - Acquisition config
  */
 function startAcquisitionSimulation(acquisitionId, config) {
     const totalImages = calculateTotalImages(config);
@@ -426,25 +447,20 @@ const MOCK_LEASE_REQUIRED = new Set([
 /**
  * refuse a hardware endpoint the way the real server's 423 does
  * @param {'not_held'|'held_by_other'} reason
- * @returns {Error}
+ * @returns {MockApiError}
  */
 function mockLockedError(reason) {
     const message = reason === 'not_held'
         ? 'hardware commands need the device lease; POST /api/lock/acquire first (mock)'
         : `microscope is locked by '${mockLock.owner}' (mock)`;
-    const error = new Error(message);
-    // @ts-ignore - mirrors the shape the real client reads off a 423 response
-    error.status = 423;
-    // @ts-ignore
-    error.detail = {
+    return new MockApiError(423, message, {
         message,
         reason,
         held: mockLock.held,
         owner: mockLock.owner,
         lock_id: mockLock.lock_id,
         expires_at: mockLock.expires_at,
-    };
-    return error;
+    });
 }
 
 /**
@@ -458,6 +474,10 @@ function checkMockLease(endpoint, body) {
 }
 
 class MockAPIClient {
+    /**
+     * @param {string} baseURL
+     * @param {APIClientOptions} [options]
+     */
     constructor(baseURL, options = {}) {
         this.mockState = sharedMockState;
         this.baseURL = baseURL || '';
@@ -593,7 +613,7 @@ class MockAPIClient {
 
         // Default acquisition config
         if (endpoint === '/api/acquisition/config_fetch') {
-            const capabilities = await this.getMockResponse('/api/get_features/hardware_capabilities');
+            const capabilities = await this.getMockResponse('/api/get_features/hardware_capabilities', null);
             return {
                 file: {
                     project_name: "mock_project",
@@ -808,6 +828,7 @@ class MockAPIClient {
             checkBusyState(); // Block if microscope is busy
 
             // Extract enabled channels from config_file
+            /** @type {AcquisitionConfig | undefined} */
             const config_file = body?.config_file;
             if (config_file?.channels) {
                 const enabledChannels = config_file.channels.filter(ch => ch.enabled);
@@ -888,6 +909,7 @@ class MockAPIClient {
         if (endpoint === '/api/acquisition/start') {
             checkBusyState(); // Block if microscope is busy
 
+            /** @type {AcquisitionConfig | undefined} */
             const config = body?.config_file;
             if (!config) {
                 throw new Error('No config_file provided');
@@ -1005,7 +1027,7 @@ class MockAPIClient {
      * Make a POST request (simulated)
      * @param {string} endpoint
      * @param {*} body
-     * @param {Object} [options]
+     * @param {ApiRequestOptions} [options]
      * @returns {Promise<*>}
      */
     async post(endpoint, body, options = {}) {
@@ -1023,22 +1045,24 @@ class MockAPIClient {
             checkMockLease(endpoint, requestBody);
             return await this.getMockResponse(endpoint, requestBody);
         } catch (error) {
+            const refusal = error instanceof MockApiError ? error : null;
+
             // Nobody holds the lease: take it and replay, exactly like APIClient.post
-            if (error.status === 423 && error.detail?.reason === 'not_held' && leaseRetry && this.ensureLease) {
+            if (refusal?.status === 423 && /** @type {LockedErrorDetail} */ (refusal.detail).reason === 'not_held' && leaseRetry && this.ensureLease) {
                 await this.ensureLease();
                 return this.post(endpoint, body, { ...options, leaseRetry: false });
             }
             // Handle 409 Conflict errors (microscope busy)
-            if (error.status === 409 && showError) {
-                if (error.detail && error.detail.busy_reasons) {
-                    const reasons = error.detail.busy_reasons.map(r => `  • ${r}`).join('\n');
-                    const userMessage = `${error.detail.message}:\n${reasons}`;
-                    this.onError(context + ' Error', userMessage);
+            if (refusal?.status === 409 && showError) {
+                const detail = /** @type {ConflictErrorDetail} */ (refusal.detail);
+                if (detail?.busy_reasons) {
+                    const reasons = detail.busy_reasons.map(r => `  • ${r}`).join('\n');
+                    this.onError(context + ' Error', `${detail.message}:\n${reasons}`);
                 } else {
-                    this.onError(context + ' Error', error.message || 'Microscope is busy');
+                    this.onError(context + ' Error', refusal.message || 'Microscope is busy');
                 }
             } else if (showError) {
-                this.onError(context + ' Error', error.message || 'Unknown error');
+                this.onError(context + ' Error', errorText(error) || 'Unknown error');
             }
             throw error;
         }
@@ -1047,7 +1071,7 @@ class MockAPIClient {
     /**
      * Make a GET request (simulated)
      * @param {string} endpoint
-     * @param {Object} [options]
+     * @param {ApiRequestOptions} [options]
      * @returns {Promise<*>}
      */
     async get(endpoint, options = {}) {
@@ -1060,16 +1084,18 @@ class MockAPIClient {
             // Instant response (<1ms) - no artificial delay
             return await this.getMockResponse(endpoint, null);
         } catch (error) {
-            if (error.status === 409 && showError) {
-                if (error.detail && error.detail.busy_reasons) {
-                    const reasons = error.detail.busy_reasons.map(r => `  • ${r}`).join('\n');
-                    const userMessage = `${error.detail.message}:\n${reasons}`;
-                    this.onError(context + ' Error', userMessage);
+            const refusal = error instanceof MockApiError ? error : null;
+
+            if (refusal?.status === 409 && showError) {
+                const detail = /** @type {ConflictErrorDetail} */ (refusal.detail);
+                if (detail?.busy_reasons) {
+                    const reasons = detail.busy_reasons.map(r => `  • ${r}`).join('\n');
+                    this.onError(context + ' Error', `${detail.message}:\n${reasons}`);
                 } else {
-                    this.onError(context + ' Error', error.message || 'Microscope is busy');
+                    this.onError(context + ' Error', refusal.message || 'Microscope is busy');
                 }
             } else if (showError) {
-                this.onError(context + ' Error', error.message);
+                this.onError(context + ' Error', errorText(error));
             }
             throw error;
         }
@@ -1099,8 +1125,8 @@ class MockWebSocketManager {
      * Create a mock WebSocket connection
      * @param {string} name
      * @param {string} endpoint
-     * @param {Object} options
-     * @returns {Object} - Mock WebSocket-like object
+     * @param {WebSocketConnectionOptions} [options]
+     * @returns {MockSocket}
      */
     createConnection(name, endpoint, options = {}) {
         const {
@@ -1111,15 +1137,26 @@ class MockWebSocketManager {
         } = options;
 
         // Protocol state for image WebSocket
+        /** @type {{ waitingFor: 'channel_handle' | 'downsample_factor', currentChannel: string | null }} */
         const protocolState = {
-            waitingFor: 'channel_handle', // or 'downsample_factor'
+            waitingFor: 'channel_handle',
             currentChannel: null,
         };
 
         // Create mock WebSocket object
+        /** @type {MockSocket} */
         const mockWs = {
             readyState: 1, // OPEN
-            send: (data) => {
+            /** @type {BinaryType} */
+            binaryType: 'blob',
+            send: (frame) => {
+                // Every socket this server has takes text frames from the client; binary only
+                // ever travels the other way.
+                if (typeof frame !== 'string') {
+                    throw new TypeError(`mock websocket ${endpoint} takes text frames, got ${typeof frame}`);
+                }
+                const data = frame;
+
                 // Handle image WebSocket protocol
                 if (endpoint === '/ws/get_info/acquired_image') {
                     if (protocolState.waitingFor === 'channel_handle') {
@@ -1131,7 +1168,7 @@ class MockWebSocketManager {
 
                         if (!imageEntry) {
                             // No image available, send empty JSON
-                            onMessage({ data: JSON.stringify({}) });
+                            onMessage(new MessageEvent('message', { data: JSON.stringify({}) }));
                             protocolState.waitingFor = 'channel_handle';
                         } else {
                             // Send metadata
@@ -1141,13 +1178,15 @@ class MockWebSocketManager {
                                 camera_bit_depth: imageEntry.cameraBitDepth,
                                 bit_depth: imageEntry.bitDepth,
                             };
-                            onMessage({ data: JSON.stringify(metadata) });
+                            onMessage(new MessageEvent('message', { data: JSON.stringify(metadata) }));
                             protocolState.waitingFor = 'downsample_factor';
                         }
                     } else if (protocolState.waitingFor === 'downsample_factor') {
                         const downsampleFactor = parseInt(data, 10) || 1;
                         const channelHandle = protocolState.currentChannel;
-                        const imageEntry = this.mockState.imageStore[channelHandle];
+                        const imageEntry = channelHandle === null
+                            ? undefined
+                            : this.mockState.imageStore[channelHandle];
 
                         if (imageEntry) {
                             // Downsample the image
@@ -1172,7 +1211,7 @@ class MockWebSocketManager {
                             }
 
                             // Send binary data
-                            onMessage({ data: downsampledData.buffer });
+                            onMessage(new MessageEvent('message', { data: downsampledData.buffer }));
                         }
 
                         protocolState.waitingFor = 'channel_handle';
@@ -1247,9 +1286,7 @@ class MockWebSocketManager {
 
             const statusJson = JSON.stringify(statusUpdate);
 
-            onMessage({
-                data: statusJson,
-            });
+            onMessage(new MessageEvent('message', { data: statusJson, }));
         }, 16);
 
         // Store interval for cleanup
@@ -1303,9 +1340,7 @@ class MockWebSocketManager {
                 message: '',
             };
 
-            onMessage({
-                data: JSON.stringify(statusUpdate),
-            });
+            onMessage(new MessageEvent('message', { data: JSON.stringify(statusUpdate), }));
 
             // Keep sending updates for 2.5 seconds after completion/cancellation
             // Schedule stop only once when status first changes
@@ -1337,7 +1372,7 @@ class MockWebSocketManager {
     /**
      * Get an existing connection by name
      * @param {string} name
-     * @returns {Object|null}
+     * @returns {MockSocket|null}
      */
     getConnection(name) {
         const conn = this.connections.get(name);
