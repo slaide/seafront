@@ -7,9 +7,10 @@ not carry the lease, whether that is because somebody else holds it or because n
 and that reads and cancel stay open to everyone.
 
 The route list is not written down here twice. The server publishes
-`x-requires-device-lease` per route in /openapi.json, and the sweeps below run over that, so a
-route added later is covered the day it is added (and a route added without a sample request
-body fails TestSchemaContract until someone writes one).
+`x-requires-device-lease` per route in /openapi.json and per websocket channel in
+/asyncapi.json, and the sweeps below run over those, so a route added later is covered the day
+it is added (and a route added without a sample request body fails TestSchemaContract until
+someone writes one).
 """
 
 import json
@@ -184,6 +185,22 @@ def schema(server) -> dict:
 
 
 @pytest.fixture(scope="module")
+def async_schema(server) -> dict:
+    """the websocket contract; sockets are not describable in OpenAPI, so they live here"""
+    with urllib.request.urlopen(f"{SERVER}/asyncapi.json", timeout=10) as r:
+        return json.loads(r.read().decode())
+
+
+@pytest.fixture(scope="module")
+def gated_channels(async_schema) -> set[str]:
+    return {
+        channel["address"]
+        for channel in async_schema["channels"].values()
+        if channel.get("x-requires-device-lease")
+    }
+
+
+@pytest.fixture(scope="module")
 def gated_paths(schema) -> set[str]:
     return {
         path
@@ -260,10 +277,16 @@ class TestSchemaContract:
         """a GET carries no body, so it could never carry lock_token"""
         for path in gated_paths:
             methods = set(schema["paths"][path])
-            assert "get" not in methods or path.startswith("/ws/"), path
+            assert "get" not in methods, path
 
-    def test_the_hardware_websocket_is_gated(self, gated_paths):
-        assert "/ws/action/snap_selected_channels_progressive" in gated_paths
+    def test_the_hardware_websocket_is_gated(self, gated_channels):
+        assert "/ws/action/snap_selected_channels_progressive" in gated_channels
+
+    def test_the_gated_channel_documents_its_close_code(self, async_schema, gated_channels):
+        """4423 is the websocket mirror of the 423 a POST would have got"""
+        for channel in async_schema["channels"].values():
+            if channel["address"] in gated_channels:
+                assert "4423" in channel["x-close-codes"], channel["address"]
 
     def test_gated_routes_document_the_423(self, schema, gated_paths):
         for path in gated_paths:

@@ -905,3 +905,14 @@ class EstablishHardwareConnection(BaseModel, BaseCommand[BasicSuccessResponse]):
     hardware_identifier: str = Field(default="")
 
     _ReturnValue: type = PrivateAttr(default=BasicSuccessResponse)
+
+
+class HealthResponse(BaseModel):
+    """/api/health: answered without touching the hardware, and without a target_device"""
+
+    status: tp.Literal["ok"] = "ok"
+    microscope_name: str
+    time_since_last_request_s: float | None
+    "seconds since the last request this server answered, or null if it has answered none"
+    server_time: float
+    "server clock at the time of this reply, as a unix timestamp"
