@@ -145,3 +145,52 @@ def minio_s3():
         client.create_bucket(Bucket=MINIO_BUCKET)
     yield {"endpoint_url": MINIO_ENDPOINT, "bucket": MINIO_BUCKET, "client": client}
     subprocess.run(["docker", "compose", "-f", str(compose), "down", "-v"], capture_output=True, timeout=120)
+
+
+@pytest.fixture
+def squid_adapter(mock_microscope_env):
+    """
+    A real SquidAdapter over a fake microcontroller and stand-in cameras.
+
+    The adapter is where the physically dangerous sequencing lives - the order the axes are
+    moved in to reach the loading position, which axis is approached first on the way to a
+    well - and none of it was reachable from a test, because `SquidAdapter.make()` wants
+    camera SDKs that only exist on a microscope.
+
+    Constructing it directly sidesteps that: the fields are injectable, and everything the
+    sequencing touches goes through the microcontroller, which `tests/fake_mcu.py` supplies.
+    The cameras are placeholders; a test that needs one should say so rather than rely on
+    these.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).parent))
+    from fake_mcu import FakeMCU, make_microcontroller
+
+    from seafront.config.basics import ChannelConfig
+    from seafront.hardware.illumination import IlluminationController
+    from seafront.hardware.microscope import Locked
+    from seafront.hardware.squid import SquidAdapter
+
+    class _NoCamera:
+        """stands in for a camera; touching it is a test reaching further than it should"""
+
+        def __getattr__(self, name):
+            raise AssertionError(f"this test touched the camera ({name}); it has none")
+
+    controller, device = make_microcontroller(FakeMCU())
+    channels = [
+        ChannelConfig(name="Brightfield LED matrix full", handle="bfledfull", source_slot=0),
+        ChannelConfig(name="Fluorescence 488nm", handle="f488", source_slot=1),
+    ]
+    adapter = SquidAdapter(
+        main_camera=Locked(_NoCamera()),
+        focus_camera=Locked(_NoCamera()),
+        microcontroller=controller,
+        illumination_controller=IlluminationController(channels),
+        channels=channels,
+        filters=[],
+    )
+    adapter.is_connected = True
+    return adapter, device

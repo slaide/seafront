@@ -27,6 +27,7 @@ import crc
 import serial
 
 from seafront.hardware.firmware_config import get_firmware_config
+from seafront.hardware.microcontroller.teensy_microcontroller import CommandName
 
 firmware = get_firmware_config()
 
@@ -133,6 +134,7 @@ class FakeMCU:
         moves_by: tuple[int, int, int] = (0, 0, 0),
         exec_status: int = EXEC_COMPLETED,
         corrupt_crc: bool = False,
+        honour_moves: bool = True,
     ) -> None:
         self.acknowledge = acknowledge
         "whether a written command is ever reported back as the last executed one"
@@ -142,6 +144,8 @@ class FakeMCU:
         "how far the reported position advances per packet (a stage still in motion)"
         self.exec_status = exec_status
         self.corrupt_crc = corrupt_crc
+        self.honour_moves = honour_moves
+        "whether an absolute move updates the position this device reports"
 
         self.x, self.y, self.z = position
         self.commands_received: list[bytes] = []
@@ -166,6 +170,36 @@ class FakeMCU:
                 self.commands_received.append(packet)
                 self._pending = packet[0]
                 self._packets_since_command = 0
+                if self.honour_moves:
+                    self._apply_move_locked(packet)
+
+    def _apply_move_locked(self, packet: bytes) -> None:
+        """
+        move the reported position to where an absolute move asked for
+
+        A real stage travels there over some milliseconds; this arrives immediately, which is
+        what a test about ordering or coordinates wants. `moves_by` is the knob for tests that
+        need it still moving.
+
+        The status packet's decoder multiplies by the axis movement sign, so the raw value
+        stored here is divided by it - a round trip through the wire then returns exactly the
+        microsteps the command carried.
+        """
+        moveto = {
+            CommandName.MOVETO_X.value: "x",
+            CommandName.MOVETO_Y.value: "y",
+            CommandName.MOVETO_Z.value: "z",
+        }
+        axis = moveto.get(packet[1])
+        if axis is None:
+            return
+        raw = int.from_bytes(packet[2:6], "big", signed=True)
+        sign = {
+            "x": firmware.STAGE_MOVEMENT_SIGN_X,
+            "y": firmware.STAGE_MOVEMENT_SIGN_Y,
+            "z": firmware.STAGE_MOVEMENT_SIGN_Z,
+        }[axis]
+        setattr(self, axis, raw * sign)
 
     def bytes_waiting(self) -> int:
         with self._lock:
