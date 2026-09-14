@@ -103,6 +103,26 @@ name_validity_regex = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
 """ only permits: lower case latin letters, upper case latin letters, digits, underscore, dash, dot """
 
 
+MAX_NAME_LENGTH = 255
+"""
+the longest a single path component may be
+
+ext4, xfs, apfs and ntfs all stop at 255 bytes. A longer name is not a naming preference, it
+is an OSError on the first write - which for an acquisition means one that has already been
+accepted, scheduled and reported as running.
+"""
+
+DOT_NAMES = {".", ".."}
+"""
+the two names that are instructions to the filesystem rather than names
+
+A project name is a path component on its own (`<base>/<project>/<plate>_<timestamp>`), and
+the disk sink creates it with mkdir(parents=True). `..` therefore writes outside the output
+directory the operator configured. No accepted name can contain a separator, so this is the
+whole of the exposure: one level, and only via these two spellings.
+"""
+
+
 def name_check(name: str) -> str | None:
     """
     check name for validity.
@@ -118,6 +138,12 @@ def name_check(name: str) -> str | None:
         # from name_validity_regex doc:
         return "name invalid. it only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot"
 
+    if name in DOT_NAMES:
+        return f"name must not be '{name}': it names a directory rather than being one"
+
+    if len(name.encode()) > MAX_NAME_LENGTH:
+        return f"name must be at most {MAX_NAME_LENGTH} bytes, got {len(name.encode())}"
+
     return None
 
 
@@ -127,16 +153,11 @@ def filename_check(name: str) -> str | None:
 
     returns None if valid, otherwise returns description of the error.
 
-    used to check config filename for validity.
+    used to check config filename for validity. Same rules as name_check: a stored protocol
+    filename is a path component under the config directory, so the dot names walk out of it
+    the same way a project name does.
     """
-    if len(name) == 0:
-        return "name must not be empty"
-
-    if not name_validity_regex.match(name):
-        # from name_validity_regex doc:
-        return "name invalid. it only permits: lower case latin letter, upper case latin letters, digits, underscore, dash, dot"
-
-    return None
+    return name_check(name)
 
 
 class AcquisitionCancelledError(Exception):

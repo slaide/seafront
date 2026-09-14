@@ -1993,6 +1993,22 @@ class SquidAdapter(Microscope):
                     "Please select a filter for all enabled channels."
                 )
 
+        if not channel.enabled:
+            return
+
+        # The same limits every snap is checked against, applied before the run starts
+        # rather than when it reaches its first image. A protocol whose illumination is out
+        # of range is refusable in a millisecond at the front door; the same protocol
+        # accepted and started fails partway through a plate, with images already written.
+        self._validate_imaging_parameters(
+            exposure_time_ms=channel.exposure_time_ms,
+            analog_gain_db=channel.analog_gain,
+            z_offset_um=channel.z_offset_um,
+            illum_perc=channel.illum_perc,
+            num_z_planes=channel.num_z_planes,
+            delta_z_um=channel.delta_z_um,
+        )
+
     def extend_machine_config(self, config_items: list[ConfigItem]) -> None:
         """
         Extend machine configuration with microscope-specific options.

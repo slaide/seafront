@@ -92,8 +92,11 @@ def mock_core(temp_config, mock_microscope_env):
     """
     from seafront.server.core import Core
 
-    _tmp_path, config_file = temp_config
+    tmp_path, config_file = temp_config
     scope_config = json.loads(config_file.read_text())["microscopes"][0]
+    # the protocol generator asserts the configured output directory exists before it writes
+    # anything, so a Core built for tests needs one the same way a real deployment does
+    (tmp_path / "images").mkdir(exist_ok=True)
     core = Core(scope_config)
     yield core
     core.close()

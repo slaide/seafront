@@ -85,10 +85,6 @@ def error_internal(detail: str) -> tp.NoReturn:
     """raise an HTTPException with specified detail"""
     logger.debug(f"error_internal - {detail=}")
 
-    import faulthandler
-
-    faulthandler.dump_traceback(all_threads=True)
-
     raise HTTPException(status_code=500, detail=detail)
 
 
