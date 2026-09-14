@@ -1728,16 +1728,21 @@ class SquidAdapter(Microscope):
             delta_z_um=0,  # unused
         )
 
-        with self.focus_camera.locked() as focus_camera:
-            if focus_camera is None:
-                error_internal("focus camera is busy")
-            img = focus_camera.snap(channel_config)
+        # even if acquisition fails, ensure the laser is turned off again - the same guard
+        # _execute_ChannelSnapshot puts around its illumination. Without it a camera that
+        # raises mid-frame leaves the autofocus laser on the sample, and nothing downstream
+        # turns it off: the exception unwinds past every later step, including this one.
+        try:
+            with self.focus_camera.locked() as focus_camera:
+                if focus_camera is None:
+                    error_internal("focus camera is busy")
+                img = focus_camera.snap(channel_config)
 
-        logger.debug("squid - autofocus - acquired image")
-
-        if command.turn_laser_off:
-            qmc.af_laser_off()
-            logger.debug("squid - autofocus - turned laser off")
+            logger.debug("squid - autofocus - acquired image")
+        finally:
+            if command.turn_laser_off:
+                qmc.af_laser_off()
+                logger.debug("squid - autofocus - turned laser off")
 
         result = cmd.AutofocusSnapResult(
             width_px=img.shape[1],

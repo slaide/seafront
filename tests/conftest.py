@@ -31,11 +31,19 @@ def temp_config(tmp_path):
                 "microcontroller.id": "",
                 "microcontroller.driver": "teensy",
                 "storage.base_image_output_dir": str(tmp_path / "images"),
+                # MockCamera synthesises 1024x1024; a config asking for more makes every
+                # snap fail with "target height is larger than max"
+                "camera.main.image.width_px": 1024,
+                "camera.main.image.height_px": 1024,
                 "calibration.offset.x_mm": 0.0,
                 "calibration.offset.y_mm": 0.0,
                 "calibration.offset.z_mm": 0.0,
                 "protocol.forbidden_areas": [],
-                "laser.autofocus.available": "no",
+                # available, so the laser autofocus config items are registered and the
+                # autofocus commands are reachable from a test
+                "laser.autofocus.available": "yes",
+                "laser.autofocus.camera.id": "mock-focus-camera",
+                "laser.autofocus.camera.driver": "galaxy",
                 "filter.wheel.available": "no",
                 "imaging.channels": [
                     {
@@ -154,13 +162,13 @@ def squid_adapter(mock_microscope_env):
 
     The adapter is where the physically dangerous sequencing lives - the order the axes are
     moved in to reach the loading position, which axis is approached first on the way to a
-    well - and none of it was reachable from a test, because `SquidAdapter.make()` wants
-    camera SDKs that only exist on a microscope.
+    well, when the illumination goes on and off around an exposure - and none of it was
+    reachable from a test, because `SquidAdapter.make()` wants camera SDKs that only exist on
+    a microscope.
 
-    Constructing it directly sidesteps that: the fields are injectable, and everything the
-    sequencing touches goes through the microcontroller, which `tests/fake_mcu.py` supplies.
-    The cameras are placeholders; a test that needs one should say so rather than rely on
-    these.
+    Constructing it directly sidesteps that: the fields are injectable. The microcontroller is
+    the fake from `tests/fake_mcu.py`, which records every command; the cameras are the same
+    MockCamera the mock microscope uses, so snapping and streaming work and produce images.
     """
     import sys
     from pathlib import Path as _Path
@@ -173,20 +181,21 @@ def squid_adapter(mock_microscope_env):
     from seafront.hardware.microscope import Locked
     from seafront.hardware.squid import SquidAdapter
 
-    class _NoCamera:
-        """stands in for a camera; touching it is a test reaching further than it should"""
-
-        def __getattr__(self, name):
-            raise AssertionError(f"this test touched the camera ({name}); it has none")
+    from seafront.hardware.camera.mock_camera import MockCamera
 
     controller, device = make_microcontroller(FakeMCU())
     channels = [
         ChannelConfig(name="Brightfield LED matrix full", handle="bfledfull", source_slot=0),
         ChannelConfig(name="Fluorescence 488nm", handle="f488", source_slot=1),
     ]
+    main_camera = MockCamera()
+    main_camera.open("main")
+    focus_camera = MockCamera()
+    focus_camera.open("autofocus")
+
     adapter = SquidAdapter(
-        main_camera=Locked(_NoCamera()),
-        focus_camera=Locked(_NoCamera()),
+        main_camera=Locked(main_camera),
+        focus_camera=Locked(focus_camera),
         microcontroller=controller,
         illumination_controller=IlluminationController(channels),
         channels=channels,
