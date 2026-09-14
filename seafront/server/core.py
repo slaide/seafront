@@ -187,9 +187,20 @@ class Core:
         self.worker = MicroscopeWorker(self.microscope)
         self.worker.start()
 
+        # Streamed frames go straight into the image store. Installed once, here: the
+        # adapter's stream state decides whether frames flow, so there is no callback to
+        # install and remove around each stream (and no window where the camera is running
+        # but nobody is listening).
+        self.microscope.set_frame_sink(self._handle_streamed_image)
+
         # Client-held lease above the worker: one client at a time across requests. Routes
         # registered with a lease-requiring policy refuse 423 while another client holds it.
-        self.lock = DeviceLock(worker_is_busy=lambda: self.worker.is_busy)
+        # "In use" is a command on the worker OR a running camera stream - a stream hands the
+        # worker slot straight back, so watching the worker alone would let the lease lapse
+        # under a live camera.
+        self.lock = DeviceLock(
+            device_in_use=lambda: self.worker.is_busy or self.microscope.is_streaming
+        )
 
         self.acquisition_map: dict[str, AcquisitionStatus] = {}
         """ map containing information on past and current acquisitions """
@@ -200,8 +211,6 @@ class Core:
         "latest image acquired in each channel, key is channel handle"
 
         self.image_store_threadpool = AsyncThreadPool()
-
-        self._streaming_channel: sc.AcquisitionChannelConfig | None = None
 
         self._hardware_limits_cache: HardwareLimits | None = None
         """ cached hardware limits to serve when microscope is busy """
@@ -270,40 +279,22 @@ class Core:
             img=res._img, pixel_format=pixel_format, channel_config=res._channel
         )
 
-    def stream_begin(self, channel: sc.AcquisitionChannelConfig) -> None:
+    def _handle_streamed_image(
+        self, img: np.ndarray, channel: sc.AcquisitionChannelConfig
+    ) -> None:
         """
-        start feeding streamed frames into the image store
+        one streamed frame, on the camera SDK's acquisition thread
 
-        Channel first, then the callback: status reports the channel only while the callback
-        is installed (see get_current_state), so setting them in this order is what keeps a
-        status read from ever catching a stream with no channel.
+        The channel comes with the frame rather than from server-side bookkeeping, so a frame
+        can never be filed under a channel the stream is no longer running.
         """
-        self._streaming_channel = channel
-        # Wire the server-side frame handler under the narrow stream-callback lock (the SDK
-        # acquisition thread reads it). The ChannelStreamBegin command already ran on the
-        # worker and started the camera stream; frames are dropped until this is set.
-        self.microscope.set_stream_callback(self._handle_streamed_image)
-
-    def stream_end(self) -> None:
-        "stop attributing streamed frames to a channel"
-        self._streaming_channel = None
-
-    def _handle_streamed_image(self, arg: "np.ndarray | bool") -> bool:
-        if isinstance(arg, bool):
-            should_stop = arg
-            if should_stop:
-                return True
-        else:
-            img = arg
-            assert self._streaming_channel is not None
-            self.image_store_threadpool.run(
-                self._store_new_image(
-                    img=img,
-                    pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
-                    channel_config=self._streaming_channel,
-                )
+        self.image_store_threadpool.run(
+            self._store_new_image(
+                img=img,
+                pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
+                channel_config=channel,
             )
-        return False
+        )
 
     def get_config_list(self) -> ConfigListResponse:
         """
@@ -602,13 +593,9 @@ class Core:
         except DisconnectError:
             error_internal("hardware disconnect")
 
-        # Check if streaming is currently active by looking at the stream callback. Read once
-        # and report the channel from that same read: the two are set together on the way in,
-        # but on the way out the stream is stopped by the command on the worker while the
-        # channel is cleared by the route callback that follows it. A status read landing in
-        # between must not hand a client a channel that is no longer streaming.
-        is_streaming = self.microscope.stream_callback is not None
-        streaming_channel = self._streaming_channel if is_streaming else None
+        # One locked read of the adapter for both answers, so a client can never be handed a
+        # stream with no channel or a channel that is not streaming.
+        stream = self.microscope.stream_state()
 
         # Busy state is owned by the single-owner worker (reject-on-busy): a command
         # in flight == busy. The status hatch reads it directly, never queuing.
@@ -632,8 +619,8 @@ class Core:
             # in a status read, which must never fail
             latest_imgs={key: entry.info for key, entry in dict(self.latest_images).items()},
             current_acquisition_id=current_acquisition_id,
-            is_streaming=is_streaming,
-            streaming_channel_handle=streaming_channel.handle if streaming_channel is not None else None,
+            is_streaming=stream is not None,
+            streaming_channel_handle=stream.channel.handle if stream is not None else None,
             is_busy=is_busy,
             busy_reasons=busy_reasons,
             last_acquisition_error=self._last_acquisition_error,

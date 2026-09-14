@@ -426,7 +426,6 @@ const MOCK_LEASE_REQUIRED = new Set([
     '/api/acquisition/start',
     '/api/action/calibrate_stage_xy_here',
     '/api/action/enter_loading_position',
-    '/api/action/establish_hardware_connection',
     '/api/action/laser_autofocus_calibrate',
     '/api/action/laser_autofocus_measure_displacement',
     '/api/action/laser_autofocus_move_to_target_offset',

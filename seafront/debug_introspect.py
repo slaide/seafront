@@ -59,7 +59,12 @@ def format_stack_dump(
     if microscope is not None:
         try:
             buf.write("\n--- microscope ---\n")
-            buf.write(f"stream_callback set: {microscope.stream_callback is not None}\n")
+            stream = microscope.stream_state()
+            buf.write(
+                "streaming: no\n"
+                if stream is None
+                else f"streaming: {stream.channel.handle} since {stream.started_at}\n"
+            )
         except Exception as e:
             buf.write(f"  (failed to read microscope state: {e!r})\n")
 

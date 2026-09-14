@@ -828,7 +828,6 @@ declare global {
     };
 
     type StreamChannelEndRequest = {
-        channel: AcquisitionChannelConfig;
         machine_config?: ConfigItem[];
         /** Target device name for request routing */
         target_device: string;

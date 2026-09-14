@@ -153,20 +153,19 @@ async def stream_channel_begin(
     body: StreamChannelBeginRequest, core: CoreDep
 ) -> StreamingStartedResponse:
     """begin streaming in the given channel"""
-    command = command_of(body, ChannelStreamBegin)
-    result = await core.run(command)
-    core.stream_begin(command.channel)
-    return result
+    return await core.run(command_of(body, ChannelStreamBegin))
 
 
 @api.post("/api/action/stream_channel_end", policy=HARDWARE)
 async def stream_channel_end(
     body: StreamChannelEndRequest, core: CoreDep
 ) -> BasicSuccessResponse:
-    """stop streaming"""
-    result = await core.run(command_of(body, ChannelStreamEnd))
-    core.stream_end()
-    return result
+    """
+    stop streaming
+
+    Takes no channel: the adapter knows what it is running, and stops that.
+    """
+    return await core.run(command_of(body, ChannelStreamEnd))
 
 
 @api.post("/api/action/turn_off_all_illumination", policy=HARDWARE)
@@ -235,7 +234,10 @@ async def machine_config_flush(
     )
 
 
-@api.post("/api/action/establish_hardware_connection", policy=HARDWARE)
+# Connecting is not a hardware write in any sense a lease is meant to protect: it is "are the
+# devices there?", and a no-op once they are. The one connect that does move the stage - the
+# cold one, which homes - is the server's own at startup, before any client can reach this.
+@api.post("/api/action/establish_hardware_connection", policy=READ)
 async def establish_hardware_connection(
     body: EstablishHardwareConnectionRequest, core: CoreDep
 ) -> BasicSuccessResponse:

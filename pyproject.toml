@@ -97,6 +97,7 @@ dev = [
     "pyright>=1.1.402",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
+    "httpx>=0.28,<0.29", # what starlette's TestClient drives an ASGI app through
 ]
 
 [tool.setuptools.package-data]

@@ -167,8 +167,6 @@ class MockMicroscope(Microscope):
     # Mock hardware state
     _current_position: Position = PrivateAttr(default_factory=lambda: Position(x_pos_mm=0.0, y_pos_mm=0.0, z_pos_mm=0.0))
     _is_homed: bool = PrivateAttr(default=False)
-    _streaming_channel: ChannelConfig | None = PrivateAttr(default=None)
-    _streaming_acquisition_config: sc.AcquisitionChannelConfig | None = PrivateAttr(default=None)
     _latest_images: dict[str, cmd.ImageStoreEntry] = PrivateAttr(default_factory=dict)
 
     # Per-axis movement parameters - loaded from firmware profile
@@ -413,12 +411,8 @@ class MockMicroscope(Microscope):
         logger.info("Mock microscope: closing connections")
 
         # Ensure streaming is stopped (safety measure - should be done via ChannelStreamEnd)
+        self._stream_stopped()
         self.main_camera.value.stop_streaming()
-
-        # Clean up streaming state
-        self._streaming_channel = None
-        self._streaming_acquisition_config = None
-        self.stream_callback = None
         self.is_connected = False
 
     async def home(self) -> None:
@@ -861,7 +855,7 @@ class MockMicroscope(Microscope):
             logger.info("Mock microscope: entering loading position")
 
             # Check if streaming is active
-            if self.stream_callback is not None:
+            if self.is_streaming:
                 cmd.error_internal(detail="Cannot enter loading position while camera is streaming - stop streaming first")
 
             # Simulate gradual movement to loading position (0, 0, 0)
@@ -874,7 +868,7 @@ class MockMicroscope(Microscope):
             logger.info("Mock microscope: leaving loading position")
 
             # Check if streaming is active
-            if self.stream_callback is not None:
+            if self.is_streaming:
                 cmd.error_internal(detail="Cannot leave loading position while camera is streaming - stop streaming first")
 
             # Move to center of plate (127.8mm width, ~80mm height)
@@ -967,7 +961,7 @@ class MockMicroscope(Microscope):
             logger.info(f"Mock microscope: snapping channel {command.channel.handle}")
 
             # Check if streaming is active
-            if self.stream_callback is not None:
+            if self.is_streaming:
                 cmd.error_internal(detail="Cannot take snapshot while camera is streaming")
 
             # Validate channel configuration for acquisition
@@ -1005,7 +999,7 @@ class MockMicroscope(Microscope):
             logger.info("Mock microscope: taking autofocus snapshot")
 
             # Check if streaming is active
-            if self.stream_callback is not None:
+            if self.is_streaming:
                 cmd.error_internal(detail="Cannot capture autofocus image while main camera is streaming")
 
             # Simulate imaging delay (autofocus typically uses shorter exposure ~5ms)
@@ -1045,7 +1039,7 @@ class MockMicroscope(Microscope):
             logger.info(f"Mock microscope: starting stream for channel {command.channel.handle}")
 
             # Check if already streaming
-            if self.stream_callback is not None:
+            if self.is_streaming:
                 cmd.error_internal("Streaming already active - stop current stream before starting a new one")
 
             # Validate channel configuration for acquisition
@@ -1056,29 +1050,29 @@ class MockMicroscope(Microscope):
             if not matching_configs:
                 cmd.error_internal(f"No channel config found for handle: {command.channel.handle}")
 
-            self._streaming_channel = matching_configs[0]
-            self._streaming_acquisition_config = command.channel
-
-            # Create wrapper to forward camera images to microscope's stream callback
-            def streaming_callback_wrapper(img: np.ndarray) -> None:
-                if self.stream_callback is not None:
-                    self.stream_callback(img)
-
-            # Delegate streaming to camera (camera manages its own thread)
-            self.main_camera.value.start_streaming(command.channel, callback=streaming_callback_wrapper)
+            # Marked as streaming before the camera starts, so the first frame already has
+            # somewhere to go; rolled back if the start fails.
+            self._stream_started(command.channel)
+            try:
+                self.main_camera.value.start_streaming(
+                    command.channel, callback=self._forward_frame
+                )
+            except Exception:
+                self._stream_stopped()
+                raise
 
             return cmd.StreamingStartedResponse(channel=command.channel)  # type: ignore
 
         elif isinstance(command, cmd.ChannelStreamEnd):
             logger.info("Mock microscope: ending channel stream")
 
+            # Clearing the state is what stops frames being forwarded; it also says what was
+            # streaming, so the caller never has to name the channel.
+            if self._stream_stopped() is None:
+                cmd.error_internal(detail="not currently streaming")
+
             # Stop camera streaming (camera manages its own thread cleanup)
             self.main_camera.value.stop_streaming()
-
-            # Clean up streaming state
-            self._streaming_channel = None
-            self._streaming_acquisition_config = None
-            self.stream_callback = None
 
             return cmd.BasicSuccessResponse()  # type: ignore
 

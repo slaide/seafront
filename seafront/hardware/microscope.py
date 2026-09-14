@@ -7,12 +7,13 @@ for different microscope implementations (SquidAdapter, MockMicroscope, etc.).
 
 import abc
 import threading
+import time
 import typing as tp
 from contextlib import contextmanager
 
 import numpy as np
 import seaconfig as sc
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from seafront.config.basics import (
     ChannelConfig,
@@ -63,6 +64,34 @@ class Locked[T]:
 
 
 
+class StreamState(BaseModel):
+    """
+    What the camera is streaming right now, or None when it is not streaming.
+
+    Frozen, and the adapter's own: whoever reads it gets the channel and the moment it
+    started as one snapshot, so a status read cannot catch a stream that has a channel but is
+    not running, or the other way round.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    channel: sc.AcquisitionChannelConfig
+    "the channel the stream was started with, and whose illumination is currently on"
+    started_at: float
+    "unix time, for the record; nothing decides anything from it"
+
+
+type FrameSink = tp.Callable[[np.ndarray, sc.AcquisitionChannelConfig], None]
+"""
+what a streamed frame is handed to: the image, and the channel it belongs to
+
+Installed once with set_frame_sink() and left there. The stream state, not the presence of a
+sink, is what says whether frames should flow - installing and removing a callback around
+each stream is what used to drop every frame between the camera starting and the server
+getting round to registering interest in it.
+"""
+
+
 class Microscope(BaseModel, abc.ABC):
     """
     Abstract base class for microscope implementations.
@@ -77,22 +106,23 @@ class Microscope(BaseModel, abc.ABC):
     is_connected: bool = False
     is_in_loading_position: bool = False
 
-    stream_callback: tp.Callable[[np.ndarray | bool], bool] | None = Field(default=None)
-    """
-    call with either:
-        image, then return if should stop or not
-        or call with bool, which indicates if should stop (return value then ignored)
-
-    Touched from three threads (the worker sets/clears it via ChannelStream begin/end,
-    the camera SDK's acquisition thread reads it to forward frames), so all access goes
-    through set_stream_callback()/read_stream_callback() under _stream_callback_lock.
-    """
-
     last_state: AdapterState | None = None
 
-    _stream_callback_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
-    """The one remaining cross-thread guard: serializes access to stream_callback between
-    the worker and the SDK frame-callback thread."""
+    _stream: StreamState | None = PrivateAttr(default=None)
+    """
+    the one answer to "is the camera streaming, and with what"
+
+    Written by the worker inside ChannelStreamBegin/End, read by the SDK's frame-callback
+    thread and by every status read, all under _stream_lock.
+    """
+
+    _frame_sink: FrameSink | None = PrivateAttr(default=None)
+    "where streamed frames go; installed once by whoever owns this adapter"
+
+    _stream_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    """The one remaining cross-thread guard: serializes the stream state between the worker
+    and the SDK frame-callback thread. Never held while taking the camera lock - the capture
+    callback would then deadlock against stop_streaming()."""
 
     _current_cancel: threading.Event | None = PrivateAttr(default=None)
     """Cancel event of the command currently executing, set by the worker. Single
@@ -100,15 +130,49 @@ class Microscope(BaseModel, abc.ABC):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def set_stream_callback(self, cb: tp.Callable[[np.ndarray | bool], bool] | None) -> None:
-        """Set or clear the streaming frame callback (worker thread)."""
-        with self._stream_callback_lock:
-            self.stream_callback = cb
+    # -- streaming: the adapter owns whether it is happening ----------------------------------
 
-    def read_stream_callback(self) -> tp.Callable[[np.ndarray | bool], bool] | None:
-        """Read the current streaming frame callback (SDK acquisition thread)."""
-        with self._stream_callback_lock:
-            return self.stream_callback
+    def set_frame_sink(self, sink: FrameSink | None) -> None:
+        """Install the one consumer of streamed frames. Done once, when the adapter is built."""
+        self._frame_sink = sink
+
+    def stream_state(self) -> StreamState | None:
+        """What is streaming, or None. The single source of truth, for status and for policy."""
+        with self._stream_lock:
+            return self._stream
+
+    @property
+    def is_streaming(self) -> bool:
+        return self.stream_state() is not None
+
+    def _stream_started(self, channel: sc.AcquisitionChannelConfig) -> None:
+        """
+        Mark the stream as running. Adapters call this from ChannelStreamBegin *before*
+        starting the camera, so no frame arrives while the adapter still thinks it is idle.
+        A begin that then fails must call _stream_stopped() on its way out.
+        """
+        with self._stream_lock:
+            self._stream = StreamState(channel=channel, started_at=time.time())
+
+    def _stream_stopped(self) -> StreamState | None:
+        """Mark the stream as over and hand back what it was, or None if nothing was running."""
+        with self._stream_lock:
+            previous, self._stream = self._stream, None
+            return previous
+
+    def _forward_frame(self, img: np.ndarray) -> None:
+        """
+        Hand one frame to the sink. Runs on the camera SDK's acquisition thread.
+
+        Reads the state and the sink under the lock and calls out from outside it, so a slow
+        consumer can never hold up a stream stopping.
+        """
+        with self._stream_lock:
+            stream = self._stream
+            sink = self._frame_sink
+        if stream is None or sink is None:
+            return
+        sink(img, stream.channel)
 
     def set_current_cancel(self, cancel: threading.Event | None) -> None:
         """Set (or clear) the cancel event for the in-flight command. Called by the

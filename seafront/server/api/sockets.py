@@ -2,9 +2,11 @@
 The websockets: the same operations as the HTTP routes, but pushed rather than polled.
 
 Each socket opens with a handshake that says which microscope the client means and, for the
-one socket that drives the hardware, carries the device lease. After that every inbound
-message is parsed through a model in `messages.py` before anything acts on it - a socket
-takes client JSON exactly as sceptically as a POST body does.
+one socket that drives the hardware, carries the device lease. `socketspec.socket()` does all
+of that before a handler here runs, so what is left in this module is only what each socket
+does once it is open. After that every inbound message is parsed through a model in
+`messages.py` before anything acts on it - a socket takes client JSON exactly as sceptically
+as a POST body does.
 
 Close codes mirror the HTTP refusals: 4421 for a misdirected request (421), 4423 for a
 missing or foreign device lease (423).
@@ -12,11 +14,10 @@ missing or foreign device lease (423).
 
 import asyncio
 import time
-import typing as tp
 
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from seafront.logger import logger
 from seafront.server.api.messages import (
@@ -31,8 +32,7 @@ from seafront.server.api.messages import (
     SocketLocked,
     SocketMisdirected,
 )
-from seafront.server.api.routing import get_core
-from seafront.server.api.socketspec import Frame, socket
+from seafront.server.api.socketspec import Frame, send, send_bytes, socket
 from seafront.server.commands import (
     AcquisitionStatusOut,
     ChannelSnapProgressiveStatus,
@@ -62,84 +62,6 @@ FAILURE = Frame("failure", "something went wrong; the socket stays open", Socket
 MISDIRECTED_CLOSE = {4421: "target_device named another microscope", 4400: "malformed message"}
 
 
-async def send(ws: WebSocket, payload: BaseModel | dict[str, tp.Any]) -> bool:
-    "send one JSON message; False once the socket has gone away"
-    try:
-        await ws.send_json(
-            payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload
-        )
-        return True
-    except Exception as exc:
-        logger.debug(f"websocket send_json failed: {exc}")
-        return False
-
-
-async def send_bytes(ws: WebSocket, payload: bytes) -> bool:
-    "send one binary message; False once the socket has gone away"
-    try:
-        await ws.send_bytes(payload)
-        return True
-    except Exception as exc:
-        logger.debug(f"websocket send_bytes failed: {exc}")
-        return False
-
-
-async def handshake(ws: WebSocket, core: Core) -> SocketHandshake | None:
-    """
-    Read and check the opening message.
-
-    Returns None once the socket has been closed, which is the caller's cue to return.
-    """
-    try:
-        opening = SocketHandshake.model_validate(await ws.receive_json())
-    except (ValidationError, ValueError) as exc:
-        await send(
-            ws,
-            SocketFailure(
-                error=SocketErrorKind.INTERNAL_ERROR,
-                message=f"first message must be a handshake object: {exc}",
-                timestamp=time.time(),
-            ),
-        )
-        await ws.close(code=4400)
-        return None
-
-    if opening.target_device and opening.target_device != core.microscope_name:
-        await send(
-            ws,
-            SocketMisdirected(
-                message=f"target_device mismatch: request targets '{opening.target_device}' but this server is '{core.microscope_name}'"
-            ),
-        )
-        await ws.close(code=4421)
-        return None
-
-    return opening
-
-
-async def require_lease(ws: WebSocket, core: Core, opening: SocketHandshake) -> bool:
-    """
-    The lease rule of the hardware routes, in websocket clothing.
-
-    Returns False once the socket has been closed with 4423, mirroring the 423 a POST
-    would have got.
-    """
-    decision = core.lock.check(opening.lock_token)
-    if decision.permitted:
-        return True
-
-    await send(
-        ws,
-        SocketLocked(
-            reason=decision.reason,
-            owner=decision.state.owner,
-            message=decision.message,
-        ),
-    )
-    await ws.close(code=4423)
-    return False
-
-
 @socket(
     router,
     "/ws/get_info/current_state",
@@ -154,41 +76,32 @@ async def require_lease(ws: WebSocket, core: Core, opening: SocketHandshake) -> 
     ],
     close_codes=MISDIRECTED_CLOSE,
 )
-async def ws_current_state(ws: WebSocket):
+async def ws_current_state(ws: WebSocket, core: Core, opening: SocketHandshake):
     """
     get current state of the microscope
 
     after the handshake, every message received triggers one state reply; the contents of
     that message are ignored. A websocket wrapper around /api/get_info/current_state.
     """
-    core = get_core(ws)
-    await ws.accept()
-    try:
-        if await handshake(ws, core) is None:
-            return
+    while True:
+        message = await ws.receive()
+        if message.get("type") in {"websocket.disconnect", "websocket.close"}:
+            break
 
-        while True:
-            message = await ws.receive()
-            if message.get("type") in {"websocket.disconnect", "websocket.close"}:
-                break
-
-            try:
-                await send(ws, await core.get_current_state())
-            except Exception as e:
-                # hardware disconnects and the like: report and let the client decide
-                await send(
-                    ws,
-                    SocketFailure(
-                        error=SocketErrorKind.HARDWARE_DISCONNECT
-                        if "disconnect" in str(e).lower()
-                        else SocketErrorKind.INTERNAL_ERROR,
-                        message=str(e),
-                        timestamp=time.time(),
-                    ),
-                )
-
-    except WebSocketDisconnect:
-        pass
+        try:
+            await send(ws, await core.get_current_state())
+        except Exception as e:
+            # hardware disconnects and the like: report and let the client decide
+            await send(
+                ws,
+                SocketFailure(
+                    error=SocketErrorKind.HARDWARE_DISCONNECT
+                    if "disconnect" in str(e).lower()
+                    else SocketErrorKind.INTERNAL_ERROR,
+                    message=str(e),
+                    timestamp=time.time(),
+                ),
+            )
 
 
 @socket(
@@ -216,7 +129,7 @@ async def ws_current_state(ws: WebSocket):
     ],
     close_codes=MISDIRECTED_CLOSE,
 )
-async def ws_acquired_image(ws: WebSocket):
+async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake):
     """
     get acquired image data
 
@@ -227,63 +140,54 @@ async def ws_acquired_image(ws: WebSocket):
      - the client sends a downsampling factor as a text frame, and the server replies with
        the pixels as one binary frame
     """
-    core = get_core(ws)
-    await ws.accept()
-    try:
-        if await handshake(ws, core) is None:
-            return
+    while True:
+        channel_handle = await ws.receive_text()
 
-        while True:
-            channel_handle = await ws.receive_text()
+        img = core.latest_images.get(channel_handle)
+        if img is None:
+            if not await send(ws, NoImageYet()):
+                break
+            continue
 
-            img = core.latest_images.get(channel_handle)
-            if img is None:
-                if not await send(ws, NoImageYet()):
-                    break
-                continue
+        img_data = img._img
+        info = AcquiredImageInfo(
+            channel_handle=channel_handle,
+            width=img_data.shape[1],
+            height=img_data.shape[0],
+            camera_bit_depth=img.bit_depth,
+            bit_depth=img_data.dtype.itemsize * 8,
+        )
+        if not await send(ws, info):
+            break
 
-            img_data = img._img
-            info = AcquiredImageInfo(
-                channel_handle=channel_handle,
-                width=img_data.shape[1],
-                height=img_data.shape[0],
-                camera_bit_depth=img.bit_depth,
-                bit_depth=img_data.dtype.itemsize * 8,
+        raw_factor = await ws.receive_text()
+        try:
+            factor = int(raw_factor)
+        except ValueError:
+            await send(
+                ws,
+                SocketFailure(
+                    error=SocketErrorKind.INTERNAL_ERROR,
+                    message=f"downsampling factor must be an integer, got {raw_factor!r}",
+                    timestamp=time.time(),
+                ),
             )
-            if not await send(ws, info):
-                break
+            continue
+        if factor < 1:
+            await send(
+                ws,
+                SocketFailure(
+                    error=SocketErrorKind.INTERNAL_ERROR,
+                    message=f"downsampling factor must be at least 1, got {factor}",
+                    timestamp=time.time(),
+                ),
+            )
+            continue
 
-            raw_factor = await ws.receive_text()
-            try:
-                factor = int(raw_factor)
-            except ValueError:
-                await send(
-                    ws,
-                    SocketFailure(
-                        error=SocketErrorKind.INTERNAL_ERROR,
-                        message=f"downsampling factor must be an integer, got {raw_factor!r}",
-                        timestamp=time.time(),
-                    ),
-                )
-                continue
-            if factor < 1:
-                await send(
-                    ws,
-                    SocketFailure(
-                        error=SocketErrorKind.INTERNAL_ERROR,
-                        message=f"downsampling factor must be at least 1, got {factor}",
-                        timestamp=time.time(),
-                    ),
-                )
-                continue
-
-            if not await send_bytes(
-                ws, np.ascontiguousarray(img_data[::factor, ::factor]).tobytes()
-            ):
-                break
-
-    except WebSocketDisconnect:
-        pass
+        if not await send_bytes(
+            ws, np.ascontiguousarray(img_data[::factor, ::factor]).tobytes()
+        ):
+            break
 
 
 @socket(
@@ -297,37 +201,28 @@ async def ws_acquired_image(ws: WebSocket):
     ],
     close_codes=MISDIRECTED_CLOSE,
 )
-async def ws_acquisition_status(ws: WebSocket):
+async def ws_acquisition_status(ws: WebSocket, core: Core, opening: SocketHandshake):
     """
     watch a running acquisition
 
     after the handshake, each message names the acquisition to report on and is answered with
     one status.
     """
-    core = get_core(ws)
-    await ws.accept()
-    try:
-        if await handshake(ws, core) is None:
-            return
+    while True:
+        raw = await ws.receive_json()
+        try:
+            query = AcquisitionStatusQuery.model_validate(raw)
+        except ValidationError as exc:
+            await send(ws, {"error": f"expected an acquisition_id: {exc}"})
+            continue
 
-        while True:
-            raw = await ws.receive_json()
-            try:
-                query = AcquisitionStatusQuery.model_validate(raw)
-            except ValidationError as exc:
-                await send(ws, {"error": f"expected an acquisition_id: {exc}"})
-                continue
-
-            try:
-                await send(ws, await core.get_acquisition_status(query.acquisition_id))
-            except Exception as e:
-                detail = getattr(e, "detail", None)
-                if detail is None:
-                    logger.warning(f"Error getting acquisition status: {e}")
-                await send(ws, {"error": str(detail if detail is not None else e)})
-
-    except WebSocketDisconnect:
-        pass
+        try:
+            await send(ws, await core.get_acquisition_status(query.acquisition_id))
+        except Exception as e:
+            detail = getattr(e, "detail", None)
+            if detail is None:
+                logger.warning(f"Error getting acquisition status: {e}")
+            await send(ws, {"error": str(detail if detail is not None else e)})
 
 
 @socket(
@@ -346,26 +241,21 @@ async def ws_acquisition_status(ws: WebSocket):
     ],
     close_codes=MISDIRECTED_CLOSE | {4423: "device lease missing or held by another client"},
 )
-async def ws_snap_selected_channels_progressive(ws: WebSocket):
+async def ws_snap_selected_channels_progressive(
+    ws: WebSocket, core: Core, opening: SocketHandshake
+):
     """
     snap every selected channel, reporting each one as it completes
 
     The handshake must carry lock_token: this socket drives the hardware, so it is gated
-    exactly like POST /api/action/snap_selected_channels. The second message is the protocol
-    to snap. Each completed channel image is immediately available from the normal image
-    retrieval endpoints.
+    exactly like POST /api/action/snap_selected_channels (requires_lease on the declaration
+    above is what enforces that). The first message after it is the protocol to snap. Each
+    completed channel image is immediately available from the normal image retrieval
+    endpoints.
     """
-    core = get_core(ws)
-    await ws.accept()
     callback_id = make_unique_acquisition_id()
 
     try:
-        opening = await handshake(ws, core)
-        if opening is None:
-            return
-        if not await require_lease(ws, core, opening):
-            return
-
         try:
             request = ProgressiveSnapRequest.model_validate({"config_file": await ws.receive_json()})
         except ValidationError as exc:
@@ -413,7 +303,7 @@ async def ws_snap_selected_channels_progressive(ws: WebSocket):
             )
 
     except WebSocketDisconnect:
-        pass
+        raise  # a client leaving mid-snap is not an error; the gate swallows it
     except Exception as e:
         logger.error(f"Progressive snap WebSocket error: {e}")
     finally:

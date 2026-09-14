@@ -34,6 +34,7 @@ seafront/
 │       ├── socketspec.py  how a socket declares its frames
 │       ├── tags.py        /docs grouping
 │       ├── info.py  actions.py  acquisition.py  lock.py  sockets.py   the route table
+│       ├── socketspec.py  the socket gate: declares each socket AND enforces it
 │
 ├── config/
 │   ├── registry.py        ConfigRegistry — decentralized config registration
@@ -150,8 +151,18 @@ async def move_to(body: MoveToRequest, core: CoreDep) -> BasicSuccessResponse:
 ```
 
 That one line of policy does three jobs that used to be done in three places: it is enforced
-at request time, it decides which error responses the route documents, and it is published as
-`x-requires-device-lease` in the schema. They cannot drift, because they are the same object.
+at request time, it decides which error responses the route documents, and all three of its
+parts are published in the schema (`x-requires-device-lease`, `x-allowed-while-acquiring`,
+`x-allowed-while-streaming`). They cannot drift, because they are the same object.
+
+`tests/test_route_policy.py` drives every route against every state and holds the result
+against those published flags — and, separately, holds the published flags against a list of
+what they are *meant* to be, because a consistency check alone stays green when somebody
+relaxes a Policy: the flag and the enforcement move together.
+
+Request bodies are strict (`Envelope` sets `extra="forbid"`), so a field this server does not
+know is a 422 rather than something silently dropped. Only the top level: nested seaconfig
+models keep their own rules.
 
 The six policies are the whole access model:
 
@@ -258,8 +269,9 @@ microscope".
 **Kept locks.** `Locked[T]` (in `microscope.py`) wraps a value with an `RLock` and a
 `locked(blocking=...)` context manager that yields `None` if it can't acquire; it survives for
 the per-camera guards that are read off the worker thread (e.g. `get_hardware_limits`),
-alongside the microcontroller's own internal lock and the narrow stream-callback lock. The
-old nested `Microscope.lock()` / `get_lock_reasons()` hierarchy is gone.
+alongside the microcontroller's own internal lock and the narrow `_stream_lock` that guards
+the adapter's stream state. The old nested `Microscope.lock()` / `get_lock_reasons()`
+hierarchy is gone.
 
 **Rules for anything running on a hardware/SDK-owned thread (e.g. a camera streaming
 callback):**
@@ -269,7 +281,9 @@ callback):**
   acquisition thread with **no timeout**; if your callback blocks on a lock the stopping
   thread holds, you deadlock forever. (This is exactly the bug that motivated
   `debug_introspect.py`.) The streaming callback in `squid.py` snapshots what it needs (e.g.
-  pixel format) up front and does a lock-free, non-blocking hand-off.
+  pixel format) up front, and `Microscope._forward_frame` reads the stream state under
+  `_stream_lock` and then calls the sink from *outside* it, so a slow consumer can never hold
+  up a stream stopping.
 - Blocking C/FFI calls can hang indefinitely and cannot be interrupted in-process — only
   bounded-timeout SDK calls (like `get_image(timeout=...)`) are safe to wait on.
 
@@ -297,12 +311,32 @@ lease's `lock_token` (an envelope field, like `target_device`) - an unheld lease
 (`reason: "not_held"`) rather than letting everyone through, and a lease somebody else holds
 denies with `reason: "held_by_other"` plus the owner. Opted out: reads, `acquisition/cancel`,
 `cancel_current` (safety hatch: cancel is never gated), the acquisition config file routes
-(they write protocol files, not hardware) and `/api/lock/*`.
+(they write protocol files, not hardware), `establish_hardware_connection` (it is "are the
+devices there?", and the cold connect that homes the stage is the server's own at startup)
+and `/api/lock/*`.
 
 `DeviceLock.check(token)` makes that decision and renews the holder's expiry in one atomic
 step; every request calls it, so a holder's lease is kept alive by anything it does, gated or
-not. Expiry is lazy and never fires while the worker is busy. `/api/lock/break` is open to
-anyone and logs owner + reason at WARNING. Coordination, not auth.
+not. Expiry is lazy, and the *device being in use* renews it too - a command on the worker or
+a running camera stream is by definition the holder's work, since nobody else could have
+started it. That is a renewal and not a freeze: a lease that were merely pinned open while
+busy would lapse the instant a six-hour run ended, which is the one moment the holder still
+needs it (to park the stage, to kill the illumination). A stream matters here as much as the
+worker does, because `ChannelStreamBegin` gives the worker slot straight back and the camera
+then runs for as long as the client wants. `/api/lock/break` is open to anyone and logs owner
++ reason at WARNING. Coordination, not auth.
+
+## Streaming
+
+The adapter owns it. `Microscope._stream` (a frozen `StreamState`: channel + start time,
+under `_stream_lock`) is set inside `ChannelStreamBegin` *before* the camera starts and
+cleared inside `ChannelStreamEnd`, and `stream_state()` is what both `get_current_state` and
+the policy gate read. `ChannelStreamEnd` carries no channel: it stops whatever is running and
+turns off the illumination of the channel the adapter actually lit.
+
+The frame sink is installed once, by `Core.__init__`, and `_forward_frame` gates on the
+stream state. Nothing installs or removes a callback around a stream, so there is no window
+where the camera is producing frames that nobody is listening for.
 
 A gated route is POST: a GET carries no body, so it could never carry `lock_token`.
 `/ws/action/snap_selected_channels_progressive` drives hardware too and takes the token in its

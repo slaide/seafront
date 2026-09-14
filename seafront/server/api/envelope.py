@@ -8,11 +8,18 @@ the envelope back off, so the hardware layer only ever sees a command that knows
 about HTTP.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Envelope(BaseModel):
     """fields every /api request carries, regardless of what it asks the microscope to do"""
+
+    # A field this server does not know is a 422, not something to quietly drop. Silently
+    # ignoring it means a client can ask for something for months and never be told it is
+    # not happening - two of this repo's own tests passed `framerate_hz` to
+    # stream_channel_begin, which has never had such a field. Only the top level is strict:
+    # nested models (seaconfig's protocol and channel configs) keep their own rules.
+    model_config = ConfigDict(extra="forbid")
 
     target_device: str = Field(..., description="Target device name for request routing")
     lock_token: str | None = Field(

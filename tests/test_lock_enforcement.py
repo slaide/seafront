@@ -51,6 +51,10 @@ UNGATED_ROUTES = {
     # writes a protocol file, not the microscope: preparing a protocol while somebody else
     # images is legitimate
     "/api/acquisition/config_store",
+    # "are we connected?", and connect if not. The connect that actually moves the stage is
+    # the server's own at startup (see __main__), so by the time any client can call this it
+    # is a presence check.
+    "/api/action/establish_hardware_connection",
     # safety hatch: stopping the hardware must never depend on holding a lease
     "/api/acquisition/cancel",
     "/api/action/cancel_current",
@@ -64,7 +68,6 @@ UNGATED_ROUTES = {
 # hardware routes that are safe (and quick) to actually run on the mock, used to prove the
 # gate lets the holder through rather than refusing everybody
 SAFE_TO_RUN = [
-    "/api/action/establish_hardware_connection",
     "/api/action/turn_off_all_illumination",
     "/api/action/machine_config_flush",
     "/api/action/move_to",
@@ -238,7 +241,6 @@ def bodies(server) -> dict[str, dict]:
         "/api/acquisition/start": {"config_file": protocol},
         "/api/action/calibrate_stage_xy_here": {},
         "/api/action/enter_loading_position": {},
-        "/api/action/establish_hardware_connection": {},
         "/api/action/laser_autofocus_calibrate": {},
         "/api/action/laser_autofocus_measure_displacement": {"config_file": protocol},
         "/api/action/laser_autofocus_move_to_target_offset": {
@@ -254,8 +256,9 @@ def bodies(server) -> dict[str, dict]:
         "/api/action/snap_channel": {"channel": channel},
         "/api/action/snap_reflection_autofocus": {},
         "/api/action/snap_selected_channels": {"config_file": protocol},
-        "/api/action/stream_channel_begin": {"channel": channel, "framerate_hz": 1.0},
-        "/api/action/stream_channel_end": {"channel": channel},
+        "/api/action/stream_channel_begin": {"channel": channel},
+        # nothing: the adapter knows what it lit, so ending names no channel
+        "/api/action/stream_channel_end": {},
         "/api/action/turn_off_all_illumination": {},
     }
 
@@ -467,13 +470,85 @@ class TestLeaseLifetimeOverHttp:
         assert status == 200, (status, response)
 
 
+@pytest.fixture
+def no_stream(server):
+    """each test here ends with the camera stopped, however it left it"""
+    yield
+    break_lease()
+    token = lease(owner="stream cleanup")
+    if post("/api/get_info/current_state")[1]["is_streaming"]:
+        post("/api/action/stream_channel_end", {}, token=token)
+    break_lease()
+
+
+class TestLeaseWhileTheCameraStreams:
+    """
+    A live stream is the device in use, even though the worker is idle for its whole duration.
+
+    ChannelStreamBegin gives the worker slot back as soon as it returns - that is the point,
+    since live view is meant to be interleaved with moves - so "a command is in flight" is
+    false for the next ten minutes of streaming. A lease that watches only the worker lapses
+    under a running camera: a stranger takes the microscope, drives the stage through
+    somebody else's live view, and the client that started the stream is refused when it
+    tries to stop its own.
+    """
+
+    def test_the_lease_outlives_a_stream_longer_than_its_ttl(self, bodies, unlocked, no_stream):
+        token = lease(owner="alice", ttl_s=5)
+        status, response = post(
+            "/api/action/stream_channel_begin",
+            bodies["/api/action/stream_channel_begin"],
+            token=token,
+        )
+        assert status == 200, (status, response)
+
+        time.sleep(7)  # past the 5s ttl, with no token-bearing request in between
+
+        state = post("/api/get_info/current_state")[1]
+        assert state["is_streaming"] is True, state
+        assert state["lock"]["held"] is True and state["lock"]["owner"] == "alice", state["lock"]
+
+        # and nobody walks in while it runs
+        assert acquire("bob")[0] == 423
+        assert post("/api/action/move_to", bodies["/api/action/move_to"])[0] == 423
+
+        status, response = post("/api/action/stream_channel_end", {}, token=token)
+        assert status == 200, f"the holder could not stop its own stream: {status} {response}"
+
+    def test_the_ttl_runs_again_once_the_stream_stops(self, bodies, unlocked, no_stream):
+        """
+        in use renews the lease, it does not pin it open forever
+
+        The countdown restarts at the first request that finds the microscope idle, not at
+        the instant the stream stopped: expiry is lazy, so there is no moment in between at
+        which the lease could have noticed. Which way to round that is the whole question,
+        and it rounds in the holder's favour - a lease that outlives its owner by one TTL
+        costs somebody a `/api/lock/break`, where one that expires early costs somebody a
+        half-finished plate.
+        """
+        token = lease(owner="alice", ttl_s=5)
+        assert post(
+            "/api/action/stream_channel_begin",
+            bodies["/api/action/stream_channel_begin"],
+            token=token,
+        )[0] == 200
+        assert post("/api/action/stream_channel_end", {}, token=token)[0] == 200
+
+        assert post("/api/lock/status")[1]["held"] is True  # the countdown starts here
+        time.sleep(6)
+        status, response = post("/api/lock/status")
+        assert status == 200 and response["held"] is False, response
+
+
 # --------------------------------------------------------------------------------------------
 # websocket
 
 
-def ws_handshake(token: str | None) -> tuple[dict | None, int | None]:
+def ws_handshake(
+    token: str | None, path: str = "/ws/action/snap_selected_channels_progressive"
+) -> tuple[dict | None, int | None]:
     """
-    open the progressive-snap socket, send its init message, return (first reply, close code)
+    open a socket, send its init message, return (first reply, close code)
 
     The reply is None when the server sent nothing before closing. The close code is None while
     the socket is still open.
@@ -481,7 +556,7 @@ def ws_handshake(token: str | None) -> tuple[dict | None, int | None]:
     init: dict = {"target_device": MOCK}
     if token is not None:
         init["lock_token"] = token
-    with ws_connect(f"{WS_SERVER}/ws/action/snap_selected_channels_progressive") as ws:
+    with ws_connect(f"{WS_SERVER}{path}") as ws:
         ws.send(json.dumps(init))
         try:
             reply = json.loads(ws.recv(timeout=10))
@@ -498,6 +573,23 @@ def ws_handshake(token: str | None) -> tuple[dict | None, int | None]:
 
 class TestHardwareWebsocket:
     """the progressive snap socket drives the hardware, so it needs the lease too"""
+
+    def test_every_socket_that_says_it_is_gated_actually_refuses(self, gated_channels, unlocked):
+        """
+        The sweep, not the one hardcoded path.
+
+        A socket's gate used to be declared in one place (the spec `socket()` records for
+        asyncapi.json) and enforced in another (a `require_lease()` call written by hand
+        inside the handler), so a channel could advertise 4423 and refuse nobody. The
+        declaration is what this reads, so a socket that declares the gate and does not
+        enforce it fails here.
+        """
+        assert gated_channels, "no gated sockets at all - the sweep would prove nothing"
+        for path in gated_channels:
+            reply, code = ws_handshake(None, path)
+            assert code == 4423, (path, reply, code)
+            assert reply is not None and reply["error"] == "device_locked", (path, reply)
+            assert reply["reason"] == LockReason.NOT_HELD, (path, reply)
 
     def test_refused_without_a_lease(self, unlocked):
         reply, code = ws_handshake(None)

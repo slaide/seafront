@@ -117,9 +117,15 @@ class DeviceLock:
     """
     Single lease with owner label, secret token and expiry.
 
-    Expiry is evaluated lazily. A lease is live while `now < expires_at`, OR while the worker
-    is busy: only the holder can submit while locked, so a running job is the holder's and an
-    hour-long acquisition can't lose its lease. Every token-bearing request renews the expiry.
+    Expiry is evaluated lazily. Every token-bearing request renews it, and so does the device
+    being in use: only the holder can start anything, so a command on the worker or a running
+    camera stream is the holder's work and counts as the holder using its lease.
+
+    Renewed, not frozen. Pinning the expiry while the device is busy and letting it fire the
+    moment the device goes idle loses the lease at the worst possible instant - the client
+    that ran a six-hour acquisition is refused the command that parks the stage afterwards,
+    and whoever asks next owns the microscope. Nothing the client can do would prevent that
+    either: it watches its own run over a websocket and sends no renewing request for hours.
     """
 
     DEFAULT_TTL_S: float = 600.0
@@ -127,12 +133,13 @@ class DeviceLock:
 
     def __init__(
         self,
-        worker_is_busy: tp.Callable[[], bool],
+        device_in_use: tp.Callable[[], bool],
         *,
         default_ttl_s: float = DEFAULT_TTL_S,
         clock: tp.Callable[[], float] = time.monotonic,
     ) -> None:
-        self._worker_is_busy = worker_is_busy
+        self._device_in_use = device_in_use
+        "is the microscope doing something right now (worker busy, or camera streaming)"
         self._default_ttl_s = default_ttl_s
         self._clock = clock
         self._mutex = threading.Lock()
@@ -142,6 +149,8 @@ class DeviceLock:
         self._ttl_s: float = default_ttl_s
         self._expires_mono: float = 0.0
         self._expires_wall: dt.datetime | None = None
+        self._was_in_use: bool = False
+        "whether the device was working the last time anything asked; see _purge_expired"
 
     # -- internals (call with self._mutex held) --------------------------------------------
 
@@ -151,11 +160,35 @@ class DeviceLock:
         self._owner = None
         self._expires_mono = 0.0
         self._expires_wall = None
+        self._was_in_use = False
 
     def _purge_expired(self) -> None:
         if self._token is None:
             return
-        if self._clock() >= self._expires_mono and not self._worker_is_busy():
+        # The device being used IS the holder using its lease: only the holder can start
+        # anything, so a command on the worker or a running camera stream is the holder's
+        # work. That renews, which is what makes the TTL "idle for this long" rather than
+        # "silent for this long".
+        #
+        # `_was_in_use` is what makes a single observation enough. Expiry is judged lazily,
+        # when something asks, so between two questions the lease cannot watch the device
+        # start and stop again; carrying the last reading forward means a six-hour run needs
+        # one status read somewhere in the middle rather than a client polling all night.
+        #
+        # Renewing here rather than in check() is also deliberate: it is the device working
+        # that earns the time, not whoever happened to ask, so a stranger's refused request
+        # cannot shorten a lease it does not hold.
+        # The countdown therefore restarts at the first question that finds the device idle,
+        # not at the instant it went idle - there is no moment in between at which anything
+        # here runs. That rounds in the holder's favour by up to one TTL, which is the right
+        # way round: a lease that outlives its owner costs somebody a /api/lock/break, one
+        # that expires early costs somebody a half-finished plate.
+        in_use = self._device_in_use()
+        if in_use or self._was_in_use:
+            self._was_in_use = in_use
+            self._renew()
+            return
+        if self._clock() >= self._expires_mono:
             self._clear()
 
     def _renew(self) -> None:

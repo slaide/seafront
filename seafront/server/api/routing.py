@@ -118,7 +118,7 @@ def admit(core: Core, body: Envelope, policy: Policy) -> None:
     if (not policy.allow_while_acquisition_is_running) and core.acquisition_is_running:
         raise RefusedError(400, "cannot run this command while acquisition is running")
 
-    if (not policy.allow_while_streaming) and core.microscope.stream_callback is not None:
+    if (not policy.allow_while_streaming) and core.microscope.is_streaming:
         raise RefusedError(400, "cannot run this command while live streaming is active")
 
     # an empty target_device is the bypass a client uses before it knows the device name
@@ -202,11 +202,17 @@ class Api:
                 summary=summary,
                 tags=tags if tags is not None else self.tags,  # type: ignore[arg-type]
                 responses=responses,
-                # x-requires-device-lease is the machine-readable answer to "is this a
-                # hardware write?". Clients read it to know what needs a lease;
-                # tests/test_lock_enforcement.py reads it to prove every write route
-                # actually refuses without one.
-                openapi_extra={"x-requires-device-lease": policy.requires_lease},
+                # The whole Policy, published. x-requires-device-lease is the
+                # machine-readable answer to "is this a hardware write?"; the other two say
+                # when the route may run at all. Clients read them to know what needs a
+                # lease and what to grey out mid-run; tests/test_route_policy.py reads them
+                # to drive every route against every state, so a policy that is documented
+                # but not enforced (or enforced but not documented) fails the sweep.
+                openapi_extra={
+                    "x-requires-device-lease": policy.requires_lease,
+                    "x-allowed-while-acquiring": policy.allow_while_acquisition_is_running,
+                    "x-allowed-while-streaming": policy.allow_while_streaming,
+                },
             )
             return fn
 

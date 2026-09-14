@@ -5,8 +5,8 @@ worker.
 The rule these tests pin: driving the hardware always needs a lease. An unheld lease is a
 refusal (`not_held`), not a free pass, so "nobody locked it" and "somebody else locked it"
 are both denials and a client can tell them apart. A lease is renewed by use, lapses after
-its TTL when the worker is idle, never lapses while the worker is busy, and can be broken
-by anyone.
+its TTL once the device is idle, is renewed for as long as the device is in use (a command
+on the worker, or a running camera stream), and can be broken by anyone.
 
 These are the unit tests of the lease itself. tests/test_lock_enforcement.py proves the
 server actually applies it to every hardware route.
@@ -35,10 +35,17 @@ class FakeClock:
 
 
 def make(busy: bool = False, ttl: float = 60.0) -> tuple[DeviceLock, FakeClock, list[bool]]:
+    """
+    a lease over a fake clock and a fake "the device is in use" flag
+
+    In the server that flag is the worker being busy or the camera streaming; here it is a
+    list the test flips, because what the lease promises is about use, not about which of the
+    two it is.
+    """
     clock = FakeClock()
-    busy_flag = [busy]
-    lock = DeviceLock(worker_is_busy=lambda: busy_flag[0], default_ttl_s=ttl, clock=clock)
-    return lock, clock, busy_flag
+    in_use = [busy]
+    lock = DeviceLock(device_in_use=lambda: in_use[0], default_ttl_s=ttl, clock=clock)
+    return lock, clock, in_use
 
 
 def take(lock: DeviceLock, owner: str, **kwargs) -> Lease:
@@ -283,16 +290,14 @@ class TestExpiry:
         assert decision.reason is LockReason.NOT_HELD
         take(lock, "bob")
 
-    def test_lease_never_lapses_while_worker_busy(self):
-        lock, clock, busy = make(ttl=60)
+    def test_lease_never_lapses_while_the_device_is_in_use(self):
+        lock, clock, in_use = make(ttl=60)
         lease = take(lock, "alice")
-        busy[0] = True
+        in_use[0] = True
         clock.t += 3600
         assert lock.state().held is True
         assert lock.permits(lease.token) is True
         assert lock.permits("wrong") is False
-        busy[0] = False
-        assert lock.state().held is False
 
     def test_check_renews_for_the_holder_only(self):
         lock, clock, _ = make(ttl=60)
@@ -324,6 +329,95 @@ class TestExpiry:
         take(lock, "alice", ttl_s=0.001)
         clock.t += 1
         assert lock.state().held is True  # MIN_TTL_S, not 1 ms
+
+
+class TestUseKeepsTheLease:
+    """
+    Use renews the lease, it does not merely postpone the reckoning.
+
+    Freezing the expiry while the device is busy and letting it fire the moment the device
+    goes idle is the same thing as having no lease at all at the one moment it matters most:
+    the client that ran a six-hour acquisition loses the microscope the instant the run ends,
+    before it can park the stage or turn the illumination off, and whoever asks next gets it.
+    Nothing the client does can prevent that - the web UI watches a run over a websocket, so
+    it sends no renewing request for hours - which is why this is the lease's job and not the
+    client's.
+    """
+
+    def test_the_holder_still_owns_the_microscope_when_its_run_ends(self):
+        lock, clock, in_use = make(ttl=60)
+        lease = take(lock, "alice")
+
+        in_use[0] = True
+        clock.t += 3 * 3600
+        assert lock.state().held is True  # somebody looked at the run while it was going
+        clock.t += 3 * 3600
+        in_use[0] = False
+
+        assert lock.state().held is True
+        assert lock.permits(lease.token) is True
+        assert refusal(lock.acquire("bob")).reason is LockReason.HELD_BY_OTHER
+
+    def test_one_look_during_the_run_is_enough(self):
+        """
+        Expiry is lazy, so between two questions the lease cannot watch the device start and
+        stop again. It carries the last reading forward instead, which is what turns "poll all
+        night or lose the microscope" into "somebody glanced at it once".
+        """
+        lock, clock, in_use = make(ttl=60)
+        lease = take(lock, "alice")
+
+        in_use[0] = True
+        clock.t += 30
+        assert lock.state().held is True  # the one look, still inside the original ttl
+        clock.t += 6 * 3600  # and then nothing asks for six hours
+        in_use[0] = False
+
+        assert lock.permits(lease.token) is True
+
+    def test_the_ttl_then_runs_from_when_the_device_went_idle(self):
+        """not from the last request: the whole run counts as the holder using the device"""
+        lock, clock, in_use = make(ttl=60)
+        lease = take(lock, "alice")
+
+        in_use[0] = True
+        clock.t += 3600
+        assert lock.state().held is True
+        in_use[0] = False
+        assert lock.state().held is True  # the reading that carries the run forward
+
+        clock.t += 59
+        assert lock.permits(lease.token) is True
+        clock.t += 2
+        assert lock.state().held is False
+
+    def test_a_stranger_reading_status_mid_run_does_not_shorten_it(self):
+        """
+        every request goes through check(), including refusals; none of them may cost the
+        holder the lease it is earning by running
+        """
+        lock, clock, in_use = make(ttl=60)
+        lease = take(lock, "alice")
+
+        in_use[0] = True
+        for _ in range(10):
+            clock.t += 600
+            assert lock.check(None).reason is LockReason.HELD_BY_OTHER
+            assert lock.state().held is True
+        in_use[0] = False
+
+        assert lock.permits(lease.token) is True
+
+    def test_use_cannot_revive_a_lease_that_already_lapsed(self):
+        """in-use renews a live lease; it does not resurrect one that is already gone"""
+        lock, clock, in_use = make(ttl=60)
+        lease = take(lock, "alice")
+        clock.t += 61
+        assert lock.state().held is False
+
+        in_use[0] = True
+        assert lock.state().held is False
+        assert lock.permits(lease.token) is False
 
 
 class TestBreak:

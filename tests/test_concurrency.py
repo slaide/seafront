@@ -619,10 +619,10 @@ class TestStatusNeverContradictsItself:
         """
         Start and stop streaming over and over while watching.
 
-        `is_streaming` and the channel handle are set and cleared a moment apart - the stream
-        is stopped by the command on the worker, the bookkeeping by the route callback that
-        follows - so a client polling in between sees a stream with no channel, or a channel
-        that is not streaming.
+        `is_streaming` and the channel handle come from one locked read of the adapter, so a
+        client polling through a transition can never see a stream with no channel, or a
+        channel that is not streaming. They used to be set a moment apart - the stream stopped
+        by the command on the worker, the bookkeeping by the route callback that followed.
         """
         channel = _one_channel()
 
@@ -630,12 +630,12 @@ class TestStatusNeverContradictsItself:
             for i in range(self.CYCLES):
                 s1, d1 = make_request(
                     self._url("/api/action/stream_channel_begin"),
-                    data={"channel": channel, "framerate_hz": 5.0}, timeout=30, token=self.lease,
+                    data={"channel": channel}, timeout=30, token=self.lease,
                 )
                 assert s1 == 200, f"cycle {i}: begin failed: {s1} {d1}"
                 s2, d2 = make_request(
                     self._url("/api/action/stream_channel_end"),
-                    data={"channel": channel}, timeout=30, token=self.lease,
+                    data={}, timeout=30, token=self.lease,
                 )
                 assert s2 == 200, f"cycle {i}: end failed: {s2} {d2}"
 
@@ -890,7 +890,7 @@ class TestStreamingRejectsAndLifecycle:
             # rejected by the streaming gate (400) — a different path from the 409 busy lock
             assert status == 400, f"expected 400 (rejected during streaming), got {status}: {data}"
         finally:
-            make_request(self._url("/api/action/stream_channel_end"), data={"channel": channel}, token=self.lease)
+            make_request(self._url("/api/action/stream_channel_end"), data={}, token=self.lease)
 
     def test_stream_begin_end_begin_again(self):
         channel = _one_channel()
@@ -898,14 +898,14 @@ class TestStreamingRejectsAndLifecycle:
         s1, d1 = make_request(self._url("/api/action/stream_channel_begin"), data={"channel": channel}, token=self.lease)
         assert s1 == 200, f"first begin failed: {s1} {d1}"
 
-        s2, d2 = make_request(self._url("/api/action/stream_channel_end"), data={"channel": channel}, token=self.lease)
+        s2, d2 = make_request(self._url("/api/action/stream_channel_end"), data={}, token=self.lease)
         assert s2 == 200, f"end failed: {s2} {d2}"
 
         # begin again after a clean end must work — a stop that left bad state would fail here
         s3, d3 = make_request(self._url("/api/action/stream_channel_begin"), data={"channel": channel}, token=self.lease)
         assert s3 == 200, f"second begin failed (stop left bad state?): {s3} {d3}"
 
-        s4, _ = make_request(self._url("/api/action/stream_channel_end"), data={"channel": channel}, token=self.lease)
+        s4, _ = make_request(self._url("/api/action/stream_channel_end"), data={}, token=self.lease)
         assert s4 == 200, f"final end failed: {s4}"
 
 

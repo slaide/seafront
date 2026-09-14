@@ -315,6 +315,11 @@ class SquidAdapter(Microscope):
         if not self.is_connected:
             return
 
+        # Outside the camera lock, and first: a disconnected adapter must not be left
+        # claiming to stream, and clearing the state stops the SDK's capture callback from
+        # forwarding into a camera that is being torn down.
+        self._stream_stopped()
+
         with (
             self.main_camera.locked() as main_camera,
             self.focus_camera.locked() as focus_camera,
@@ -1319,15 +1324,15 @@ class SquidAdapter(Microscope):
         self,
         command:cmd.ChannelStreamEnd
     ):
-        if self.read_stream_callback() is None:
+        # Clearing the state is what stops forwarding: any capture callback still in flight
+        # on the camera SDK's acquisition thread sees no stream and returns immediately
+        # without touching the sink. It also hands back what was streaming, which is how this
+        # knows whose illumination to turn off - the caller never says.
+        stopped = self._stream_stopped()
+        if stopped is None:
             cmd.error_internal(detail="not currently streaming")
 
         logger.debug("squid - requested stream stop")
-
-        # Stop forwarding first: any capture callback still in flight on the camera SDK's
-        # acquisition thread sees stream_callback=None and returns immediately without
-        # touching the downstream (websocket) callback.
-        self.set_stream_callback(None)
 
         # Stop the camera under the camera lock. This is deadlock-free now that the capture
         # callback no longer acquires the camera lock (see _execute_ChannelStreamBegin), so
@@ -1345,10 +1350,10 @@ class SquidAdapter(Microscope):
         except Exception as e:
             logger.warning(f"squid - failed to stop camera streaming: {e}")
 
-        # Turn off illumination for the streamed channel
+        # Turn off illumination for the channel that was actually streaming
         channel_config = None
         for ch in self.channels:
-            if ch.handle == command.channel.handle:
+            if ch.handle == stopped.channel.handle:
                 channel_config = ch
                 break
 
@@ -1356,7 +1361,7 @@ class SquidAdapter(Microscope):
             try:
                 illum_code = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
                 self.microcontroller.illumination_end(illum_code.value)
-                logger.debug(f"squid - illumination cleanup for channel {command.channel.handle}")
+                logger.debug(f"squid - illumination cleanup for channel {stopped.channel.handle}")
             except Exception as e:
                 logger.warning(f"squid - failed illumination cleanup: {e}")
 
@@ -1394,7 +1399,7 @@ class SquidAdapter(Microscope):
 
         GlobalConfigHandler.override(command.machine_config)
 
-        if self.read_stream_callback() is not None:
+        if self.is_streaming:
             cmd.error_internal(detail="Cannot take snapshot while camera is streaming")
 
         # Validate channel configuration for acquisition
@@ -1472,7 +1477,7 @@ class SquidAdapter(Microscope):
         qmc: Microcontroller,
         command:cmd.ChannelStreamBegin
     ):
-        if self.read_stream_callback() is not None:
+        if self.is_streaming:
             cmd.error_internal(detail="Streaming already active - stop current stream before starting a new one")
 
         # Find channel config by handle and get illumination code from source slot
@@ -1551,20 +1556,24 @@ class SquidAdapter(Microscope):
             stream_pixel_format = main_camera.pixel_format
 
             def forward_image(img: np.ndarray) -> None:
-                # Runs on the SDK acquisition thread. Read the callback once under the narrow
-                # lock, then invoke it outside the lock (so a slow send never blocks stream-end).
-                cb = self.read_stream_callback()
-                if cb is None:
-                    return
-
+                # Runs on the SDK acquisition thread. _forward_frame checks the stream state
+                # under the narrow lock and calls the sink from outside it, so a slow
+                # consumer never holds up stream-end.
                 img_np, _cambits = _process_image(img.copy(), pixel_format=stream_pixel_format)
+                self._forward_frame(img_np)
 
-                cb(img_np)
-
-            main_camera.start_streaming(
-                command.channel,
-                callback=forward_image,
-            )
+            # Marked as streaming before the camera starts, so the first frame the SDK
+            # produces already has somewhere to go. Rolled back if the start fails, so a
+            # refused begin cannot leave the adapter claiming a stream that is not running.
+            self._stream_started(command.channel)
+            try:
+                main_camera.start_streaming(
+                    command.channel,
+                    callback=forward_image,
+                )
+            except Exception:
+                self._stream_stopped()
+                raise
 
         logger.debug("squid - channel stream begin")
 

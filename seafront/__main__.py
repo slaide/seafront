@@ -8,7 +8,7 @@ microscope to open and how to listen.
 """
 
 import argparse
-import json
+import asyncio
 import os
 import pathlib as path
 import signal
@@ -16,18 +16,17 @@ import socket
 import subprocess
 import sys
 import threading
-import time
-import urllib.error
-import urllib.request
 
 import json5
 import uvicorn
+from fastapi import HTTPException
 
 from seafront.config.basics import GlobalConfigHandler, MicroscopeConfig, ServerConfig
 from seafront.config.core_config import UnconfiguredDeviceIdError
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig, SystemConfig
 from seafront.logger import logger
 from seafront.server.app import make_app
+from seafront.server.commands import EstablishHardwareConnection
 from seafront.server.core import Core
 
 
@@ -138,76 +137,47 @@ def main():
 
     app = make_app(core)
 
-    # Define hardware connection function (but don't start it yet)
     def establish_hardware_connection():
+        """
+        Connect to the hardware once, at startup, in this process.
+
+        Not over HTTP to ourselves. This is the *cold* connect - the one that opens the
+        devices, turns the illumination off and homes the stage - and it belongs to the
+        server, not to whichever client happens to ask first. Doing it here is also what
+        makes "another process already owns this device" a startup failure again: over HTTP
+        it arrived as a status code among others, here it is the exception it always was.
+
+        Runs on its own thread so the server starts listening straight away; homing takes
+        a while. The worker serialises it against anything a client sends meanwhile.
+        """
         try:
-            server_base_url=f"http://127.0.0.1:{server_config.port}"
-
-            # Wait for server to be ready by polling a simple endpoint
-            server_ready = False
-            max_attempts = 30  # 30 seconds max wait
-            for _ in range(max_attempts):
-                try:
-                    with urllib.request.urlopen(server_base_url+"/", timeout=0.5) as response:
-                        if response.status == 200:
-                            server_ready = True
-                            break
-                except (TimeoutError, urllib.error.URLError):
-                    pass
-                time.sleep(0.5)
-
-            if not server_ready:
-                logger.warning("server did not become ready within 30 seconds, skipping hardware connection")
-                return
-
             logger.info("establishing hardware connection at startup")
-            request_body = json.dumps({"target_device": core.microscope_name}).encode('utf-8')
-            req = urllib.request.Request(
-                server_base_url + "/api/action/establish_hardware_connection",
-                data=request_body,
-                headers={'Content-Type': 'application/json'},
-                method='POST'
-            )
-
-            with urllib.request.urlopen(req, timeout=30) as response:
-                if response.status == 200:
-                    logger.info("hardware connection established")
-
-                    # Initialize hardware limits cache
-                    try:
-                        logger.info("initializing hardware limits cache")
-                        req_limits = urllib.request.Request(
-                            server_base_url + "/api/get_features/hardware_capabilities",
-                            data=request_body,  # reuse the same body with target_device
-                            headers={'Content-Type': 'application/json'},
-                            method='POST'
-                        )
-
-                        with urllib.request.urlopen(req_limits, timeout=30) as limits_response:
-                            if limits_response.status == 200:
-                                logger.info("hardware limits cache initialized")
-                            else:
-                                logger.warning(f"hardware limits cache initialization failed: {limits_response.status}")
-                    except Exception as e_limits:
-                        logger.warning(f"failed to initialize hardware limits cache: {e_limits}")
-                else:
-                    logger.warning(f"hardware connection failed: {response.status}")
-        except urllib.error.HTTPError as e:
-            if e.code == 503:
+            asyncio.run(core.run(EstablishHardwareConnection()))
+            logger.info("hardware connection established")
+        except HTTPException as e:
+            if e.status_code == 503:
                 # Device is already in use by another process - must exit
-                logger.critical(f"hardware connection failed: {e}")
+                logger.critical(f"hardware connection failed: {e.detail}")
                 logger.critical("A hardware device is already in use by another process.")
                 logger.critical("Shutting down server...")
                 # Send SIGINT to gracefully shut down uvicorn
                 os.kill(os.getpid(), signal.SIGINT)
-            elif e.code == 500:
-                # General hardware error - log but don't exit (user can retry via UI)
-                logger.warning(f"hardware connection failed: {e}")
-                logger.warning("Hardware connection could not be established. You may retry via the UI.")
             else:
-                logger.warning(f"failed to establish hardware connection at startup: {e}")
+                logger.warning(f"hardware connection failed: {e.detail}")
+                logger.warning("Hardware connection could not be established. You may retry via the UI.")
+            return
         except Exception as e:
             logger.warning(f"failed to establish hardware connection at startup: {e}")
+            return
+
+        # Warm the hardware limits cache while we are here: it is a one-off camera query, and
+        # doing it now keeps it off the first client request that asks what the camera can do.
+        try:
+            logger.info("initializing hardware limits cache")
+            core.get_hardware_capabilities()
+            logger.info("hardware limits cache initialized")
+        except Exception as e:
+            logger.warning(f"failed to initialize hardware limits cache: {e}")
 
     logger.info("starting http server")
 

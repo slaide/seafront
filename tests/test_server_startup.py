@@ -11,14 +11,20 @@ import pytest
 
 
 @pytest.fixture(scope="class")
-def running_server(request):
+def running_server(request, tmp_path_factory):
     """Start server once for all tests in the class."""
     env = os.environ.copy()
     env["MOCK_NO_DELAYS"] = "1"
 
+    # To a file, never a PIPE: nothing here reads the pipe, and a full pipe buffer blocks
+    # the server's event loop. Tests that need to see what startup did read this back.
+    log_path = tmp_path_factory.mktemp("server-log") / "server.log"
+    log = log_path.open("w")
+    request.cls.server_log = log_path
+
     proc = subprocess.Popen(
         ["uv", "run", "python", "-m", "seafront", "--microscope", "mocroscope"],
-        stdout=subprocess.PIPE,
+        stdout=log,
         stderr=subprocess.STDOUT,
         text=True,
         env=env,
@@ -41,6 +47,7 @@ def running_server(request):
     if not server_ready:
         proc.terminate()
         proc.wait()
+        log.close()
         pytest.fail("Server did not start within timeout")
 
     # Make server URL available to tests
@@ -55,6 +62,7 @@ def running_server(request):
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+    log.close()
 
 
 @pytest.mark.usefixtures("running_server")
@@ -115,3 +123,59 @@ class TestServerStartup:
         """Swagger docs should be available."""
         with urllib.request.urlopen(f"{self.server_url}/docs", timeout=5) as response:
             assert response.status == 200
+
+
+@pytest.mark.usefixtures("running_server")
+class TestStartupConnectsTheHardware:
+    """
+    The server connects its own microscope at startup, without a device lease.
+
+    This used to go over HTTP to itself, which stopped working the day hardware routes
+    started requiring the lease: the request came back 423, so the hardware was never
+    connected, the "another process owns this device" shutdown never fired (423 is not the
+    503 it looks for), and the hardware-limits warm-up - nested inside the success branch -
+    never ran either. None of it was visible except as a warning in the log.
+    """
+
+    def _log(self) -> str:
+        # startup runs on its own thread; give it a moment to finish writing
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            text = self.server_log.read_text()
+            if "hardware connection established" in text or "hardware connection failed" in text:
+                return text
+            time.sleep(0.25)
+        return self.server_log.read_text()
+
+    def test_the_hardware_is_connected_at_startup(self):
+        assert "hardware connection established" in self._log()
+
+    def test_the_startup_connect_is_not_refused(self):
+        """the regression itself: a 423 on the way in, and nobody the wiser"""
+        log = self._log()
+        # "423" on its own also matches a millisecond in a timestamp
+        assert "423 Locked" not in log, f"something was refused during startup:\n{log[-2000:]}"
+        assert "hardware connection failed" not in log
+        assert "failed to establish hardware connection" not in log
+
+    def test_the_hardware_limits_cache_is_warmed(self):
+        """it lives in the success branch, so it is also what proves that branch ran"""
+        assert "hardware limits cache initialized" in self._log()
+
+    def test_nobody_holds_a_lease_afterwards(self):
+        """
+        connecting needs no lease and must not leave one behind
+
+        If startup took a lease to do its work, the first human to touch the microscope
+        would be locked out by their own server.
+        """
+        self._log()
+        body = json.dumps({"target_device": "mocroscope"}).encode()
+        req = urllib.request.Request(
+            f"{self.server_url}/api/lock/status",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            assert json.loads(response.read().decode())["held"] is False

@@ -81,6 +81,24 @@ def mock_scope(mock_microscope_env):
     return MockMicroscope.make()
 
 
+@pytest.fixture
+def mock_core(temp_config, mock_microscope_env):
+    """
+    A real Core over a mock microscope, in this process.
+
+    The whole server object graph minus HTTP: worker, device lease, image store and the frame
+    sink wired to the adapter. Lets a test check what the pieces do to each other without
+    paying ten seconds to boot a subprocess and talk to it over a socket.
+    """
+    from seafront.server.core import Core
+
+    _tmp_path, config_file = temp_config
+    scope_config = json.loads(config_file.read_text())["microscopes"][0]
+    core = Core(scope_config)
+    yield core
+    core.close()
+
+
 # --------------------------------------------------------------------------------------------
 # mock S3 (MinIO in docker) for the S3 storage backend
 

@@ -716,7 +716,13 @@ class ChannelStreamBegin(BaseModel, BaseCommand[StreamingStartedResponse]):
 
 
 class ChannelStreamEnd(BaseModel, BaseCommand[BasicSuccessResponse]):
-    channel: sc.AcquisitionChannelConfig
+    """
+    stop whatever is streaming
+
+    Carries no channel on purpose: the adapter lit the illumination and knows which channel
+    it is running, so there is nothing for a client to get wrong (or to go stale) between
+    starting a stream and stopping it.
+    """
 
     machine_config: list[sc.ConfigItem] = Field(default_factory=list)
 

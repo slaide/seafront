@@ -2653,21 +2653,11 @@ const generate_alpine_object=() => ({
      * @returns {Promise<StreamEndResponse>}
      */
     async buttons_endStreaming() {
-        const target_channel_handle =
-            this.actionInput.live_acquisition_channelhandle;
-        const target_channel = this.microscope_config.channels.find(
-            (c) => c.handle == target_channel_handle,
-        );
-        if (!target_channel) {
-            const error = `could not find a channel with handle '${target_channel_handle}'`;
-            console.error(error);
-            throw error;
-        }
-
+        // no channel: the server stops whatever it is streaming, which is the only thing
+        // that can be right. Sending the one this tab currently has selected was a way to
+        // turn off the illumination of a channel nobody was streaming.
         /** @type {ApiPayload<StreamEndRequest>} */
-        const body = {
-            channel: target_channel,
-        };
+        const body = {};
 
         const response = await this.api.post('/api/action/stream_channel_end', body, {
             context: 'End streaming'
