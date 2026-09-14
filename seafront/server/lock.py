@@ -130,6 +130,15 @@ class DeviceLock:
 
     DEFAULT_TTL_S: float = 600.0
     MIN_TTL_S: float = 5.0
+    MAX_TTL_S: float = 3600.0
+    """
+    the longest a client may hold the microscope while doing nothing with it
+
+    Not a limit on how long you can work: the device being in use renews the lease, so an
+    overnight acquisition keeps it on a ten-minute TTL. This bounds only the idle case, which
+    is where an unbounded ttl_s hurts - a client that asked for a year and then went home
+    leaves everyone else with nothing but /api/lock/break.
+    """
 
     def __init__(
         self,
@@ -257,7 +266,11 @@ class DeviceLock:
         If `token` is the current holder's, the lease is renewed (and re-labelled/re-timed)
         instead of refused.
         """
-        ttl = self._default_ttl_s if ttl_s is None else max(float(ttl_s), self.MIN_TTL_S)
+        ttl = (
+            self._default_ttl_s
+            if ttl_s is None
+            else min(max(float(ttl_s), self.MIN_TTL_S), self.MAX_TTL_S)
+        )
         with self._mutex:
             self._purge_expired()
             if self._token is not None and not self._matches(token):

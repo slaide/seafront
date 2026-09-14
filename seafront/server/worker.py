@@ -34,6 +34,20 @@ class WorkItem(tp.NamedTuple):
     cancel: threading.Event
 
 
+class RunningJob(tp.NamedTuple):
+    """
+    what is on the hardware right now: what it is, and how to stop it.
+
+    One value, swapped in and out by a single assignment, because the two halves are only
+    useful together. As two fields they were set in two statements and cleared in two more,
+    so a reader could take the label of the job that had just finished and the cancel event
+    of the one that had just started - and then cancel the wrong thing.
+    """
+
+    label: str
+    cancel: threading.Event
+
+
 class MicroscopeWorker:
     """Owns a microscope on a dedicated thread and runs one command at a time.
 
@@ -56,12 +70,9 @@ class MicroscopeWorker:
         # free == this submit is accepted. Released by the worker once the command
         # completes. This lock IS the reject-on-busy gate.
         self._inflight = threading.Lock()
-        # Cancel event of the command currently running, or None when idle. Read by
-        # the cancel hatch; only ever mutated by the worker thread.
-        self._current_cancel: threading.Event | None = None
-        # Label of the command currently running, or None when idle. Surfaced in the
-        # 409 busy reason so callers see WHAT the hardware is doing.
-        self._current_label: str | None = None
+        # The job currently running, or None when idle. Read by the cancel hatch and the
+        # status hatch; only ever mutated by the worker thread, and always as a whole.
+        self._current: RunningJob | None = None
         self._thread = threading.Thread(
             target=self._run, name="microscope-worker", daemon=True
         )
@@ -142,17 +153,29 @@ class MicroscopeWorker:
         self._handoff.put(WorkItem(make_coro, label, reply, cancel))
         return reply, cancel
 
+    def current_job(self) -> RunningJob | None:
+        """The job on the hardware right now, or None when idle.
+
+        The atomic read: a caller that needs to know both what is running and how to stop
+        it must take them from here, not from the two accessors below, or it can end up
+        cancelling a job it did not identify. Never blocks, never rejected.
+        """
+        return self._current
+
     def current_cancel(self) -> threading.Event | None:
         """The cancel event of the in-flight command, or None when idle.
 
-        Used by the cancel hatch. Never blocks, never rejected.
+        For the cancel hatch, which stops whatever is running and so does not care what
+        that is. Anything that cancels a *named* job wants current_job().
         """
-        return self._current_cancel
+        job = self._current
+        return job.cancel if job is not None else None
 
     def current_label(self) -> str | None:
         """Label of the in-flight command (e.g. "acquisition:<id>", "MoveTo"), or None
         when idle. Surfaced in the busy (409) reason for debuggability."""
-        return self._current_label
+        job = self._current
+        return job.label if job is not None else None
 
     @property
     def is_busy(self) -> bool:
@@ -172,8 +195,7 @@ class MicroscopeWorker:
             if item is None:  # shutdown sentinel (see _SHUTDOWN / stop())
                 return
 
-            self._current_cancel = item.cancel
-            self._current_label = item.label
+            self._current = RunningJob(item.label, item.cancel)
             # Publish the cancel event onto the scope so long operations can poll it
             # via raise_if_cancelled().
             self._scope.set_current_cancel(item.cancel)
@@ -183,14 +205,12 @@ class MicroscopeWorker:
                 # Any failure is relayed to the caller's future. Release the slot
                 # BEFORE completing the future so a caller that awaits the result
                 # and immediately resubmits finds the worker free.
-                self._current_cancel = None
-                self._current_label = None
+                self._current = None
                 self._scope.set_current_cancel(None)
                 self._inflight.release()
                 item.reply.set_exception(e)
             else:
-                self._current_cancel = None
-                self._current_label = None
+                self._current = None
                 self._scope.set_current_cancel(None)
                 self._inflight.release()
                 item.reply.set_result(result)

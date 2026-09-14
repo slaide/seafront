@@ -330,6 +330,26 @@ class TestExpiry:
         clock.t += 1
         assert lock.state().held is True  # MIN_TTL_S, not 1 ms
 
+    def test_ttl_has_a_ceiling(self):
+        """
+        an idle client cannot claim the microscope for a year
+
+        The ceiling costs a working client nothing - use renews the lease, so a long run
+        keeps it on the default TTL - and it bounds the one case with no other remedy: a
+        client that asked for an enormous TTL and then went home.
+        """
+        lock, clock, _ = make()
+        take(lock, "alice", ttl_s=10**9)
+        clock.t += DeviceLock.MAX_TTL_S + 1
+        assert lock.state().held is False
+
+    def test_the_ceiling_is_a_clamp_not_a_refusal(self):
+        """asking for too long gets you the maximum, not an error"""
+        lock, clock, _ = make()
+        lease = take(lock, "alice", ttl_s=10**9)
+        clock.t += DeviceLock.MAX_TTL_S - 1
+        assert lock.permits(lease.token) is True
+
 
 class TestUseKeepsTheLease:
     """
@@ -446,3 +466,145 @@ class TestBreak:
         assert lock.permits(lease.token) is False
         bob = take(lock, "bob")
         assert lock.permits(bob.token) is True
+
+
+class TestInvariantsUnderArbitraryOrder:
+    """
+    A randomised walk over the lease, checking what must be true after *every* step.
+
+    The tests above each pin one rule in one order. This one throws acquires, releases,
+    breaks, checks, clock jumps and the device starting and stopping work at the lease in
+    orders nobody thought to write down, and after each step asserts the handful of things
+    that must hold no matter what happened. It is deterministic - fixed seeds - so a failure
+    is a bug report with a reproduction, not a flake.
+
+    What it is looking for is the shape of a lease bug: two clients both believing they hold
+    the microscope, a lease that reports itself half-held, or a token that works again after
+    it should not.
+    """
+
+    STEPS = 400
+
+    def invariants(self, lock: DeviceLock, issued: list[Lease], live: Lease | None) -> list[str]:
+        wrong = []
+        state = lock.state()
+
+        # held is one fact, not four that can disagree
+        if not (state.held == (state.owner is not None) == (state.lock_id is not None) == (state.expires_at is not None)):
+            wrong.append(f"half-held: {state}")
+
+        # At most one secret in the world may drive the hardware. Counted by token value,
+        # not by Lease: re-acquiring with your own token renews in place and hands the same
+        # token back, so one secret can have been issued several times.
+        permitted = {lease.token for lease in issued if lock.permits(lease.token)}
+        if len(permitted) > 1:
+            wrong.append(f"{len(permitted)} different tokens permitted at once")
+
+        # and if one may, it is the lease that is actually held
+        if permitted:
+            token = next(iter(permitted))
+            holder = next(lease for lease in reversed(issued) if lease.token == token)
+            if holder.lock_id != state.lock_id:
+                wrong.append(f"permitted lease {holder.lock_id} but state holds {state.lock_id}")
+            if not state.held:
+                wrong.append("a token is permitted while nothing is held")
+
+        # the tracked live lease and the lock agree about whether anything is held
+        if live is not None and state.held and live.lock_id != state.lock_id:
+            wrong.append(f"tracking {live.lock_id} but lock holds {state.lock_id}")
+
+        # nobody gets in without a token, ever
+        if lock.permits(None):
+            wrong.append("an absent token was permitted")
+        if lock.permits("definitely-not-a-token"):
+            wrong.append("a made-up token was permitted")
+
+        # the public state never carries the secret
+        if state.model_dump_json().find("token") != -1 and any(
+            lease.token in state.model_dump_json() for lease in issued
+        ):
+            wrong.append("a token leaked into the public lease state")
+
+        return wrong
+
+    @pytest.mark.parametrize("seed", [1, 7, 99, 12345])
+    def test_the_lease_never_contradicts_itself(self, seed):
+        import random
+
+        rng = random.Random(seed)
+        lock, clock, in_use = make(ttl=60)
+        issued: list[Lease] = []
+        live: Lease | None = None
+
+        for step in range(self.STEPS):
+            action = rng.choice(
+                ["acquire", "acquire_own", "release", "release_wrong", "break", "check",
+                 "check_wrong", "status", "tick", "tick_far", "start_work", "stop_work"]
+            )
+
+            if action == "acquire":
+                outcome = lock.acquire(f"client-{rng.randrange(4)}", ttl_s=rng.choice([None, 5, 30, 600]))
+                if isinstance(outcome, Lease):
+                    issued.append(outcome)
+                    live = outcome
+            elif action == "acquire_own" and live is not None:
+                outcome = lock.acquire(live.owner, token=live.token)
+                if isinstance(outcome, Lease):
+                    issued.append(outcome)
+                    live = outcome
+            elif action == "release" and live is not None:
+                if lock.release(live.token).reason is LockReason.OK:
+                    live = None
+            elif action == "release_wrong":
+                lock.release("not-a-real-token")
+            elif action == "break":
+                lock.break_lock()
+                live = None
+            elif action == "check" and live is not None:
+                lock.check(live.token)
+            elif action == "check_wrong":
+                lock.check("not-a-real-token")
+            elif action == "status":
+                lock.state()
+            elif action == "tick":
+                clock.t += rng.uniform(0, 20)
+            elif action == "tick_far":
+                clock.t += rng.uniform(60, 5000)
+            elif action == "start_work":
+                in_use[0] = True
+            elif action == "stop_work":
+                in_use[0] = False
+
+            if not lock.state().held:
+                live = None
+
+            wrong = self.invariants(lock, issued, live)
+            assert not wrong, f"seed {seed}, step {step}, after {action!r}: {wrong}"
+
+    @pytest.mark.parametrize("seed", [3, 42])
+    def test_a_lease_can_always_be_taken_after_a_break(self, seed):
+        """
+        however tangled it got, breaking frees the microscope
+
+        The escape hatch has to work from every state the walk above can reach, or a lease
+        bug becomes a microscope nobody can use until the process is restarted.
+        """
+        import random
+
+        rng = random.Random(seed)
+        lock, clock, in_use = make(ttl=60)
+
+        for _ in range(self.STEPS):
+            rng.choice([
+                lambda: lock.acquire(f"client-{rng.randrange(3)}"),
+                lambda: lock.release("whatever"),
+                lambda: lock.check(None),
+                lambda: clock.__setattr__("t", clock.t + rng.uniform(0, 200)),
+                lambda: in_use.__setitem__(0, rng.random() < 0.5),
+            ])()
+
+        lock.break_lock()
+        in_use[0] = False
+        assert lock.state().held is False
+        fresh = take(lock, "the next client")
+        assert lock.permits(fresh.token) is True

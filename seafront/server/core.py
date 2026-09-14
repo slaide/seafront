@@ -712,23 +712,22 @@ class Core:
         if acquisition_id not in self.acquisition_map:
             error_internal(detail="acquisition_id not found")
 
-        acq = self.acquisition_map[acquisition_id]
-
-        if acq.thread_is_running:
-            if self.acquisition_future is None:
-                acq.thread_is_running = False
-            else:
-                acq.thread_is_running = not self.acquisition_future.done()
-
-        if not acq.thread_is_running:
+        # The worker is what decides, and it decides both halves at once: an acquisition
+        # holds the worker for its whole duration under the label `acquisition:<id>`, so a
+        # job with this run's label IS this run, and the cancel event that came with it is
+        # this run's. Setting it makes the protocol loop's next handle_q_in checkpoint raise
+        # AcquisitionCancelledError.
+        #
+        # Deciding from `AcquisitionStatus.thread_is_running` instead is what made this
+        # dangerous: it was refreshed against `self.acquisition_future`, the *latest* run's
+        # future rather than this one's, so cancelling a run that had already finished
+        # reported it as still going and then cancelled whatever the worker held - the next
+        # acquisition, or somebody's move.
+        running = self.worker.current_job()
+        if running is None or running.label != f"{ACQUISITION_LABEL_PREFIX}{acquisition_id}":
             error_internal(detail=f"acquisition with id {acquisition_id} is not running")
 
-        # The acquisition holds the worker for its whole duration, so the in-flight
-        # cancel event IS this acquisition's. Setting it makes the protocol loop's next
-        # handle_q_in checkpoint raise AcquisitionCancelledError.
-        cancel = self.worker.current_cancel()
-        if cancel is not None:
-            cancel.set()
+        running.cancel.set()
 
         return BasicSuccessResponse()
 

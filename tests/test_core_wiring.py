@@ -196,3 +196,81 @@ class TestConnectingIsSerialisedLikeEverythingElse:
         finally:
             release.set()
             claimed[0].result(timeout=10)
+
+
+class TestStreamingUnderContention:
+    """
+    Many clients starting and stopping the same stream at once.
+
+    The adapter's begin/end are not thread-safe on their own and are not meant to be: the
+    worker is what serialises them, one command at a time, rejecting the rest. What has to
+    survive that is the stream state - whatever order the winners land in, the adapter must
+    never be left claiming a stream it is not running, or running one it does not claim.
+
+    Concurrency through `core.run` rather than straight at the adapter, because that is the
+    only way a real client can reach it.
+    """
+
+    THREADS = 8
+
+    def _storm(self, core, rounds: int) -> list[str]:
+        """every thread races to begin and end; returns whatever went wrong"""
+        wrong: list[str] = []
+        start = threading.Barrier(self.THREADS)
+
+        def churn(n: int):
+            start.wait()
+            for _ in range(rounds):
+                for command in (
+                    cmd.ChannelStreamBegin(channel=channel()),
+                    cmd.ChannelStreamEnd(),
+                ):
+                    try:
+                        run(core, command)
+                    except HTTPException:
+                        pass  # 409 busy, or "already streaming"/"not streaming": all legal
+                    except Exception as e:  # anything else is not
+                        wrong.append(f"thread {n}: {type(e).__name__}: {e}")
+
+                    reported = state(core)
+                    if reported.is_streaming != (reported.streaming_channel_handle is not None):
+                        wrong.append(f"half a stream: {reported.is_streaming} / {reported.streaming_channel_handle}")
+
+        threads = [threading.Thread(target=churn, args=(n,)) for n in range(self.THREADS)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return wrong
+
+    def test_the_stream_state_never_goes_incoherent(self, connected):
+        wrong = self._storm(connected, rounds=6)
+        assert not wrong, wrong[:5]
+
+    def test_the_microscope_is_still_usable_afterwards(self, connected):
+        """
+        the point of the storm
+
+        A stream left running with nothing claiming it, or a claim with no camera behind
+        it, shows up here: the next honest begin/end pair fails.
+        """
+        self._storm(connected, rounds=6)
+
+        if connected.microscope.is_streaming:
+            run(connected, cmd.ChannelStreamEnd())
+        assert connected.microscope.is_streaming is False
+
+        run(connected, cmd.ChannelStreamBegin(channel=channel("f488")))
+        assert connected.microscope.stream_state().channel.handle == "f488"
+        run(connected, cmd.ChannelStreamEnd())
+        assert connected.microscope.is_streaming is False
+
+    def test_the_lease_tracks_the_storm(self, connected):
+        """`device_in_use` is read straight off the adapter, so it cannot fall out of step"""
+        self._storm(connected, rounds=4)
+        assert connected.lock._device_in_use() == (
+            connected.worker.is_busy or connected.microscope.is_streaming
+        )
+        if connected.microscope.is_streaming:
+            run(connected, cmd.ChannelStreamEnd())
+        assert connected.lock._device_in_use() is False

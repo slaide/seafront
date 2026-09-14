@@ -186,3 +186,39 @@ class TestAFailedBeginLeavesNothingBehind:
             assert scope.is_streaming is True
         finally:
             end(scope)
+
+    def test_a_camera_that_refuses_to_start_leaves_nothing_streaming(self, scope, monkeypatch):
+        """
+        the rollback path, which the checks above never reach
+
+        An unknown channel is refused before the adapter marks itself streaming, so it
+        proves nothing about what happens when the mark is already set. The camera failing
+        to start is the case that gets there: the state goes on first, deliberately, so the
+        first frame has somewhere to go, which means a failed start has to take it off again
+        or the microscope is stuck claiming a stream that never began.
+        """
+
+        def refuse(*_args, **_kwargs):
+            raise RuntimeError("camera said no")
+
+        monkeypatch.setattr(scope.main_camera.value, "start_streaming", refuse)
+        with pytest.raises(RuntimeError, match="camera said no"):
+            begin(scope)
+
+        assert scope.is_streaming is False
+        assert scope.stream_state() is None
+
+    def test_and_the_stream_starts_once_the_camera_is_willing_again(self, scope, monkeypatch):
+        def refuse(*_args, **_kwargs):
+            raise RuntimeError("camera said no")
+
+        monkeypatch.setattr(scope.main_camera.value, "start_streaming", refuse)
+        with pytest.raises(RuntimeError):
+            begin(scope)
+        monkeypatch.undo()
+
+        begin(scope)
+        try:
+            assert scope.is_streaming is True
+        finally:
+            end(scope)
