@@ -11,12 +11,15 @@ import os
 import pathlib as path
 import re
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
 import traceback
 import typing as tp
+import urllib.error
+import urllib.request
 from concurrent.futures import Future as CCFuture
 from enum import Enum
 from functools import wraps
@@ -1954,7 +1957,6 @@ class Core:
                 # Parse objective value (e.g., "20xolympus" -> 20)
                 objective_value = objective_config_item.strvalue
                 # Extract magnification from objective string
-                import re
                 mag_match = re.match(r'(\d+)x', objective_value)
                 if mag_match:
                     objective_magnification = int(mag_match.group(1))
@@ -2674,9 +2676,6 @@ def main():
 
     # Define hardware connection function (but don't start it yet)
     def establish_hardware_connection():
-        import urllib.error
-        import urllib.request
-
         try:
             server_base_url=f"http://127.0.0.1:{server_config.port}"
 
@@ -2750,7 +2749,6 @@ def main():
 
     # Test if port is available before starting uvicorn
     try:
-        import socket
         family = socket.AF_INET6 if ":" in server_config.host else socket.AF_INET
         test_socket = socket.socket(family, socket.SOCK_STREAM)
         test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
