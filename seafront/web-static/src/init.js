@@ -2320,7 +2320,7 @@ const generate_alpine_object=() => ({
     },
     /**
      * rpc to /api/acquisition/status
-     * @param {AcquisitionStatusRequest} body
+     * @param {ApiPayload<AcquisitionStatusRequest>} body
      * @returns {Promise<AcquisitionStatusResponse>}
      */
     async acquisition_status(body) {
@@ -2332,7 +2332,7 @@ const generate_alpine_object=() => ({
     get Actions() {
         return {
             /**
-             * @param {StoreConfigRequest} body
+             * @param {ApiPayload<StoreConfigRequest>} body
              * @returns {Promise<StoreConfigResponse>}
              */
             storeConfig: async (body) => {
@@ -2342,7 +2342,7 @@ const generate_alpine_object=() => ({
             },
 
             /**
-             * @param {LoadConfigRequest} body
+             * @param {ApiPayload<LoadConfigRequest>} body
              * @returns {Promise<LoadConfigResponse>}
              */
             loadConfig: async (body) => {
@@ -2352,7 +2352,7 @@ const generate_alpine_object=() => ({
             },
             /**
              * rpc to /api/action/move_by
-             * @param {MoveByRequest} body
+             * @param {ApiPayload<MoveByRequest>} body
              * @returns {Promise<MoveByResult>}
              */
             moveBy: (body) => {
@@ -2363,7 +2363,7 @@ const generate_alpine_object=() => ({
 
             /**
              * rpc to /api/action/move_to
-             * @param {MoveToRequest} body
+             * @param {ApiPayload<MoveToRequest>} body
              * @returns {Promise<MoveToResult>}
              */
             moveTo: (body) => {
@@ -2374,7 +2374,7 @@ const generate_alpine_object=() => ({
 
             /**
              *
-             * @param {MoveToWellRequest} body
+             * @param {ApiPayload<MoveToWellRequest>} body
              * @returns {Promise<MoveToWellResponse>}
              */
             moveToWell: (body) => {
@@ -2385,7 +2385,7 @@ const generate_alpine_object=() => ({
 
             /**
              *
-             * @param {ChannelSnapshotRequest} body
+             * @param {ApiPayload<ChannelSnapshotRequest>} body
              * @returns {Promise<ChannelSnapshotResponse>}
              */
             snapChannel: (body) => {
@@ -2463,7 +2463,7 @@ const generate_alpine_object=() => ({
                 });
             },
             /**
-             * @param {StreamBeginRequest} body
+             * @param {ApiPayload<StreamBeginRequest>} body
              * @returns {Promise<StreamingStartedResponse>}
              */
             streamBegin: async (body) => {
@@ -2477,7 +2477,7 @@ const generate_alpine_object=() => ({
                 });
             },
             /**
-             * @param {StreamEndRequest} body
+             * @param {ApiPayload<StreamEndRequest>} body
              * @returns {Promise<StreamEndResponse>}
              */
             streamEnd: (body) => {
@@ -2490,7 +2490,7 @@ const generate_alpine_object=() => ({
             },
             /**
              *
-             * @param {LaserAutofocusCalibrateRequest} body
+             * @param {ApiPayload<LaserAutofocusCalibrateRequest>} body
              * @returns {Promise<LaserAutofocusCalibrateResponse>}
              */
             laserAutofocusCalibrate: async (body) => {
@@ -2503,7 +2503,7 @@ const generate_alpine_object=() => ({
             },
             /**
              *
-             * @param {LaserAutofocusMoveToTargetOffsetRequest} body
+             * @param {ApiPayload<LaserAutofocusMoveToTargetOffsetRequest>} body
              * @returns {Promise<LaserAutofocusMoveToTargetOffsetResponse>}
              */
             laserAutofocusMoveToTargetOffset: async (body) => {
@@ -2515,7 +2515,7 @@ const generate_alpine_object=() => ({
             },
             /**
              *
-             * @param {LaserAutofocusMeasureDisplacementRequest} body
+             * @param {ApiPayload<LaserAutofocusMeasureDisplacementRequest>} body
              * @returns {Promise<LaserAutofocusMeasureDisplacementResponse>}
              */
             laserAutofocusMeasureDisplacement: async (body) => {
@@ -2527,7 +2527,7 @@ const generate_alpine_object=() => ({
             },
             /**
              *
-             * @param {LaserAutofocusSnapRequest} body
+             * @param {ApiPayload<LaserAutofocusSnapRequest>} body
              * @returns {Promise<LaserAutofocusSnapResponse>}
              */
             laserAutofocusSnap: async (body) => {

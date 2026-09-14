@@ -1,15 +1,19 @@
+// Frontend-side types only. Everything that crosses the API is generated into
+// seafront-api.d.ts from the server's own schemas - do not add API shapes here, or they will
+// drift from the server the way this file used to.
+//
+// What legitimately lives here:
+//  - types the browser needs that never cross the wire (canvas, cache, scene state)
+//  - aliases from the names this frontend has always used to the generated ones
+//  - HardwareLimits / HardwareLimitValue, which are more precise here than the server model
+//    is: HardwareCapabilitiesResponse.hardware_limits is typed dict[str, dict[str, float|int]]
+//    in commands.py, so the generated type cannot express the per-field structure yet.
+
 import * as THREE from "three";
 
 declare global {
     type float = number;
     type int = number;
-
-    /**
-     * has html status code 500
-     * */
-    type InternalErrorModel = {
-        detail: string;
-    };
 
     /**
      * has html status code 409 (Conflict)
@@ -29,20 +33,6 @@ declare global {
         target_device: string;
     };
 
-    // Channel configuration
-    type AcquisitionChannelConfig = {
-        name: string;
-        handle: string;
-        analog_gain: float;
-        exposure_time_ms: float;
-        illum_perc: float;
-        num_z_planes: int;
-        z_offset_um: float;
-        enabled: boolean;
-        filter_handle?: string | null; // null or actual filter handle
-        delta_z_um?: float;
-    };
-
     type ChannelInfo = {
         channel: AcquisitionChannelConfig;
         height_px: int;
@@ -50,101 +40,6 @@ declare global {
         storage_path: string | undefined;
         position: AdapterPosition;
         timestamp: float;
-    };
-
-    /**
-     * microscope state, combines actual microscope telemetry with UI state
-     */
-    type CoreCurrentState = {
-        adapter_state: {
-            is_in_loading_position: boolean;
-            stage_position: AdapterPosition;
-        };
-        latest_imgs: {
-            [channel_handle: string]: ChannelInfo;
-        };
-        current_acquisition_id: string | undefined;
-        is_streaming: boolean;
-        is_busy: boolean;
-        microscope_name: string;
-        last_acquisition_error: string|null;
-        last_acquisition_error_timestamp: string|null;
-        /** who holds the device lease, if anyone */
-        lock: LockState;
-    };
-
-    /** public view of the device lease; carries no token */
-    type LockState = {
-        held: boolean;
-        owner: string | null;
-        /** public id of the lease; equals the lock_id you got on acquire while it is yours */
-        lock_id: string | null;
-        /** ISO-8601 UTC; renewed by every request carrying the token */
-        expires_at: string | null;
-    };
-    type LockAcquireRequest = {
-        owner: string;
-        ttl_s?: number;
-    };
-    type LockAcquireResponse = {
-        /** secret; send as lock_token with every request */
-        token: string;
-        lock_id: string;
-        owner: string;
-        expires_at: string;
-        microscope_name: string;
-    };
-    type LockStatusResponse = LockState & {
-        /** true if the lock_token in the request is the holder's */
-        token_matches: boolean;
-        microscope_name: string;
-    };
-    type LockBreakRequest = {
-        reason?: string;
-    };
-    type Version = {
-        major: int;
-        minor: int;
-        patch: int;
-    };
-    type AcquisitionWellSiteConfigurationSiteSelectionItem = {
-        row: int;
-        col: int;
-        selected: boolean;
-    };
-    type AcquisitionWellSiteConfiguration = {
-        num_x: int;
-        delta_x_mm: float;
-        num_y: int;
-        delta_y_mm: float;
-        num_t: int;
-        delta_t: {
-            h: float;
-            m: float;
-            s: float;
-        };
-        mask: AcquisitionWellSiteConfigurationSiteSelectionItem[];
-    };
-    type PlateWellConfig = {
-        row: int;
-        col: int;
-        selected: boolean;
-    };
-
-    // Acquisition configuration
-    type AcquisitionConfig = {
-        project_name: string;
-        plate_name: string;
-        cell_line: string;
-        plate_wells: PlateWellConfig[];
-        grid: AcquisitionWellSiteConfiguration;
-        autofocus_enabled: boolean;
-        comment: string | null;
-        machine_config: MachineConfigItem[];
-        wellplate_type: Wellplate;
-        timestamp: string | null;
-        channels: AcquisitionChannelConfig[];
-        spec_version?: Version;
     };
 
     type CachedChannelImage = {
@@ -217,108 +112,28 @@ declare global {
         microscope_config?: CachedMicroscopeConfig;
     };
 
-    type Wellplate = {
-        Manufacturer: string;
-        Model_id: string;
-        Model_id_manufacturer: string;
-        Model_name: string;
-        Num_wells_x: int;
-        Num_wells_y: int;
-        Offset_A1_x_mm: float;
-        Offset_A1_y_mm: float;
-        Width_mm: float;
-        Length_mm: float;
-        Offset_bottom_mm: float;
-        Well_distance_x_mm: float;
-        Well_distance_y_mm: float;
-        Well_size_x_mm: float;
-        Well_size_y_mm: float;
-        Well_edge_radius_mm: float;
-    };
-
     type WellPlateGroup = {
         label: string;
         numwells: number;
         plates: Wellplate[];
     };
 
-    type BasicSuccessResponse = {
-        microscope_name: string;
-    };
-
-    type MoveToRequest = {
-        x_mm?: number;
-        y_mm?: number;
-        z_mm?: number;
-    };
     type MoveToResult = BasicSuccessResponse;
-    type MoveByRequest = {
-        axis: "x" | "y" | "z";
-        distance_mm: float;
-    };
-    type MoveByResult = {
-        axis: string;
-        moved_by_mm: float;
-        microscope_name: string;
-    };
-    // truly empty
-    type MoveToWellRequest = {
-        plate_type: Wellplate;
-        well_name: string;
-    };
     type MoveToWellResponse = BasicSuccessResponse;
 
-    type ImageAcquiredResponse = {};
-
-    type ChannelSnapshotRequest = {
-        channel: AcquisitionChannelConfig;
-        machine_config?: MachineConfigItem[];
-    };
+    type ChannelSnapshotRequest = SnapChannelRequest;
     type ChannelSnapshotResponse = ImageAcquiredResponse;
 
-    type ChannelSnapSelectionResponse={
-        channel_handles: string[],
-    };
+    type ChannelSnapSelectionResponse = ChannelSnapSelectionResult;
 
-    type MachineConfigFlushRequest = {
-        machine_config: MachineConfigItem[];
-        /**
-         * write privileged items too (calibration, device identity, ...); the server persists
-         * such a change at once. without it, a flush that would change a privileged value is
-         * rejected with 400 and `detail.mismatched_handles`.
-         */
-        privileged?: boolean;
-    };
-    type MachineConfigFlushResponse = {
-        /** handles whose value was written and differs from before */
-        changed: string[];
-        /** privileged handles left untouched because the request was not privileged */
-        skipped_privileged: string[];
-        /** handles the server does not know; ignored */
-        unknown_handles: string[];
-        /** handle -> reason, for values rejected by validation */
-        invalid: Record<string, string>;
-        microscope_name: string;
-    };
-
-    type StreamBeginRequest = {
-        channel: AcquisitionChannelConfig;
-        machine_config?: MachineConfigItem[];
-    };
-    type StreamingStartedResponse = {
-        channel: AcquisitionChannelConfig;
-        microscope_name: string;
-    };
+    type StreamBeginRequest = StreamChannelBeginRequest;
     type StreamBeginResponse = StreamingStartedResponse;
 
-    type StreamEndRequest = {
-        channel: AcquisitionChannelConfig;
-        machine_config?: MachineConfigItem[];
-    };
+    type StreamEndRequest = StreamChannelEndRequest;
     type StreamEndResponse = BasicSuccessResponse;
 
-    type EnterLoadingPositionResponse = {};
-    type LeaveLoadingPositionResponse = {};
+    type EnterLoadingPositionResponse = BasicSuccessResponse;
+    type LeaveLoadingPositionResponse = BasicSuccessResponse;
 
     type HardwareLimitValue = {
         min: number;
@@ -337,236 +152,34 @@ declare global {
         imaging_delta_z_um: HardwareLimitValue;
     };
 
-    type HardwareCapabilities = {
-        /** identity of the main camera as reported by its driver */
-        main_camera: { vendor: string; model: string; serial_number: string };
-        main_camera_imaging_channels: AcquisitionChannelConfig[];
-        wellplate_types: Wellplate[];
-        hardware_limits: HardwareLimits;
-        microscope_name: string;
-    };
+    type HardwareCapabilities = HardwareCapabilitiesResponse;
 
-    type ConfigItemOption = {
-        name: string;
-        handle: string;
-        /** can be anything, e.g. (actual example): object {"magnification":4} */
-        info: any | null;
-    };
-    type ConfigItem =
-        | {
-              name: string;
-              handle: string;
-              value_kind: "int";
-              value: int;
-              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
-              privileged: boolean;
-          }
-        | {
-              name: string;
-              handle: string;
-              value_kind: "float";
-              value: float;
-              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
-              privileged: boolean;
-          }
-        | {
-              name: string;
-              handle: string;
-              value_kind: "text";
-              value: string;
-              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
-              privileged: boolean;
-          }
-        | {
-              name: string;
-              handle: string;
-              value_kind: "option";
-              value: string;
-              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
-              privileged: boolean;
-              options: ConfigItemOption[] | null;
-          }
-        | {
-              name: string;
-              handle: string;
-              value_kind: "action";
-              value: string;
-              /** server-owned: only written by a privileged flush (see MachineConfigFlushRequest) */
-              privileged: boolean;
-          };
     type MachineConfigItem = ConfigItem;
     type MachineDefaults = MachineConfigItem[];
 
-    type ConfigListInfo = {
-        filename: string;
-        project_name: string;
-        plate_name: string;
-        comment: string;
-        timestamp: string;
-        cell_line: string;
-        plate_type: Wellplate;
-    };
+    type ConfigListInfo = ConfigFileInfo;
     type ConfigListEntry = ConfigListInfo;
-    type ConfigListResponse = {
-        configs: ConfigListEntry[];
-        microscope_name: string;
-    };
-
-    type StoreConfigRequest = {
-        filename: string;
-        config_file: AcquisitionConfig;
-        overwrite_on_conflict: boolean | null;
-        comment: string | null;
-    };
+    type StoreConfigRequest = ConfigStoreRequest;
     type StoreConfigResponse = BasicSuccessResponse;
-    type LoadConfigRequest = {
-        /** filename of the target config file */
-        config_file: string;
-    };
-    type LoadConfigResponse = {
-        file: AcquisitionConfig;
-        microscope_name: string;
-    };
+    type LoadConfigRequest = ConfigFetchRequest;
+    type LoadConfigResponse = ConfigFetchResponse;
 
-    type AcquisitionStartRequest = {
-        config_file: AcquisitionConfig;
-    };
-    type AcquisitionStartResponse = {
-        acquisition_id: string;
-        microscope_name: string;
-    };
-    type AcquisitionStopRequest = {
-        acquisition_id: string;
-    };
-    type AcquisitionStopResponse = {};
+    type AcquisitionStopRequest = AcquisitionCancelRequest;
+    type AcquisitionStopResponse = BasicSuccessResponse;
     type AcquisitionStopError = InternalErrorModel;
 
-    type AdapterPosition = {
-        x_pos_mm: float;
-        y_pos_mm: float;
-        z_pos_mm: float;
-    };
-    type SitePosition = {
-        well_name: string;
-        site_x: int;
-        site_y: int;
-        site_z: int;
-
-        x_offset_mm: float;
-        y_offset_mm: float;
-        z_offset_mm: float;
-
-        position: AdapterPosition;
-    };
-    type ImageStoreInfo = {
-        channel: AcquisitionChannelConfig;
-        width_px: int;
-        height_px: int;
-        timestamp: float;
-
-        position: SitePosition;
-
-        storage_path: string | null;
-    };
-    type AcquisitionStatusStage =
-        | "running"
-        | "cancelled"
-        | "completed"
-        | "crashed"
-        | "scheduled";
-    type AcquisitionProgressStatus = {
-        current_num_images: int;
-        time_since_start_s: float;
-        start_time_iso: string;
-        current_storage_usage_GB: float;
-
-        estimated_remaining_time_s: float | null;
-
-        last_image: ImageStoreInfo | null;
-
-        // per-timepoint timing (for time series acquisitions)
-        current_timepoint: int | null;
-        total_timepoints: int | null;
-        estimated_timepoint_duration_s: float | null;
-    };
-    type AcquisitionMetaInformation = {
-        total_num_images: int;
-        max_storage_size_images_GB: float;
-    };
-    type AcquisitionStatusOut = {
-        acquisition_id: string;
-        acquisition_status: AcquisitionStatusStage;
-        acquisition_progress: AcquisitionProgressStatus;
-
-        acquisition_meta_information: AcquisitionMetaInformation;
-
-        acquisition_config: AcquisitionConfig;
-
-        message: string;
-        microscope_name: string;
-    };
-    type AcquisitionStatusRequest = {
-        acquisition_id: string;
-    };
+    type AdapterPosition = Position;
     type AcquisitionStatusResponse = AcquisitionStatusOut;
     type AcquisitionStartError = InternalErrorModel;
 
-    /** Pre-acquisition estimate for confirmation dialog */
-    type AcquisitionEstimate = {
-        project_name: string;
-        plate_name: string;
-        num_selected_wells: int;
-        num_selected_sites: int;
-        num_channels: int;
-        /** Total z-planes across all channels (sum of each channel's num_z_planes) */
-        num_z_planes_total: int;
-        num_timepoints: int;
-        total_num_images: int;
-        /** Upper bound storage estimate (uncompressed) */
-        max_storage_size_GB: float;
-        /** Estimated acquisition time in seconds (null if cannot be estimated) */
-        estimated_time_s: float | null;
-        microscope_name: string;
-    };
+    type LaserAutofocusCalibrateResponse = LaserAutofocusCalibrationResponse;
+    type LaserAutofocusMoveToTargetOffsetRequest = AutofocusApproachTargetRequest;
+    type LaserAutofocusMoveToTargetOffsetResponse = AutofocusApproachTargetDisplacementResult;
+    type LaserAutofocusMeasureDisplacementRequest = AutofocusMeasureDisplacementRequest;
+    type LaserAutofocusMeasureDisplacementResponse = AutofocusMeasureDisplacementResult;
 
-    type LaserAutofocusCalibrateRequest = {};
-    type LaserAutofocusCalibrateResponse = {
-        calibration_data: {
-            um_per_px: float;
-            x_reference: float;
-            offset_um: float;
-            calibration_position: AdapterPosition;
-        };
-        microscope_name: string;
-    };
-    type LaserAutofocusMoveToTargetOffsetRequest = {
-        target_offset_um: float;
-        config_file: AcquisitionConfig;
-    };
-    type LaserAutofocusMoveToTargetOffsetResponse = {
-        num_compensating_moves: int;
-        uncompensated_offset_mm: float;
-        reached_threshold: boolean;
-        microscope_name: string;
-    };
-    type LaserAutofocusMeasureDisplacementRequest = {
-        config_file: AcquisitionConfig;
-        override_num_images?: int;
-    };
-    type LaserAutofocusMeasureDisplacementResponse = {
-        displacement_um: float;
-        microscope_name: string;
-    };
-
-    type LaserAutofocusSnapRequest = {
-        exposure_time_ms: float;
-        analog_gain: float;
-    };
-    type LaserAutofocusSnapResponse = {
-        width_px: int;
-        height_px: int;
-        microscope_name: string;
-    };
+    type LaserAutofocusSnapRequest = AutofocusSnapRequest;
+    type LaserAutofocusSnapResponse = AutofocusSnapResult;
 }
 
 // this line ensures that the 'declare global' are visible by the LSP in other .js files

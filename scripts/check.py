@@ -10,7 +10,10 @@
 
 """
 Script to run type checking and linting on the codebase using uv.
-This script runs pyright for type checking and ruff for linting via uv run, checking only the 'seafront' directory.
+
+Runs pyright for type checking, ruff for linting, and checks that the generated TypeScript
+view of the API is current - the last one is what stops a stale copy of the contract being
+committed alongside a model change.
 """
 
 import argparse
@@ -51,6 +54,12 @@ def main() -> int:
     parser.add_argument(
         "--ruff", choices=["on", "off"], default="on", help="Run ruff linting (default: on)"
     )
+    parser.add_argument(
+        "--api-types",
+        choices=["on", "off"],
+        default="on",
+        help="Check the generated TypeScript API types are up to date (default: on)",
+    )
 
     args = parser.parse_args()
 
@@ -81,6 +90,19 @@ def main() -> int:
             "Linting (ruff)",
         )
         success = success and ruff_success
+
+    if args.api_types == "on":
+        types_success = run_command(
+            [
+                "uv",
+                "run",
+                "python",
+                str(project_root / "scripts/generate_api_types.py"),
+                "--check",
+            ],
+            "Generated API types",
+        )
+        success = success and types_success
 
     return 0 if success else 1
 
