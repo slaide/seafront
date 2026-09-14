@@ -763,6 +763,17 @@ class MoveByResult(BaseModel):
     "name of the device that processed this request"
 
 
+Millimetres = tp.Annotated[float, Field(allow_inf_nan=False)]
+"""
+a distance or coordinate in mm, which must be an actual number
+
+NaN and infinity are rejected here because every safety check downstream is a comparison,
+and every comparison with NaN is False: `x_mm < 0` says it is not negative, and
+`min_x <= x <= max_x` says it is not inside any forbidden area. A NaN coordinate is therefore
+reported safe by each check in turn and handed to the stage. Infinity passes the same way.
+"""
+
+
 class MoveBy(BaseModel, BaseCommand[MoveByResult]):
     """
     move stage by some distance
@@ -771,7 +782,7 @@ class MoveBy(BaseModel, BaseCommand[MoveByResult]):
     """
 
     axis: tp.Literal["x", "y", "z"]
-    distance_mm: float
+    distance_mm: Millimetres
 
     _ReturnValue: type = PrivateAttr(default=MoveByResult)
 
@@ -785,9 +796,9 @@ class MoveTo(BaseModel, BaseCommand[BasicSuccessResponse]):
     these coordinates are internally adjusted to take the calibration into account
     """
 
-    x_mm: float | None = None
-    y_mm: float | None = None
-    z_mm: float | None = None
+    x_mm: Millimetres | None = None
+    y_mm: Millimetres | None = None
+    z_mm: Millimetres | None = None
 
     _ReturnValue: type = PrivateAttr(default=BasicSuccessResponse)
 

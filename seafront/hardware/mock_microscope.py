@@ -17,6 +17,7 @@ Environment Variables:
 """
 
 import asyncio
+import math
 import os
 import time
 import typing as tp
@@ -642,6 +643,12 @@ class MockMicroscope(Microscope):
         callers snap to it, and checking compliance here would fail on floating-point
         representation alone.
         """
+        # Not a number fails every comparison below, so "is it outside the range" answers
+        # no and the value goes to the hardware. An illumination percentage of NaN is a laser
+        # driven by whatever the conversion happens to produce.
+        if not math.isfinite(value):
+            cmd.error_internal(detail=f"{param_name} value {value} is not a finite number")
+
         if value < limit.min:
             cmd.error_internal(
                 detail=f"{param_name} value {value} is below minimum {limit.min}"

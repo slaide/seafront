@@ -64,8 +64,28 @@ def intFromPayload(payload, start_index, num_bytes):
 
 
 def twos_complement(v, num_bytes):
+    """
+    Encode a signed integer into `num_bytes` bytes, or refuse.
+
+    Refusing matters more than it looks. The callers shift this result into the packet a byte
+    at a time and mask each one, so a value too large to fit used to be silently truncated -
+    and truncation of a position is not a smaller move, it is a *different* one, frequently
+    with the opposite sign. A request to move to 1e6 mm encoded as -65353 mm, having already
+    passed the "x must not be negative" check and the forbidden-area check, because both of
+    those looked at the number the client sent rather than the number that went on the wire.
+
+    The relative-move callers clamp to +-(2**31 - 1) and split a long move across several
+    packets before calling this, so they are unaffected; the absolute-position ones had no
+    such guard, which is exactly why this is enforced here rather than at each call site.
+    """
     THRESHOLD = 2 ** (8 * num_bytes)
     v = int(v)
+    limit = THRESHOLD // 2
+    if not (-limit <= v < limit):
+        raise ValueError(
+            f"{v} does not fit in {num_bytes} signed bytes "
+            f"(accepts [{-limit}, {limit - 1}]); refusing to truncate a hardware command"
+        )
     if v >= 0:
         payload = v
     else:
@@ -74,8 +94,15 @@ def twos_complement(v, num_bytes):
 
 
 def twos_complement_rev(payload, num_bytes):
+    """
+    Decode `num_bytes` of two's complement back to a signed integer.
+
+    The boundary is `<`, not `<=`: a payload of exactly THRESHOLD/2 is the most *negative*
+    representable value, and reading it as positive turns the extreme of the range into its
+    own mirror image.
+    """
     THRESHOLD = 2 ** (8 * num_bytes)
-    if payload <= THRESHOLD / 2:
+    if payload < THRESHOLD / 2:
         v = payload
     else:
         v = payload - THRESHOLD

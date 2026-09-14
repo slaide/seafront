@@ -15,9 +15,11 @@ client reads is derived from the models the server validates against.
 """
 
 import faulthandler
+import math
 import os
 import pathlib as path
 import signal
+import typing as tp
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -35,6 +37,23 @@ from seafront.server.core import Core
 
 PACKAGE_DIR = path.Path(__file__).resolve().parent.parent
 WEB_STATIC = PACKAGE_DIR / "web-static"
+
+
+def json_safe(value: tp.Any) -> tp.Any:
+    """
+    Replace anything `json.dumps` refuses to write, leaving everything else alone.
+
+    Only non-finite floats qualify: they are the one thing python will happily produce and
+    read but the JSON specification has no syntax for. They are rendered as their python
+    spelling ("nan", "inf") so the client can still see what it sent.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return repr(value)
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [json_safe(item) for item in value]
+    return value
 
 
 def make_app(core: Core | None = None) -> FastAPI:
@@ -99,7 +118,14 @@ def make_app(core: Core | None = None) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         logger.debug(f"Validation error at {request.url}: {exc.errors()}")
-        return JSONResponse(status_code=422, content=jsonable_encoder({"detail": exc.errors()}))
+        # json_safe, because a validation error quotes the offending input back to the
+        # client and the offending input is sometimes a value JSON cannot carry. NaN and
+        # infinity are not JSON, but python's json module reads them, so any client can put
+        # one in any float field; rendering the 422 would then raise *inside the response*
+        # and the client would get a bare 500 with no body in place of the explanation.
+        return JSONResponse(
+            status_code=422, content=json_safe(jsonable_encoder({"detail": exc.errors()}))
+        )
 
     # websocket compression is disabled in the uvicorn configuration: compression time is
     # unpredictable, 70ms for an all-white image and 1400ms for an all-black one, which is
