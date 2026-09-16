@@ -1054,6 +1054,7 @@ class Core:
             acquisition_id=acquisition_id,
             ome_template=ome_template,
             hardware_channels=self.microscope.channels,
+            objective_magnification=objective_magnification,
         )
 
         if protocol.num_images_total == 0:

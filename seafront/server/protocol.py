@@ -347,13 +347,38 @@ def build_ome_instrument(
     return ome
 
 
+MAIN_CAMERA_PIXEL_PITCH_UM = 6.0
+"""
+The main camera's pixel pitch projected back through the optics, in micrometres.
+
+Anchored on the one magnification this was ever measured at: with the 20x objective a
+3000 px wide field covers 0.9 mm, i.e. 0.3 um per pixel at the sample, so the pitch is
+0.3 * 20. Every other objective follows from it by `pixel_size_um_at`.
+"""
+
+
+def pixel_size_um_at(objective_magnification: int | None) -> float | None:
+    """
+    Pixel size at the sample, in micrometres, for the objective currently in the light path.
+
+    None when the magnification is unknown, and the caller must then leave PhysicalSize out
+    of the metadata rather than guess. This used to be a single hardcoded 0.3, which is the
+    20x value: a 4x acquisition wrote files claiming a 4x objective and 0.3 um pixels at the
+    same time, and every distance measured off them in micrometres was out by a factor of
+    five.
+    """
+    if objective_magnification is None or objective_magnification <= 0:
+        return None
+    return MAIN_CAMERA_PIXEL_PITCH_UM / objective_magnification
+
+
 def build_ome_metadata(
     ome_template: OME,
     image_entry: cmds.ImageStoreEntry,
     channel_config: sc.AcquisitionChannelConfig,
     position: cmds.SitePosition,
     plane_index: int,
-    pixel_size_um: float,
+    pixel_size_um: float | None,
     project_name: str,
     plate_name: str,
     cell_line: str,
@@ -373,7 +398,8 @@ def build_ome_metadata(
         channel_config: Channel acquisition settings
         position: Stage position and well information
         plane_index: Z-plane index (0-based)
-        pixel_size_um: Physical pixel size in micrometers
+        pixel_size_um: Physical pixel size at the sample in micrometers, or None when the
+            objective is unknown - in which case PhysicalSize is left out rather than guessed
         project_name: Project/experiment name
         plate_name: Plate identifier
         cell_line: Cell line identifier
@@ -532,7 +558,7 @@ def encode_image(
     channel_config: sc.AcquisitionChannelConfig,
     position: cmds.SitePosition,
     plane_index: int,
-    pixel_size_um: float,
+    pixel_size_um: float | None,
     project_name: str,
     plate_name: str,
     cell_line: str,
@@ -589,6 +615,8 @@ class ProtocolGenerator(BaseModel):
     "Pre-built OME template with Instrument, Microscope, Detector, Objectives, LightSources"
     hardware_channels: list[basics.ChannelConfig] = Field(default_factory=list)
     "List of available hardware channels with wavelength info"
+    objective_magnification: int | None = None
+    "the objective in the light path, which is what sets the pixel size at the sample"
 
     # the values below are initialized during post init hook
     num_wells: int = -1
@@ -941,7 +969,18 @@ class ProtocolGenerator(BaseModel):
         )
 
         Z_STACK_COUNTER_BACKLASH_MM = 40e-3  # 40um
-        PIXEL_SIZE_UM = 900 / 3000  # 3000px wide fov covers 0.9mm
+        pixel_size_um = pixel_size_um_at(self.objective_magnification)
+        if pixel_size_um is None:
+            logger.warning(
+                "protocol - objective magnification is unknown, so the images will carry no "
+                "PhysicalSize. Better a missing scale than a wrong one, but check "
+                f"{CameraConfig.MAIN_OBJECTIVE.value} in the config."
+            )
+        else:
+            logger.info(
+                f"protocol - {self.objective_magnification}x objective, "
+                f"{pixel_size_um:.4f} um/px at the sample"
+            )
         # movement below this threshold is not performed (0.5um)
         DISPLACEMENT_THRESHOLD_MM: float = 0.5e-3
 
@@ -1266,7 +1305,7 @@ class ProtocolGenerator(BaseModel):
                                 channel_config=channel,
                                 position=image_store_entry.info.position,
                                 plane_index=plane_index,
-                                pixel_size_um=PIXEL_SIZE_UM,
+                                pixel_size_um=pixel_size_um,
                                 project_name=self.config_file.project_name,
                                 plate_name=self.config_file.plate_name,
                                 cell_line=self.config_file.cell_line,
