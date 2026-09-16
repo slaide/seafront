@@ -98,12 +98,11 @@ class TestC1TheChecksumByteIsDeliberatelyNotChecked:
 
 class TestC2TheReaderThrowsPacketsAway:
     """
-    DEFECTS.md C2 - the reader skips every packet but the last one waiting
+    DEFECTS.md C2, fixed: the reader reads and examines every whole packet waiting.
 
-    `_read_packets` computes how many whole packets are buffered and discards all but the
-    final one, with its own TODO saying why. A command that completes quickly has its
-    acknowledgement buffered behind later status packets and thrown away unread, so the
-    driver waits out the full timeout for a command that finished immediately.
+    It used to take the last packet of whatever was buffered and discard the rest, so a
+    command that completed quickly had its acknowledgement thrown away unread and the driver
+    waited out the whole timeout for a command that had already answered.
     """
 
     def test_a_completion_buffered_behind_later_packets_is_not_missed(self):
@@ -136,20 +135,19 @@ class TestC2TheReaderThrowsPacketsAway:
         controller._wait_until_cmd_is_finished(command, timeout_s=0.5)
 
 
-class TestHowOftenC2Bites:
+class TestHowDeepAnAcknowledgementCanBeBuried:
     """
-    Whether the discarding matters in practice, measured rather than argued.
+    How much can pile up behind an acknowledgement before it is lost. Nothing, now.
 
-    These pass: they describe what the reader does today, so that the cost of C2 is a number
-    rather than a worry. The threshold is the point - one buffered packet is fine, two is a
-    lost acknowledgement.
+    These used to measure the defect instead of the fix - one buffered packet ahead was
+    enough to lose a completion, and the driver then spent the full timeout on a command that
+    had already answered. Depth is still the right axis to test on, so they are the same
+    arrangement with the answer a working reader gives.
 
-    At the ~100 Hz this device streams status, one packet arrives every ~10 ms. The read loop
-    polls every 0.4 ms, so it normally finds zero or one waiting and loses nothing. Two
-    packets means the reader was away for ~20 ms - one image copy, one burst of GIL
-    contention, one slow log write - and an acknowledgement that arrived in that window is
-    gone. Which is worth knowing next to "the firmware does not acknowledge every command":
-    some part of that may be the driver throwing its own answer away.
+    At the ~100 Hz this device streams status a packet arrives every ~10 ms against a 0.4 ms
+    poll, so one or two waiting is the normal case and a long burst means the reader was away
+    - one image copy, one burst of GIL contention, one slow log write. None of it may cost an
+    acknowledgement.
     """
 
     def _completion_survives(self, packets_ahead: int) -> bool:
@@ -169,24 +167,23 @@ class TestHowOftenC2Bites:
     def test_a_completion_read_on_its_own_survives(self):
         assert self._completion_survives(0) is True
 
-    def test_one_packet_behind_it_is_enough_to_lose_it(self):
+    def test_one_packet_behind_it_does_not_lose_it(self):
+        """the old threshold, and it was this low: two waiting, and the answer was gone"""
+        assert self._completion_survives(1) is True
+
+    def test_nor_does_a_whole_burst_behind_it(self):
+        assert self._completion_survives(5) is True
+
+    def test_nor_a_burst_longer_than_any_real_stall(self):
+        """50 packets is half a second of silence from the reader, far past anything real"""
+        assert self._completion_survives(50) is True
+
+    def test_the_driver_answers_at_once_instead_of_waiting_out_the_timeout(self):
         """
-        the threshold, and it is low
+        what the fix buys
 
-        Two packets waiting - a single missed 10 ms poll - and the acknowledgement is
-        discarded unread.
-        """
-        assert self._completion_survives(1) is False
-
-    def test_and_it_stays_lost_however_many_follow(self):
-        assert self._completion_survives(5) is False
-
-    def test_the_driver_then_waits_out_the_whole_timeout(self):
-        """
-        what it costs
-
-        Not an error - the caller gets the routine unacknowledged path - but a full timeout
-        spent on a command that had already answered.
+        The completion is already in the buffer, so the wait costs a poll, not the 0.3 s the
+        old reader spent discarding it and then timing out.
         """
         controller, device = make_microcontroller(FakeMCU())
         command = Command.initialize()
@@ -196,6 +193,5 @@ class TestHowOftenC2Bites:
             status_packet(last_cmd_id=200),
         )
         started = time.monotonic()
-        with pytest.raises(MicrocontrollerTimeout):
-            controller._wait_until_cmd_is_finished(command, timeout_s=0.3)
-        assert time.monotonic() - started >= 0.3
+        controller._wait_until_cmd_is_finished(command, timeout_s=0.3)
+        assert time.monotonic() - started < 0.1

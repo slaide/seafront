@@ -209,11 +209,10 @@ class TestCompletingACommand:
 
     def test_a_move_completes_once_the_position_settles(self, mcu):
         """
-        packets arrive one at a time here rather than pre-queued
+        two packets reporting the same position is what "arrived" looks like
 
-        A batch would not work: the reader skips all but the last packet of whatever is
-        waiting (see test_microcontroller_defects), so two identical packets queued together
-        are read as one, and "the position did not change" can never be observed.
+        The first packet only establishes where the stage was; it takes a second one at the
+        same place to say it stopped.
         """
         controller, device = mcu
         device.moves_by = (0, 0, 0)  # the stage has stopped

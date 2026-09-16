@@ -198,6 +198,11 @@ class MicrocontrollerStatusPackage:
         # 4 bytes from theta ignored (index 14-17)
         self.buttons_and_switches: int = packet[18]
         # 4 bytes reserved (index 19-22)
+        # Parsed and deliberately never compared: we assume the check passes. Outbound
+        # commands are checksummed, but packet integrity has never been a problem on this
+        # hardware, and the firmware in service predates the CRC and version bytes, so
+        # validating this could reject every packet in the fleet. Kept because the byte is
+        # here and the comparison is one line away if corruption ever does turn up.
         self.crc: int = packet[23]
 
     @property
@@ -1101,20 +1106,18 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
 
         may throw MicrocontrollerTimeout
         """
-        last_position_x = 0
-        last_position_y = 0
-        last_position_z = 0
+        # None until the first packet: "the position stopped changing" is a statement about
+        # two samples, and there is no such statement to make about the first one. This used
+        # to start at 0, which reads as "not moving" for any stage that really is near 0 -
+        # which is where homing leaves it.
+        last_position: tuple[int, int, int] | None = None
         timeoutinfo: None | MicrocontrollerTimeoutInfo = None
 
         def read_packet(packet: MicrocontrollerStatusPackage) -> bool:
-            nonlocal last_position_x
-            nonlocal last_position_y
-            nonlocal last_position_z
+            nonlocal last_position
             nonlocal timeoutinfo
 
-            latest_position_x = packet.x_pos_usteps
-            latest_position_y = packet.y_pos_usteps
-            latest_position_z = packet.z_pos_usteps
+            latest_position = (packet.x_pos_usteps, packet.y_pos_usteps, packet.z_pos_usteps)
 
             timeoutinfo = MicrocontrollerTimeoutInfo(
                 await_move=cmd.is_move_cmd,
@@ -1125,18 +1128,12 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
 
             if cmd.is_move_cmd:
                 # wait until stage has stopped moving (which the microcontroller has no direct knowledge of)
-                movement_in_progress = (
-                    last_position_x != latest_position_x
-                    or last_position_y != latest_position_y
-                    or last_position_z != latest_position_z
-                )
+                movement_in_progress = last_position is None or last_position != latest_position
 
                 timeoutinfo.move_done = movement_in_progress
 
                 if movement_in_progress:
-                    last_position_x = latest_position_x
-                    last_position_y = latest_position_y
-                    last_position_z = latest_position_z
+                    last_position = latest_position
                     return False
 
             cmd_is_completed = (
@@ -1222,26 +1219,32 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                 time.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
                 continue
 
-            # skip all bytes except those in the last package, since parsing takes too long
-            # TODO make this fast enough to check all packet command ids, to not skip over the
-            # result of a command that finishes quickly
-            num_packets_to_skip = (
-                bytes_waiting // firmware_config.READ_PACKET_LENGTH
-            ) - 1
-            if num_packets_to_skip > 0:
-                self._usb_receive(num_packets_to_skip * firmware_config.READ_PACKET_LENGTH)
+            # Every whole packet that is waiting, in one read, and every one of them looked
+            # at. This used to take only the last packet of the burst and discard the rest,
+            # on the assumption that there would be far more of them than there are and that
+            # parsing would not keep up. The device streams status at ~100 Hz - one packet
+            # per ~10 ms against a 0.4 ms poll - so a burst is one or two packets and the
+            # parsing is nowhere near the cost of the USB round trip that fetched them.
+            #
+            # What the discarding cost: a command that completed immediately had its
+            # acknowledgement buffered behind the next status packet and thrown away unread,
+            # so the driver waited out the whole timeout for a command that had already
+            # answered, and there was no reliable request/response matching at all.
+            num_waiting = bytes_waiting // firmware_config.READ_PACKET_LENGTH
+            data = self._usb_receive(num_waiting * firmware_config.READ_PACKET_LENGTH)
 
-            data = self._usb_receive(firmware_config.READ_PACKET_LENGTH)
-            packet = MicrocontrollerStatusPackage(data)
-            last_packet = packet
-            packets_seen += 1
+            packet_length = firmware_config.READ_PACKET_LENGTH
+            for offset in range(0, len(data) - packet_length + 1, packet_length):
+                packet = MicrocontrollerStatusPackage(data[offset : offset + packet_length])
+                last_packet = packet
+                packets_seen += 1
 
-            # save current position as last known position
-            self.last_position = packet.pos
+                # save current position as last known position
+                self.last_position = packet.pos
 
-            should_terminate: bool = until(packet)
-
-            self.terminate_reading_received_packet_thread = should_terminate
+                if until(packet):
+                    self.terminate_reading_received_packet_thread = True
+                    break
 
     def get_last_position(self) -> AdapterPosition:
         """
