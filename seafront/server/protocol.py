@@ -34,6 +34,7 @@ from ome_types.model import (
     PixelType,
     Pixels_DimensionOrder,
     StageLabel,
+    UnitsLength,
     Detector_Type,
     TiffData,
 )
@@ -504,6 +505,14 @@ def build_ome_metadata(
         position_x=position.position.x_pos_mm,
         position_y=position.position.y_pos_mm,
         position_z=position.position.z_pos_mm,
+        # The driver works in millimetres and these come straight from it. Saying so is not
+        # optional: OME defaults an unset position unit to "reference frame", which declares
+        # an undefined coordinate system rather than a length, and there is no way back to
+        # millimetres from that. Anything stitching a plate from these was reading bare
+        # numbers.
+        position_x_unit=UnitsLength.MILLIMETER,
+        position_y_unit=UnitsLength.MILLIMETER,
+        position_z_unit=UnitsLength.MILLIMETER,
     )
 
     # Create TiffData block to explicitly link Plane to TIFF IFD
@@ -542,6 +551,10 @@ def build_ome_metadata(
         x=position.position.x_pos_mm,
         y=position.position.y_pos_mm,
         z=position.position.z_pos_mm,
+        # same defaulting trap as the Plane above
+        x_unit=UnitsLength.MILLIMETER,
+        y_unit=UnitsLength.MILLIMETER,
+        z_unit=UnitsLength.MILLIMETER,
     )
     image.stage_label = stage_label
 
