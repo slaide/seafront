@@ -21,24 +21,20 @@ fell over - it just takes longer to notice.
 """
 
 import json
-import os
 import random
-import re
-import shutil
-import socket
-import subprocess
 import threading
 import time
 import typing as tp
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 
-MOCK = "mocroscope"
-PORT = 5014  # 5000/5011/5013 belong to the other server fixtures
-SERVER = f"http://127.0.0.1:{PORT}"
+from tests.mock_server import MOCK, mock_server
+
+# the fixture picks a free port and rebinds these before any helper below runs
+PORT = 0
+SERVER = ""
 
 # Every status this API is allowed to answer with. Anything else is a bug, and a connection
 # error or a timeout is not a status at all.
@@ -47,53 +43,12 @@ DEFINED_STATUSES = {200, 400, 409, 421, 422, 423, 500, 503}
 NOT_NUMBERS = ["NaN", "Infinity", "-Infinity"]
 
 
-def _port_free() -> bool:
-    with socket.socket() as s:
-        return s.connect_ex(("127.0.0.1", PORT)) != 0
-
-
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
-    real_home = Path.home() / "seafront"
-    if not (real_home / "config.json").exists():
-        pytest.skip("no ~/seafront/config.json to copy")
-    home = tmp_path_factory.mktemp("seafront-home")
-    cfg = json.loads(re.sub(r"//.*", "", (real_home / "config.json").read_text()))
-    mock = next((m for m in cfg["microscopes"] if m.get("system.microscope_name") == MOCK), None)
-    if mock is None:
-        pytest.skip(f"no '{MOCK}' in ~/seafront/config.json")
-    images = home / "images"
-    images.mkdir()
-    mock["storage.base_image_output_dir"] = str(images)
-    (home / "config.json").write_text(json.dumps(cfg, indent=2))
-
-    assert _port_free(), f"port {PORT} is busy; another seafront is running"
-    env = dict(os.environ, SEAFRONT_HOME=str(home), MOCK_NO_DELAYS="1")
-    log_path = home / "server.log"
-    log = log_path.open("w")
-    proc = subprocess.Popen(
-        ["uv", "run", "python", "-m", "seafront", "--microscope", MOCK, "--port", str(PORT)],
-        stdout=log, stderr=subprocess.STDOUT, text=True, env=env,
-    )
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(f"{SERVER}/api/health", timeout=1) as r:
-                if r.status == 200:
-                    break
-        except (urllib.error.URLError, ConnectionRefusedError):
-            time.sleep(0.3)
-    else:
-        proc.terminate()
-        raise RuntimeError("test server did not start")
-    yield proc, log_path
-    proc.terminate()
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    log.close()
-    shutil.rmtree(home, ignore_errors=True)
+    global PORT, SERVER
+    with mock_server(tmp_path_factory) as srv:
+        PORT, SERVER = srv.port, srv.url
+        yield srv.proc, srv.log_path
 
 
 class Reply(tp.NamedTuple):

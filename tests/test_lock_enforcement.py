@@ -14,28 +14,24 @@ someone writes one).
 """
 
 import json
-import os
-import re
-import shutil
-import socket
-import subprocess
 import threading
 import time
 import typing as tp
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
+
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect as ws_connect
 
 from seafront.server.lock import LockReason
+from tests.mock_server import MOCK, mock_server
 
-MOCK = "mocroscope"
-PORT = 5011  # not 5000: the other server fixtures own that one
-SERVER = f"http://127.0.0.1:{PORT}"
-WS_SERVER = f"ws://127.0.0.1:{PORT}"
+# the fixture picks a free port and rebinds these before any helper below runs
+PORT = 0
+SERVER = ""
+WS_SERVER = ""
 
 # routes that do NOT need the lease, and why. Everything else the server exposes must be
 # gated; TestSchemaContract holds this list against the running server.
@@ -78,54 +74,14 @@ SAFE_TO_RUN = [
 # server
 
 
-def _port_free() -> bool:
-    with socket.socket() as s:
-        return s.connect_ex(("127.0.0.1", PORT)) != 0
-
-
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
-    """mock server on a scratch copy of the seafront home, on its own port"""
-    real_home = Path.home() / "seafront"
-    if not (real_home / "config.json").exists():
-        pytest.skip("no ~/seafront/config.json to copy")
-    home = tmp_path_factory.mktemp("seafront-home")
-    cfg = json.loads(re.sub(r"//.*", "", (real_home / "config.json").read_text()))
-    mock = next((m for m in cfg["microscopes"] if m.get("system.microscope_name") == MOCK), None)
-    if mock is None:
-        pytest.skip(f"no '{MOCK}' in ~/seafront/config.json")
-    images = home / "images"
-    images.mkdir()
-    mock["storage.base_image_output_dir"] = str(images)
-    (home / "config.json").write_text(json.dumps(cfg, indent=2))
-
-    assert _port_free(), f"port {PORT} is busy; another seafront is running"
-    env = dict(os.environ, SEAFRONT_HOME=str(home), MOCK_NO_DELAYS="1")
-    # never a PIPE nobody reads: a full pipe buffer blocks the server's event loop
-    log = (home / "server.log").open("w")
-    proc = subprocess.Popen(
-        ["uv", "run", "python", "-m", "seafront", "--microscope", MOCK, "--port", str(PORT)],
-        stdout=log, stderr=subprocess.STDOUT, text=True, env=env,
-    )
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(f"{SERVER}/api/health", timeout=1) as r:
-                if r.status == 200:
-                    break
-        except (urllib.error.URLError, ConnectionRefusedError):
-            time.sleep(0.3)
-    else:
-        proc.terminate()
-        raise RuntimeError("test server did not start")
-    yield proc
-    proc.terminate()
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    log.close()
-    shutil.rmtree(home, ignore_errors=True)
+    """mock server on a scratch seafront home, on a port the kernel picked"""
+    global PORT, SERVER, WS_SERVER
+    with mock_server(tmp_path_factory) as srv:
+        PORT, SERVER = srv.port, srv.url
+        WS_SERVER = f"ws://127.0.0.1:{srv.port}"
+        yield srv.proc
 
 
 # --------------------------------------------------------------------------------------------

@@ -11,85 +11,39 @@ calibration writes and acquisitions never touch the real config or image directo
 
 import contextlib
 import json
-import os
 import re
-import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
 import typing as tp
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import pytest
 import tifffile
 
+from tests.mock_server import mock_server
 from tests.test_api_operations import make_request
 
-MOCK = "mocroscope"
-PORT = 5000
-SERVER = f"http://127.0.0.1:{PORT}"
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "acquire_via_api.py"
 TOTAL_TIMEOUT_S = 300
+
+# the fixture picks a free port and rebinds these before any helper below runs
+PORT = 0
+SERVER = ""
 
 
 # --------------------------------------------------------------------------------------------
 # scratch server
 
 
-def _port_free() -> bool:
-    with socket.socket() as s:
-        return s.connect_ex(("127.0.0.1", PORT)) != 0
-
-
 @pytest.fixture(scope="module")
 def scratch_server(tmp_path_factory):
-    """mock server on a copy of the real seafront home, images redirected into the scratch dir"""
-    real_home = Path.home() / "seafront"
-    if not (real_home / "config.json").exists():
-        pytest.skip("no ~/seafront/config.json to copy")
-    home = tmp_path_factory.mktemp("seafront-home")
-    cfg = json.loads(re.sub(r"//.*", "", (real_home / "config.json").read_text()))  # tolerate json5 comments
-    images = home / "images"
-    images.mkdir()
-    mock = next((m for m in cfg["microscopes"] if m.get("system.microscope_name") == MOCK), None)
-    if mock is None:
-        pytest.skip(f"no '{MOCK}' in ~/seafront/config.json")
-    mock["storage.base_image_output_dir"] = str(images)
-    (home / "config.json").write_text(json.dumps(cfg, indent=2))
-    if (real_home / "acquisition_configs").exists():
-        shutil.copytree(real_home / "acquisition_configs", home / "acquisition_configs")
-
-    assert _port_free(), f"port {PORT} is busy; another seafront is running"
-    env = dict(os.environ, SEAFRONT_HOME=str(home), MOCK_NO_DELAYS="1")
-    # server output goes to a file: an unread PIPE fills up after a few dozen images and then
-    # blocks the server's event loop on every log write
-    server_log = (home / "server.log").open("w")
-    proc = subprocess.Popen(
-        ["uv", "run", "python", "-m", "seafront", "--microscope", MOCK],
-        stdout=server_log, stderr=subprocess.STDOUT, text=True, env=env,
-    )
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(f"{SERVER}/", timeout=1) as r:
-                if r.status == 200:
-                    break
-        except (urllib.error.URLError, ConnectionRefusedError):
-            time.sleep(0.3)
-    else:
-        proc.terminate()
-        raise RuntimeError("scratch server did not start")
-    yield home
-    proc.terminate()
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    server_log.close()
+    """mock server on a scratch seafront home, images redirected into the scratch dir"""
+    global PORT, SERVER
+    with mock_server(tmp_path_factory) as srv:
+        PORT, SERVER = srv.port, srv.url
+        yield srv.home
 
 
 # --------------------------------------------------------------------------------------------

@@ -11,63 +11,24 @@ These tests verify that the server correctly handles:
 """
 
 import json
-import os
-import subprocess
-import time
 import urllib.error
 import urllib.request
 
 import pytest
 
-# The mock microscope name used in tests
-MOCK_MICROSCOPE_NAME = "mocroscope"
+from tests.mock_server import MOCK, mock_server
+
+# The mock microscope name used in tests, as the example config spells it
+MOCK_MICROSCOPE_NAME = MOCK
 
 
 @pytest.fixture(scope="class")
-def running_server(request):
+def running_server(request, tmp_path_factory):
     """Start server once for all tests in the class."""
-    env = os.environ.copy()
-    env["MOCK_NO_DELAYS"] = "1"
-
-    proc = subprocess.Popen(
-        ["uv", "run", "python", "-m", "seafront", "--microscope", MOCK_MICROSCOPE_NAME],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        env=env,
-    )
-
-    # Wait for server to start
-    server_ready = False
-    start_time = time.time()
-    timeout = 15
-
-    while time.time() - start_time < timeout:
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:5000/", timeout=1) as response:
-                if response.status == 200:
-                    server_ready = True
-                    break
-        except (urllib.error.URLError, ConnectionRefusedError):
-            time.sleep(0.5)
-
-    if not server_ready:
-        proc.terminate()
-        proc.wait()
-        pytest.fail("Server did not start within timeout")
-
-    # Make server URL available to tests
-    request.cls.server_url = "http://127.0.0.1:5000"
-
-    yield proc
-
-    # Cleanup
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+    with mock_server(tmp_path_factory) as srv:
+        # Make server URL available to tests
+        request.cls.server_url = srv.url
+        yield srv.proc
 
 
 def make_request(
