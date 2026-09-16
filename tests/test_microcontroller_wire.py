@@ -2,12 +2,11 @@
 The wire protocol, against a fake Teensy.
 
 Everything below `TeensyMicrocontroller` used to be untestable because it is a USB device;
-`tests/fake_mcu.py` supplies one. What is checked here is the part that is correct and worth
-keeping correct: how a command is laid out, how ids are allocated, how a position comes back,
-and how the driver decides a command has finished.
+`tests/fake_mcu.py` supplies one. What is checked here: how a command is laid out, how ids
+are allocated, how a position comes back, and how the driver decides a command has finished.
 
-The defects this layer is already known to have live next door in
-`test_microcontroller_defects.py`, which fails on purpose.
+What the driver does when the device stops answering is next door, in
+`test_microcontroller_silence.py`.
 """
 
 import sys
@@ -172,6 +171,45 @@ class TestStatusPackets:
         assert packet.x_pos_usteps == -1 * firmware.STAGE_MOVEMENT_SIGN_X
 
 
+class TestTheChecksumByteIsNotValidated:
+    """
+    The last byte of a status packet is a CRC, and the driver deliberately ignores it.
+
+    Outbound commands are checksummed. Inbound ones are not checked because the firmware in
+    service predates the CRC and version bytes, so comparing that byte could reject every
+    packet the fleet sends. These are here so that turning the check on is a deliberate act
+    with a test to update, rather than a plausible-looking one-line "fix" that takes the
+    microscopes off the air.
+    """
+
+    def test_a_packet_whose_checksum_is_wrong_is_still_accepted(self):
+        controller, device = make_microcontroller(FakeMCU())
+        device.ack(7)
+        device.moves_by = (0, 0, 0)
+        device.corrupt_crc = True
+        command = Command.initialize()
+        command.set_id(7)
+        controller._wait_until_cmd_is_finished(command, timeout_s=2.0)
+
+    def test_the_fake_computes_a_real_checksum_over_the_body(self):
+        """
+        without this the test above passes for the wrong reason
+
+        `corrupt_crc` only corrupts something if the fake was producing a correct CRC-8/CCITT
+        to begin with - the same one the driver uses for outbound commands.
+        """
+        import crc
+
+        packet_bytes = status_packet(last_cmd_id=7, x_usteps=1234)
+        calculator = crc.CrcCalculator(crc.Crc8.CCITT, table_based=True)
+        assert packet_bytes[-1] == calculator.calculate_checksum(packet_bytes[:-1])
+
+    def test_the_byte_is_parsed_and_reachable(self):
+        """so the check is one comparison away if corruption ever does turn up"""
+        packet = MicrocontrollerStatusPackage(status_packet(last_cmd_id=7))
+        assert 0 <= packet.crc <= 255
+
+
 class TestCompletingACommand:
     def test_a_command_the_device_acknowledges_completes(self, mcu):
         controller, device = mcu
@@ -191,6 +229,27 @@ class TestCompletingACommand:
         device.queue(*[status_packet(last_cmd_id=200) for _ in range(3)])
         with pytest.raises(MicrocontrollerTimeout):
             controller._wait_until_cmd_is_finished(command, timeout_s=0.3)
+
+    @pytest.mark.parametrize("packets_behind", [0, 1, 5, 50])
+    def test_an_acknowledgement_is_found_however_much_is_buffered_behind_it(
+        self, mcu, packets_behind
+    ):
+        """
+        the reader may not skip packets to catch up
+
+        It used to read only the last packet of whatever was waiting, so one status packet
+        arriving behind an acknowledgement was enough to lose it and the caller then spent
+        the whole timeout on a command that had already answered. A packet nobody looks at
+        is an acknowledgement nobody can see, at any depth.
+        """
+        controller, device = mcu
+        command = Command.initialize()
+        command.set_id(7)
+        device.queue(
+            status_packet(last_cmd_id=7, exec_status=0),
+            *[status_packet(last_cmd_id=200) for _ in range(packets_behind)],
+        )
+        controller._wait_until_cmd_is_finished(command, timeout_s=0.3)
 
     def test_a_move_waits_for_the_stage_to_stop(self, mcu):
         """

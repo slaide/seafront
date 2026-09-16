@@ -12,8 +12,8 @@ and `send_cmd` returning normally is the only thing telling the layers above tha
 a silent device reported as success is a stage the server believes is somewhere it is not -
 and the input to every relative move after it.
 
-The two used to be indistinguishable, which is the whole of DEFECTS.md B, "cannot tell slow
-from dead". They are separable because this device streams status continuously whether or not
+The two used to be indistinguishable - there was no telling slow from dead. They are
+separable because this device streams status continuously whether or not
 it is answering a particular command: packets arriving means alive, no packets at all means
 gone. `_read_packets` sees every one of them and now counts them, so the distinction costs an
 integer.
