@@ -48,6 +48,22 @@ def _to_payload(value: int, num_bytes: int = 4) -> list[int]:
     return [(raw >> (8 * (num_bytes - 1 - i))) & 0xFF for i in range(num_bytes)]
 
 
+def device_z_mm(device) -> float:
+    """
+    the fake's z, in mm, as the driver reads it back
+
+    `device.z` holds microsteps exactly as the wire carried them. The status decoder applies
+    the axis sign on the way in, so a test that reads or sets the field directly has to apply
+    it too - and z is the axis where that matters, being the only one with sign -1.
+    """
+    return device.z * firmware.STAGE_POS_SIGN_Z * firmware.mm_per_ustep_z
+
+
+def set_device_z_mm(device, z_mm: float) -> None:
+    "put the fake's stage at this z, in the units the driver will read back"
+    device.z = round(z_mm / (firmware.STAGE_POS_SIGN_Z * firmware.mm_per_ustep_z))
+
+
 def status_packet(
     *,
     last_cmd_id: int = 0,
@@ -181,9 +197,11 @@ class FakeMCU:
         what a test about ordering or coordinates wants. `moves_by` is the knob for tests that
         need it still moving.
 
-        The status packet's decoder multiplies by the axis movement sign, so the raw value
-        stored here is divided by it - a round trip through the wire then returns exactly the
-        microsteps the command carried.
+        Stored exactly as the wire carried it, which is what the firmware reports back. The
+        status decoder then applies the axis sign on the way in, and `mm_to_ustep_*` applied
+        it on the way out, so the two cancel and a move to z=1.0 mm reads back as z=1.0 mm.
+        Multiplying by the sign here as well applied it twice: x and y have sign +1 so they
+        were unaffected, but z has -1, and every absolute z move read back negated.
         """
         moveto = {
             CommandName.MOVETO_X.value: "x",
@@ -205,12 +223,7 @@ class FakeMCU:
         if axis is None:
             return
         raw = int.from_bytes(packet[2:6], "big", signed=True)
-        sign = {
-            "x": firmware.STAGE_MOVEMENT_SIGN_X,
-            "y": firmware.STAGE_MOVEMENT_SIGN_Y,
-            "z": firmware.STAGE_MOVEMENT_SIGN_Z,
-        }[axis]
-        setattr(self, axis, (getattr(self, axis) if relative else 0) + raw * sign)
+        setattr(self, axis, (getattr(self, axis) if relative else 0) + raw)
 
     def bytes_waiting(self) -> int:
         with self._lock:

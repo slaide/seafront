@@ -32,6 +32,7 @@ from seafront.hardware.microcontroller.teensy_microcontroller import CommandName
 from seafront.hardware.mock_microscope import _simulate_laf_image
 from seafront.hardware.squid import linear_regression
 from seafront.server import commands as cmd
+from tests.fake_mcu import device_z_mm
 from tests.test_autofocus_measurement import spots
 
 firmware = get_firmware_config()
@@ -60,7 +61,7 @@ class ZAwareFocusCamera:
 
     def _z_um(self) -> float:
         "the fake's z, in micrometres, the way the status packet decoder reads it"
-        return self.device.z * firmware.mm_per_ustep_z * 1e3 + self.z_offset_um
+        return device_z_mm(self.device) * 1e3 + self.z_offset_um
 
     def snap(self, config: sc.AcquisitionChannelConfig) -> np.ndarray:
         z_um = self._z_um()
@@ -95,7 +96,7 @@ class DrawnSpotFocusCamera:
         self.snaps: list[float] = []
 
     def snap(self, config: sc.AcquisitionChannelConfig) -> np.ndarray:
-        z_um = self.device.z * firmware.mm_per_ustep_z * 1e3
+        z_um = device_z_mm(self.device) * 1e3
         self.snaps.append(z_um)
         left = self.BASE_X + z_um * self.px_per_um
         xs = [left] if self.num_spots == 1 else [left, left + self.SEPARATION_PX]
@@ -264,9 +265,9 @@ class TestTheSweep:
         back at the start by then.
         """
         adapter, device, _camera = calibrating
-        start_z = device.z
+        start_z = device_z_mm(device)
         _calibrate(adapter)
-        end_mm = (device.z - start_z) * firmware.mm_per_ustep_z
+        end_mm = device_z_mm(device) - start_z
         assert end_mm == pytest.approx(0.0, abs=1e-3)
 
 
