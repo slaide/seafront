@@ -195,6 +195,78 @@ def _format_well_name_with_padding(well_name: str) -> str:
     return f"{row_letter}{col_number.zfill(2)}"
 
 
+class TimeEstimate(tp.NamedTuple):
+    """
+    what the progress display needs: how much longer, and how long one timepoint takes
+
+    `remaining_s` is None until the first image, because there is no rate to extrapolate
+    from. `timepoint_duration_s` is None for a run that is not a time series, where the idea
+    does not apply.
+    """
+
+    remaining_s: float | None
+    timepoint_duration_s: float | None
+
+
+def estimate_remaining_time(
+    *,
+    num_images_acquired: int,
+    num_images_total: int,
+    time_since_start_s: float,
+    num_timepoints: int,
+    current_timepoint: int,
+    delta_t_s: float,
+    completed_timepoint_imaging_times: list[float],
+) -> TimeEstimate:
+    """
+    How much longer the run has, from how long it has taken so far.
+
+    This is the number on the operator's screen for the hours a plate takes, so it is worth
+    it being roughly right: it decides whether somebody waits or goes home.
+
+    None until the first image, because there is no rate to extrapolate from yet.
+
+    A time series is not just more images. Imaging a timepoint and then waiting for the next
+    one are separate costs, and the wait is whatever is left of `delta_t` after the imaging -
+    nothing, if imaging already takes longer than the interval. Once a timepoint has
+    completed, its measured time is a better estimate for the rest than anything derived from
+    a partial one, so it takes over.
+    """
+    if num_images_acquired <= 0:
+        return TimeEstimate(remaining_s=None, timepoint_duration_s=None)
+
+    images_remaining = num_images_total - num_images_acquired
+    time_per_image = time_since_start_s / num_images_acquired
+
+    if num_timepoints <= 1:
+        # Single timepoint: simple linear interpolation
+        return TimeEstimate(
+            remaining_s=time_per_image * images_remaining, timepoint_duration_s=None
+        )
+
+    images_per_tp = num_images_total / num_timepoints
+
+    if completed_timepoint_imaging_times:
+        # Use average of completed timepoint times for all remaining imaging
+        est_imaging_per_tp = sum(completed_timepoint_imaging_times) / len(
+            completed_timepoint_imaging_times
+        )
+        tps_remaining = images_remaining / images_per_tp
+        estimate = est_imaging_per_tp * tps_remaining
+    else:
+        # No completed TPs yet: estimate from current progress
+        est_imaging_per_tp = time_per_image * images_per_tp
+        estimate = time_per_image * images_remaining
+
+    # Add wait periods
+    waits_remaining = num_timepoints - current_timepoint
+    wait_per_cycle = max(0, delta_t_s - est_imaging_per_tp)
+    return TimeEstimate(
+        remaining_s=estimate + waits_remaining * wait_per_cycle,
+        timepoint_duration_s=est_imaging_per_tp,
+    )
+
+
 def image_filename_for(
     *,
     well_name: str,
@@ -1404,41 +1476,20 @@ class ProtocolGenerator(BaseModel):
                         time_since_start_s = time.time() - start_time
 
                         # Estimate remaining time from imaging progress
-                        est_imaging_per_tp: float | None = None
-                        if num_images_acquired > 0:
-                            images_remaining = self.num_images_total - num_images_acquired
-
-                            # For time series: use completed timepoint times for accurate estimates
-                            if self.num_timepoints > 1:
-                                delta_t_s = self.config_file.grid.delta_t.h*3600 + self.config_file.grid.delta_t.m*60 + self.config_file.grid.delta_t.s
-                                images_per_tp = self.num_images_total / self.num_timepoints
-
-                                if self.completed_timepoint_imaging_times:
-                                    # Use average of completed timepoint times for all remaining imaging
-                                    est_imaging_per_tp = sum(self.completed_timepoint_imaging_times) / len(self.completed_timepoint_imaging_times)
-                                    tps_remaining = images_remaining / images_per_tp
-                                    estimated_remaining_time_s = est_imaging_per_tp * tps_remaining
-
-                                    # Add wait periods
-                                    waits_remaining = self.num_timepoints - timepoint
-                                    wait_per_cycle = max(0, delta_t_s - est_imaging_per_tp)
-                                    estimated_remaining_time_s += waits_remaining * wait_per_cycle
-                                else:
-                                    # No completed TPs yet: estimate from current progress
-                                    time_per_image = time_since_start_s / num_images_acquired
-                                    est_imaging_per_tp = time_per_image * images_per_tp
-                                    estimated_remaining_time_s = time_per_image * images_remaining
-
-                                    # Add wait periods
-                                    waits_remaining = self.num_timepoints - timepoint
-                                    wait_per_cycle = max(0, delta_t_s - est_imaging_per_tp)
-                                    estimated_remaining_time_s += waits_remaining * wait_per_cycle
-                            else:
-                                # Single timepoint: simple linear interpolation
-                                time_per_image = time_since_start_s / num_images_acquired
-                                estimated_remaining_time_s = time_per_image * images_remaining
-                        else:
-                            estimated_remaining_time_s = None
+                        time_estimate = estimate_remaining_time(
+                            num_images_acquired=num_images_acquired,
+                            num_images_total=self.num_images_total,
+                            time_since_start_s=time_since_start_s,
+                            num_timepoints=self.num_timepoints,
+                            current_timepoint=timepoint,
+                            delta_t_s=(
+                                self.config_file.grid.delta_t.h * 3600
+                                + self.config_file.grid.delta_t.m * 60
+                                + self.config_file.grid.delta_t.s
+                            ),
+                            completed_timepoint_imaging_times=self.completed_timepoint_imaging_times,
+                        )
+                        estimated_remaining_time_s = time_estimate.remaining_s
 
                         logger.debug(
                             f"protocol - {num_images_acquired}/{self.num_images_total} images acquired"
@@ -1455,7 +1506,7 @@ class ProtocolGenerator(BaseModel):
                             message=f"Acquisition is {(100 * num_images_acquired / self.num_images_total):.2f}% complete",
                             current_timepoint=timepoint if self.num_timepoints > 1 else None,
                             total_timepoints=self.num_timepoints if self.num_timepoints > 1 else None,
-                            estimated_timepoint_duration_s=est_imaging_per_tp,
+                            estimated_timepoint_duration_s=time_estimate.timepoint_duration_s,
                         )
 
             # sleep for additional time, maybe
