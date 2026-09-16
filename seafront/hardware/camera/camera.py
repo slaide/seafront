@@ -13,6 +13,22 @@ from seafront.logger import logger
 
 
 
+def bits_for_pixel_format(pixel_format: str) -> int:
+    """
+    How many bits of the container a camera in this mode actually fills.
+
+    The number every adapter needs and nobody should spell out twice: it decides the array
+    dtype, whether the samples get padded up to the container, and what goes in the OME-XML
+    as SignificantBits.
+    """
+    bits = {"mono8": 8, "mono10": 10, "mono12": 12, "mono14": 14, "mono16": 16}.get(
+        pixel_format.lower()
+    )
+    if bits is None:
+        raise ValueError(f"unsupported pixel format {pixel_format}")
+    return bits
+
+
 class AcquisitionMode(str, Enum):
     """
     set acquisition mode of microscope

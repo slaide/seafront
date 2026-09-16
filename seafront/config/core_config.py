@@ -413,7 +413,12 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
         bool_config_item(
             handle=ImageConfig.FILE_PAD_LOW.value,
             name="image file pad low",
-            default=True,
+            # Off by default so the stored samples are the camera's own values and the
+            # SignificantBits in the OME-XML describes them. On, the samples are shifted up to
+            # fill the container - which makes the images look right in a viewer that ignores
+            # the metadata, at the cost of every intensity being scaled by 2^(container-camera)
+            # with nothing in the file able to say so.
+            default=False,
         ),
         bool_config_item(
             handle=ImageConfig.FILENAME_USE_CHANNEL_NAME.value,

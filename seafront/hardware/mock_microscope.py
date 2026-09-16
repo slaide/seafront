@@ -27,10 +27,10 @@ import seaconfig as sc
 from pydantic import PrivateAttr
 
 from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, GlobalConfigHandler, ImagingOrder
-from seafront.config.handles import FilterWheelConfig, ImagingConfig, LaserAutofocusConfig
+from seafront.config.handles import CameraConfig, FilterWheelConfig, ImagingConfig, LaserAutofocusConfig
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import AdapterState, Position
-from seafront.hardware.camera import Camera, HardwareLimitValue, MockCamera
+from seafront.hardware.camera import Camera, HardwareLimitValue, MockCamera, bits_for_pixel_format
 from seafront.hardware.firmware_config import (
     get_firmware_config,
 )
@@ -149,6 +149,20 @@ def _simulate_laf_image(
     img = (img / saturation_level * 65535).astype(np.uint16)
 
     return img
+
+
+def _to_camera_bits(img: np.ndarray, cambits: int) -> np.ndarray:
+    """
+    Put a synthetic frame in the range a camera in this mode would actually produce.
+
+    MockCamera always synthesises 16-bit values; a mock configured for mono8 or mono12 has to
+    hand back samples that fit in 8 or 12 bits, or the OME-XML written from a mock run
+    describes something that never existed.
+    """
+    full = np.iinfo(img.dtype).max
+    scaled = (img.astype(np.float64) / full) * ((1 << cambits) - 1)
+    dtype = np.uint8 if cambits <= 8 else np.uint16
+    return scaled.astype(dtype)
 
 
 class MockMicroscope(Microscope):
@@ -996,9 +1010,16 @@ class MockMicroscope(Microscope):
             # Generate synthetic image via camera
             synthetic_img = self.main_camera.value.snap(command.channel)
 
+            # The configured format, not a hardcoded 16: this used to claim 16 bits whatever
+            # the config said, so the OME-XML written from a mock run described data the mock
+            # had never produced and no test over that metadata meant anything.
+            pixel_format = ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue
+            cambits = bits_for_pixel_format(pixel_format)
+            synthetic_img = _to_camera_bits(synthetic_img, cambits)
+
             result = cmd.ImageAcquiredResponse()
             result._img = synthetic_img
-            result._cambits = 16
+            result._cambits = cambits
             return result  # type: ignore
 
         elif isinstance(command, cmd.MC_getLastPosition):

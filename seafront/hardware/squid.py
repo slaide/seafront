@@ -49,6 +49,7 @@ from seafront.hardware.camera import (
     Camera,
     CameraOpenRequest,
     HardwareLimitValue,
+    bits_for_pixel_format,
     camera_open,
 )
 from seafront.hardware.illumination import IlluminationController
@@ -128,21 +129,7 @@ def _process_image(img: np.ndarray, pixel_format: str) -> tuple[np.ndarray, int]
 
     image_file_pad_low = ConfigRegistry.get(ImageConfig.FILE_PAD_LOW)
     assert image_file_pad_low is not None
-    cambits = 0
-
-    match pixel_format:
-        case "mono8":
-            cambits = 8
-        case "mono10":
-            cambits = 10
-        case "mono12":
-            cambits = 12
-        case "mono14":
-            cambits = 14
-        case "mono16":
-            cambits = 16
-        case _:
-            raise ValueError(f"unsupported pixel format {pixel_format}")
+    cambits = bits_for_pixel_format(pixel_format)
 
     if image_file_pad_low.boolvalue:
         # e.g. ret = ret << (16 - 12)

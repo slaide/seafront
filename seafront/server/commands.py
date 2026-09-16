@@ -17,6 +17,7 @@ from seafront.hardware.adapter import AdapterState, Position
 from seafront.hardware.forbidden_areas import ForbiddenArea, ForbiddenAreaList
 from seafront.hardware.limits import HardwareLimits
 
+from ..hardware.camera.camera import bits_for_pixel_format
 from ..logger import logger
 
 
@@ -33,19 +34,11 @@ class ImageStoreEntry(BaseModel):
 
     @property
     def bit_depth(self) -> int:
-        match self.pixel_format.lower():
-            case "mono8":
-                return 8
-            case "mono10":
-                return 10
-            case "mono12":
-                return 12
-            case "mono14":
-                return 14
-            case "mono16":
-                return 16
-            case _unknown:
-                error_internal(detail=f"unexpected pixel format {_unknown}")
+        "how many bits of each stored sample the camera actually filled"
+        try:
+            return bits_for_pixel_format(self.pixel_format)
+        except ValueError:
+            error_internal(detail=f"unexpected pixel format {self.pixel_format}")
 
 
 # wrap error cases in http response models

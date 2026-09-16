@@ -66,12 +66,13 @@ from seafront.server.protocol import (
     _format_well_name_with_padding,
     build_ome_instrument,
     encode_image,
+    pixel_size_um_at,
+    significant_bits_for,
 )
 from seafront.storage import DiskSink, ImageStore, S3Sink
 
 # --- constants mirrored from ProtocolGenerator.generate -------------------------------------
 Z_STACK_COUNTER_BACKLASH_MM = 40e-3
-PIXEL_SIZE_UM = 900 / 3000
 DISPLACEMENT_THRESHOLD_MM = 0.5e-3
 UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM = 10e-3
 AUTOFOCUS_NUM_ATTEMPTS_MAX = 3
@@ -316,15 +317,18 @@ def run_protocol(
     camera = client.post("/api/get_features/hardware_capabilities")["main_camera"]
     hardware_channels = [ChannelConfig(**ch) for ch in (cfg("imaging.channels") or [])]
     mag = re.match(r"(\d+)x", str(cfg("camera.main.objective", "")))
+    objective_magnification = int(mag.group(1)) if mag else None
     ome_template = build_ome_instrument(
         microscope_name=client.target_device,
         camera_vendor=camera["vendor"],
         camera_model=camera["model"],
         camera_sn=camera["serial_number"],
         hardware_channels=hardware_channels,
-        objective_magnification=int(mag.group(1)) if mag else None,
+        objective_magnification=objective_magnification,
     )
+    pixel_size_um = pixel_size_um_at(objective_magnification)
     pixel_format = str(cfg("camera.main.pixel_format", "mono8"))
+    pad_low = bool(cfg("image.file.pad_low", False))
     imaging_order = str(cfg("imaging.order", "protocol_order"))
 
     # file naming options (handles as registered in seafront/config/handles.py)
@@ -427,7 +431,12 @@ def run_protocol(
                                 channel_config=plane.channel,
                                 position=entry.info.position,
                                 plane_index=plane.plane_index,
-                                pixel_size_um=PIXEL_SIZE_UM,
+                                pixel_size_um=pixel_size_um,
+                                significant_bits=significant_bits_for(
+                                    camera_bits=entry.bit_depth,
+                                    container_bits=img.dtype.itemsize * 8,
+                                    pad_low=pad_low,
+                                ),
                                 project_name=protocol.project_name,
                                 plate_name=protocol.plate_name,
                                 cell_line=protocol.cell_line,

@@ -6,6 +6,7 @@ from .camera import (
     CameraDriver,
     CameraOpenRequest,
     HardwareLimitValue,
+    bits_for_pixel_format,
     camera_open,
     get_all_cameras,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "CameraDriver",
     "HardwareLimitValue",
     "AcquisitionMode",
+    "bits_for_pixel_format",
     "CameraOpenRequest",
     "get_all_cameras",
     "camera_open",

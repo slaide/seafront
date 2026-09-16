@@ -20,6 +20,7 @@ from seafront.server.protocol import (
     build_ome_instrument,
     build_ome_metadata,
     pixel_size_um_at,
+    significant_bits_for,
 )
 
 import pytest
@@ -79,7 +80,8 @@ def _channel() -> sc.AcquisitionChannelConfig:
     )
 
 
-def _ome_xml(magnification: int | None) -> str:
+def _ome_xml(magnification: int | None, significant_bits: int | None = None,
+             pixel_format: str = "mono12") -> str:
     """a real OME-TIFF description string, built the way an acquisition builds one"""
     hardware_channels = [
         basics.ChannelConfig(name="Fluorescence 405 nm Ex", handle="fluo405", source_slot=11)
@@ -93,7 +95,7 @@ def _ome_xml(magnification: int | None) -> str:
         objective_magnification=magnification,
     )
     entry = cmds.ImageStoreEntry(
-        pixel_format="mono12",
+        pixel_format=pixel_format,
         info=cmds.ImageStoreInfo(
             channel=_channel(),
             width_px=2500,
@@ -114,6 +116,7 @@ def _ome_xml(magnification: int | None) -> str:
         position=entry.info.position,
         plane_index=0,
         pixel_size_um=pixel_size_um_at(magnification),
+        significant_bits=significant_bits,
         project_name="project",
         plate_name="plate",
         cell_line="line",
@@ -156,3 +159,49 @@ class TestWhatReachesTheFile:
         pixels = from_xml(_ome_xml(None)).images[0].pixels
         assert pixels.physical_size_x is None
         assert pixels.physical_size_y is None
+
+
+class TestSignificantBitsDescribesTheSamples:
+    """
+    the other half of an honest file: how much of each 16-bit word is real
+
+    The cameras are 12-bit (or 8/10/14) and there is no container for that, so the samples
+    ride in a 16-bit type. OME has one attribute for saying so, and nothing was setting it: a
+    reader saw uint16 and had no way to know the values only ever reach 4095.
+
+    OME gives no way to say *where* in the word the bits sit, so the only interpretation
+    available to a reader is low-aligned, 0..2**N-1. That is what the camera produces, which
+    is why `image.file.pad_low` now defaults off.
+    """
+
+    @pytest.mark.parametrize("camera_bits", [8, 10, 12, 14, 16])
+    def test_unpadded_samples_report_the_cameras_own_depth(self, camera_bits):
+        container = 8 if camera_bits <= 8 else 16
+        assert significant_bits_for(camera_bits, container, pad_low=False) == camera_bits
+
+    def test_padding_shifts_the_samples_so_the_container_width_is_the_honest_answer(self):
+        """
+        12 bits shifted up to fill 16 really do span the container
+
+        Saying 12 here would tell a reader to stretch 0..4095 over a frame whose values reach
+        65520, and the whole image would clip to white - worse than the darkness the shift was
+        added to avoid.
+        """
+        assert significant_bits_for(12, 16, pad_low=True) == 16
+
+    def test_padding_changes_nothing_when_the_camera_already_fills_the_container(self):
+        assert significant_bits_for(16, 16, pad_low=True) == 16
+        assert significant_bits_for(8, 8, pad_low=True) == 8
+
+    @pytest.mark.parametrize(("pixel_format", "expected"), [("mono8", 8), ("mono12", 12), ("mono16", 16)])
+    def test_the_depth_reaches_the_file(self, pixel_format, expected):
+        pixels = from_xml(
+            _ome_xml(20, significant_bits=expected, pixel_format=pixel_format)
+        ).images[0].pixels
+        assert pixels.significant_bits == expected
+
+    def test_twelve_bit_data_is_not_described_as_sixteen(self):
+        """the specific lie the file used to tell by omission"""
+        pixels = from_xml(_ome_xml(20, significant_bits=12)).images[0].pixels
+        assert pixels.type.value == "uint16"
+        assert pixels.significant_bits == 12

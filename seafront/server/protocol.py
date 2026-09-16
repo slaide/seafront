@@ -372,6 +372,24 @@ def pixel_size_um_at(objective_magnification: int | None) -> float | None:
     return MAIN_CAMERA_PIXEL_PITCH_UM / objective_magnification
 
 
+def significant_bits_for(camera_bits: int, container_bits: int, pad_low: bool) -> int:
+    """
+    What SignificantBits should say for samples this camera produced.
+
+    OME gives no way to state where the significant bits sit inside the container, so a reader
+    has only one interpretation available: the value fits in N bits, i.e. the range is
+    0..2**N-1, low-aligned. That is true of the camera's own samples, so normally this is just
+    the camera's bit depth.
+
+    With `image.file.pad_low` the adapter shifts the samples up to fill the container. They
+    then really do span the container's range - in coarse steps, but a viewer wanting a
+    display range is right to use all of it - so the honest answer becomes the container
+    width. Claiming the camera's depth there would tell a reader to stretch 0..4095 across a
+    frame whose values reach 65520, and everything would clip to white.
+    """
+    return container_bits if pad_low and container_bits != camera_bits else camera_bits
+
+
 def build_ome_metadata(
     ome_template: OME,
     image_entry: cmds.ImageStoreEntry,
@@ -379,6 +397,7 @@ def build_ome_metadata(
     position: cmds.SitePosition,
     plane_index: int,
     pixel_size_um: float | None,
+    significant_bits: int | None,
     project_name: str,
     plate_name: str,
     cell_line: str,
@@ -400,6 +419,9 @@ def build_ome_metadata(
         plane_index: Z-plane index (0-based)
         pixel_size_um: Physical pixel size at the sample in micrometers, or None when the
             objective is unknown - in which case PhysicalSize is left out rather than guessed
+        significant_bits: how many bits of each stored sample carry data (see
+            significant_bits_for); None leaves the attribute out, which OME reads as the
+            full width of the type
         project_name: Project/experiment name
         plate_name: Plate identifier
         cell_line: Cell line identifier
@@ -455,6 +477,7 @@ def build_ome_metadata(
         physical_size_x=pixel_size_um,
         physical_size_y=pixel_size_um,
         physical_size_z=channel_config.delta_z_um if channel_config.delta_z_um > 0 else None,
+        significant_bits=significant_bits,
     )
 
     # Create channel
@@ -559,6 +582,7 @@ def encode_image(
     position: cmds.SitePosition,
     plane_index: int,
     pixel_size_um: float | None,
+    significant_bits: int | None,
     project_name: str,
     plate_name: str,
     cell_line: str,
@@ -581,6 +605,7 @@ def encode_image(
         position=position,
         plane_index=plane_index,
         pixel_size_um=pixel_size_um,
+        significant_bits=significant_bits,
         project_name=project_name,
         plate_name=plate_name,
         cell_line=cell_line,
@@ -987,6 +1012,10 @@ class ProtocolGenerator(BaseModel):
         # 10um
         UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM = 10e-3
 
+        # read once for the run: the samples are shifted (or not) by the adapter at snap time,
+        # and the metadata has to describe what was actually done to them
+        pad_low = ConfigRegistry.get(ImageConfig.FILE_PAD_LOW).boolvalue
+
         g_config = basics.GlobalConfigHandler.get_dict()
 
         # first yield indicates that this generator is ready to produce commands
@@ -1306,6 +1335,11 @@ class ProtocolGenerator(BaseModel):
                                 position=image_store_entry.info.position,
                                 plane_index=plane_index,
                                 pixel_size_um=pixel_size_um,
+                                significant_bits=significant_bits_for(
+                                    camera_bits=image_store_entry.bit_depth,
+                                    container_bits=res._img.dtype.itemsize * 8,
+                                    pad_low=pad_low,
+                                ),
                                 project_name=self.config_file.project_name,
                                 plate_name=self.config_file.plate_name,
                                 cell_line=self.config_file.cell_line,
