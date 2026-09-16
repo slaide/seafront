@@ -10,11 +10,8 @@ microscope to open and how to listen.
 import argparse
 import asyncio
 import os
-import pathlib as path
 import signal
 import socket
-import subprocess
-import sys
 import threading
 
 import json5
@@ -23,6 +20,7 @@ from fastapi import HTTPException
 
 from seafront.config.basics import GlobalConfigHandler, MicroscopeConfig, ServerConfig
 from seafront.config.core_config import UnconfiguredDeviceIdError
+from seafront.config.default_protocol import generate_default_protocol
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig, SystemConfig
 from seafront.logger import logger
 from seafront.server.app import make_app
@@ -108,16 +106,8 @@ def main():
         logger.info(f"Default protocol file not found: {default_protocol_file}")
         logger.info(f"Generating default protocol for microscope '{microscope_name}'...")
         try:
-            script_path = (path.Path(__file__).parent.parent / "scripts/generate_default_protocol.py").resolve()
-            result = subprocess.run(
-                [sys.executable, str(script_path), "--microscope", microscope_name],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                logger.critical(f"Failed to generate default protocol: {result.stderr}")
-                return
-            logger.info(result.stdout.strip())
+            output_file = generate_default_protocol(microscope_name)
+            logger.info(f"Generated: {output_file}")
         except Exception as e:
             logger.critical(f"Failed to generate default protocol: {e}")
             return

@@ -1,6 +1,10 @@
 [project]
 name = "seafront"
 version = "2.6.1"
+description = "Headless-first microscope control framework for the Cephla SQUID microscope"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.13,<3.14"
 authors = [{ name = "Patrick Hennig", email = "patrick.hennig@uu.se" }]
 dependencies = [
@@ -26,6 +30,13 @@ dependencies = [
     "boto3>=1.34,<2", # S3 image storage backend
 ]
 
+[project.urls]
+Homepage = "https://github.com/slaide/seafront"
+Issues = "https://github.com/slaide/seafront/issues"
+
+[project.scripts]
+seafront = "seafront.__main__:main"
+
 [project.optional-dependencies]
 dev = [
     "pyright>=1.1.0", # type checker
@@ -39,8 +50,25 @@ dev = [
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["seafront"]
+[tool.setuptools.packages.find]
+# every seafront.* subpackage, not just the top level: an explicit packages = ["seafront"]
+# shipped the three top-level modules and left hardware/, server/, config/ and storage/ out
+# of the wheel entirely.
+include = ["seafront*"]
+
+[tool.setuptools.package-data]
+# server/app.py resolves these relative to the package directory and mounts them, so they
+# have to sit inside the installed seafront/ rather than beside it.
+seafront = [
+    "web-static/*.html",
+    "web-static/*.json",
+    "web-static/css/*",
+    "web-static/resources/*",
+    "web-static/src/*.js",
+    "web-static/src/types/*",
+    "web-static/vendor/*.js",
+    "web-static/vendor/*/*.js",
+]
 
 [tool.pyright]
 pythonVersion = "3.13"
@@ -99,6 +127,3 @@ dev = [
     "pytest-cov>=7.0.0",
     "httpx>=0.28,<0.29", # what starlette's TestClient drives an ASGI app through
 ]
-
-[tool.setuptools.package-data]
-toupcam = ["web-static"]

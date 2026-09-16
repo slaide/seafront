@@ -1,138 +1,23 @@
 #!/usr/bin/env python3
 """
-Generate default protocol file for a microscope.
+Command line front end for seafront.config.default_protocol.
 
-Creates a default.json protocol file in the microscope-specific acquisition_configs/ directory.
+The generation itself lives in the package, because the server runs it on first start and an
+installed seafront has no scripts/ directory beside it. This file is the argument parsing and
+the listing options, nothing else.
 """
 
 import argparse
-import json
-from pathlib import Path
 
-import json5
 import seaconfig as sc
-from seafront.config.basics import FilterConfig, GlobalConfigHandler, MicroscopeConfig, ServerConfig
 
-def load_server_config() -> ServerConfig:
-    """Load and return server config."""
-    config_path = GlobalConfigHandler.home() / "config.json"
+from seafront.config.default_protocol import (
+    generate_default_protocol,
+    get_wellplate,
+    load_server_config,
+)
 
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found at {config_path}. See examples/ directory.")
-
-    with config_path.open("r") as f:
-        return ServerConfig(**json5.load(f))
-
-
-def get_wellplate(plate_id: str | None) -> sc.wellplates.Wellplate:
-    """Get wellplate by ID, or default to revvity-384-6057800."""
-    target_id = plate_id or "revvity-384-6057800"
-
-    for plate in sc.plates.Plates:
-        if plate.Model_id == target_id:
-            return plate
-
-    available = ", ".join(p.Model_id for p in sc.plates.Plates)
-    raise ValueError(f"Wellplate '{target_id}' not found. Available: {available}")
-
-
-def generate_default_protocol(
-    microscope_name: str,
-    microscope_config: MicroscopeConfig | None = None,
-    plate_id: str | None = None,
-) -> Path:
-    """
-    Generate a default protocol file for the given microscope.
-
-    Args:
-        microscope_name: Name of the microscope
-        microscope_config: Optional microscope config dict. If not provided, loads from config file.
-        plate_id: Optional wellplate ID. Defaults to revvity-384-6057800.
-
-    Returns:
-        Path to the generated protocol file.
-    """
-    # Load microscope config if not provided
-    if microscope_config is None:
-        server_config = load_server_config()
-        for m in server_config.microscopes:
-            if m.get("system.microscope_name") == microscope_name:
-                microscope_config = m
-                break
-
-        if microscope_config is None:
-            available = [m.get("system.microscope_name", "<unnamed>") for m in server_config.microscopes]
-            raise ValueError(f"Microscope '{microscope_name}' not found. Available: {available}")
-
-    assert microscope_config is not None
-
-    # Create output directory
-    safe_dir_name = GlobalConfigHandler._sanitize_microscope_name_for_directory(microscope_name)
-    config_dir = GlobalConfigHandler.home() / "acquisition_configs" / safe_dir_name
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    default_filter_handle: str | None = None
-    filter_wheel_available = microscope_config.get("filter.wheel.available") == "yes"
-    if filter_wheel_available:
-        filter_config_raw = microscope_config.get("filter.wheel.configuration", [])
-        filter_config = [FilterConfig.model_validate(f) for f in filter_config_raw]
-        if filter_config:
-            default_filter_handle = filter_config[0].handle
-
-    # Build channels from microscope config with default filter
-    channels: list[sc.AcquisitionChannelConfig] = []
-    imaging_channels = microscope_config.get("imaging.channels", [])
-    for ch in imaging_channels:
-        # Use different default illumination based on channel type
-        handle = ch.get("handle", "")
-        default_illum_perc = 20.0 if handle.startswith("bfled") else 100.0
-
-        channels.append(
-            sc.AcquisitionChannelConfig(
-                name=ch.get("name", handle),
-                handle=handle,
-                illum_perc=default_illum_perc,
-                exposure_time_ms=10.0,
-                analog_gain=0.0,
-                z_offset_um=0.0,
-                num_z_planes=1,
-                delta_z_um=1.0,
-                filter_handle=default_filter_handle,
-                enabled=False,
-            )
-        )
-
-    # Generate protocol
-    wellplate = get_wellplate(plate_id)
-    protocol = sc.AcquisitionConfig(
-        project_name="",
-        plate_name="",
-        cell_line="",
-        autofocus_enabled=False,
-        grid=sc.AcquisitionWellSiteConfiguration(
-            num_x=1,
-            delta_x_mm=0.9,
-            num_y=1,
-            delta_y_mm=0.9,
-            num_t=1,
-            delta_t=sc.AcquisitionWellSiteConfigurationDeltaTime(h=2, m=1, s=4),
-            mask=[sc.AcquisitionWellSiteConfigurationSiteSelectionItem(row=0, col=0, selected=True)],
-        ),
-        wellplate_type=wellplate,
-        plate_wells=[sc.PlateWellConfig(col=0, row=0, selected=True)],
-        channels=channels,
-        machine_config=[],
-        comment="Default protocol generated by generate_default_protocol.py",
-        spec_version=sc.LATEST_SPEC_VERSION,
-        timestamp=None,
-    )
-
-    # Write protocol
-    output_file = config_dir / "default.json"
-    with open(output_file, "w") as f:
-        json.dump(protocol.model_dump(mode="json"), f, indent=2)
-
-    return output_file
+__all__ = ["generate_default_protocol", "get_wellplate", "load_server_config"]
 
 
 def main():
