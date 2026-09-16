@@ -190,7 +190,18 @@ class FakeMCU:
             CommandName.MOVETO_Y.value: "y",
             CommandName.MOVETO_Z.value: "z",
         }
+        # relative moves land here too: the driver's move_by_mm sends MOVE_*, which is what
+        # the laser autofocus calibration sweeps z with, so a fake that only honoured
+        # absolute moves reported a stage that never left the spot it started on
+        move_by = {
+            CommandName.MOVE_X.value: "x",
+            CommandName.MOVE_Y.value: "y",
+            CommandName.MOVE_Z.value: "z",
+        }
         axis = moveto.get(packet[1])
+        relative = axis is None
+        if relative:
+            axis = move_by.get(packet[1])
         if axis is None:
             return
         raw = int.from_bytes(packet[2:6], "big", signed=True)
@@ -199,7 +210,7 @@ class FakeMCU:
             "y": firmware.STAGE_MOVEMENT_SIGN_Y,
             "z": firmware.STAGE_MOVEMENT_SIGN_Z,
         }[axis]
-        setattr(self, axis, raw * sign)
+        setattr(self, axis, (getattr(self, axis) if relative else 0) + raw * sign)
 
     def bytes_waiting(self) -> int:
         with self._lock:
