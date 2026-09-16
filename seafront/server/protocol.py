@@ -449,17 +449,11 @@ def build_ome_metadata(
     )
 
     # Determine pixel type for OME
-    pixel_type_map = {
-        "mono8": PixelType.UINT8,
-        "mono10": PixelType.UINT16,
-        "mono12": PixelType.UINT16,
-        "mono14": PixelType.UINT16,
-        "mono16": PixelType.UINT16,
-    }
-    pixel_type = pixel_type_map.get(
-        image_entry.pixel_format.lower(),
-        PixelType.UINT8
-    )
+    # The container the samples ride in, which follows from their depth. This was a table of
+    # the five formats the drivers enumerate today, defaulting to UINT8 - so a depth nobody
+    # had listed was silently declared 8-bit while the array beside it was 16, and a reader
+    # trusting the declaration would have read every image wrong.
+    pixel_type = PixelType.UINT8 if image_entry.bit_depth <= 8 else PixelType.UINT16
 
     # Create pixels element
     # Note: Each TIFF file contains a single 2D image plane, so size_z=1

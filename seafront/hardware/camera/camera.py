@@ -1,3 +1,4 @@
+import re
 import typing as tp
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -13,6 +14,9 @@ from seafront.logger import logger
 
 
 
+_MONO_FORMAT = re.compile(r"^mono(\d+)$")
+
+
 def bits_for_pixel_format(pixel_format: str) -> int:
     """
     How many bits of the container a camera in this mode actually fills.
@@ -20,12 +24,18 @@ def bits_for_pixel_format(pixel_format: str) -> int:
     The number every adapter needs and nobody should spell out twice: it decides the array
     dtype, whether the samples get padded up to the container, and what goes in the OME-XML
     as SignificantBits.
+
+    Read out of the name rather than looked up in a table of the five the drivers happen to
+    enumerate today (8/10/12/14/16, from the GenICam mono set and ToupCam's RAW flags). The
+    depth is the camera's to choose and any step between 8 and 16 is a coherent thing for one
+    to offer; a table would turn a camera the drivers grew support for into a crash here.
     """
-    bits = {"mono8": 8, "mono10": 10, "mono12": 12, "mono14": 14, "mono16": 16}.get(
-        pixel_format.lower()
-    )
-    if bits is None:
-        raise ValueError(f"unsupported pixel format {pixel_format}")
+    match = _MONO_FORMAT.match(pixel_format.lower())
+    if match is None:
+        raise ValueError(f"unsupported pixel format {pixel_format!r}: expected 'mono<bits>'")
+    bits = int(match.group(1))
+    if not 1 <= bits <= 16:
+        raise ValueError(f"pixel format {pixel_format!r} claims {bits} bits, which fits no container")
     return bits
 
 

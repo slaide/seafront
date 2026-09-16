@@ -205,3 +205,61 @@ class TestSignificantBitsDescribesTheSamples:
         pixels = from_xml(_ome_xml(20, significant_bits=12)).images[0].pixels
         assert pixels.type.value == "uint16"
         assert pixels.significant_bits == 12
+
+
+class TestEveryDepthTheCameraCouldOffer:
+    """
+    the depth is the camera's to choose, and the chain has to carry whatever it picks
+
+    The drivers enumerate 8/10/12/14/16 today - the GenICam mono set, and ToupCam's RAW
+    flags - but the depth is a camera capability, not a fact about this codebase, and the
+    config options are replaced at runtime by whatever `get_supported_pixel_formats` reports.
+    Four separate places used to hold their own list of those five; the two that mattered
+    both had a silent fallback for anything absent, so a camera the drivers grew support for
+    would have written an image labelled 8-bit with 16-bit samples in it.
+    """
+
+    @pytest.mark.parametrize("bits", list(range(1, 17)))
+    def test_the_depth_is_read_out_of_the_format_name(self, bits):
+        from seafront.hardware.camera import bits_for_pixel_format
+
+        assert bits_for_pixel_format(f"mono{bits}") == bits
+
+    @pytest.mark.parametrize("pixel_format", ["", "mono", "rgb8", "mono8packed", "bayer12", "MONO", "mono0", "mono17"])
+    def test_a_format_that_is_not_a_mono_depth_is_refused(self, pixel_format):
+        """loudly, rather than falling back to a depth nobody chose"""
+        from seafront.hardware.camera import bits_for_pixel_format
+
+        with pytest.raises(ValueError):
+            bits_for_pixel_format(pixel_format)
+
+    def test_the_name_is_case_insensitive(self):
+        from seafront.hardware.camera import bits_for_pixel_format
+
+        assert bits_for_pixel_format("Mono12") == 12
+
+    @pytest.mark.parametrize("bits", list(range(8, 17)))
+    def test_the_container_and_the_declared_depth_agree_at_every_step(self, bits):
+        """
+        the pairing a reader needs: a type wide enough to hold the samples, and a count of
+        how many of its bits are real
+        """
+        pixels = from_xml(
+            _ome_xml(20, significant_bits=bits, pixel_format=f"mono{bits}")
+        ).images[0].pixels
+        assert pixels.significant_bits == bits
+        assert pixels.type.value == ("uint8" if bits <= 8 else "uint16")
+
+    @pytest.mark.parametrize("bits", [9, 11, 13, 15])
+    def test_an_odd_depth_is_carried_rather_than_mislabelled(self, bits):
+        """
+        the case the tables could not express
+
+        No driver reports these today. The point is that adding one would be a driver change,
+        not a hunt through four lists in three modules.
+        """
+        pixels = from_xml(
+            _ome_xml(20, significant_bits=bits, pixel_format=f"mono{bits}")
+        ).images[0].pixels
+        assert pixels.significant_bits == bits
+        assert pixels.type.value == "uint16"
