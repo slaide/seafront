@@ -195,6 +195,65 @@ def _format_well_name_with_padding(well_name: str) -> str:
     return f"{row_letter}{col_number.zfill(2)}"
 
 
+def image_filename_for(
+    *,
+    well_name: str,
+    site: sc.AcquisitionWellSiteConfigurationSiteSelectionItem,
+    site_index: int,
+    plane_index: int,
+    channel: sc.AcquisitionChannelConfig,
+    g_config: dict[str, basics.ConfigItem],
+) -> str:
+    """
+    The name one acquired frame is stored under, and the well name used in it.
+
+    Each OME-TIFF here holds a single plane and declares SizeZ=SizeC=SizeT=1, with no
+    TiffData UUID tying it to its siblings - so this name is the only thing connecting the
+    files of one acquisition to each other. Whatever reassembles a z-stack downstream is
+    parsing it, which is why the indices are configurable and why changing the shape is a
+    breaking change for somebody.
+
+    """
+    # Choose channel identifier for filename based on configuration
+    use_channel_name = g_config.get(ImageConfig.FILENAME_USE_CHANNEL_NAME.value)
+    if use_channel_name is None or use_channel_name.boolvalue:
+        # Use channel name with spaces replaced by underscores (default behavior)
+        channel_identifier = channel.name.replace(" ", "_")
+    else:
+        # Use channel handle when explicitly set to "no"
+        channel_identifier = channel.handle
+
+    # Get index starting values from configuration (with defaults if not present)
+    xy_start = g_config.get(ImageConfig.FILENAME_XY_INDEX_START.value)
+    xy_start_value = xy_start.intvalue if xy_start else 0
+
+    z_start = g_config.get(ImageConfig.FILENAME_Z_INDEX_START.value)
+    z_start_value = z_start.intvalue if z_start else 0
+
+    site_start = g_config.get(ImageConfig.FILENAME_SITE_INDEX_START.value)
+    site_start_value = site_start.intvalue if site_start else 1
+
+    site_num = site_index + site_start_value
+    x_num = site.col + xy_start_value
+    y_num = site.row + xy_start_value
+    z_num = plane_index + z_start_value
+
+    # Apply zero-padding to well name if configured
+    zero_pad_column = g_config.get(ImageConfig.FILENAME_ZERO_PAD_COLUMN.value)
+    if zero_pad_column is None or zero_pad_column.boolvalue:
+        # Default behavior: apply zero-padding (e.g., F8 -> F08)
+        formatted_well_name = _format_well_name_with_padding(well_name)
+    else:
+        # Use well name as-is without zero-padding
+        formatted_well_name = well_name
+
+    filename = (
+        f"{formatted_well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}"
+        f"_{channel_identifier}.ome.tiff"
+    )
+    return filename
+
+
 def make_unique_acquisition_id(length: tp.Literal[16, 32] = 16) -> str:
     """
     Generates a random microscope image acquisition protocol name.
@@ -1264,41 +1323,15 @@ class ProtocolGenerator(BaseModel):
                         logger.debug("protocol - took image snapshot")
 
                         # store image
-                        # Choose channel identifier for filename based on configuration
-                        use_channel_name = g_config.get(ImageConfig.FILENAME_USE_CHANNEL_NAME.value)
-                        if use_channel_name is None or use_channel_name.boolvalue:
-                            # Use channel name with spaces replaced by underscores (default behavior)
-                            channel_identifier = channel.name.replace(" ", "_")
-                        else:
-                            # Use channel handle when explicitly set to "no"
-                            channel_identifier = channel.handle
+                        image_filename = image_filename_for(
+                            well_name=well.well_name,
+                            site=site,
+                            site_index=site_index,
+                            plane_index=plane_index,
+                            channel=channel,
+                            g_config=g_config,
+                        )
 
-                        # Get index starting values from configuration (with defaults if not present)
-                        xy_start = g_config.get(ImageConfig.FILENAME_XY_INDEX_START.value)
-                        xy_start_value = xy_start.intvalue if xy_start else 0
-
-                        z_start = g_config.get(ImageConfig.FILENAME_Z_INDEX_START.value)
-                        z_start_value = z_start.intvalue if z_start else 0
-
-                        site_start = g_config.get(ImageConfig.FILENAME_SITE_INDEX_START.value)
-                        site_start_value = site_start.intvalue if site_start else 1
-
-                        # Generate filename with configurable index starting values
-                        site_num = site_index + site_start_value
-                        x_num = site.col + xy_start_value
-                        y_num = site.row + xy_start_value
-                        z_num = plane_index + z_start_value
-
-                        # Apply zero-padding to well name if configured
-                        zero_pad_column = g_config.get(ImageConfig.FILENAME_ZERO_PAD_COLUMN.value)
-                        if zero_pad_column is None or zero_pad_column.boolvalue:
-                            # Default behavior: apply zero-padding (e.g., F8 -> F08)
-                            formatted_well_name = _format_well_name_with_padding(well.well_name)
-                        else:
-                            # Use well name as-is without zero-padding
-                            formatted_well_name = well.well_name
-
-                        image_filename=f"{formatted_well_name}_s{site_num}_x{x_num}_y{y_num}_z{z_num}_{channel_identifier}.ome.tiff"
                         if is_timeseries_acquisition:
                             #timepoints start at 1, but we use 0 for the first one in dir
                             assert timepoint>=1
