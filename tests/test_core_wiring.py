@@ -102,6 +102,17 @@ class TestTheFrameSinkIsWiredAtConstruction:
         assert connected.latest_images["f488"].info.channel.handle == "f488"
 
 
+class TestSnapshotPixelHandoff:
+    def test_latest_image_contains_the_exact_array_returned_by_the_snapshot(self, connected):
+        """No encode, copy, or second camera read occurs between the command and pixel cache."""
+        command = cmd.ChannelSnapshot(channel=channel())
+        result = run(connected, command)
+        asyncio.run(connected.store_snapped_image(command, result))
+
+        stored = connected.latest_images[command.channel.handle]
+        assert stored._img is result._img
+
+
 class TestStatusAnswersFromTheAdapter:
     def test_idle_status_reports_no_stream(self, connected):
         reported = state(connected)

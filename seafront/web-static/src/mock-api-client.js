@@ -1159,27 +1159,8 @@ class MockWebSocketManager {
                 // Handle image WebSocket protocol
                 if (endpoint === '/ws/get_info/acquired_image') {
                     if (protocolState.waitingFor === 'channel_handle') {
-                        const channelHandle = data;
-                        protocolState.currentChannel = channelHandle;
-
-                        // Check if we have an image for this channel
-                        const imageEntry = this.mockState.imageStore[channelHandle];
-
-                        if (!imageEntry) {
-                            // No image available, send empty JSON
-                            onMessage(new MessageEvent('message', { data: JSON.stringify({}) }));
-                            protocolState.waitingFor = 'channel_handle';
-                        } else {
-                            // Send metadata
-                            const metadata = {
-                                width: imageEntry.width,
-                                height: imageEntry.height,
-                                camera_bit_depth: imageEntry.cameraBitDepth,
-                                bit_depth: imageEntry.bitDepth,
-                            };
-                            onMessage(new MessageEvent('message', { data: JSON.stringify(metadata) }));
-                            protocolState.waitingFor = 'downsample_factor';
-                        }
+                        protocolState.currentChannel = data;
+                        protocolState.waitingFor = 'downsample_factor';
                     } else if (protocolState.waitingFor === 'downsample_factor') {
                         const downsampleFactor = parseInt(data, 10) || 1;
                         const channelHandle = protocolState.currentChannel;
@@ -1187,12 +1168,23 @@ class MockWebSocketManager {
                             ? undefined
                             : this.mockState.imageStore[channelHandle];
 
-                        if (imageEntry) {
+                        if (!imageEntry) {
+                            onMessage(new MessageEvent('message', { data: JSON.stringify({}) }));
+                        } else {
                             // Downsample the image
                             const origWidth = imageEntry.width;
                             const origHeight = imageEntry.height;
-                            const newWidth = Math.floor(origWidth / downsampleFactor);
-                            const newHeight = Math.floor(origHeight / downsampleFactor);
+                            const newWidth = Math.ceil(origWidth / downsampleFactor);
+                            const newHeight = Math.ceil(origHeight / downsampleFactor);
+
+                            const metadata = {
+                                channel_handle: channelHandle,
+                                width: newWidth,
+                                height: newHeight,
+                                camera_bit_depth: imageEntry.cameraBitDepth,
+                                bit_depth: imageEntry.bitDepth,
+                            };
+                            onMessage(new MessageEvent('message', { data: JSON.stringify(metadata) }));
 
                             const origData = imageEntry.imageData;
                             const bytesPerPixel = imageEntry.bitDepth === 8 ? 1 : 2;

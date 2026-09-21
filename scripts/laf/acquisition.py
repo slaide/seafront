@@ -35,6 +35,7 @@ async def fetch_image_via_websocket(
         async with websockets.connect(ws_url, max_size=50 * 1024 * 1024) as ws:
             await ws.send(json.dumps({"target_device": microscope_name}))
             await ws.send(channel_handle)
+            await ws.send("1")
 
             metadata_str = await ws.recv()
             metadata = json.loads(metadata_str)
@@ -47,7 +48,6 @@ async def fetch_image_via_websocket(
             height = metadata["height"]
             bit_depth = metadata["bit_depth"]
 
-            await ws.send("1")
             img_bytes = await ws.recv()
             assert isinstance(img_bytes, bytes), "Expected binary image data"
 

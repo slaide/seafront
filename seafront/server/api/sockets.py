@@ -135,31 +135,12 @@ async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake)
 
     after the handshake the exchange repeats in three steps:
      - the client sends a channel handle as a text frame
-     - the server replies with AcquiredImageInfo, or an empty object if that channel has
-       nothing yet
-     - the client sends a downsampling factor as a text frame, and the server replies with
-       the pixels as one binary frame
+     - the client sends a downsampling factor as a text frame
+     - the server replies with AcquiredImageInfo followed by the pixels as one binary frame,
+       or an empty object if that channel has nothing yet
     """
     while True:
         channel_handle = await ws.receive_text()
-
-        img = core.latest_images.get(channel_handle)
-        if img is None:
-            if not await send(ws, NoImageYet()):
-                break
-            continue
-
-        img_data = img._img
-        info = AcquiredImageInfo(
-            channel_handle=channel_handle,
-            width=img_data.shape[1],
-            height=img_data.shape[0],
-            camera_bit_depth=img.bit_depth,
-            bit_depth=img_data.dtype.itemsize * 8,
-        )
-        if not await send(ws, info):
-            break
-
         raw_factor = await ws.receive_text()
         try:
             factor = int(raw_factor)
@@ -184,9 +165,24 @@ async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake)
             )
             continue
 
-        if not await send_bytes(
-            ws, np.ascontiguousarray(img_data[::factor, ::factor]).tobytes()
-        ):
+        img = core.latest_images.get(channel_handle)
+        if img is None:
+            if not await send(ws, NoImageYet()):
+                break
+            continue
+
+        img_data = np.ascontiguousarray(img._img[::factor, ::factor])
+        info = AcquiredImageInfo(
+            channel_handle=channel_handle,
+            width=img_data.shape[1],
+            height=img_data.shape[0],
+            camera_bit_depth=img.bit_depth,
+            bit_depth=img_data.dtype.itemsize * 8,
+        )
+        if not await send(ws, info):
+            break
+
+        if not await send_bytes(ws, img_data.tobytes()):
             break
 
 

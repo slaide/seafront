@@ -144,10 +144,10 @@ class SeafrontClient:
                     self._image_ws.send(json.dumps({"target_device": self.target_device}))
                 ws = self._image_ws
                 ws.send(channel_handle)
+                ws.send("1")  # downsample factor 1 = full resolution
                 meta = json.loads(ws.recv(timeout=REQUEST_TIMEOUT_S))
                 if not meta:
                     raise RuntimeError(f"server has no image for channel '{channel_handle}'")
-                ws.send("1")  # downsample factor 1 = full resolution
                 data = ws.recv(timeout=REQUEST_TIMEOUT_S)
                 assert isinstance(data, bytes)
                 dtype = {8: np.uint8, 16: np.uint16}.get(int(meta["bit_depth"]))

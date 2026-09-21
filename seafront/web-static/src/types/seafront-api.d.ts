@@ -16,8 +16,9 @@ declare global {
     /**
      * /ws/get_info/acquired_image: what follows this message, so the client can size the buffer
      * 
-     * The pixels themselves arrive as the next frame, as raw bytes: monochrome, `bit_depth`
-     * bits per pixel, row by row, top to bottom, left to right.
+     * `width` and `height` describe the transmitted (possibly downsampled) image. The pixels
+     * themselves arrive as the next frame, as raw bytes: monochrome, `bit_depth` bits per pixel,
+     * row by row, top to bottom, left to right.
      */
     type AcquiredImageInfo = {
         channel_handle: string;
