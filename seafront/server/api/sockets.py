@@ -111,6 +111,11 @@ async def ws_current_state(ws: WebSocket, core: Core, opening: SocketHandshake):
         HANDSHAKE,
         Frame("channel_handle", "which channel to read, as a text frame", schema={"type": "string"}),
         Frame(
+            "image_id",
+            "the exact image returned by the request that produced this identifier",
+            schema={"type": "string"},
+        ),
+        Frame(
             "downsample_factor",
             "take every nth pixel on both axes, as a text frame holding an integer >= 1",
             schema={"type": "string", "pattern": r"^[1-9][0-9]*$"},
@@ -135,12 +140,14 @@ async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake)
 
     after the handshake the exchange repeats in three steps:
      - the client sends a channel handle as a text frame
+     - the client sends the expected image identifier as a text frame
      - the client sends a downsampling factor as a text frame
      - the server replies with AcquiredImageInfo followed by the pixels as one binary frame,
        or an empty object if that channel has nothing yet
     """
     while True:
         channel_handle = await ws.receive_text()
+        image_id = await ws.receive_text()
         raw_factor = await ws.receive_text()
         try:
             factor = int(raw_factor)
@@ -171,9 +178,26 @@ async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake)
                 break
             continue
 
+        if img.info.image_id != image_id:
+            if not await send(
+                ws,
+                SocketFailure(
+                    error=SocketErrorKind.IMAGE_REPLACED,
+                    message=(
+                        f"image {image_id!r} is no longer available for channel "
+                        f"{channel_handle!r}"
+                    ),
+                    timestamp=time.time(),
+                    channel_handle=channel_handle,
+                ),
+            ):
+                break
+            continue
+
         img_data = np.ascontiguousarray(img._img[::factor, ::factor])
         info = AcquiredImageInfo(
             channel_handle=channel_handle,
+            image_id=image_id,
             width=img_data.shape[1],
             height=img_data.shape[0],
             camera_bit_depth=img.bit_depth,

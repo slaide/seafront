@@ -1,5 +1,6 @@
 import asyncio
 import typing as tp
+import uuid
 from enum import Enum
 
 import json5
@@ -270,6 +271,9 @@ class ImageStoreInfo(BaseModel):
     height_px: int
     timestamp: float
     "time when the image was taken (finish time)"
+
+    image_id: str | None = None
+    "opaque identity of a transient image exposed through the latest-image socket"
 
     position: SitePosition
 
@@ -671,6 +675,8 @@ class ImageAcquiredResponse(BaseModel):
     acquired image data is only present for internal use.
     """
 
+    image_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+
     _img: np.ndarray = PrivateAttr(...)  # type:ignore
     _cambits: int = PrivateAttr(...)  # type:ignore
 
@@ -831,6 +837,7 @@ class AutofocusMeasureDisplacement(BaseModel, BaseCommand[AutofocusMeasureDispla
 
 
 class AutofocusSnapResult(BaseModel):
+    image_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     width_px: int = Field(..., title="Image Width [pixels]", description="image height, in pixels")
     "image width, in pixels"
     height_px: int = Field(

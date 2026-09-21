@@ -19,7 +19,7 @@ from data_types import ZStackFrame
 
 
 async def fetch_image_via_websocket(
-    base_url: str, microscope_name: str, channel_handle: str
+    base_url: str, microscope_name: str, channel_handle: str, image_id: str
 ) -> np.ndarray | None:
     """Fetch an acquired image via websocket."""
     try:
@@ -35,10 +35,14 @@ async def fetch_image_via_websocket(
         async with websockets.connect(ws_url, max_size=50 * 1024 * 1024) as ws:
             await ws.send(json.dumps({"target_device": microscope_name}))
             await ws.send(channel_handle)
+            await ws.send(image_id)
             await ws.send("1")
 
             metadata_str = await ws.recv()
             metadata = json.loads(metadata_str)
+
+            if metadata.get("error"):
+                raise RuntimeError(metadata["message"])
 
             if not metadata:
                 print(f"  No image data available for channel '{channel_handle}'")
@@ -136,15 +140,19 @@ def capture_zstack_nonuniform(
         # Snap BF image (for software autofocus)
         bf_image = None
         if capture_bf:
-            client.snap_bf_channel(bf_channel_config)
+            bf_image_id = client.snap_bf_channel(bf_channel_config)
             bf_image = asyncio.run(
-                fetch_image_via_websocket(base_url, client.microscope_name, bf_channel["handle"])
+                fetch_image_via_websocket(
+                    base_url, client.microscope_name, bf_channel["handle"], bf_image_id
+                )
             )
 
         # Snap LAF image
-        client.snap_laf(exposure_time_ms=laf_exposure_ms, analog_gain=laf_gain)
+        laf_image_id = client.snap_laf(exposure_time_ms=laf_exposure_ms, analog_gain=laf_gain)
         laf_image = asyncio.run(
-            fetch_image_via_websocket(base_url, client.microscope_name, "laser_autofocus")
+            fetch_image_via_websocket(
+                base_url, client.microscope_name, "laser_autofocus", laf_image_id
+            )
         )
 
         # Save LAF image if requested
@@ -294,15 +302,19 @@ def capture_zstack(
         # Snap BF image (optional)
         bf_image = None
         if capture_bf:
-            client.snap_bf_channel(bf_channel_config)
+            bf_image_id = client.snap_bf_channel(bf_channel_config)
             bf_image = asyncio.run(
-                fetch_image_via_websocket(base_url, client.microscope_name, bf_channel["handle"])
+                fetch_image_via_websocket(
+                    base_url, client.microscope_name, bf_channel["handle"], bf_image_id
+                )
             )
 
         # Snap LAF image
-        client.snap_laf(exposure_time_ms=laf_exposure_ms, analog_gain=laf_gain)
+        laf_image_id = client.snap_laf(exposure_time_ms=laf_exposure_ms, analog_gain=laf_gain)
         laf_image = asyncio.run(
-            fetch_image_via_websocket(base_url, client.microscope_name, "laser_autofocus")
+            fetch_image_via_websocket(
+                base_url, client.microscope_name, "laser_autofocus", laf_image_id
+            )
         )
 
         # Save LAF image if save_dir is provided

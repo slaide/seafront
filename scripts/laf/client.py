@@ -113,11 +113,11 @@ class SeafrontClient:
             },
         )
 
-    def snap_bf_channel(self, channel_config: dict) -> None:
-        self._post("/api/action/snap_channel", {"channel": channel_config})
+    def snap_bf_channel(self, channel_config: dict) -> str:
+        return self._post("/api/action/snap_channel", {"channel": channel_config})["image_id"]
 
-    def snap_laf(self, exposure_time_ms: float = 5, analog_gain: float = 10) -> None:
-        self._post(
+    def snap_laf(self, exposure_time_ms: float = 5, analog_gain: float = 10) -> str:
+        return self._post(
             "/api/action/snap_reflection_autofocus",
             {
                 "exposure_time_ms": exposure_time_ms,
@@ -125,7 +125,7 @@ class SeafrontClient:
                 "turn_laser_on": True,
                 "turn_laser_off": True,
             },
-        )
+        )["image_id"]
 
     def get_hardware_capabilities(self) -> dict:
         return self._post("/api/get_features/hardware_capabilities")

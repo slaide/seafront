@@ -22,6 +22,7 @@ declare global {
      */
     type AcquiredImageInfo = {
         channel_handle: string;
+        image_id: string;
         width: number;
         height: number;
         camera_bit_depth: number;
@@ -258,6 +259,7 @@ declare global {
     };
 
     type AutofocusSnapResult = {
+        image_id?: string;
         /** image height, in pixels */
         width_px: number;
         /** image height, in pixels */
@@ -505,7 +507,9 @@ declare global {
      * 
      * acquired image data is only present for internal use.
      */
-    type ImageAcquiredResponse = { [key: string]: unknown };
+    type ImageAcquiredResponse = {
+        image_id?: string;
+    };
 
     /** contains information about an image that has been acquired and stored */
     type ImageStoreInfo = {
@@ -513,6 +517,7 @@ declare global {
         width_px: number;
         height_px: number;
         timestamp: number;
+        image_id?: string | null;
         position: SitePosition;
         storage_path?: string | null;
     };
@@ -778,7 +783,7 @@ declare global {
         config_file: AcquisitionConfig;
     };
 
-    type SocketErrorKind = "target_device_mismatch" | "device_locked" | "hardware_disconnect" | "internal_error";
+    type SocketErrorKind = "target_device_mismatch" | "device_locked" | "hardware_disconnect" | "internal_error" | "image_replaced";
 
     /** a refusal that carries only its own text (bad acquisition id, and the like) */
     type SocketErrorText = {
@@ -790,6 +795,7 @@ declare global {
         error: SocketErrorKind;
         message: string;
         timestamp: number;
+        channel_handle?: string | null;
     };
 
     /**

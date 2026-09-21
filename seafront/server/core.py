@@ -14,6 +14,7 @@ import re
 import traceback
 import time
 import typing as tp
+import uuid
 from concurrent.futures import Future as CCFuture
 
 import json5
@@ -290,14 +291,20 @@ class Core:
         pixel_format = ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue
         logger.debug(f"storing new image for {cmd.channel.handle}")
         await self._store_new_image(
-            img=res._img, pixel_format=pixel_format, channel_config=cmd.channel
+            img=res._img,
+            pixel_format=pixel_format,
+            channel_config=cmd.channel,
+            image_id=res.image_id,
         )
 
     async def store_laseraf_image(self, res: AutofocusSnapResult) -> None:
         "store the image a reflection-autofocus snap produced"
         pixel_format = ConfigRegistry.get(LaserAutofocusConfig.CAMERA_PIXEL_FORMAT).strvalue
         await self._store_new_image(
-            img=res._img, pixel_format=pixel_format, channel_config=res._channel
+            img=res._img,
+            pixel_format=pixel_format,
+            channel_config=res._channel,
+            image_id=res.image_id,
         )
 
     def _handle_streamed_image(
@@ -494,13 +501,19 @@ class Core:
         return BasicSuccessResponse()
 
     async def _store_new_image(
-        self, img: np.ndarray, pixel_format: str, channel_config: sc.AcquisitionChannelConfig
+        self,
+        img: np.ndarray,
+        pixel_format: str,
+        channel_config: sc.AcquisitionChannelConfig,
+        image_id: str | None = None,
     ) -> str:
         """
         store a new image, return the channel handle (into self.latest_images)
 
         note: this stores regular images, as well as autofocus images
         """
+
+        image_id = image_id or str(uuid.uuid4())
 
         try:
             adapter_state = await self.microscope.get_current_state()
@@ -515,6 +528,7 @@ class Core:
                 width_px=0,
                 height_px=0,
                 timestamp=time.time(),
+                image_id=image_id,
                 position=SitePosition(
                     well_name="",
                     site_x=0,
@@ -588,7 +602,8 @@ class Core:
             await self._store_new_image(
                 img=res_snap._img,
                 pixel_format=pixel_format,
-                channel_config=channel
+                channel_config=channel,
+                image_id=res_snap.image_id,
             )
 
             # Accumulate results
@@ -1140,6 +1155,7 @@ class Core:
                             img=result._img,
                             pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
                             channel_config=next_step.channel,
+                            image_id=result.image_id,
                         )
 
             logger.debug("protocol done")
@@ -1289,7 +1305,8 @@ class Core:
                     await self._store_new_image(
                         img=result._img,
                         pixel_format=pixel_format,
-                        channel_config=channel
+                        channel_config=channel,
+                        image_id=result.image_id,
                     )
 
                     completed_channels += 1
@@ -1365,4 +1382,3 @@ class Core:
         self.image_store_threadpool.join()
 
         logger.debug("shutdown - done")
-

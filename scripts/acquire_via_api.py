@@ -134,7 +134,7 @@ class SeafrontClient:
     def machine_defaults(self) -> dict[str, dict[str, tp.Any]]:
         return {item["handle"]: item for item in self.post("/api/get_features/machine_defaults")}
 
-    def fetch_image(self, channel_handle: str) -> np.ndarray:
+    def fetch_image(self, channel_handle: str, image_id: str) -> np.ndarray:
         """Full-resolution pixels of the last image taken in this channel (same data the server stores)."""
         for attempt in range(2):
             try:
@@ -144,8 +144,11 @@ class SeafrontClient:
                     self._image_ws.send(json.dumps({"target_device": self.target_device}))
                 ws = self._image_ws
                 ws.send(channel_handle)
+                ws.send(image_id)
                 ws.send("1")  # downsample factor 1 = full resolution
                 meta = json.loads(ws.recv(timeout=REQUEST_TIMEOUT_S))
+                if meta.get("error"):
+                    raise RuntimeError(meta["message"])
                 if not meta:
                     raise RuntimeError(f"server has no image for channel '{channel_handle}'")
                 data = ws.recv(timeout=REQUEST_TIMEOUT_S)
@@ -404,8 +407,8 @@ def run_protocol(
                         position = client.current_position()
 
                         # ChannelSnapshot, then the pixels
-                        client.post("/api/action/snap_channel", {"channel": plane.channel.model_dump(), "machine_config": []})
-                        img = client.fetch_image(plane.channel.handle)
+                        snapped = client.post("/api/action/snap_channel", {"channel": plane.channel.model_dump(), "machine_config": []})
+                        img = client.fetch_image(plane.channel.handle, snapped["image_id"])
 
                         channel_identifier = plane.channel.name.replace(" ", "_") if use_channel_name else plane.channel.handle
                         well_name = _format_well_name_with_padding(well.well_name) if zero_pad else well.well_name

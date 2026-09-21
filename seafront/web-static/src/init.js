@@ -903,6 +903,15 @@ const generate_alpine_object=() => ({
                     if (typeof ev.data === 'string') {
                         // Metadata message
                         const metadata = json5.parse(ev.data);
+                        if (metadata.error) {
+                            const request = this.pending_image_requests.get(metadata.channel_handle);
+                            if (request) {
+                                request.reject(new Error(metadata.message));
+                                this.pending_image_requests.delete(metadata.channel_handle);
+                            }
+                            this._image_current_request = null;
+                            return;
+                        }
                         // Find the matching request by channel_handle from metadata
                         const channel_handle = metadata.channel_handle;
                         const request = this.pending_image_requests.get(channel_handle);
@@ -989,6 +998,7 @@ const generate_alpine_object=() => ({
 
             // Send the request through WebSocketManager
             this.wsManager.send('image', channel_handle);
+            this.wsManager.send('image', channel_info.image_id);
             this.wsManager.send('image', `${downsample_factor}`);
         });
 
@@ -3158,6 +3168,7 @@ const generate_alpine_object=() => ({
             height_px: lafSnapRes.height_px,
             width_px: lafSnapRes.width_px,
             storage_path: "",
+            image_id: lafSnapRes.image_id,
             position: {
                 well_name: "",
                 site_x: 0,

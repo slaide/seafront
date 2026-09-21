@@ -22,6 +22,7 @@ class SocketErrorKind(StrEnum):
     DEVICE_LOCKED = "device_locked"
     HARDWARE_DISCONNECT = "hardware_disconnect"
     INTERNAL_ERROR = "internal_error"
+    IMAGE_REPLACED = "image_replaced"
 
 
 # -- inbound -----------------------------------------------------------------------------------
@@ -79,6 +80,7 @@ class SocketFailure(BaseModel):
     error: SocketErrorKind
     message: str
     timestamp: float
+    channel_handle: str | None = None
 
 
 class SocketErrorText(BaseModel):
@@ -97,6 +99,7 @@ class AcquiredImageInfo(BaseModel):
     """
 
     channel_handle: str
+    image_id: str
     width: int
     height: int
     camera_bit_depth: int

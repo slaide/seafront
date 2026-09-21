@@ -177,6 +177,7 @@ function generateNoiseImage(width, height, bitDepth) {
  */
 function storeChannelImage(channel, width = 640, height = 640, bitDepth = 16) {
     const timestamp = Date.now() / 1000; // Unix timestamp in seconds
+    const imageId = crypto.randomUUID();
     const imageData = generateNoiseImage(width, height, bitDepth);
 
     // Store raw image data
@@ -187,6 +188,7 @@ function storeChannelImage(channel, width = 640, height = 640, bitDepth = 16) {
         bitDepth: bitDepth,
         cameraBitDepth: bitDepth,
         timestamp: timestamp,
+        imageId: imageId,
     };
 
     // Store metadata in latest_imgs (matching ImageStoreInfo structure)
@@ -206,7 +208,10 @@ function storeChannelImage(channel, width = 640, height = 640, bitDepth = 16) {
             position: { ...sharedMockState.position },
         },
         timestamp: timestamp,
+        image_id: imageId,
     };
+
+    return imageId;
 }
 
 /**
@@ -817,8 +822,9 @@ class MockAPIClient {
                 this.mockState.is_busy = true;
                 const exposureTimeMs = channel.exposure_time_ms || 0;
                 await new Promise(resolve => setTimeout(resolve, exposureTimeMs));
-                storeChannelImage(channel);
+                const imageId = storeChannelImage(channel);
                 this.mockState.is_busy = false;
+                return { image_id: imageId };
             }
             return {};
         }
@@ -891,7 +897,9 @@ class MockAPIClient {
         }
 
         if (endpoint === '/api/action/snap_reflection_autofocus') {
+            const imageId = storeChannelImage({ handle: 'laser_autofocus', name: 'Laser autofocus' }, 640, 480);
             return {
+                image_id: imageId,
                 width_px: 640,
                 height_px: 480,
             };
@@ -1136,10 +1144,11 @@ class MockWebSocketManager {
         } = options;
 
         // Protocol state for image WebSocket
-        /** @type {{ waitingFor: 'channel_handle' | 'downsample_factor', currentChannel: string | null }} */
+        /** @type {{ waitingFor: 'channel_handle' | 'image_id' | 'downsample_factor', currentChannel: string | null, expectedImageId: string | null }} */
         const protocolState = {
             waitingFor: 'channel_handle',
             currentChannel: null,
+            expectedImageId: null,
         };
 
         // Create mock WebSocket object
@@ -1160,6 +1169,9 @@ class MockWebSocketManager {
                 if (endpoint === '/ws/get_info/acquired_image') {
                     if (protocolState.waitingFor === 'channel_handle') {
                         protocolState.currentChannel = data;
+                        protocolState.waitingFor = 'image_id';
+                    } else if (protocolState.waitingFor === 'image_id') {
+                        protocolState.expectedImageId = data;
                         protocolState.waitingFor = 'downsample_factor';
                     } else if (protocolState.waitingFor === 'downsample_factor') {
                         const downsampleFactor = parseInt(data, 10) || 1;
@@ -1170,6 +1182,13 @@ class MockWebSocketManager {
 
                         if (!imageEntry) {
                             onMessage(new MessageEvent('message', { data: JSON.stringify({}) }));
+                        } else if (imageEntry.imageId !== protocolState.expectedImageId) {
+                            onMessage(new MessageEvent('message', { data: JSON.stringify({
+                                error: 'image_replaced',
+                                message: `image ${protocolState.expectedImageId} is no longer available for channel ${channelHandle}`,
+                                timestamp: Date.now() / 1000,
+                                channel_handle: channelHandle,
+                            }) }));
                         } else {
                             // Downsample the image
                             const origWidth = imageEntry.width;
@@ -1179,6 +1198,7 @@ class MockWebSocketManager {
 
                             const metadata = {
                                 channel_handle: channelHandle,
+                                image_id: imageEntry.imageId,
                                 width: newWidth,
                                 height: newHeight,
                                 camera_bit_depth: imageEntry.cameraBitDepth,
