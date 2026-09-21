@@ -1181,8 +1181,45 @@ class ProtocolGenerator(BaseModel):
                 channel_info=channel_info
             )
 
-    @logger.catch
     async def generate(
+        self,
+    ) -> tp.AsyncGenerator[
+        None | tp.Literal["ready"] | cmds.BaseCommand,
+        None | tp.Any,
+    ]:
+        """Yield hardware commands while retaining ownership of persistent storage.
+
+        Core is deliberately only the command executor.  In particular, closing an async
+        generator (the cancellation/error path) must also drain and close this protocol's
+        writers; callers do not need access to the ImageStore to clean up correctly.
+        """
+        commands = self._generate_commands()
+        send_value: tp.Any = None
+        pending_error: BaseException | None = None
+        try:
+            while True:
+                try:
+                    if pending_error is None:
+                        command = await commands.asend(send_value)
+                    else:
+                        error = pending_error
+                        pending_error = None
+                        command = await commands.athrow(error)
+                except StopAsyncIteration:
+                    return
+
+                try:
+                    send_value = yield command
+                except BaseException as error:
+                    send_value = None
+                    pending_error = error
+        finally:
+            await commands.aclose()
+            if self.image_store is not None:
+                self.image_store.close()
+
+    @logger.catch
+    async def _generate_commands(
         self,
     ) -> tp.AsyncGenerator[
         # yielded types: None means done, str is returned on first iter, other types are BaseCommands

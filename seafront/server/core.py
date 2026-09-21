@@ -564,6 +564,33 @@ class Core:
 
         return new_image_store_entry
 
+    def _cache_captured_image(self, capture: ImageAcquiredResponse) -> ImageStoreEntry:
+        """Keep an acquired frame available to viewers without assigning it storage policy."""
+        entry = ImageStoreEntry(
+            pixel_format=capture.pixel_format,
+            capture=capture,
+            info=ImageStoreInfo(
+                channel=capture.channel,
+                width_px=capture.width_px,
+                height_px=capture.height_px,
+                timestamp=capture.timestamp,
+                image_id=capture.image_id,
+                position=SitePosition(
+                    well_name="",
+                    site_x=0,
+                    site_y=0,
+                    site_z=0,
+                    x_offset_mm=0,
+                    y_offset_mm=0,
+                    z_offset_mm=0,
+                    position=capture.position,
+                ),
+            ),
+        )
+        entry._img = capture._img
+        self.latest_images[capture.channel.handle] = entry
+        return entry
+
     async def snap_selected_channels(self, config_file: sc.AcquisitionConfig) -> ChannelSnapSelectionResult:
         """
         Take snapshots of all selected channels with real-time image updates.
@@ -1168,14 +1195,10 @@ class Core:
                         logger.debug(f"executing protocol step generated error {e}")
                         await protocol_generator.athrow(e)
 
-                    if result is not None and isinstance(next_step, ChannelSnapshot):
-                        await self._store_new_image(
-                            img=result._img,
-                            pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
-                            channel_config=next_step.channel,
-                            image_id=result.image_id,
-                            capture=result,
-                        )
+                    if isinstance(result, ImageAcquiredResponse) and isinstance(
+                        next_step, ChannelSnapshot
+                    ):
+                        self._cache_captured_image(result)
 
             logger.debug("protocol done")
 
@@ -1208,11 +1231,6 @@ class Core:
             if acquisition_status.last_status is not None:
                 acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
         finally:
-            # ensure no dangling image-writer threads, and mark the run finished (close is idempotent)
-            if protocol.image_store is not None:
-                late = protocol.image_store.close()
-                if late.failed:
-                    logger.error(f"acquisition {protocol.acquisition_id}: {len(late.failed)} images failed to store: {late.failed[:5]}")
             acquisition_status.thread_is_running = False
         logger.debug("acquisition done")
 
