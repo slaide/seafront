@@ -252,6 +252,108 @@ class TestSameOutput:
         assert st["acquisition_status"] == "completed", st
         _assert_same_output(tmp_path / "client", tmp_path / "server", expected_images=4)
 
+    @pytest.mark.parametrize("pad_low", ["no", "yes"])
+    def test_twelve_bit_metadata_respects_pad_low(self, tmp_path, pad_low):
+        """
+        The API runner reads yes/no options from machine_defaults just like the server.
+
+        Eight-bit images cannot expose a bad pad_low interpretation because their camera and
+        container widths are both eight bits.  Twelve-bit samples ride in uint16: unpadded
+        data must declare SignificantBits=12, while padded data fills and declares all 16.
+        """
+        defaults = {i["handle"]: i for i in _ok("/api/get_features/machine_defaults")}
+        originals = [defaults["camera.main.pixel_format"], defaults["image.file.pad_low"]]
+        expected_bits = 16 if pad_low == "yes" else 12
+        try:
+            with _leased("12-bit parity setup") as token:
+                _ok(
+                    "/api/action/machine_config_flush",
+                    {
+                        "privileged": True,
+                        "machine_config": [
+                            dict(defaults["camera.main.pixel_format"], value="mono12"),
+                            dict(defaults["image.file.pad_low"], value=pad_low),
+                        ],
+                    },
+                    token=token,
+                )
+
+            proto_path, proto = _protocol(tmp_path, channels=1, name=f"mono12-{pad_low}")
+            client_root = tmp_path / "client"
+            server_root = tmp_path / "server"
+            res = _run_script(
+                "--protocol-file", str(proto_path), "--output-dir", str(client_root)
+            )
+            assert res.returncode == 0, res.stderr
+            _, st = _builtin_run(proto, server_root)
+            assert st["acquisition_status"] == "completed", st
+            _assert_same_output(client_root, server_root, expected_images=1)
+
+            for root in (client_root, server_root):
+                image = next(root.rglob("*.tiff"))
+                with tifffile.TiffFile(image) as tif:
+                    page = tp.cast(tp.Any, tif.pages[0])
+                    assert f'SignificantBits="{expected_bits}"' in page.description
+        finally:
+            with _leased("12-bit parity cleanup") as token:
+                _ok(
+                    "/api/action/machine_config_flush",
+                    {"privileged": True, "machine_config": originals},
+                    token=token,
+                )
+
+    def test_nondefault_filename_settings_match(self, tmp_path):
+        """Exercise every configurable component of the per-plane filename."""
+        handles = (
+            "image.filename.use_channel_name",
+            "image.filename.xy_index_start",
+            "image.filename.z_index_start",
+            "image.filename.site_index_start",
+            "image.filename.zero_pad_column",
+        )
+        defaults = {i["handle"]: i for i in _ok("/api/get_features/machine_defaults")}
+        originals = [defaults[handle] for handle in handles]
+        changed = [
+            dict(defaults["image.filename.use_channel_name"], value="no"),
+            dict(defaults["image.filename.xy_index_start"], value=7),
+            dict(defaults["image.filename.z_index_start"], value=3),
+            dict(defaults["image.filename.site_index_start"], value=9),
+            dict(defaults["image.filename.zero_pad_column"], value="no"),
+        ]
+        try:
+            with _leased("filename parity setup") as token:
+                _ok(
+                    "/api/action/machine_config_flush",
+                    {"machine_config": changed},
+                    token=token,
+                )
+
+            proto_path, proto = _protocol(
+                tmp_path, wells=[(8, 12)], channels=1, z_planes=2, name="filenames"
+            )
+            client_root = tmp_path / "client"
+            server_root = tmp_path / "server"
+            res = _run_script(
+                "--protocol-file", str(proto_path), "--output-dir", str(client_root)
+            )
+            assert res.returncode == 0, res.stderr
+            _, st = _builtin_run(proto, server_root)
+            assert st["acquisition_status"] == "completed", st
+            _assert_same_output(client_root, server_root, expected_images=2)
+
+            names = {path.name for path in client_root.rglob("*.tiff")}
+            assert names == {
+                "I13_s9_x7_y7_z3_fluo405.ome.tiff",
+                "I13_s9_x7_y7_z4_fluo405.ome.tiff",
+            }
+        finally:
+            with _leased("filename parity cleanup") as token:
+                _ok(
+                    "/api/action/machine_config_flush",
+                    {"machine_config": originals},
+                    token=token,
+                )
+
 
 # --------------------------------------------------------------------------------------------
 # same refusals, before anything moves

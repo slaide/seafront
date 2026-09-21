@@ -251,19 +251,29 @@ def run_protocol(
     client: SeafrontClient, protocol: sc.AcquisitionConfig, store: ImageStore, compression: str,
     strip_rows: int = 64, codec_threads: int = 4,
 ) -> Summary:
-    md = client.machine_defaults()
+    md = {
+        handle: sc.ConfigItem.model_validate(item)
+        for handle, item in client.machine_defaults().items()
+    }
 
-    def cfg(handle: str, default: tp.Any = None) -> tp.Any:
+    def cfg_item(handle: str) -> sc.ConfigItem | None:
+        return md.get(handle)
+
+    def cfg_value(handle: str, default: tp.Any = None) -> tp.Any:
         item = md.get(handle)
-        return default if item is None else item["value"]
+        return default if item is None else item.value
 
     def cfg_bool(handle: str, default: bool) -> bool:
-        v = cfg(handle)
-        return default if v is None else v == "yes"
+        item = cfg_item(handle)
+        return default if item is None else item.boolvalue
 
     def cfg_int(handle: str, default: int) -> int:
-        v = cfg(handle)
-        return default if v is None else int(v)
+        item = cfg_item(handle)
+        return default if item is None else item.intvalue
+
+    def cfg_str(handle: str, default: str) -> str:
+        item = cfg_item(handle)
+        return default if item is None else item.strvalue
 
     plate = protocol.wellplate_type
     grid = protocol.grid
@@ -300,7 +310,7 @@ def run_protocol(
     client.post("/api/action/establish_hardware_connection")
 
     # -- pre-flight: every planned position against the server's forbidden areas
-    areas_raw = cfg("protocol.forbidden_areas") or []
+    areas_raw = cfg_value("protocol.forbidden_areas") or []
     forbidden = cmd.ForbiddenAreaList.model_validate({"areas": areas_raw}) if areas_raw else None
     problems: list[str] = []
     for well in wells:
@@ -315,8 +325,10 @@ def run_protocol(
 
     # -- OME template, from the same camera identity the server uses
     camera = client.post("/api/get_features/hardware_capabilities")["main_camera"]
-    hardware_channels = [ChannelConfig(**ch) for ch in (cfg("imaging.channels") or [])]
-    mag = re.match(r"(\d+)x", str(cfg("camera.main.objective", "")))
+    hardware_channels = [
+        ChannelConfig(**ch) for ch in (cfg_value("imaging.channels") or [])
+    ]
+    mag = re.match(r"(\d+)x", cfg_str("camera.main.objective", ""))
     objective_magnification = int(mag.group(1)) if mag else None
     ome_template = build_ome_instrument(
         microscope_name=client.target_device,
@@ -327,9 +339,9 @@ def run_protocol(
         objective_magnification=objective_magnification,
     )
     pixel_size_um = pixel_size_um_at(objective_magnification)
-    pixel_format = str(cfg("camera.main.pixel_format", "mono8"))
-    pad_low = bool(cfg("image.file.pad_low", False))
-    imaging_order = str(cfg("imaging.order", "protocol_order"))
+    pixel_format = cfg_str("camera.main.pixel_format", "mono8")
+    pad_low = cfg_bool("image.file.pad_low", False)
+    imaging_order = cfg_str("imaging.order", "protocol_order")
 
     # file naming options (handles as registered in seafront/config/handles.py)
     use_channel_name = cfg_bool("image.filename.use_channel_name", True)
@@ -340,9 +352,9 @@ def run_protocol(
 
     # -- z reference: current z, or the laser autofocus reference when autofocus is on
     reference_z_mm = client.current_position().z_pos_mm
-    refz = cfg("laser.autofocus.calibration.ref_z_mm")
-    if protocol.autofocus_enabled and refz is not None:
-        reference_z_mm = float(refz)
+    refz_item = cfg_item("laser.autofocus.calibration.ref_z_mm")
+    if protocol.autofocus_enabled and refz_item is not None:
+        reference_z_mm = refz_item.floatvalue
         client.move_to(z_mm=reference_z_mm)
 
     ordered_wells = greedy_well_order(wells)

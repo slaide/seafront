@@ -38,7 +38,7 @@ from ome_types.model import (
     Detector_Type,
     TiffData,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 import seafront.server.commands as cmds
 from seafront.config import basics
@@ -95,6 +95,73 @@ class ZPositionInfo(BaseModel):
     channel_info: ChannelInfo
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class AcquisitionStatusReporter:
+    """Build and publish status snapshots; independent of protocol traversal and storage."""
+
+    def __init__(
+        self,
+        target: cmds.AcquisitionStatus,
+        acquisition_id: str,
+        config: sc.AcquisitionConfig,
+        total_num_images: int,
+        max_storage_size_images_gb: float,
+    ) -> None:
+        self._target = target
+        self._acquisition_id = acquisition_id
+        self._config = config
+        self._total_num_images = total_num_images
+        self._max_storage_size_images_gb = max_storage_size_images_gb
+
+    def publish(
+        self,
+        *,
+        status: cmds.AcquisitionStatusStage,
+        current_num_images: int,
+        time_since_start_s: float,
+        start_time_iso: str,
+        storage_usage_bytes: int,
+        estimated_remaining_time_s: float | None,
+        last_image: cmds.ImageStoreInfo | None,
+        message: str,
+        current_timepoint: int | None = None,
+        total_timepoints: int | None = None,
+        estimated_timepoint_duration_s: float | None = None,
+    ) -> None:
+        self._target.last_status = cmds.AcquisitionStatusOut(
+            acquisition_id=self._acquisition_id,
+            acquisition_status=status,
+            acquisition_progress=cmds.AcquisitionProgressStatus(
+                current_num_images=current_num_images,
+                time_since_start_s=time_since_start_s,
+                start_time_iso=start_time_iso,
+                current_storage_usage_GB=storage_usage_bytes / (1024**3),
+                estimated_remaining_time_s=estimated_remaining_time_s,
+                last_image=last_image,
+                current_timepoint=current_timepoint,
+                total_timepoints=total_timepoints,
+                estimated_timepoint_duration_s=estimated_timepoint_duration_s,
+            ),
+            acquisition_meta_information=cmds.AcquisitionMetaInformation(
+                total_num_images=self._total_num_images,
+                max_storage_size_images_GB=self._max_storage_size_images_gb,
+            ),
+            acquisition_config=self._config,
+            message=message,
+        )
+
+    def scheduled(self) -> None:
+        self.publish(
+            status=cmds.AcquisitionStatusStage.SCHEDULED,
+            current_num_images=0,
+            time_since_start_s=0,
+            start_time_iso="scheduled",
+            storage_usage_bytes=0,
+            estimated_remaining_time_s=0,
+            last_image=None,
+            message="scheduled",
+        )
 
 
 class AsyncThreadPool(BaseModel):
@@ -799,6 +866,8 @@ class ProtocolGenerator(BaseModel):
     completed_timepoint_imaging_times: list[float] = Field(default_factory=list)
     "Actual imaging times for completed timepoints (used to estimate remaining ones)"
 
+    _status_reporter: AcquisitionStatusReporter = PrivateAttr()
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
@@ -987,61 +1056,14 @@ class ProtocolGenerator(BaseModel):
         # the protocol itself travels with the images
         self.image_store.put_bytes(str(self.project_relpath / "config.json"), self.config_file.json().encode())
 
-        self.acquisition_status.last_status = cmds.AcquisitionStatusOut(
+        self._status_reporter = AcquisitionStatusReporter(
+            target=self.acquisition_status,
             acquisition_id=self.acquisition_id,
-            acquisition_status=cmds.AcquisitionStatusStage.SCHEDULED,
-            acquisition_progress=cmds.AcquisitionProgressStatus(
-                current_num_images=0,
-                time_since_start_s=0,
-                start_time_iso="scheduled",
-                current_storage_usage_GB=0,
-                estimated_remaining_time_s=0,
-                last_image=None,
-            ),
-            acquisition_meta_information=cmds.AcquisitionMetaInformation(
-                total_num_images=self.num_images_total,
-                max_storage_size_images_GB=self.max_storage_size_images_GB,
-            ),
-            acquisition_config=self.config_file,
-            message="scheduled",
+            config=self.config_file,
+            total_num_images=self.num_images_total,
+            max_storage_size_images_gb=self.max_storage_size_images_GB,
         )
-
-    def _update_acquisition_status(
-        self,
-        status: cmds.AcquisitionStatusStage,
-        current_num_images: int,
-        time_since_start_s: float,
-        start_time_iso_str: str,
-        storage_usage_bytes: int,
-        estimated_remaining_time_s: float | None,
-        last_image_information: cmds.ImageStoreInfo | None,
-        message: str,
-        current_timepoint: int | None = None,
-        total_timepoints: int | None = None,
-        estimated_timepoint_duration_s: float | None = None,
-    ) -> None:
-        """Update acquisition status with current progress"""
-        self.acquisition_status.last_status = cmds.AcquisitionStatusOut(
-            acquisition_id=self.acquisition_id,
-            acquisition_status=status,
-            acquisition_progress=cmds.AcquisitionProgressStatus(
-                current_num_images=current_num_images,
-                time_since_start_s=time_since_start_s,
-                start_time_iso=start_time_iso_str,
-                current_storage_usage_GB=storage_usage_bytes / (1024**3),
-                estimated_remaining_time_s=estimated_remaining_time_s,
-                last_image=last_image_information,
-                current_timepoint=current_timepoint,
-                total_timepoints=total_timepoints,
-                estimated_timepoint_duration_s=estimated_timepoint_duration_s,
-            ),
-            acquisition_meta_information=cmds.AcquisitionMetaInformation(
-                total_num_images=self.num_images_total,
-                max_storage_size_images_GB=self.max_storage_size_images_GB,
-            ),
-            acquisition_config=self.config_file,
-            message=message,
-        )
+        self._status_reporter.scheduled()
 
     # Iterator methods for protocol traversal
     def iter_wells(self) -> tp.Iterator[WellInfo]:
@@ -1495,14 +1517,14 @@ class ProtocolGenerator(BaseModel):
                             f"protocol - {num_images_acquired}/{self.num_images_total} images acquired"
                         )
 
-                        self._update_acquisition_status(
+                        self._status_reporter.publish(
                             status=cmds.AcquisitionStatusStage.RUNNING,
                             current_num_images=num_images_acquired,
                             time_since_start_s=time_since_start_s,
-                            start_time_iso_str=start_time_iso_str,
+                            start_time_iso=start_time_iso_str,
                             storage_usage_bytes=image_store.bytes_written,
                             estimated_remaining_time_s=estimated_remaining_time_s,
-                            last_image_information=last_image_information,
+                            last_image=last_image_information,
                             message=f"Acquisition is {(100 * num_images_acquired / self.num_images_total):.2f}% complete",
                             current_timepoint=timepoint if self.num_timepoints > 1 else None,
                             total_timepoints=self.num_timepoints if self.num_timepoints > 1 else None,
@@ -1539,14 +1561,14 @@ class ProtocolGenerator(BaseModel):
                     estimated_remaining_during_wait = time_remaining + (remaining_full_cycles * time_per_timepoint) + time_elapsed_s
                     # Use average of completed timepoint times for the estimate
                     avg_timepoint_duration = sum(self.completed_timepoint_imaging_times) / len(self.completed_timepoint_imaging_times)
-                    self._update_acquisition_status(
+                    self._status_reporter.publish(
                         status=cmds.AcquisitionStatusStage.RUNNING,
                         current_num_images=num_images_acquired,
                         time_since_start_s=time.time() - start_time,
-                        start_time_iso_str=start_time_iso_str,
+                        start_time_iso=start_time_iso_str,
                         storage_usage_bytes=image_store.bytes_written,
                         estimated_remaining_time_s=estimated_remaining_during_wait,
-                        last_image_information=last_image_information,
+                        last_image=last_image_information,
                         message=f"Waiting for next timepoint ({time_remaining:.1f}s remaining)...",
                         current_timepoint=timepoint,
                         total_timepoints=self.num_timepoints,
