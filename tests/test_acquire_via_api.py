@@ -20,7 +20,9 @@ import typing as tp
 from pathlib import Path
 
 import pytest
+import seaconfig as sc
 import tifffile
+from ome_types import from_xml
 
 from tests.mock_server import mock_server
 from tests.test_api_operations import make_request
@@ -353,6 +355,132 @@ class TestSameOutput:
                     {"machine_config": originals},
                     token=token,
                 )
+
+
+@pytest.fixture(scope="class")
+def calibrated_coordinate_runs(scratch_server, tmp_path_factory):
+    """One external and one built-in run with offsets large enough to expose frame mixing."""
+    tmp_path = tmp_path_factory.mktemp("calibrated-coordinate-parity")
+    defaults = {i["handle"]: i for i in _ok("/api/get_features/machine_defaults")}
+    handles = (
+        "calibration.offset.x_mm",
+        "calibration.offset.y_mm",
+        "calibration.offset.z_mm",
+    )
+    originals = [defaults[handle] for handle in handles]
+    offsets = (2.5, -1.25, 0.2)
+
+    def move_to_start() -> None:
+        with _leased("coordinate test positioning") as token:
+            _ok(
+                "/api/action/move_to",
+                {"x_mm": 60.0, "y_mm": 40.0, "z_mm": 5.0},
+                token=token,
+            )
+
+    def ome_positions(root: Path) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+        image = next(root.rglob("*.tiff"))
+        with tifffile.TiffFile(image) as tif:
+            xml = tp.cast(tp.Any, tif.pages[0]).description
+        ome = from_xml(xml)
+        image_meta = ome.images[0]
+        plane = image_meta.pixels.planes[0]
+        label = image_meta.stage_label
+        assert label is not None
+        return (
+            (plane.position_x, plane.position_y, plane.position_z),
+            (label.x, label.y, label.z),
+        )
+
+    try:
+        with _leased("coordinate test calibration") as token:
+            _ok(
+                "/api/action/machine_config_flush",
+                {
+                    "privileged": True,
+                    "machine_config": [
+                        dict(defaults[handle], value=value)
+                        for handle, value in zip(handles, offsets, strict=True)
+                    ],
+                },
+                token=token,
+            )
+
+        proto_path, proto = _protocol(
+            tmp_path, wells=[(8, 12)], channels=1, z_planes=1, name="coordinates"
+        )
+        parsed = sc.AcquisitionConfig.model_validate(proto)
+        well = parsed.plate_wells[0]
+        plate = parsed.wellplate_type
+        expected_xy = (
+            plate.get_well_offset_x(well.well_name) + plate.Well_size_x_mm / 2,
+            plate.get_well_offset_y(well.well_name) + plate.Well_size_y_mm / 2,
+        )
+
+        move_to_start()
+        external_root = tmp_path / "external"
+        result = _run_script(
+            "--protocol-file", str(proto_path), "--output-dir", str(external_root)
+        )
+        assert result.returncode == 0, result.stderr
+        external_stage = _stage()
+
+        move_to_start()
+        builtin_root = tmp_path / "builtin"
+        _, status = _builtin_run(proto, builtin_root)
+        assert status["acquisition_status"] == "completed", status
+        builtin_stage = _stage()
+
+        yield {
+            "expected": (*expected_xy, 5.0),
+            "external_stage": external_stage,
+            "builtin_stage": builtin_stage,
+            "external_ome": ome_positions(external_root),
+            "builtin_ome": ome_positions(builtin_root),
+        }
+    finally:
+        with _leased("coordinate test cleanup") as token:
+            _ok(
+                "/api/action/machine_config_flush",
+                {"privileged": True, "machine_config": originals},
+                token=token,
+            )
+
+
+@pytest.mark.usefixtures("scratch_server")
+class TestCalibratedCoordinateParity:
+    """Physical motion and recorded positions must use the public calibrated frame."""
+
+    def test_external_xy_motion_reaches_the_planned_site(self, calibrated_coordinate_runs):
+        expected = calibrated_coordinate_runs["expected"]
+        assert calibrated_coordinate_runs["external_stage"][:2] == pytest.approx(expected[:2])
+
+    def test_builtin_xy_motion_reaches_the_planned_site(self, calibrated_coordinate_runs):
+        expected = calibrated_coordinate_runs["expected"]
+        assert calibrated_coordinate_runs["builtin_stage"][:2] == pytest.approx(expected[:2])
+
+    def test_external_z_reference_round_trips_without_motion(self, calibrated_coordinate_runs):
+        assert calibrated_coordinate_runs["external_stage"][2] == pytest.approx(5.0)
+
+    def test_builtin_z_reference_round_trips_without_motion(self, calibrated_coordinate_runs):
+        assert calibrated_coordinate_runs["builtin_stage"][2] == pytest.approx(5.0)
+
+    def test_external_ome_plane_uses_calibrated_coordinates(self, calibrated_coordinate_runs):
+        plane, _label = calibrated_coordinate_runs["external_ome"]
+        assert plane == pytest.approx(calibrated_coordinate_runs["expected"])
+
+    def test_builtin_ome_xy_uses_calibrated_coordinates(self, calibrated_coordinate_runs):
+        plane, _label = calibrated_coordinate_runs["builtin_ome"]
+        assert plane[:2] == pytest.approx(calibrated_coordinate_runs["expected"][:2])
+
+    def test_builtin_ome_z_uses_calibrated_coordinates(self, calibrated_coordinate_runs):
+        plane, _label = calibrated_coordinate_runs["builtin_ome"]
+        assert plane[2] == pytest.approx(calibrated_coordinate_runs["expected"][2])
+
+    @pytest.mark.parametrize("runner", ["external", "builtin"])
+    def test_stage_label_and_plane_use_the_same_frame(self, calibrated_coordinate_runs, runner):
+        plane, label = calibrated_coordinate_runs[f"{runner}_ome"]
+        assert label == pytest.approx(plane)
 
 
 # --------------------------------------------------------------------------------------------
