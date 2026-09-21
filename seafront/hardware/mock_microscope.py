@@ -445,19 +445,20 @@ class MockMicroscope(Microscope):
 
     async def get_current_state(self) -> AdapterState:
         """Get current mock microscope state."""
-        # Apply calibration offsets to position
-        calibrated_pos = Position(
-            x_pos_mm=self._pos_x_measured_to_real(self._current_position.x_pos_mm),
-            y_pos_mm=self._pos_y_measured_to_real(self._current_position.y_pos_mm),
-            z_pos_mm=self._pos_z_measured_to_real(self._current_position.z_pos_mm)
-        )
-
         self.last_state = AdapterState(
-            stage_position=calibrated_pos,
+            stage_position=self._get_current_position(),
             is_in_loading_position=self.is_in_loading_position,
         )
 
         return self.last_state
+
+    def _get_current_position(self) -> Position:
+        """Stage position in the calibrated coordinate frame used by public commands."""
+        return Position(
+            x_pos_mm=self._pos_x_measured_to_real(self._current_position.x_pos_mm),
+            y_pos_mm=self._pos_y_measured_to_real(self._current_position.y_pos_mm),
+            z_pos_mm=self._pos_z_measured_to_real(self._current_position.z_pos_mm)
+        )
 
     @property
     def calibrated_stage_position(self) -> tuple[float, float, float]:
@@ -1022,8 +1023,8 @@ class MockMicroscope(Microscope):
             result._cambits = cambits
             return result  # type: ignore
 
-        elif isinstance(command, cmd.MC_getLastPosition):
-            return self._current_position  # type: ignore
+        elif isinstance(command, cmd.GetCurrentPosition):
+            return self._get_current_position()  # type: ignore
 
         elif isinstance(command, cmd.IlluminationEndAll):
             logger.info("Mock microscope: turning off all illumination")

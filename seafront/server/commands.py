@@ -204,8 +204,8 @@ class BaseCommand[T]:
 # input and output parameter models (for server i/o and internal use)
 
 
-class MC_getLastPosition(BaseModel, BaseCommand[Position]):
-    """command class to retrieve core.mc.get_last_position"""
+class GetCurrentPosition(BaseModel, BaseCommand[Position]):
+    """Read the stage position in the calibrated coordinate frame used by MoveTo and the API."""
 
     _ReturnValue: type = PrivateAttr(default=Position)
 

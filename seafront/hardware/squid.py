@@ -987,27 +987,27 @@ class SquidAdapter(Microscope):
 
     async def get_current_state(self) -> AdapterState:
         try:
-            last_stage_position = self.microcontroller.get_last_position()
+            current_position = self._get_current_position(self.microcontroller)
         except IOError as e:
             self.close()
             logger.debug("microcontroller disconnected (IOError)")
             raise DisconnectError() from e
 
-        # supposed=real-calib
-        x_pos_mm = self._pos_x_measured_to_real(last_stage_position.x_pos_mm)
-        y_pos_mm = self._pos_y_measured_to_real(last_stage_position.y_pos_mm)
-        z_pos_mm = self._pos_z_measured_to_real(last_stage_position.z_pos_mm)
-
         self.last_state = AdapterState(
             is_in_loading_position=self.is_in_loading_position,
-            stage_position=cmd.Position(
-                x_pos_mm=x_pos_mm,
-                y_pos_mm=y_pos_mm,
-                z_pos_mm=z_pos_mm,
-            ),
+            stage_position=current_position,
         )
 
         return self.last_state
+
+    def _get_current_position(self, qmc: Microcontroller) -> cmd.Position:
+        """Stage position in the calibrated coordinate frame used by public commands."""
+        measured = qmc.get_last_position()
+        return cmd.Position(
+            x_pos_mm=self._pos_x_measured_to_real(measured.x_pos_mm),
+            y_pos_mm=self._pos_y_measured_to_real(measured.y_pos_mm),
+            z_pos_mm=self._pos_z_measured_to_real(measured.z_pos_mm),
+        )
 
     def get_hardware_limits(self) -> HardwareLimits:
         """
@@ -1892,10 +1892,10 @@ class SquidAdapter(Microscope):
         elif isinstance(command, cmd.AutofocusApproachTargetDisplacement):
             return self._execute_AutofocusApproachTargetDisplacement(qmc, command)
 
-        elif isinstance(command, cmd.MC_getLastPosition):
-            logger.debug("squid - fetching last stage position")
-            res = qmc.get_last_position()
-            logger.debug("squid - fetched last stage position")
+        elif isinstance(command, cmd.GetCurrentPosition):
+            logger.debug("squid - fetching current calibrated stage position")
+            res = self._get_current_position(qmc)
+            logger.debug("squid - fetched current calibrated stage position")
             return res
 
         else:

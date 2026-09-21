@@ -1233,7 +1233,7 @@ class ProtocolGenerator(BaseModel):
         codec_threads = ConfigRegistry.get(StorageConfig.CODEC_THREADS).intvalue
 
         # get current z coordinate as z reference
-        last_position = yield cmds.MC_getLastPosition()
+        last_position = yield cmds.GetCurrentPosition()
         assert isinstance(last_position, McPosition), f"{type(last_position)=}"
         reference_z_mm = last_position.z_pos_mm
 
@@ -1345,7 +1345,7 @@ class ProtocolGenerator(BaseModel):
                             )
 
                         # reference for channel z offsets
-                        last_position = yield cmds.MC_getLastPosition()
+                        last_position = yield cmds.GetCurrentPosition()
                         assert isinstance(last_position, McPosition), f"{type(last_position)=}"
                         reference_z_mm = last_position.z_pos_mm
 
@@ -1391,7 +1391,7 @@ class ProtocolGenerator(BaseModel):
                         self.handle_q_in()
 
                         # move to channel offset
-                        last_position = yield cmds.MC_getLastPosition()
+                        last_position = yield cmds.GetCurrentPosition()
                         assert isinstance(last_position, McPosition), f"{type(last_position)=}"
                         current_z_mm = last_position.z_pos_mm
 
@@ -1400,7 +1400,7 @@ class ProtocolGenerator(BaseModel):
                             res = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=channel_z_mm)
                             assert isinstance(res, cmds.BasicSuccessResponse), f"{type(res)=}"
 
-                        last_position = yield cmds.MC_getLastPosition()
+                        last_position = yield cmds.GetCurrentPosition()
                         assert isinstance(last_position, McPosition), f"{type(last_position)=}"
 
                         logger.debug(

@@ -14,7 +14,7 @@ data handling (position/forbidden-area math, OME metadata construction).
 Per-command mapping (built-in command -> API route):
 
   EstablishHardwareConnection         POST /api/action/establish_hardware_connection
-  MC_getLastPosition                  POST /api/get_info/current_state  (see note below)
+  GetCurrentPosition                 POST /api/get_info/current_state
   MoveTo                              POST /api/action/move_to
   AutofocusApproachTargetDisplacement POST /api/action/laser_autofocus_move_to_target_offset
   ChannelSnapshot                     POST /api/action/snap_channel
@@ -32,10 +32,8 @@ Usage:
 
 Exit codes: 0 done, 1 error, 2 microscope locked by someone else, 130 interrupted.
 
-Known difference to the server's output: the built-in protocol records the raw microcontroller
-position in OME metadata (MC_getLastPosition), the API only reports the calibrated stage position
-(current_state), i.e. the frame the protocol itself is specified in. Positions in the two OME files
-therefore differ by the calibration offsets; file names, pixels and everything else match.
+Both paths use the calibrated stage coordinate frame exposed by current_state, so positions in
+OME metadata have the same meaning as MoveTo coordinates and protocol well/site coordinates.
 """
 
 from __future__ import annotations

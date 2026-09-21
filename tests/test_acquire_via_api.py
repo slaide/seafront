@@ -141,11 +141,27 @@ def _wait_files(root: Path, at_least: int, timeout_s: float = 30) -> None:
     raise AssertionError(f"fewer than {at_least} images appeared under {root}")
 
 
-def _builtin_run(proto: dict, out_dir: Path) -> tuple[str, dict]:
+def _move_to(position: tuple[float, float, float]) -> None:
+    with _leased("parity test positioning") as token:
+        _ok(
+            "/api/action/move_to",
+            {"x_mm": position[0], "y_mm": position[1], "z_mm": position[2]},
+            token=token,
+        )
+
+
+def _builtin_run(
+    proto: dict,
+    out_dir: Path,
+    *,
+    start_at: tuple[float, float, float] | None = None,
+) -> tuple[str, dict]:
     """run the protocol through /api/acquisition/start with images redirected to out_dir"""
     out_dir.mkdir(parents=True, exist_ok=True)
     proto = dict(proto)
     proto["machine_config"] = [{"name": "", "handle": "storage.base_image_output_dir", "value_kind": "text", "value": str(out_dir)}]
+    if start_at is not None:
+        _move_to(start_at)
     with _leased("builtin run") as token:
         resp = _ok("/api/acquisition/start", {"config_file": proto}, token=token)
         acq_id = resp["acquisition_id"]
@@ -174,9 +190,6 @@ def _norm_ome(xml: str) -> str:
     xml = re.sub(r'(?<=ID=")[^"]*', "ID", xml)
     xml = re.sub(r'(?<=Name=")[^"]*\.tiff', "FILE", xml)
     xml = re.sub(r'/[^"<> ]*\.tiff', "PATH", xml)
-    # documented difference: the server records raw microcontroller coordinates, the API
-    # exposes calibrated ones, so positions differ by the calibration offsets
-    xml = re.sub(r'\b(Position[XYZ]|[XYZ])="[^"]*"', r'\1="POS"', xml)
     return xml
 
 
@@ -212,12 +225,18 @@ def _set_calibrated(value: bool) -> None:
 
 @pytest.mark.usefixtures("scratch_server")
 class TestSameOutput:
+    START_POSITION = (60.0, 40.0, 2.0)
+
+    @pytest.fixture(autouse=True)
+    def start_external_run_at_known_position(self):
+        _move_to(self.START_POSITION)
+
     def test_single_site(self, tmp_path):
         proto_path, proto = _protocol(tmp_path, channels=2)
         res = _run_script("--protocol-file", str(proto_path), "--output-dir", str(tmp_path / "client"))
         assert res.returncode == 0, res.stderr
         assert _ok("/api/lock/status")["held"] is False
-        _, st = _builtin_run(proto, tmp_path / "server")
+        _, st = _builtin_run(proto, tmp_path / "server", start_at=self.START_POSITION)
         assert st["acquisition_status"] == "completed", st
         _assert_same_output(tmp_path / "client", tmp_path / "server", expected_images=2)
 
@@ -227,7 +246,7 @@ class TestSameOutput:
         proto_path, proto = _protocol(tmp_path, wells=[(8, 12), (9, 14), (8, 14)], sites=2, channels=2, z_planes=3, name="grid")
         res = _run_script("--protocol-file", str(proto_path), "--output-dir", str(tmp_path / "client"))
         assert res.returncode == 0, res.stderr
-        _, st = _builtin_run(proto, tmp_path / "server")
+        _, st = _builtin_run(proto, tmp_path / "server", start_at=self.START_POSITION)
         assert st["acquisition_status"] == "completed", st
         _assert_same_output(tmp_path / "client", tmp_path / "server", expected_images=3 * 4 * 2 * 3)
 
@@ -235,7 +254,7 @@ class TestSameOutput:
         proto_path, proto = _protocol(tmp_path, channels=1, num_t=2, delta_t_s=1.0, name="tseries")
         res = _run_script("--protocol-file", str(proto_path), "--output-dir", str(tmp_path / "client"))
         assert res.returncode == 0, res.stderr
-        _, st = _builtin_run(proto, tmp_path / "server")
+        _, st = _builtin_run(proto, tmp_path / "server", start_at=self.START_POSITION)
         assert st["acquisition_status"] == "completed", st
         _assert_same_output(tmp_path / "client", tmp_path / "server", expected_images=2)
         assert {p.name for p in (tmp_path / "client").glob("*/*/t*")} == {"t0", "t1"}
@@ -250,7 +269,7 @@ class TestSameOutput:
         proto_path, proto = _protocol(tmp_path, wells=[(8, 12), (8, 13)], channels=2, autofocus=True, name="af")
         res = _run_script("--protocol-file", str(proto_path), "--output-dir", str(tmp_path / "client"))
         assert res.returncode == 0, res.stderr
-        _, st = _builtin_run(proto, tmp_path / "server")
+        _, st = _builtin_run(proto, tmp_path / "server", start_at=self.START_POSITION)
         assert st["acquisition_status"] == "completed", st
         _assert_same_output(tmp_path / "client", tmp_path / "server", expected_images=4)
 
@@ -287,7 +306,7 @@ class TestSameOutput:
                 "--protocol-file", str(proto_path), "--output-dir", str(client_root)
             )
             assert res.returncode == 0, res.stderr
-            _, st = _builtin_run(proto, server_root)
+            _, st = _builtin_run(proto, server_root, start_at=self.START_POSITION)
             assert st["acquisition_status"] == "completed", st
             _assert_same_output(client_root, server_root, expected_images=1)
 
@@ -339,7 +358,7 @@ class TestSameOutput:
                 "--protocol-file", str(proto_path), "--output-dir", str(client_root)
             )
             assert res.returncode == 0, res.stderr
-            _, st = _builtin_run(proto, server_root)
+            _, st = _builtin_run(proto, server_root, start_at=self.START_POSITION)
             assert st["acquisition_status"] == "completed", st
             _assert_same_output(client_root, server_root, expected_images=2)
 

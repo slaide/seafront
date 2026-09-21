@@ -284,3 +284,22 @@ class TestCoordinatesAreCalibrated:
         calibrated = device.commands_received[-1]
 
         assert calibrated[2:6] != uncalibrated[2:6], "the calibration offset changed nothing"
+
+    def test_internal_position_command_matches_public_adapter_state(self, squid_adapter):
+        """Acquisitions and current_state must observe the same calibrated coordinates."""
+        from seafront.config.handles import CalibrationConfig
+        from seafront.config.registry import ConfigRegistry
+
+        adapter, _device = squid_adapter
+        ConfigRegistry.set_value(CalibrationConfig.OFFSET_X_MM, 2.5)
+        ConfigRegistry.set_value(CalibrationConfig.OFFSET_Y_MM, -1.25)
+        ConfigRegistry.set_value(CalibrationConfig.OFFSET_Z_MM, 0.2)
+        run(adapter, cmd.MoveTo(x_mm=60.0, y_mm=40.0, z_mm=5.0))
+
+        internal = run(adapter, cmd.GetCurrentPosition())
+        public = asyncio.run(adapter.get_current_state()).stage_position
+
+        assert internal == public
+        assert (internal.x_pos_mm, internal.y_pos_mm, internal.z_pos_mm) == pytest.approx(
+            (60.0, 40.0, 5.0), abs=0.01
+        )
