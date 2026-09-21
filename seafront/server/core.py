@@ -43,6 +43,7 @@ from seafront.config.handles import (
 )
 from seafront.config.registry import ConfigRegistry
 from seafront.debug_introspect import register_signal_dumper
+from seafront.hardware.camera.camera import bits_for_pixel_format
 from seafront.hardware.forbidden_areas import ForbiddenArea, ForbiddenAreaList
 from seafront.hardware.microscope import (
     DisconnectError,
@@ -65,6 +66,7 @@ from seafront.server.commands import (
     ChannelSnapProgressiveStatus,
     ChannelSnapSelectionResult,
     ChannelSnapshot,
+    CapturedImageMetadata,
     ConfigFetchResponse,
     ConfigFileInfo,
     ConfigListResponse,
@@ -295,6 +297,7 @@ class Core:
             pixel_format=pixel_format,
             channel_config=cmd.channel,
             image_id=res.image_id,
+            capture=res,
         )
 
     async def store_laseraf_image(self, res: AutofocusSnapResult) -> None:
@@ -506,7 +509,8 @@ class Core:
         pixel_format: str,
         channel_config: sc.AcquisitionChannelConfig,
         image_id: str | None = None,
-    ) -> str:
+        capture: CapturedImageMetadata | None = None,
+    ) -> ImageStoreEntry:
         """
         store a new image, return the channel handle (into self.latest_images)
 
@@ -515,19 +519,32 @@ class Core:
 
         image_id = image_id or str(uuid.uuid4())
 
-        try:
-            adapter_state = await self.microscope.get_current_state()
-        except DisconnectError:
-            error_internal("hardware disconnect")
+        if capture is None:
+            try:
+                adapter_state = await self.microscope.get_current_state()
+            except DisconnectError:
+                error_internal("hardware disconnect")
+            capture = CapturedImageMetadata(
+                image_id=image_id,
+                channel=channel_config,
+                width_px=img.shape[1],
+                height_px=img.shape[0],
+                timestamp=time.time(),
+                position=adapter_state.stage_position,
+                pixel_format=pixel_format,
+                camera_bit_depth=bits_for_pixel_format(pixel_format),
+                bit_depth=img.dtype.itemsize * 8,
+            )
 
         # store new image
         new_image_store_entry = ImageStoreEntry(
             pixel_format=pixel_format,
+            capture=capture,
             info=ImageStoreInfo(
                 channel=channel_config,
-                width_px=0,
-                height_px=0,
-                timestamp=time.time(),
+                width_px=capture.width_px,
+                height_px=capture.height_px,
+                timestamp=capture.timestamp,
                 image_id=image_id,
                 position=SitePosition(
                     well_name="",
@@ -537,7 +554,7 @@ class Core:
                     x_offset_mm=0,
                     y_offset_mm=0,
                     z_offset_mm=0,
-                    position=adapter_state.stage_position,
+                    position=capture.position,
                 ),
             ),
         )
@@ -545,7 +562,7 @@ class Core:
         logger.debug(f"stored new image for {channel_config.handle} at {time.time()}")
         self.latest_images[channel_config.handle] = new_image_store_entry
 
-        return channel_config.name
+        return new_image_store_entry
 
     async def snap_selected_channels(self, config_file: sc.AcquisitionConfig) -> ChannelSnapSelectionResult:
         """
@@ -604,6 +621,7 @@ class Core:
                 pixel_format=pixel_format,
                 channel_config=channel,
                 image_id=res_snap.image_id,
+                capture=res_snap,
             )
 
             # Accumulate results
@@ -1156,6 +1174,7 @@ class Core:
                             pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
                             channel_config=next_step.channel,
                             image_id=result.image_id,
+                            capture=result,
                         )
 
             logger.debug("protocol done")
@@ -1294,10 +1313,11 @@ class Core:
                 ))
 
                 try:
-                    result = await self.microscope.execute(ChannelSnapshot(
+                    snap_command = ChannelSnapshot(
                         channel=channel,
                         machine_config=config_file.machine_config or []
-                    ))
+                    )
+                    result = await self.microscope.execute(snap_command)
 
                     # Store the image
                     g_dict = GlobalConfigHandler.get_dict()
@@ -1307,6 +1327,7 @@ class Core:
                         pixel_format=pixel_format,
                         channel_config=channel,
                         image_id=result.image_id,
+                        capture=result,
                     )
 
                     completed_channels += 1

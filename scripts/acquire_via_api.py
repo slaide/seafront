@@ -58,14 +58,10 @@ import numpy as np
 import seaconfig as sc
 from websockets.sync.client import connect as ws_connect
 
-from seafront.config.basics import ChannelConfig
 from seafront.server import commands as cmd
 from seafront.server.protocol import (
     _format_well_name_with_padding,
-    build_ome_instrument,
     encode_image,
-    pixel_size_um_at,
-    significant_bits_for,
 )
 from seafront.storage import DiskSink, ImageStore, S3Sink
 
@@ -134,7 +130,7 @@ class SeafrontClient:
     def machine_defaults(self) -> dict[str, dict[str, tp.Any]]:
         return {item["handle"]: item for item in self.post("/api/get_features/machine_defaults")}
 
-    def fetch_image(self, channel_handle: str, image_id: str) -> np.ndarray:
+    def fetch_image(self, channel_handle: str, image_id: str) -> tuple[np.ndarray, dict[str, tp.Any]]:
         """Full-resolution pixels of the last image taken in this channel (same data the server stores)."""
         for attempt in range(2):
             try:
@@ -156,7 +152,8 @@ class SeafrontClient:
                 dtype = {8: np.uint8, 16: np.uint16}.get(int(meta["bit_depth"]))
                 if dtype is None:
                     raise RuntimeError(f"unsupported bit depth {meta['bit_depth']}")
-                return np.frombuffer(data, dtype=dtype).reshape(int(meta["height"]), int(meta["width"])).copy()
+                image = np.frombuffer(data, dtype=dtype).reshape(int(meta["height"]), int(meta["width"])).copy()
+                return image, meta
             except (OSError, ConnectionError) as e:
                 self._image_ws = None
                 if attempt == 1:
@@ -324,24 +321,6 @@ def run_protocol(
         raise RuntimeError("positions in forbidden areas:\n  " + "\n  ".join(problems))
     log("pre-flight: no planned position is in a forbidden area")
 
-    # -- OME template, from the same camera identity the server uses
-    camera = client.post("/api/get_features/hardware_capabilities")["main_camera"]
-    hardware_channels = [
-        ChannelConfig(**ch) for ch in (cfg_value("imaging.channels") or [])
-    ]
-    mag = re.match(r"(\d+)x", cfg_str("camera.main.objective", ""))
-    objective_magnification = int(mag.group(1)) if mag else None
-    ome_template = build_ome_instrument(
-        microscope_name=client.target_device,
-        camera_vendor=camera["vendor"],
-        camera_model=camera["model"],
-        camera_sn=camera["serial_number"],
-        hardware_channels=hardware_channels,
-        objective_magnification=objective_magnification,
-    )
-    pixel_size_um = pixel_size_um_at(objective_magnification)
-    pixel_format = cfg_str("camera.main.pixel_format", "mono8")
-    pad_low = cfg_bool("image.file.pad_low", False)
     imaging_order = cfg_str("imaging.order", "protocol_order")
 
     # file naming options (handles as registered in seafront/config/handles.py)
@@ -404,11 +383,27 @@ def run_protocol(
                     for plane in planes:
                         if math.fabs(plane.z_mm - client.current_position().z_pos_mm) > DISPLACEMENT_THRESHOLD_MM:
                             client.move_to(z_mm=plane.z_mm)
-                        position = client.current_position()
-
                         # ChannelSnapshot, then the pixels
-                        snapped = client.post("/api/action/snap_channel", {"channel": plane.channel.model_dump(), "machine_config": []})
-                        img = client.fetch_image(plane.channel.handle, snapped["image_id"])
+                        snapped = client.post(
+                            "/api/action/snap_channel",
+                            {
+                                "channel": plane.channel.model_dump(),
+                                "machine_config": [],
+                                "ome_context": {
+                                    "project_name": protocol.project_name,
+                                    "plate_name": protocol.plate_name,
+                                    "cell_line": protocol.cell_line,
+                                    "well_name": well.well_name,
+                                    "site_x": site.col,
+                                    "site_y": site.row,
+                                    "site_z": plane.plane_index,
+                                    "plane_index": plane.plane_index,
+                                    "autofocus_succeeded": autofocus_succeeded,
+                                },
+                            },
+                        )
+                        img, transferred = client.fetch_image(plane.channel.handle, snapped["image_id"])
+                        capture = transferred["capture"]
 
                         channel_identifier = plane.channel.name.replace(" ", "_") if use_channel_name else plane.channel.handle
                         well_name = _format_well_name_with_padding(well.well_name) if zero_pad else well.well_name
@@ -419,17 +414,17 @@ def run_protocol(
                         image_rel = project_rel / (f"t{timepoint - 1}" if grid.num_t > 1 else "") / filename
 
                         entry = cmd.ImageStoreEntry(
-                            pixel_format=pixel_format,
+                            pixel_format=capture["pixel_format"],
                             info=cmd.ImageStoreInfo(
                                 channel=plane.channel,
-                                width_px=img.shape[1],
-                                height_px=img.shape[0],
-                                timestamp=time.time(),
+                                width_px=capture["width_px"],
+                                height_px=capture["height_px"],
+                                timestamp=capture["timestamp"],
                                 position=cmd.SitePosition(
                                     well_name=well.well_name,
                                     site_x=site.col, site_y=site.row, site_z=plane.plane_index,
                                     x_offset_mm=0, y_offset_mm=0, z_offset_mm=0,
-                                    position=position,
+                                    position=cmd.Position(**capture["position"]),
                                 ),
                                 storage_path=store.describe(str(image_rel)),
                             ),
@@ -441,21 +436,7 @@ def run_protocol(
                                 encode_image,
                                 image_entry=entry,
                                 img_compression_algorithm=compression,  # type: ignore[arg-type]
-                                channel_config=plane.channel,
-                                position=entry.info.position,
-                                plane_index=plane.plane_index,
-                                pixel_size_um=pixel_size_um,
-                                significant_bits=significant_bits_for(
-                                    camera_bits=entry.bit_depth,
-                                    container_bits=img.dtype.itemsize * 8,
-                                    pad_low=pad_low,
-                                ),
-                                project_name=protocol.project_name,
-                                plate_name=protocol.plate_name,
-                                cell_line=protocol.cell_line,
-                                hardware_channels=hardware_channels,
-                                ome_template=ome_template,
-                                autofocus_succeeded=autofocus_succeeded,
+                                ome_xml=capture["ome_xml"],
                                 strip_rows=strip_rows,
                                 codec_threads=codec_threads,
                             ),

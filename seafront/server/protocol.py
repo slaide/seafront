@@ -49,6 +49,7 @@ from seafront.config.handles import (
     ImagingConfig,
     LaserAutofocusConfig,
     StorageConfig,
+    SystemConfig,
 )
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import Position as McPosition
@@ -777,23 +778,77 @@ def build_ome_metadata(
     ome.images = [image]
 
     # Convert OME object to XML string
-    return ome.to_xml()
+    # TIFF ASCII descriptions do not preserve trailing whitespace on readback. Normalize at
+    # the sole construction point so HTTP, WebSocket, and stored TIFF retrieval are identical.
+    return ome.to_xml().rstrip()
+
+
+def finalize_capture_ome_xml(
+    capture: cmds.CapturedImageMetadata,
+    context: cmds.OmeMetadataContext,
+    camera: tp.Any,
+    hardware_channels: list[basics.ChannelConfig],
+) -> str:
+    """Finalize OME-XML beside the pixels, while every capture fact is authoritative."""
+    objective_magnification: int | None = None
+    objective = ConfigRegistry.get(CameraConfig.MAIN_OBJECTIVE).strvalue
+    if match := re.match(r"(\d+)x", objective):
+        objective_magnification = int(match.group(1))
+
+    position = cmds.SitePosition(
+        well_name=context.well_name,
+        site_x=context.site_x,
+        site_y=context.site_y,
+        site_z=context.site_z,
+        x_offset_mm=context.x_offset_mm,
+        y_offset_mm=context.y_offset_mm,
+        z_offset_mm=context.z_offset_mm,
+        position=capture.position,
+    )
+    entry = cmds.ImageStoreEntry(
+        pixel_format=capture.pixel_format,
+        info=cmds.ImageStoreInfo(
+            channel=capture.channel,
+            width_px=capture.width_px,
+            height_px=capture.height_px,
+            timestamp=capture.timestamp,
+            image_id=capture.image_id,
+            position=position,
+        ),
+        capture=capture,
+    )
+    template = build_ome_instrument(
+        microscope_name=ConfigRegistry.get(SystemConfig.MICROSCOPE_NAME).strvalue,
+        camera_vendor=str(getattr(camera, "vendor_name", "")),
+        camera_model=str(getattr(camera, "model_name", "")),
+        camera_sn=str(getattr(camera, "sn", "")),
+        hardware_channels=hardware_channels,
+        objective_magnification=objective_magnification,
+    )
+    return build_ome_metadata(
+        ome_template=template,
+        image_entry=entry,
+        channel_config=capture.channel,
+        position=position,
+        plane_index=context.plane_index,
+        pixel_size_um=pixel_size_um_at(objective_magnification),
+        significant_bits=significant_bits_for(
+            camera_bits=capture.camera_bit_depth,
+            container_bits=capture.bit_depth,
+            pad_low=ConfigRegistry.get(ImageConfig.FILE_PAD_LOW).boolvalue,
+        ),
+        project_name=context.project_name,
+        plate_name=context.plate_name,
+        cell_line=context.cell_line,
+        hardware_channels=hardware_channels,
+        autofocus_succeeded=context.autofocus_succeeded,
+    )
 
 
 def encode_image(
     image_entry: cmds.ImageStoreEntry,
     img_compression_algorithm: tp.Literal["LZW", "zlib"],
-    channel_config: sc.AcquisitionChannelConfig,
-    position: cmds.SitePosition,
-    plane_index: int,
-    pixel_size_um: float | None,
-    significant_bits: int | None,
-    project_name: str,
-    plate_name: str,
-    cell_line: str,
-    hardware_channels: list[basics.ChannelConfig],
-    ome_template: OME,
-    autofocus_succeeded: bool = False,
+    ome_xml: str,
     strip_rows: int = STRIP_ROWS,
     codec_threads: int = CODEC_THREADS,
 ) -> bytes:
@@ -803,20 +858,6 @@ def encode_image(
     Pure: runs on an image-writer thread; the ImageStore's sink decides where the bytes go.
     Shared with scripts/acquire_via_api.py so both write identical files.
     """
-    ome_xml = build_ome_metadata(
-        ome_template=ome_template,
-        image_entry=image_entry,
-        channel_config=channel_config,
-        position=position,
-        plane_index=plane_index,
-        pixel_size_um=pixel_size_um,
-        significant_bits=significant_bits,
-        project_name=project_name,
-        plate_name=plate_name,
-        cell_line=cell_line,
-        hardware_channels=hardware_channels,
-        autofocus_succeeded=autofocus_succeeded,
-    )
     # takes 10-250ms depending on image size, compression and strip layout
     return encode_ome_tiff(image_entry._img, ome_xml, img_compression_algorithm, strip_rows, codec_threads)
 
@@ -1172,10 +1213,6 @@ class ProtocolGenerator(BaseModel):
         # 10um
         UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM = 10e-3
 
-        # read once for the run: the samples are shifted (or not) by the adapter at snap time,
-        # and the metadata has to describe what was actually done to them
-        pad_low = ConfigRegistry.get(ImageConfig.FILE_PAD_LOW).boolvalue
-
         g_config = basics.GlobalConfigHandler.get_dict()
 
         # first yield indicates that this generator is ready to produce commands
@@ -1408,7 +1445,20 @@ class ProtocolGenerator(BaseModel):
                         )
 
                         # snap image
-                        res = yield cmds.ChannelSnapshot(channel=channel)
+                        res = yield cmds.ChannelSnapshot(
+                            channel=channel,
+                            ome_context=cmds.OmeMetadataContext(
+                                project_name=self.config_file.project_name,
+                                plate_name=self.config_file.plate_name,
+                                cell_line=self.config_file.cell_line,
+                                well_name=well.well_name,
+                                site_x=site_x,
+                                site_y=site_y,
+                                site_z=site_z,
+                                plane_index=plane_index,
+                                autofocus_succeeded=autofocus_succeeded,
+                            ),
+                        )
                         if not isinstance(res, cmds.ImageAcquiredResponse):
                             cmds.error_internal(
                                 detail=f"failed to snap image at site {site} in well {well} (invalid result type {type(res)})"
@@ -1455,6 +1505,7 @@ class ProtocolGenerator(BaseModel):
                             ),
                         )
                         image_store_entry._img = res._img.copy()
+                        assert res.ome_xml is not None
 
                         self.latest_channel_images[channel.name] = image_store_entry
 
@@ -1465,21 +1516,7 @@ class ProtocolGenerator(BaseModel):
                                 encode_image,
                                 image_entry=image_store_entry,
                                 img_compression_algorithm=self.img_compression_algorithm,
-                                channel_config=channel,
-                                position=image_store_entry.info.position,
-                                plane_index=plane_index,
-                                pixel_size_um=pixel_size_um,
-                                significant_bits=significant_bits_for(
-                                    camera_bits=image_store_entry.bit_depth,
-                                    container_bits=res._img.dtype.itemsize * 8,
-                                    pad_low=pad_low,
-                                ),
-                                project_name=self.config_file.project_name,
-                                plate_name=self.config_file.plate_name,
-                                cell_line=self.config_file.cell_line,
-                                hardware_channels=self.hardware_channels,
-                                ome_template=self.ome_template,
-                                autofocus_succeeded=autofocus_succeeded,
+                                ome_xml=res.ome_xml,
                                 strip_rows=strip_rows,
                                 codec_threads=codec_threads,
                             ),

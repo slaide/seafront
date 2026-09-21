@@ -195,6 +195,7 @@ async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake)
             continue
 
         img_data = np.ascontiguousarray(img._img[::factor, ::factor])
+        assert img.capture is not None
         info = AcquiredImageInfo(
             channel_handle=channel_handle,
             image_id=image_id,
@@ -202,6 +203,7 @@ async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake)
             height=img_data.shape[0],
             camera_bit_depth=img.bit_depth,
             bit_depth=img_data.dtype.itemsize * 8,
+            capture=img.capture,
         )
         if not await send(ws, info):
             break

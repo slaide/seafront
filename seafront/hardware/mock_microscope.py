@@ -1018,7 +1018,24 @@ class MockMicroscope(Microscope):
             cambits = bits_for_pixel_format(pixel_format)
             synthetic_img = _to_camera_bits(synthetic_img, cambits)
 
-            result = cmd.ImageAcquiredResponse()
+            result = cmd.ImageAcquiredResponse(
+                channel=command.channel,
+                width_px=synthetic_img.shape[1],
+                height_px=synthetic_img.shape[0],
+                timestamp=time.time(),
+                position=self._get_current_position(),
+                pixel_format=pixel_format,
+                camera_bit_depth=cambits,
+                bit_depth=synthetic_img.dtype.itemsize * 8,
+            )
+            from seafront.server.protocol import finalize_capture_ome_xml
+
+            result.ome_xml = finalize_capture_ome_xml(
+                result,
+                command.ome_context,
+                self.main_camera.value,
+                self.channels,
+            )
             result._img = synthetic_img
             result._cambits = cambits
             return result  # type: ignore

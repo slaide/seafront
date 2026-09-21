@@ -15,6 +15,7 @@ import seaconfig as sc
 from pydantic import BaseModel
 
 from seafront.server.lock import LockReason
+from seafront.server.commands import CapturedImageMetadata
 
 
 class SocketErrorKind(StrEnum):
@@ -104,6 +105,7 @@ class AcquiredImageInfo(BaseModel):
     height: int
     camera_bit_depth: int
     bit_depth: int
+    capture: CapturedImageMetadata
 
 
 class NoImageYet(BaseModel):

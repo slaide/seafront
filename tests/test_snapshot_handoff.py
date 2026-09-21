@@ -5,16 +5,20 @@ WebSocket.  These tests characterize what is reliably bound together, what survi
 and where the public contract currently has no identity with which to name a particular frame.
 """
 
+import io
 import json
 import re
 import typing as tp
 
 import numpy as np
 import pytest
+import tifffile
+from ome_types import from_xml
 from websockets.sync.client import connect as ws_connect
 
 from tests.mock_server import MOCK, mock_server
 from tests.test_api_operations import make_request
+from seafront.storage import encode_ome_tiff
 
 SERVER = ""
 
@@ -54,8 +58,15 @@ def token() -> tp.Iterator[str]:
         post("/api/lock/release", {"lock_token": lease["token"]})
 
 
-def snap(channel: dict[str, tp.Any], token: str) -> dict[str, tp.Any]:
-    return ok("/api/action/snap_channel", {"channel": channel}, token)
+def snap(
+    channel: dict[str, tp.Any],
+    token: str,
+    ome_context: dict[str, tp.Any] | None = None,
+) -> dict[str, tp.Any]:
+    body: dict[str, tp.Any] = {"channel": channel}
+    if ome_context is not None:
+        body["ome_context"] = ome_context
+    return ok("/api/action/snap_channel", body, token)
 
 
 def fetch(
@@ -190,3 +201,102 @@ class TestFrameIdentityContract:
         assert metadata["error"] == "image_replaced"
         assert metadata["channel_handle"] == channel["handle"]
         assert current["image_id"] != replaced["image_id"]
+
+
+class TestCaptureMetadataContract:
+    def test_snapshot_and_pixel_handoff_report_the_same_capture_facts(self, channels, token):
+        channel = channels[0]
+        response = snap(channel, token)
+        metadata, image = fetch(channel["handle"], response["image_id"])
+
+        assert image is not None
+        for field in (
+            "image_id",
+            "channel",
+            "width_px",
+            "height_px",
+            "timestamp",
+            "position",
+            "pixel_format",
+            "camera_bit_depth",
+            "bit_depth",
+        ):
+            assert metadata["capture"][field] == response[field]
+
+    def test_capture_metadata_describes_the_full_resolution_source(self, channels, token):
+        channel = channels[0]
+        response = snap(channel, token)
+        metadata, reduced = fetch(channel["handle"], response["image_id"], factor=4)
+
+        assert reduced is not None
+        assert metadata["capture"]["width_px"] == response["width_px"]
+        assert metadata["capture"]["height_px"] == response["height_px"]
+        assert metadata["width"] == reduced.shape[1]
+        assert metadata["height"] == reduced.shape[0]
+
+    def test_capture_metadata_contains_calibrated_stage_coordinates(self, channels, token):
+        channel = channels[0]
+        response = snap(channel, token)
+
+        assert set(response["position"]) == {"x_pos_mm", "y_pos_mm", "z_pos_mm"}
+        assert all(np.isfinite(value) for value in response["position"].values())
+
+
+class TestOmeXmlHandoff:
+    def test_snapshot_without_optional_context_still_has_valid_ome_xml(self, channels, token):
+        response = snap(channels[0], token)
+
+        ome = from_xml(response["ome_xml"])
+        assert ome.images[0].pixels.size_x == response["width_px"]
+        assert ome.images[0].pixels.size_y == response["height_px"]
+
+    def test_optional_context_enriches_the_server_generated_ome_xml(self, channels, token):
+        context = {
+            "project_name": "external-project",
+            "plate_name": "plate-7",
+            "cell_line": "HeLa",
+            "well_name": "C04",
+            "site_x": 2,
+            "site_y": 3,
+            "site_z": 4,
+            "plane_index": 4,
+            "autofocus_succeeded": True,
+        }
+        response = snap(channels[0], token, context)
+        metadata, _image = fetch(channels[0]["handle"], response["image_id"])
+
+        assert metadata["capture"]["ome_xml"] == response["ome_xml"]
+        image = from_xml(response["ome_xml"]).images[0]
+        assert image.stage_label is not None
+        assert image.stage_label.name == "C04"
+        assert "Project: external-project" in (image.description or "")
+        assert "Site: (2, 3, 4)" in (image.description or "")
+        assert "Autofocus: Success" in (image.description or "")
+
+    @pytest.mark.parametrize("channel_index", [0, 1])
+    def test_http_and_websocket_return_byte_identical_ome_xml(
+        self, channels, token, channel_index
+    ):
+        channel = channels[channel_index]
+        response = snap(channel, token)
+        metadata, _image = fetch(channel["handle"], response["image_id"])
+
+        assert metadata["capture"]["ome_xml"] == response["ome_xml"]
+
+    def test_tiff_embedding_preserves_the_exact_transferred_ome_xml(self, channels, token):
+        channel = channels[0]
+        response = snap(
+            channel,
+            token,
+            {"project_name": "exact-xml", "plate_name": "plate-3", "well_name": "B02"},
+        )
+        metadata, image = fetch(channel["handle"], response["image_id"])
+        assert image is not None
+        transferred_xml = metadata["capture"]["ome_xml"]
+
+        encoded = encode_ome_tiff(image, transferred_xml, "LZW")
+        with tifffile.TiffFile(io.BytesIO(encoded)) as tif:
+            embedded_xml = tif.pages[0].description
+
+        assert transferred_xml == response["ome_xml"]
+        assert embedded_xml == response["ome_xml"]

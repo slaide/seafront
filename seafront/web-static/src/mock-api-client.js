@@ -175,10 +175,33 @@ function generateNoiseImage(width, height, bitDepth) {
  * @param {number} height - Image height
  * @param {number} bitDepth - Bit depth
  */
-function storeChannelImage(channel, width = 640, height = 640, bitDepth = 16) {
+function storeChannelImage(channel, width = 640, height = 640, bitDepth = 16, omeContext = {}) {
     const timestamp = Date.now() / 1000; // Unix timestamp in seconds
     const imageId = crypto.randomUUID();
     const imageData = generateNoiseImage(width, height, bitDepth);
+    const xmlEscape = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
+    })[char]);
+    const omeXml = `<?xml version="1.0" encoding="UTF-8"?>` +
+        `<OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06" UUID="urn:uuid:${imageId}" Creator="Seafront mock">` +
+        `<Image ID="Image:0" Name="${xmlEscape(omeContext.well_name || '')}_${xmlEscape(channel.handle)}_z${omeContext.plane_index || 0}">` +
+        `<Description>Project: ${xmlEscape(omeContext.project_name || '')}\nPlate: ${xmlEscape(omeContext.plate_name || '')}\nCell Line: ${xmlEscape(omeContext.cell_line || '')}</Description>` +
+        `<Pixels ID="Pixels:0" DimensionOrder="XYCZT" Type="${bitDepth <= 8 ? 'uint8' : 'uint16'}" SizeX="${width}" SizeY="${height}" SizeC="1" SizeZ="1" SizeT="1">` +
+        `<Channel ID="Channel:0:0" Name="${xmlEscape(channel.name || channel.handle)}" SamplesPerPixel="1"/>` +
+        `<TiffData IFD="0" FirstZ="0" FirstC="0" FirstT="0" PlaneCount="1"/>` +
+        `</Pixels></Image></OME>`;
+    const capture = {
+        image_id: imageId,
+        channel: channel,
+        width_px: width,
+        height_px: height,
+        timestamp: timestamp,
+        position: { ...sharedMockState.position },
+        pixel_format: bitDepth === 8 ? 'mono8' : 'mono16',
+        camera_bit_depth: bitDepth,
+        bit_depth: bitDepth <= 8 ? 8 : 16,
+        ome_xml: omeXml,
+    };
 
     // Store raw image data
     sharedMockState.imageStore[channel.handle] = {
@@ -189,6 +212,7 @@ function storeChannelImage(channel, width = 640, height = 640, bitDepth = 16) {
         cameraBitDepth: bitDepth,
         timestamp: timestamp,
         imageId: imageId,
+        capture: capture,
     };
 
     // Store metadata in latest_imgs (matching ImageStoreInfo structure)
@@ -211,7 +235,7 @@ function storeChannelImage(channel, width = 640, height = 640, bitDepth = 16) {
         image_id: imageId,
     };
 
-    return imageId;
+    return capture;
 }
 
 /**
@@ -822,9 +846,9 @@ class MockAPIClient {
                 this.mockState.is_busy = true;
                 const exposureTimeMs = channel.exposure_time_ms || 0;
                 await new Promise(resolve => setTimeout(resolve, exposureTimeMs));
-                const imageId = storeChannelImage(channel);
+                const capture = storeChannelImage(channel, 640, 640, 16, body?.ome_context || {});
                 this.mockState.is_busy = false;
-                return { image_id: imageId };
+                return capture;
             }
             return {};
         }
@@ -897,9 +921,9 @@ class MockAPIClient {
         }
 
         if (endpoint === '/api/action/snap_reflection_autofocus') {
-            const imageId = storeChannelImage({ handle: 'laser_autofocus', name: 'Laser autofocus' }, 640, 480);
+            const capture = storeChannelImage({ handle: 'laser_autofocus', name: 'Laser autofocus' }, 640, 480);
             return {
-                image_id: imageId,
+                image_id: capture.image_id,
                 width_px: 640,
                 height_px: 480,
             };
@@ -1203,6 +1227,7 @@ class MockWebSocketManager {
                                 height: newHeight,
                                 camera_bit_depth: imageEntry.cameraBitDepth,
                                 bit_depth: imageEntry.bitDepth,
+                                capture: imageEntry.capture,
                             };
                             onMessage(new MessageEvent('message', { data: JSON.stringify(metadata) }));
 

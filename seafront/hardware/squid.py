@@ -1462,11 +1462,29 @@ class SquidAdapter(Microscope):
                 qmc.illumination_end(illum_code.value)
                 logger.debug("channel snap - after illum off")
 
-            img, cambits = _process_image(img, pixel_format=main_camera.pixel_format)
+            pixel_format = main_camera.pixel_format
+            img, cambits = _process_image(img, pixel_format=pixel_format)
 
         logger.debug("squid - took channel snapshot")
 
-        result = cmd.ImageAcquiredResponse()
+        result = cmd.ImageAcquiredResponse(
+            channel=command.channel,
+            width_px=img.shape[1],
+            height_px=img.shape[0],
+            timestamp=time.time(),
+            position=self._get_current_position(qmc),
+            pixel_format=pixel_format,
+            camera_bit_depth=cambits,
+            bit_depth=img.dtype.itemsize * 8,
+        )
+        from seafront.server.protocol import finalize_capture_ome_xml
+
+        result.ome_xml = finalize_capture_ome_xml(
+            result,
+            command.ome_context,
+            main_camera,
+            self.channels,
+        )
         result._img = img
         result._cambits = cambits
         return result

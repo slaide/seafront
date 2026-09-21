@@ -30,6 +30,7 @@ class ImageStoreEntry(BaseModel):
     pixel_format: str
 
     info: "ImageStoreInfo"
+    capture: "CapturedImageMetadata | None" = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -668,14 +669,44 @@ class LoadingPositionLeave(BaseModel, BaseCommand[BasicSuccessResponse]):
     _ReturnValue: type = PrivateAttr(default=BasicSuccessResponse)
 
 
-class ImageAcquiredResponse(BaseModel):
+class CapturedImageMetadata(BaseModel):
+    """Facts fixed when a camera exposure completes, independent of storage policy."""
+
+    image_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    channel: sc.AcquisitionChannelConfig
+    width_px: int
+    height_px: int
+    timestamp: float
+    position: Position
+    pixel_format: str
+    camera_bit_depth: int
+    bit_depth: int
+    ome_xml: str | None = None
+
+
+class OmeMetadataContext(BaseModel):
+    """Optional acquisition-owned facts used to enrich server-generated OME-XML."""
+
+    project_name: str = ""
+    plate_name: str = ""
+    cell_line: str = ""
+    well_name: str = ""
+    site_x: int = 0
+    site_y: int = 0
+    site_z: int = 0
+    x_offset_mm: float = 0
+    y_offset_mm: float = 0
+    z_offset_mm: float = 0
+    plane_index: int = 0
+    autofocus_succeeded: bool = False
+
+
+class ImageAcquiredResponse(CapturedImageMetadata):
     """
     indicates that an image has been acquired
 
     acquired image data is only present for internal use.
     """
-
-    image_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     _img: np.ndarray = PrivateAttr(...)  # type:ignore
     _cambits: int = PrivateAttr(...)  # type:ignore
@@ -726,6 +757,7 @@ class ChannelStreamEnd(BaseModel, BaseCommand[BasicSuccessResponse]):
 
 class ChannelSnapshot(BaseModel, BaseCommand[ImageAcquiredResponse]):
     channel: sc.AcquisitionChannelConfig
+    ome_context: OmeMetadataContext = Field(default_factory=OmeMetadataContext)
 
     machine_config: list[sc.ConfigItem] = Field(default_factory=list)
 

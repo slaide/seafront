@@ -27,6 +27,7 @@ declare global {
         height: number;
         camera_bit_depth: number;
         bit_depth: number;
+        capture: CapturedImageMetadata;
     };
 
     type AcquisitionCancelRequest = {
@@ -294,6 +295,20 @@ declare global {
         lock_token?: string | null;
     };
 
+    /** Facts fixed when a camera exposure completes, independent of storage policy. */
+    type CapturedImageMetadata = {
+        image_id?: string;
+        channel: AcquisitionChannelConfig;
+        width_px: number;
+        height_px: number;
+        timestamp: number;
+        position: Position;
+        pixel_format: string;
+        camera_bit_depth: number;
+        bit_depth: number;
+        ome_xml?: string | null;
+    };
+
     /** Progressive channel snap status update */
     type ChannelSnapProgressiveStatus = {
         channel_handle: string;
@@ -509,6 +524,15 @@ declare global {
      */
     type ImageAcquiredResponse = {
         image_id?: string;
+        channel: AcquisitionChannelConfig;
+        width_px: number;
+        height_px: number;
+        timestamp: number;
+        position: Position;
+        pixel_format: string;
+        camera_bit_depth: number;
+        bit_depth: number;
+        ome_xml?: string | null;
     };
 
     /** contains information about an image that has been acquired and stored */
@@ -702,6 +726,22 @@ declare global {
     /** nothing has been acquired in that channel yet (an empty object on the wire) */
     type NoImageYet = { [key: string]: unknown };
 
+    /** Optional acquisition-owned facts used to enrich server-generated OME-XML. */
+    type OmeMetadataContext = {
+        project_name?: string;
+        plate_name?: string;
+        cell_line?: string;
+        well_name?: string;
+        site_x?: number;
+        site_y?: number;
+        site_z?: number;
+        x_offset_mm?: number;
+        y_offset_mm?: number;
+        z_offset_mm?: number;
+        plane_index?: number;
+        autofocus_succeeded?: boolean;
+    };
+
     /**
      * acquisition configuration for a well on a plate
      * 
@@ -768,6 +808,7 @@ declare global {
 
     type SnapChannelRequest = {
         channel: AcquisitionChannelConfig;
+        ome_context?: OmeMetadataContext;
         machine_config?: ConfigItem[];
         /** Target device name for request routing */
         target_device: string;
