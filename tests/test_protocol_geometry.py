@@ -12,7 +12,6 @@ optimisation at all - a site placed wrongly images the wrong part of the well, a
 resulting file says it is the right part.
 """
 
-import asyncio
 import itertools
 
 import pytest
@@ -98,13 +97,7 @@ def make_protocol(mock_microscope_env):
             spec_version=sc.LATEST_SPEC_VERSION,
             timestamp=None,
         )
-        status = cmds.AcquisitionStatus(
-            acquisition_id="test",
-            queue_in=asyncio.Queue(),
-            queue_out=asyncio.Queue(),
-            last_status=None,
-            thread_is_running=False,
-        )
+        status = cmds.AcquisitionStatus(acquisition_id="test")
         return ProtocolGenerator(
             config_file=config,
             handle_q_in=lambda: None,

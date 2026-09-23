@@ -11,7 +11,6 @@ import asyncio
 import datetime as dt
 import pathlib as path
 import re
-import traceback
 import time
 import threading
 import typing as tp
@@ -88,6 +87,7 @@ from seafront.server.commands import (
     error_microscope_busy,
     positionIsForbidden,
 )
+from seafront.server.acquisitions import AcquisitionRegistry
 from seafront.server.lock import DeviceLock, LockDecision, LockReason
 from seafront.server.protocol import (
     AsyncThreadPool,
@@ -229,8 +229,8 @@ class Core:
             device_in_use=lambda: self.worker.is_busy or self.microscope.is_streaming
         )
 
-        self.acquisition_map: dict[str, AcquisitionStatus] = {}
-        """ map containing information on past and current acquisitions """
+        self.acquisitions = AcquisitionRegistry()
+        "the running acquisition and the most recent finished ones"
 
         self.acquisition_future: CCFuture[None] | None = None
 
@@ -818,8 +818,8 @@ class Core:
         cancel the ongoing acquisition
         """
 
-        if acquisition_id not in self.acquisition_map:
-            error_internal(detail="acquisition_id not found")
+        if self.acquisitions.get(acquisition_id) is None:
+            error_internal(detail=self.acquisitions.describe_unknown(acquisition_id))
 
         # The worker is what decides, and it decides both halves at once: an acquisition
         # holds the worker for its whole duration under the label `acquisition:<id>`, so a
@@ -1067,16 +1067,7 @@ class Core:
             if not laser_autofocus_is_calibrated:
                 error_internal(detail="laser autofocus is enabled, but not calibrated")
 
-        queue_in = asyncio.Queue()
-        queue_out = asyncio.Queue()
-        acquisition_status = AcquisitionStatus(
-            acquisition_id=acquisition_id,
-            queue_in=queue_in,
-            queue_out=queue_out,
-            last_status=None,
-            thread_is_running=False,
-        )
-        self.acquisition_map[acquisition_id] = acquisition_status
+        acquisition_status = AcquisitionStatus(acquisition_id=acquisition_id)
 
         def handle_q_in():
             """protocol cancel checkpoint: raise if this acquisition's worker cancel
@@ -1132,15 +1123,9 @@ class Core:
         )
 
         if protocol.num_images_total == 0:
-            error_detail = f"no images to acquire ({protocol.num_wells = },{protocol.num_sites = },{protocol.num_channels = },{protocol.num_channel_z_combinations = })"
-
-            assert protocol.acquisition_status.last_status is not None
-            protocol.acquisition_status.last_status.acquisition_status = (
-                AcquisitionStatusStage.CRASHED
+            error_internal(
+                detail=f"no images to acquire ({protocol.num_wells = },{protocol.num_sites = },{protocol.num_channels = },{protocol.num_channel_z_combinations = })"
             )
-            protocol.acquisition_status.last_status.message = error_detail
-
-            error_internal(detail=error_detail)
 
         # Validate that no site positions fall within forbidden areas
         # This catches forbidden positions during preparation instead of during execution
@@ -1168,17 +1153,17 @@ class Core:
         # for its entire duration, so every other command is rejected (409) meanwhile —
         # which is exactly what allow_while_acquisition_is_running=False expects. Cancel via
         # the worker's cancel event (cancel_acquisition sets it; handle_q_in checks it).
-        # Flagged as running BEFORE the job is handed over: the moment the worker takes it,
-        # status reports the microscope busy with this acquisition, and a client reading
+        # Registered BEFORE the job is handed over: the moment the worker takes it, status
+        # reports the microscope busy with this acquisition, and a client asking about
         # `current_acquisition_id` in that instant must find the run that is making it busy
         # rather than nothing at all. Undone again if the handover is refused.
-        acquisition_status.thread_is_running = True
+        self.acquisitions.add(acquisition_status)
         submitted = self.worker.submit_job(
             lambda: self._run_acquisition_impl(protocol, acquisition_status),
             f"{ACQUISITION_LABEL_PREFIX}{acquisition_id}",
         )
         if submitted is None:
-            acquisition_status.thread_is_running = False
+            self.acquisitions.discard(acquisition_id)
             error_microscope_busy(self._busy_reasons())
         self.acquisition_future = submitted[0]
 
@@ -1215,47 +1200,61 @@ class Core:
                         self._cache_captured_image(result)
 
             logger.debug("protocol done")
-
-            # finished regularly (there was at least one image, so a status exists)
-            assert acquisition_status.last_status is not None
-            acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.COMPLETED
+            self._acquisition_ended(acquisition_status, AcquisitionStatusStage.COMPLETED)
 
         except (AcquisitionCancelledError, OperationCancelledError):
             # user requested cancellation (via cancel_acquisition -> worker cancel event)
-            assert acquisition_status.last_status is not None
-            acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CANCELLED
+            self._acquisition_ended(acquisition_status, AcquisitionStatusStage.CANCELLED)
         except HTTPException as e:
             # validation / internal errors crash the acquisition
-            assert acquisition_status.last_status is not None
-            acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
-            acquisition_status.last_status.message = str(e.detail)
-            self._last_acquisition_error = str(e.detail)
-            self._last_acquisition_error_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        except DisconnectError:
-            logger.debug("microscope disconnected during acquisition - closing connections.")
-            self.microscope.close()
-            assert acquisition_status.last_status is not None
-            acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
-            acquisition_status.last_status.message = "hardware disconnect"
+            self._acquisition_crashed(acquisition_status, str(e.detail))
+        except DisconnectError as e:
+            # The adapter has already dropped the hardware and recorded which device went; what
+            # is left is to say so on the acquisition, in words the operator can act on.
+            reason = "; ".join([str(e), *getattr(e, "__notes__", [])])
+            self._acquisition_crashed(acquisition_status, f"hardware disconnect: {reason}")
         except Exception as e:
-            logger.exception(f"error during acquisition {e}\n{traceback.format_exc()}")
-            full_error = traceback.format_exc()
-            self._last_acquisition_error = f"acquisition failed because {e!s}, more specifically: {full_error}"
-            self._last_acquisition_error_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            if acquisition_status.last_status is not None:
-                acquisition_status.last_status.acquisition_status = AcquisitionStatusStage.CRASHED
+            # not one of the ways a run is expected to fail, so the traceback goes in the log
+            self._acquisition_crashed(
+                acquisition_status, "; ".join([describe(e), *getattr(e, "__notes__", [])]), e
+            )
         finally:
-            acquisition_status.thread_is_running = False
+            self.acquisitions.finish(acquisition_status.acquisition_id)
         logger.debug("acquisition done")
+
+    def _acquisition_ended(
+        self, acquisition_status: AcquisitionStatus, stage: AcquisitionStatusStage
+    ) -> AcquisitionStatusOut:
+        # The protocol publishes a status when it is built, before the run is handed to the
+        # worker, so every run that can end has one to end.
+        last = acquisition_status.last_status
+        assert last is not None, "the protocol publishes a status before the run starts"
+        last.acquisition_status = stage
+        return last
+
+    def _acquisition_crashed(
+        self,
+        acquisition_status: AcquisitionStatus,
+        message: str,
+        unexpected: BaseException | None = None,
+    ) -> None:
+        "the run stopped on an error: say so on it, in the log, and on the status clients poll"
+        logger.opt(exception=unexpected).error(
+            f"acquisition {acquisition_status.acquisition_id} crashed: {message}"
+        )
+        last = self._acquisition_ended(acquisition_status, AcquisitionStatusStage.CRASHED)
+        last.message = message
+        self._last_acquisition_error = message
+        self._last_acquisition_error_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     async def get_acquisition_status(self, acquisition_id: str) -> AcquisitionStatusOut:
         """
         get status of an acquisition
         """
 
-        acq_res = self.acquisition_map.get(acquisition_id)
+        acq_res = self.acquisitions.get(acquisition_id)
         if acq_res is None:
-            error_internal(detail="acquisition_id is invalid")
+            error_internal(detail=self.acquisitions.describe_unknown(acquisition_id))
 
         if acq_res.last_status is None:
             error_internal(detail="no status available")

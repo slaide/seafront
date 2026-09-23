@@ -91,13 +91,9 @@ def core_jobs(mock_core):
 
 def register(core, acquisition_id: str, running: bool) -> None:
     """put an acquisition in the map the way start_acquisition would"""
-    core.acquisition_map[acquisition_id] = AcquisitionStatus(
-        acquisition_id=acquisition_id,
-        queue_in=asyncio.Queue(),
-        queue_out=asyncio.Queue(),
-        last_status=None,
-        thread_is_running=running,
-    )
+    core.acquisitions.add(AcquisitionStatus(acquisition_id=acquisition_id))
+    if not running:
+        core.acquisitions.finish(acquisition_id)
 
 
 class TestTheWorkerPublishesOneJob:

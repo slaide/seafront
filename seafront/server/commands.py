@@ -1,4 +1,3 @@
-import asyncio
 import typing as tp
 import uuid
 from enum import Enum
@@ -425,10 +424,6 @@ class LaserAutofocusCalibrate(BaseModel, BaseCommand[LaserAutofocusCalibrationRe
     _ReturnValue: type = PrivateAttr(default=LaserAutofocusCalibrationResponse)
 
 
-class AcquisitionCommand(str, Enum):
-    CANCEL = "cancel"
-
-
 class AcquisitionStartResponse(BaseModel):
     "indicates that an acquisition has been started"
 
@@ -600,15 +595,10 @@ class AcquisitionStatus(BaseModel):
     )
     "unique identifier for this acquisition"
 
-    queue_in: asyncio.Queue[AcquisitionCommand]
-    """queue to send messages to the thread"""
-    queue_out: asyncio.Queue[AcquisitionStatusOut]
-    """queue to receive messages from the thread"""
-
-    last_status: AcquisitionStatusOut | None
-    thread_is_running: bool
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    last_status: AcquisitionStatusOut | None = None
+    "published by the protocol from the moment it is built, so only None before that"
+    finished_at: float | None = None
+    "unix time the run stopped, however it stopped; None while it runs"
 
 
 class CameraInfo(BaseModel):
