@@ -63,6 +63,19 @@ class CameraOpenRequest:
     driver: CameraDriver
     usb_id: str  # USB device ID (serial number for Galaxy, device ID for ToupCam)
 
+class CameraOfflineError(Exception):
+    """
+    The camera stopped answering: unplugged, powered off, or dropped by the USB stack.
+
+    Drivers raise this in place of their SDK's own offline error, so the adapter can tell which
+    of its cameras went without knowing any vendor's exception types.
+    """
+
+    def __init__(self, camera: "Camera"):
+        self.camera = camera
+        super().__init__(f"camera {camera.sn} ({camera.device_type or 'not opened'}) is offline")
+
+
 class Camera(ABC):
     """
     Abstract interface for camera implementations to support different manufacturers.
@@ -90,7 +103,14 @@ class Camera(ABC):
 
     @abstractmethod
     def close(self):
-        """Close device handle."""
+        """
+        Release the device. A no-op when it is not open.
+
+        Always lets go of the handle, whatever fails on the way: a camera that cannot be told
+        to stop streaming is still one this driver no longer drives. If any step failed, raises
+        DeviceCloseError (hardware/health.py) *after* releasing, naming the steps - which is
+        what says whether the physical device may have been left streaming or held open.
+        """
         pass
 
     @abstractmethod

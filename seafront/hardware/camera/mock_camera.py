@@ -123,8 +123,10 @@ class MockCamera(Camera):
 
         # Wait for streaming thread to finish
         if self._streaming_thread is not None:
-            self._streaming_thread.join(timeout=2.0)
-            self._streaming_thread = None
+            thread, self._streaming_thread = self._streaming_thread, None
+            thread.join(timeout=2.0)
+            if thread.is_alive():
+                raise RuntimeError("mock camera - streaming thread did not stop within 2 s")
 
         logger.debug("mock camera - streaming stopped")
 

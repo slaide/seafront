@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from seafront.hardware.health import describe
 from seafront.logger import logger
 from seafront.server import asyncapi
 from seafront.server.api import acquisition, actions, info, lock, sockets
@@ -126,6 +127,18 @@ def make_app(core: Core | None = None) -> FastAPI:
         return JSONResponse(
             status_code=422, content=json_safe(jsonable_encoder({"detail": exc.errors()}))
         )
+
+    @app.exception_handler(Exception)
+    async def unexpected_exception_handler(request: Request, exc: Exception):
+        """
+        Anything a handler did not turn into an HTTP error itself: a bug, or a failure nothing
+        on the way up knew how to name. Still a 500, but one that says what went wrong - the
+        default answer is the bare text "Internal Server Error", which leaves whoever reads it
+        with nothing to go on but the server log.
+        """
+        logger.opt(exception=exc).error(f"unhandled error at {request.method} {request.url.path}")
+        detail = "; ".join([describe(exc), *getattr(exc, "__notes__", [])])
+        return JSONResponse(status_code=500, content={"detail": detail})
 
     # websocket compression is disabled in the uvicorn configuration: compression time is
     # unpredictable, 70ms for an all-white image and 1400ms for an all-black one, which is

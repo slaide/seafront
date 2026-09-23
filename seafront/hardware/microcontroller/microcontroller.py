@@ -179,6 +179,24 @@ class Microcontroller(ABC):
         """
         pass
 
+    @abstractmethod
+    def last_position_cached(self) -> Position:
+        """
+        The position the device last reported, without talking to it. Never current by
+        itself: pair it with last_heard_at to say how old it is.
+        """
+        pass
+
+    @abstractmethod
+    def last_heard_at(self) -> float | None:
+        """
+        Unix time the device last sent anything, or None if it has not since it was opened.
+
+        Maintained by whatever reads from the device, so it is as fresh as the last read: it
+        says when the device last proved it was alive, not that it still is.
+        """
+        pass
+
     # Illumination control
 
     @abstractmethod

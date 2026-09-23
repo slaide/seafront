@@ -12,7 +12,8 @@ from seafront.config.basics import ConfigItem, ConfigItemOption
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import DeviceAlreadyInUseError
-from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
+from seafront.hardware.camera import AcquisitionMode, Camera, CameraOfflineError, HardwareLimitValue
+from seafront.hardware.health import DeviceCloseError, describe
 from seafront.logger import logger
 
 # Galaxy camera SDK import - requires libgxiapi.so to be installed
@@ -45,13 +46,15 @@ def _camera_operation_with_reconnect(func):
         g_config = GlobalConfigHandler.get_dict()
 
         reconnect_attempts_item = g_config.get("camera.reconnection_attempts")
-        reconnect_attempts = 5 if reconnect_attempts_item is None else reconnect_attempts_item.intvalue
+        # at least one: zero would skip the operation entirely and hand back None as if it had
+        # been the result
+        reconnect_attempts = max(1, 5 if reconnect_attempts_item is None else reconnect_attempts_item.intvalue)
 
         reconnect_delay_ms_item = g_config.get("camera.reconnection_delay_ms")
         reconnect_delay_ms = 1000.0 if reconnect_delay_ms_item is None else reconnect_delay_ms_item.floatvalue
 
         retry_attempts_item = g_config.get("camera.operation_retry_attempts")
-        retry_attempts = 5 if retry_attempts_item is None else retry_attempts_item.intvalue
+        retry_attempts = max(1, 5 if retry_attempts_item is None else retry_attempts_item.intvalue)
 
         logger.debug(
             f"{func.__name__}: loaded retry config: "
@@ -61,6 +64,8 @@ def _camera_operation_with_reconnect(func):
         )
 
         last_error: Exception | None = None
+        reconnect_history: list[str] = []
+        "what happened to each reconnection, attached to the error if the operation never succeeds"
 
         for reconnect_attempt in range(reconnect_attempts):
             for retry_attempt in range(retry_attempts):
@@ -93,24 +98,53 @@ def _camera_operation_with_reconnect(func):
                 )
                 try:
                     self.close()
+                except DeviceCloseError as close_error:
+                    # the connection being replaced is the one that just failed, so it not
+                    # closing cleanly is expected - and it has been released regardless, which
+                    # is all reopening needs
+                    reconnect_history.append(f"reconnect {reconnect_attempt + 1}: {close_error}")
+                try:
                     self.open(self.device_type)
                     logger.info(
                         f"{func.__name__}: successfully reconnected, retrying operation"
                     )
                 except Exception as reconnect_error:
+                    reconnect_history.append(
+                        f"reconnect {reconnect_attempt + 1}: reopening failed: {describe(reconnect_error)}"
+                    )
                     logger.warning(
-                        f"{func.__name__}: reconnection failed: "
-                        f"{type(reconnect_error).__name__}: {reconnect_error}"
+                        f"{func.__name__}: reconnection failed: {describe(reconnect_error)}"
                     )
                 # Wait before next reconnection attempt
                 time.sleep(reconnect_delay_ms / 1000.0)
 
-        # All retries and reconnection attempts failed
-        if last_error:
-            logger.error(
-                f"{func.__name__}: all retry/reconnection attempts exhausted, re-raising exception"
-            )
-            raise last_error
+        # All retries and reconnection attempts failed. Both loops run at least once, and the
+        # only way out of them without returning is an exception, so there is one.
+        assert last_error is not None
+        logger.error(
+            f"{func.__name__}: all retry/reconnection attempts exhausted, re-raising exception"
+        )
+        for entry in reconnect_history:
+            last_error.add_note(entry)
+        raise last_error
+
+    return wrapper
+
+
+def _reports_offline[**P, R](func: tp.Callable[P, R]) -> tp.Callable[P, R]:
+    """
+    Turn gxipy's OffLine into CameraOfflineError naming this camera. On every public method, so
+    whatever the adapter was doing when a camera dropped, it learns which one.
+    """
+
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return func(*args, **kwargs)
+        except GalaxyCameraOffline as e:
+            camera = args[0]
+            assert isinstance(camera, GalaxyCamera)
+            raise CameraOfflineError(camera) from e
 
     return wrapper
 
@@ -238,45 +272,39 @@ class GalaxyCamera(Camera):
 
         self.handle = None
 
+    @_reports_offline
     def open(self, device_type: tp.Literal["main", "autofocus"]):
         """
         open device for interaction
         """
 
-        for i in range(5):
+        if self.handle is not None:
+            # every caller closes first; opening over a live handle would leak it, and the SDK
+            # would then refuse the next open as "device has been open"
+            raise RuntimeError(f"camera {self.sn} is already open")
+
+        open_attempts = 5
+        last_error: Exception | None = None
+        for attempt in range(open_attempts):
             try:
                 self.handle = GalaxyCamera.device_manager.open_device_by_sn(self.sn)
+                break
             except GalaxyCameraInvalidAccess as e:
                 # Check if error indicates device is already open by another process
-                error_msg = str(e)
-                if "device has been open" in error_msg.lower() or "has been open" in error_msg.lower():
+                if "has been open" in str(e).lower():
                     raise DeviceAlreadyInUseError("Camera", self.sn) from e
-                # Other InvalidAccess errors - log and retry
-                logger.debug(f"camera - opening failed {i+1} times {e=}")
-                try:
-                    self.close()
-                except Exception:
-                    pass
-                time.sleep(2)
-                continue
+                last_error = e
             except Exception as e:
-                logger.debug(f"camera - opening failed {i+1} times {e=}")
-
-                try:
-                    self.close()
-                except Exception as e:
-                    logger.warning(f"camera - opening failed with error {e=}. retrying. ")
-
-                time.sleep(2)
-                logger.debug("camera - done sleeping to await camera response on open")
-                continue
-
-            logger.debug("opened camera")
-            break
+                last_error = e
+            # nothing was opened, so there is nothing to close before trying again
+            logger.debug(f"camera - opening {self.sn} failed ({attempt + 1}/{open_attempts}): {describe(last_error)}")
+            time.sleep(2)
 
         if self.handle is None:
             logger.critical(f"failed to open camera {self.device_info}")
-            raise RuntimeError(f"failed to open camera {self.device_info}")
+            raise RuntimeError(f"failed to open camera {self.sn} after {open_attempts} attempts") from last_error
+
+        logger.debug("opened camera")
 
         self.device_type = device_type
 
@@ -530,28 +558,40 @@ class GalaxyCamera(Camera):
 
     def close(self):
         """
-        close device handle
+        close device handle (see Camera.close for the contract)
         """
-        logger.debug("camera - closing")
-
         if self.handle is None:
             return
 
-        # turning stream off takes 300ms (for continuous and single frame mode)
+        logger.debug("camera - closing")
+
+        # Let go first. Whatever fails below, this driver no longer drives the device, and a
+        # handle left behind would make the next open() refuse.
+        handle, self.handle = self.handle, None
+        was_streaming = self.is_streaming
         self.is_streaming = False
+        self._streaming_active = False
+        self._clear_acquisition_state()
 
-        # this may throw if the device is already offline or just not streaming
+        failures: list[tuple[str, BaseException]] = []
+
+        # Straight to the SDK rather than through _api_stream_off: that one retries by closing
+        # and reopening the camera, which from inside close() reopens the camera being closed.
+        # Only when the stream is on - stopping one that is off fails, and would be reported.
+        # turning stream off takes 300ms (for continuous and single frame mode)
+        if was_streaming:
+            try:
+                handle.stream_off()
+            except Exception as e:
+                failures.append(("stream_off", e))
+
         try:
-            self._api_stream_off()
-        except:
-            pass
+            handle.close_device()
+        except Exception as e:
+            failures.append(("close_device", e))
 
-        try:
-            self.handle.close_device()
-        except:
-            pass
-
-        self.handle = None
+        if failures:
+            raise DeviceCloseError(f"camera {self.sn}", failures)
 
         logger.debug("closed camera")
 
@@ -599,6 +639,7 @@ class GalaxyCamera(Camera):
         assert self.handle is not None
         self._api_set_analog_gain(gain_db)
 
+    @_reports_offline
     def snap(self, config: AcquisitionChannelConfig) -> np.ndarray:
         """
         Acquire a single image in trigger mode.
@@ -652,6 +693,7 @@ class GalaxyCamera(Camera):
         finally:
             self.acquisition_ongoing = False
 
+    @_reports_offline
     def start_streaming(
         self,
         config: AcquisitionChannelConfig,
@@ -702,6 +744,7 @@ class GalaxyCamera(Camera):
             with_cb=streaming_callback,
         )
 
+    @_reports_offline
     def stop_streaming(self) -> None:
         """
         Stop continuous image streaming and reset to trigger mode.
@@ -709,13 +752,14 @@ class GalaxyCamera(Camera):
         if not self._streaming_active:
             return
 
+        # Cleared first: the capture callback checks it, so from here on any frame still
+        # arriving is dropped whether or not the mode switch below works.
         self._streaming_active = False
 
-        # Reset to trigger mode
-        try:
-            self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
-        except Exception as e:
-            logger.warning(f"error resetting to trigger mode: {e}")
+        # Back to trigger mode. If this fails the camera is still free-running, and the next
+        # snap would trigger a camera that is not waiting for one - so it is the caller's
+        # error to report, not a warning to write down and carry on from.
+        self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
         logger.debug("galaxy camera - streaming stopped")
 
@@ -780,6 +824,7 @@ class GalaxyCamera(Camera):
             case _:
                 raise RuntimeError(f"unsupported pixel format {pixel_format}")
 
+    @_reports_offline
     def get_exposure_time_limits(self) -> HardwareLimitValue:
         """
         Get camera's exposure time limits from Galaxy camera hardware.
@@ -801,6 +846,7 @@ class GalaxyCamera(Camera):
             step=exposure_range['inc'] / 1000.0  # type: ignore[typeddict-item]
         )
 
+    @_reports_offline
     def get_analog_gain_limits(self) -> HardwareLimitValue:
         """
         Get camera's analog gain limits from Galaxy camera hardware.
@@ -822,6 +868,7 @@ class GalaxyCamera(Camera):
             step=gain_range['inc']  # type: ignore[typeddict-item]
         )
 
+    @_reports_offline
     def get_supported_pixel_formats(self) -> list[str]:
         """
         Get list of supported monochrome pixel formats from Galaxy camera.

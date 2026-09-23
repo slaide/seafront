@@ -63,8 +63,9 @@ async def health(core: CoreDep) -> HealthResponse:
     """
     Health check endpoint for monitoring.
 
-    Returns basic health information without requiring hardware interaction or target_device
-    authentication. Always available.
+    Whether the server is up (it answered) and whether the microscope can work (`status`,
+    with `reasons`), without requiring hardware interaction or target_device authentication.
+    Always available.
     """
     now = time.time()
     time_since_last_request = None if core.last_request_time is None else now - core.last_request_time
@@ -72,11 +73,7 @@ async def health(core: CoreDep) -> HealthResponse:
     # health checks count as requests
     core.last_request_time = now
 
-    return HealthResponse(
-        microscope_name=core.microscope_name,
-        time_since_last_request_s=time_since_last_request,
-        server_time=now,
-    )
+    return core.health_report(time_since_last_request_s=time_since_last_request, now=now)
 
 
 @router.get(

@@ -12,6 +12,7 @@ import asyncio
 import os
 import signal
 import socket
+import sys
 import threading
 
 import json5
@@ -28,8 +29,10 @@ from seafront.server.commands import EstablishHardwareConnection
 from seafront.server.core import Core
 
 
-@logger.catch
-def main():
+# an exception that escapes is logged with its traceback, and the process exits 1 rather than 0
+@logger.catch(onerror=lambda _: sys.exit(1))
+def main() -> int:
+    """run the server; returns the process exit code: 0 for a clean run and shutdown, 1 otherwise"""
     # Load server config to get available microscopes and port for help message
     with GlobalConfigHandler.home_config().open("r") as f:
         server_config = ServerConfig(**json5.load(f))
@@ -64,7 +67,7 @@ def main():
 
     if len(server_config.microscopes) == 0:
         logger.critical("No microscope configurations found in config file")
-        return
+        return 1
 
     # Determine which microscope to use
     selected_microscope: MicroscopeConfig | None = None
@@ -77,7 +80,7 @@ def main():
         if selected_microscope is None:
             available_names = [m.get(SystemConfig.MICROSCOPE_NAME.value, "<unnamed>") for m in server_config.microscopes]
             logger.critical(f"Microscope '{args.microscope}' not found. Available: {available_names}")
-            return
+            return 1
     else:
         # Default to first microscope
         selected_microscope = server_config.microscopes[0]
@@ -110,12 +113,12 @@ def main():
             logger.info(f"Generated: {output_file}")
         except Exception as e:
             logger.critical(f"Failed to generate default protocol: {e}")
-            return
+            return 1
 
         # Re-check that file was created
         if not default_protocol_file.exists():
             logger.critical(f"Default protocol file still not found after generation: {default_protocol_file}")
-            return
+            return 1
 
     logger.info(f"✓ Default protocol found: {default_protocol_file}")
 
@@ -123,9 +126,12 @@ def main():
         core = Core(selected_microscope)
     except UnconfiguredDeviceIdError as e:
         logger.critical(f"startup - {e}")
-        return
+        return 1
 
     app = make_app(core)
+
+    startup_failed = threading.Event()
+    "set by the startup connect when the failure means the server must not run"
 
     def establish_hardware_connection():
         """
@@ -150,6 +156,7 @@ def main():
                 logger.critical(f"hardware connection failed: {e.detail}")
                 logger.critical("A hardware device is already in use by another process.")
                 logger.critical("Shutting down server...")
+                startup_failed.set()
                 # Send SIGINT to gracefully shut down uvicorn
                 os.kill(os.getpid(), signal.SIGINT)
             else:
@@ -183,11 +190,11 @@ def main():
             logger.critical(f"Failed to bind to port {server_config.port}. Port is already in use by another process.")
             logger.critical("Please ensure no other instance of Seafront is running, or change the port in your configuration.")
             logger.critical("Exiting...")
-            return
+            return 1
         else:
             logger.critical(f"Failed to test port {server_config.port}: {e}")
             logger.critical("Exiting...")
-            return
+            return 1
 
     try:
         # Start hardware connection thread only after we know the port is available
@@ -220,16 +227,15 @@ def main():
         # This should now rarely be reached due to pre-flight port check
         logger.critical(f"Unexpected server error: {e}")
         logger.critical("Exiting...")
-        return
-        
+        return 1
+
     finally:
-
         logger.info("shutting down")
+        closed_cleanly = core.close()
+        logger.info("shutdown complete" if closed_cleanly else "shutdown complete, with errors (see above)")
 
-        core.close()
-
-        logger.info("shutdown complete")
+    return 0 if closed_cleanly and not startup_failed.is_set() else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

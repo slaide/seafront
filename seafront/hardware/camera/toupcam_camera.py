@@ -12,6 +12,7 @@ from seafront.config.basics import GlobalConfigHandler, set_config_item_bool, Co
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
+from seafront.hardware.health import DeviceCloseError, describe
 from seafront.logger import logger
 
 
@@ -28,34 +29,30 @@ def _camera_operation_with_reconnect(func):
     @wraps(func)
     def wrapper(self, *args, **kwargs):
         # Fetch retry configuration from GlobalConfig
-        try:
-            g_config = GlobalConfigHandler.get_dict()
 
-            reconnect_attempts_item = g_config.get("camera.reconnection_attempts")
-            reconnect_attempts = 5 if reconnect_attempts_item is None else reconnect_attempts_item.intvalue
+        g_config = GlobalConfigHandler.get_dict()
 
-            reconnect_delay_ms_item = g_config.get("camera.reconnection_delay_ms")
-            reconnect_delay_ms = 1000.0 if reconnect_delay_ms_item is None else reconnect_delay_ms_item.floatvalue
+        reconnect_attempts_item = g_config.get("camera.reconnection_attempts")
+        # at least one: zero would skip the operation entirely and hand back None as if it had
+        # been the result
+        reconnect_attempts = max(1, 5 if reconnect_attempts_item is None else reconnect_attempts_item.intvalue)
 
-            retry_attempts_item = g_config.get("camera.operation_retry_attempts")
-            retry_attempts = 5 if retry_attempts_item is None else retry_attempts_item.intvalue
+        reconnect_delay_ms_item = g_config.get("camera.reconnection_delay_ms")
+        reconnect_delay_ms = 1000.0 if reconnect_delay_ms_item is None else reconnect_delay_ms_item.floatvalue
 
-            logger.debug(
-                f"{func.__name__}: loaded retry config: "
-                f"reconnect_attempts={reconnect_attempts}, "
-                f"reconnect_delay_ms={reconnect_delay_ms}, "
-                f"retry_attempts={retry_attempts}"
-            )
-        except Exception as e:
-            logger.error(
-                f"{func.__name__}: error retrieving retry config: {type(e).__name__}: {e}, "
-                f"using defaults (reconnect_attempts=5, reconnect_delay_ms=1000, retry_attempts=5)"
-            )
-            reconnect_attempts = 5
-            reconnect_delay_ms = 1000.0
-            retry_attempts = 5
+        retry_attempts_item = g_config.get("camera.operation_retry_attempts")
+        retry_attempts = max(1, 5 if retry_attempts_item is None else retry_attempts_item.intvalue)
+
+        logger.debug(
+            f"{func.__name__}: loaded retry config: "
+            f"reconnect_attempts={reconnect_attempts}, "
+            f"reconnect_delay_ms={reconnect_delay_ms}, "
+            f"retry_attempts={retry_attempts}"
+        )
 
         last_error: Exception | None = None
+        reconnect_history: list[str] = []
+        "what happened to each reconnection, attached to the error if the operation never succeeds"
 
         for reconnect_attempt in range(reconnect_attempts):
             for retry_attempt in range(retry_attempts):
@@ -88,24 +85,35 @@ def _camera_operation_with_reconnect(func):
                 )
                 try:
                     self.close()
+                except DeviceCloseError as close_error:
+                    # the connection being replaced is the one that just failed, so it not
+                    # closing cleanly is expected - and it has been released regardless, which
+                    # is all reopening needs
+                    reconnect_history.append(f"reconnect {reconnect_attempt + 1}: {close_error}")
+                try:
                     self.open(self.device_type)
                     logger.info(
                         f"{func.__name__}: successfully reconnected, retrying operation"
                     )
                 except Exception as reconnect_error:
+                    reconnect_history.append(
+                        f"reconnect {reconnect_attempt + 1}: reopening failed: {describe(reconnect_error)}"
+                    )
                     logger.warning(
-                        f"{func.__name__}: reconnection failed: "
-                        f"{type(reconnect_error).__name__}: {reconnect_error}"
+                        f"{func.__name__}: reconnection failed: {describe(reconnect_error)}"
                     )
                 # Wait before next reconnection attempt
                 time.sleep(reconnect_delay_ms / 1000.0)
 
-        # All retries and reconnection attempts failed
-        if last_error:
-            logger.error(
-                f"{func.__name__}: all retry/reconnection attempts exhausted, re-raising exception"
-            )
-            raise last_error
+        # All retries and reconnection attempts failed. Both loops run at least once, and the
+        # only way out of them without returning is an exception, so there is one.
+        assert last_error is not None
+        logger.error(
+            f"{func.__name__}: all retry/reconnection attempts exhausted, re-raising exception"
+        )
+        for entry in reconnect_history:
+            last_error.add_note(entry)
+        raise last_error
 
     return wrapper
 
@@ -242,30 +250,29 @@ class ToupCamCamera(Camera):
     def open(self, device_type: tp.Literal["main", "autofocus"]):
         """Open device for interaction."""
 
-        for i in range(5):
+        if self.handle is not None:
+            raise RuntimeError(f"toupcam camera {self.sn} is already open")
+
+        open_attempts = 5
+        last_error: Exception | None = None
+        for attempt in range(open_attempts):
             try:
                 self.handle = tc.Toupcam.Open(self.device_info.id)
                 if self.handle is None:
-                    raise RuntimeError("Failed to open ToupCam camera")
-
+                    raise RuntimeError("Toupcam.Open returned no handle")
+                break
             except Exception as e:
-                logger.debug(f"toupcam - opening failed {i+1} times {e=}")
-
-                try:
-                    self.close()
-                except Exception as e:
-                    logger.warning(f"toupcam - opening failed with error {e=}. retrying.")
-
-                time.sleep(2)
-                logger.debug("toupcam - done sleeping to await camera response on open")
-                continue
-
-            logger.debug("opened toupcam camera")
-            break
+                # nothing was opened, so there is nothing to close before trying again
+                last_error = e
+                self.handle = None
+            logger.debug(f"toupcam - opening {self.sn} failed ({attempt + 1}/{open_attempts}): {describe(last_error)}")
+            time.sleep(2)
 
         if self.handle is None:
             logger.critical(f"failed to open toupcam camera {self.device_info}")
-            raise RuntimeError(f"failed to open toupcam camera {self.device_info}")
+            raise RuntimeError(f"failed to open toupcam camera {self.sn} after {open_attempts} attempts") from last_error
+
+        logger.debug("opened toupcam camera")
 
         self.device_type = device_type
         self.acquisition_ongoing = False
@@ -493,18 +500,24 @@ class ToupCamCamera(Camera):
         return False
 
     def close(self):
-        """Close device handle."""
-        logger.debug("toupcam - closing")
-
+        """Close device handle (see Camera.close for the contract)."""
         if self.handle is None:
             return
 
-        try:
-            self.handle.Close()
-        except:
-            pass
+        logger.debug("toupcam - closing")
 
-        self.handle = None
+        # released first, so a failing Close still leaves the driver closed
+        handle, self.handle = self.handle, None
+        self.pullmode_active = False
+        self._streaming_active = False
+        self.acquisition_ongoing = False
+
+        # Close() also stops pull mode, so there is no separate stream stop to do
+        try:
+            handle.Close()
+        except Exception as e:
+            raise DeviceCloseError(f"toupcam camera {self.sn}", [("Close", e)]) from e
+
         logger.debug("closed toupcam camera")
 
     def get_exposure_time_limits(self) -> HardwareLimitValue:

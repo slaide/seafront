@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from seafront.config.basics import GlobalConfigHandler
 from seafront.hardware.adapter import DeviceAlreadyInUseError, Position as AdapterPosition
 from seafront.hardware.firmware_config import get_firmware_config
+from seafront.hardware.health import DeviceCloseError, describe
 from seafront.hardware.microcontroller.microcontroller import Microcontroller
 from seafront.logger import logger
 
@@ -58,9 +59,22 @@ class MicrocontrollerTimeout(BaseException):
     """
 
 
-class HandleIsNone(Exception):
+class ShortReadError(OSError):
+    """
+    A read returned fewer bytes than the port said were waiting. The bytes that did arrive
+    are consumed, so the stream no longer starts at a packet boundary: retrying on the same
+    connection would parse every packet after this one at the wrong offset. Only reopening
+    the port puts the stream back in step.
+    """
+
+
+class HandleIsNone(OSError):
     """
     Raised when attempting USB operations while microcontroller handle is None.
+
+    An OSError, because that is what it is to everything above the driver: the device is not
+    reachable. The adapter turns OSError into a disconnect; anything else would reach a client
+    as an unexplained failure with the hardware still marked connected.
 
     The handle being None is an explicit part of the type system indicating the
     microcontroller is not currently connected. This exception should trigger retry
@@ -858,18 +872,21 @@ def _usb_operation_with_reconnect(func):
         g_config = GlobalConfigHandler.get_dict()
 
         reconnect_attempts_item = g_config.get("microcontroller.reconnection_attempts")
-        reconnect_attempts = 5 if reconnect_attempts_item is None else reconnect_attempts_item.intvalue
+        # at least one each: zero would skip the operation and hand back None as its result
+        reconnect_attempts = max(1, 5 if reconnect_attempts_item is None else reconnect_attempts_item.intvalue)
 
         reconnect_delay_ms_item = g_config.get("microcontroller.reconnection_delay_ms")
         reconnect_delay_ms = 1000.0 if reconnect_delay_ms_item is None else reconnect_delay_ms_item.floatvalue
 
         retry_attempts_item = g_config.get("microcontroller.operation_retry_attempts")
-        retry_attempts = 5 if retry_attempts_item is None else retry_attempts_item.intvalue
+        retry_attempts = max(1, 5 if retry_attempts_item is None else retry_attempts_item.intvalue)
 
         retry_delay_ms_item = g_config.get("microcontroller.operation_retry_delay_ms")
         retry_delay_ms = 5.0 if retry_delay_ms_item is None else retry_delay_ms_item.floatvalue
 
         last_error: IOError | HandleIsNone | None = None
+        reconnect_history: list[str] = []
+        "what happened to each reconnection, attached to the error if the operation never succeeds"
 
         for reconnect_attempt in range(reconnect_attempts):
             for retry_attempt in range(retry_attempts):
@@ -882,6 +899,10 @@ def _usb_operation_with_reconnect(func):
                             f"retry_attempt={retry_attempt + 1}/{retry_attempts}"
                         )
                     return result
+                except ShortReadError:
+                    # the stream is out of step; repeating this read, here or on a reopened
+                    # port, cannot fix that. The caller has to poll again (see _read_packets).
+                    raise
                 except HandleIsNone as e:
                     # Expected: handle is None (disconnected state)
                     last_error = e
@@ -915,12 +936,12 @@ def _usb_operation_with_reconnect(func):
                     f"{func.__name__}: attempting reconnection "
                     f"(attempt {reconnect_attempt + 1}/{reconnect_attempts})"
                 )
+                # the port being replaced is the one that just failed, so it not closing cleanly
+                # is expected; it is released either way, which is all reopening needs
                 try:
-                    if self.handle is not None:
-                        self.handle.close()
-                        self.handle = None
-                except Exception:
-                    pass
+                    self._release_handle()
+                except DeviceCloseError as close_error:
+                    reconnect_history.append(f"reconnect {reconnect_attempt + 1}: {close_error}")
 
                 # Wait before reconnection
                 time.sleep(reconnect_delay_ms / 1000.0)
@@ -931,16 +952,22 @@ def _usb_operation_with_reconnect(func):
                         f"{func.__name__}: successfully reconnected, retrying operation"
                     )
                 except Exception as reconnect_error:
+                    reconnect_history.append(
+                        f"reconnect {reconnect_attempt + 1}: reopening failed: {describe(reconnect_error)}"
+                    )
                     logger.warning(
-                        f"{func.__name__}: reconnection failed: {type(reconnect_error).__name__}: {reconnect_error}"
+                        f"{func.__name__}: reconnection failed: {describe(reconnect_error)}"
                     )
 
-        # All retries and reconnection attempts failed
-        if last_error:
-            logger.error(
-                f"{func.__name__}: all retry/reconnection attempts exhausted, re-raising exception"
-            )
-            raise last_error
+        # All retries and reconnection attempts failed. Both loops run at least once, and the
+        # only way through them without returning is one of the two caught errors.
+        assert last_error is not None
+        logger.error(
+            f"{func.__name__}: all retry/reconnection attempts exhausted, re-raising exception"
+        )
+        for entry in reconnect_history:
+            last_error.add_note(entry)
+        raise last_error
 
     return wrapper
 
@@ -988,6 +1015,9 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
     """ USB vendor ID for re-identifying device after path change """
     _usb_pid: int | None = PrivateAttr(default=None)
     """ USB product ID for re-identifying device after path change """
+
+    _last_packet_at: float | None = PrivateAttr(default=None)
+    """ unix time the last status packet arrived; None until one has since opening """
     _usb_manufacturer: str | None = PrivateAttr(default=None)
     """ USB manufacturer string for re-identifying device after path change """
 
@@ -1192,6 +1222,7 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
 
         last_packet: MicrocontrollerStatusPackage | None = None
         packets_seen = 0
+        resynced = False
 
         self.terminate_reading_received_packet_thread = False
         while not self.terminate_reading_received_packet_thread:
@@ -1209,9 +1240,9 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                 raise MicrocontrollerTimeout(info=None, packets_seen=packets_seen)
 
             if self.handle is None:
-                logger.warning("self.handle is None ")
-                time.sleep(MICROCONTROLLER_PACKET_RETRY_DELAY_S)
-                continue
+                # Not connected: nothing can arrive, and spinning here until the timeout would
+                # only make "not connected" look like "not answering".
+                raise HandleIsNone("Microcontroller handle is None - not connected")
 
             bytes_waiting = self._usb_check_waiting()
 
@@ -1231,7 +1262,17 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
             # so the driver waited out the whole timeout for a command that had already
             # answered, and there was no reliable request/response matching at all.
             num_waiting = bytes_waiting // firmware_config.READ_PACKET_LENGTH
-            data = self._usb_receive(num_waiting * firmware_config.READ_PACKET_LENGTH)
+            try:
+                data = self._usb_receive(num_waiting * firmware_config.READ_PACKET_LENGTH)
+            except ShortReadError as e:
+                if resynced:
+                    e.add_note("already reopened the port once during this read")
+                    raise
+                resynced = True
+                self._resync(e)
+                continue
+
+            self._last_packet_at = time.time()
 
             packet_length = firmware_config.READ_PACKET_LENGTH
             for offset in range(0, len(data) - packet_length + 1, packet_length):
@@ -1246,11 +1287,51 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                     self.terminate_reading_received_packet_thread = True
                     break
 
+    def _resync(self, short_read: ShortReadError) -> None:
+        """
+        reopen the port after a short read, which is the only way to get the stream back to
+        a packet boundary. A failure to reopen is raised, carrying the short read that caused
+        it; a failure to close the old port is not, because the handle is released either way
+        and the port is known to be bad - it is logged with the reason for reopening.
+        """
+        try:
+            self._release_handle()
+            close_failure = None
+        except DeviceCloseError as close_error:
+            close_failure = close_error
+        logger.warning(
+            f"{describe(short_read)}: reopening {self.device_info.device} to get back in step"
+            + ("" if close_failure is None else f" (closing the old port: {close_failure})")
+        )
+        try:
+            self._open_connection()
+        except BaseException as e:
+            e.add_note(f"reopening after: {describe(short_read)}")
+            if close_failure is not None:
+                e.add_note(f"closing the old port: {close_failure}")
+            raise
+
+    STATUS_READ_TIMEOUT_S: tp.ClassVar[float] = 0.25
+    """
+    how long a position read waits for a status packet. The device streams them at ~100 Hz,
+    so this is some 25 packets' worth: silence for this long is not a slow device.
+    """
+
+    def last_heard_at(self) -> float | None:
+        return self._last_packet_at
+
     def get_last_position(self) -> AdapterPosition:
         """
         get last known position of the stage
 
-        this function works even if another command is currently running
+        this function works even if another command is currently running: then the command
+        is reading packets (and so keeping the position current), and this returns what it
+        last saw without waiting
+
+        raises OSError if the device is connected but sends nothing within
+        STATUS_READ_TIMEOUT_S - the same verdict send_cmd reaches when a device goes silent
+        mid-command, and for the same reason: a position that cannot be read is not one to
+        hand out as current
         """
 
         if self._lock.acquire(blocking=False):
@@ -1258,15 +1339,22 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                 # do not wait to read a package if there is currently no connection
                 if self.handle is not None:
                     # internally updates the last known position
-                    self._read_packets(lambda p: True)
-
-            except Exception as e:
-                print(f"got error? {e}")
-                raise e
+                    self._read_packets(lambda p: True, timeout_s=self.STATUS_READ_TIMEOUT_S)
+            except MicrocontrollerTimeout as mte:
+                # A timeout here can only be silence: the condition is met by the first
+                # packet, so any packet at all would have ended the read.
+                last = self._last_packet_at
+                heard = "never since opening" if last is None else f"{time.time() - last:.1f} s ago"
+                raise OSError(
+                    f"microcontroller is not responding: no status packet within "
+                    f"{self.STATUS_READ_TIMEOUT_S} s (last heard {heard})"
+                ) from mte
             finally:
                 self._lock.release()
 
-        # Convert internal Position to adapter Position
+        return self.last_position_cached()
+
+    def last_position_cached(self) -> AdapterPosition:
         return AdapterPosition(
             x_pos_mm=self.last_position.x_pos_mm,
             y_pos_mm=self.last_position.y_pos_mm,
@@ -1409,6 +1497,11 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
             raise HandleIsNone("Microcontroller handle is None - not connected")
 
         data = self.handle.read(size)
+        if len(data) != size:
+            # the port has a read timeout (see SERIAL_TIMEOUT_S), and bytes it reported as
+            # waiting that then do not arrive in time are a connection gone bad, not a short
+            # packet to parse as if it were whole
+            raise ShortReadError(f"serial read returned {len(data)} of {size} bytes the port reported waiting")
         return data
 
     @_usb_operation_with_reconnect
@@ -1504,6 +1597,23 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
             return True
         return False
 
+    SERIAL_TIMEOUT_S: tp.ClassVar[float] = 1.0
+    """
+    read and write timeout on the port. Without them a read or write the device never
+    completes blocks the worker for good: a write when the device has stopped draining its
+    buffer, a read of bytes the driver reported but that never arrive. Pyserial raises
+    SerialTimeoutException (an OSError) on a write that times out, and a read returns short,
+    which _usb_receive turns into OSError - both then take the usual disconnect path.
+    """
+
+    def _serial(self, device: str) -> serial.Serial:
+        return serial.Serial(
+            device,
+            self.baudrate,
+            timeout=self.SERIAL_TIMEOUT_S,
+            write_timeout=self.SERIAL_TIMEOUT_S,
+        )
+
     def _open_connection(self):
         """Internal method to open the serial connection (without lock)."""
         logger.debug(f"_open_connection(): attempting to open device at {self.device_info.device}")
@@ -1513,7 +1623,8 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                 f"_open_connection(): opening serial port {self.device_info.device} "
                 f"at {self.baudrate} baud"
             )
-            self.handle = serial.Serial(self.device_info.device, self.baudrate)
+            self.handle = self._serial(self.device_info.device)
+            self._last_packet_at = None
             logger.debug(f"_open_connection(): successfully opened {self.device_info.device}")
         except IOError as e:
             # Check if device is already in use by another process
@@ -1541,7 +1652,8 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
                     f"- attempting to open at new path"
                 )
                 try:
-                    self.handle = serial.Serial(new_device_info.device, self.baudrate)
+                    self.handle = self._serial(new_device_info.device)
+                    self._last_packet_at = None
                     logger.info(
                         f"_open_connection(): successfully opened at new device path {new_device_info.device}"
                     )
@@ -1586,16 +1698,26 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         "open connection to device"
         self._open_connection()
 
+    def _release_handle(self) -> None:
+        """
+        Drop the serial handle, then close it. The handle is gone afterwards whatever the close
+        did: a port that failed to close is still not one this driver can use, and holding on
+        to it would only stop the next open.
+        """
+        if self.handle is None:
+            return
+        handle, self.handle = self.handle, None
+        try:
+            handle.close()
+        except Exception as e:
+            raise DeviceCloseError(f"microcontroller {self.device_info.device}", [("close port", e)]) from e
+
     @microcontroller_exclusive
     def close(self):
-        "close connection to device"
+        "close connection to device; raises DeviceCloseError after releasing it if closing failed"
 
         logger.debug("microcontroller - closing")
-
-        if self.handle is not None:
-            self.handle.close()
-            self.handle = None
-
+        self._release_handle()
         logger.debug("microcontroller - closed")
 
     @microcontroller_exclusive

@@ -10,7 +10,6 @@ import scipy  # to find peaks in a signal
 # import scipy.ndimage  # for guassian blur
 import seaconfig as sc
 
-from seafront.hardware.camera.galaxy_camera import GalaxyCameraOffline
 from matplotlib import pyplot as plt
 from pydantic import BaseModel
 from scipy import stats  # for linear regression
@@ -44,9 +43,10 @@ from seafront.hardware.microcontroller import (
 from seafront.hardware.microcontroller.teensy_microcontroller import (
     ILLUMINATION_CODE,
 )
-from seafront.hardware.adapter import AdapterState
+from seafront.hardware.adapter import AdapterState, Position
 from seafront.hardware.camera import (
     Camera,
+    CameraOfflineError,
     CameraOpenRequest,
     HardwareLimitValue,
     bits_for_pixel_format,
@@ -54,6 +54,7 @@ from seafront.hardware.camera import (
 )
 from seafront.hardware.illumination import IlluminationController
 from seafront.hardware.adapter import DeviceAlreadyInUseError
+from seafront.hardware.health import Device, DeviceHealth, HardwareCloseError, describe
 from seafront.hardware.microscope import DisconnectError, HardwareLimits, Locked, Microscope
 from seafront.logger import logger
 from seafront.server import commands as cmd
@@ -66,6 +67,15 @@ from seafront.server.commands import (
 
 from seafront.config.handles import ProtocolConfig
 from seafront.hardware.forbidden_areas import ForbiddenAreaList
+
+# Deadlines on the hardware calls that can hang (see hardware/watchdog.py): the camera SDKs,
+# and opening and closing. Each is far past anything the call takes, including the drivers'
+# own retries and reconnects, so reaching one means the call is stuck.
+OPEN_DEADLINE_S = 60.0
+CALL_DEADLINE_S = 30.0
+"close, stream start/stop, and the queries (limits, pixel formats)"
+SNAP_DEADLINE_MARGIN_S = 30.0
+"a snap's deadline is its exposure time plus this"
 
 # utility functions
 
@@ -139,6 +149,28 @@ def _process_image(img: np.ndarray, pixel_format: str) -> tuple[np.ndarray, int]
             ret = ret << (bits_per_pixel - cambits)
 
     return ret, cambits
+
+
+def _connection_lost(error: BaseException) -> bool:
+    "whether an error means the device is gone, rather than that one operation on it failed"
+    return isinstance(error, (CameraOfflineError, OSError))
+
+
+def _raise_collected(failures: list[tuple[str, BaseException]]) -> None:
+    """
+    Raise after a run of steps that were each attempted whatever happened to the others.
+
+    One error comes out, so the execute boundary can act on it: the first that means a
+    connection was lost if there is one (that decides whether the hardware gets dropped),
+    otherwise the first. Every other failure rides along as a note.
+    """
+    if not failures:
+        return
+    ordered = sorted(failures, key=lambda failure: not _connection_lost(failure[1]))
+    (_, primary), rest = ordered[0], ordered[1:]
+    for step, error in rest:
+        primary.add_note(f"also failed - {step}: {describe(error)}")
+    raise primary
 
 
 class LaserAutofocusMeasurement(BaseModel):
@@ -251,57 +283,95 @@ class SquidAdapter(Microscope):
             if focus_camera is None:
                 error_internal("focus camera is busy")
 
-            # small round trip because short disconnects from the cameras do not notify the cameras of the disconnect
-            # so an attempted reconnect will throw an error indicating an existing connection
-            # which cannot be severed without a physical connection (which may disrupted on the disconnect)
-            # hence we ensure proper disconnect before a reconnect (even though this could waste an on->off->on roundtrip)
-            self.is_connected = True
-            self.close()
-            self.is_connected = False
-
+            # Close before opening, always. A short disconnect does not reach the camera, so it
+            # still holds the old connection and refuses a new one until that is severed - and
+            # after a partial open or a drop, some devices are still open from last time.
             try:
-                main_camera.open(device_type="main")
-                logger.debug("startup - connected to main cam")
-                focus_camera.open(device_type="autofocus")
-                logger.debug("startup - connected to focus cam")
-                self.microcontroller.open()
-                logger.debug("startup - connected to microcontroller")
-            except DeviceAlreadyInUseError:
-                # Don't convert to DisconnectError - let it propagate for specific handling
-                raise
-            except GalaxyCameraOffline as e:
-                logger.critical("startup - camera offline")
-                raise DisconnectError() from e
-            except IOError as e:
-                logger.critical("startup - microcontroller offline")
-                raise DisconnectError() from e
+                self.close()
+            except HardwareCloseError as e:
+                # Expected after a drop: the devices being closed are the ones that went away.
+                # They are released regardless, which is all opening needs, and each failure is
+                # on the health board as that device's last fault.
+                logger.info(f"startup - {e}")
 
-            # Fetch actual camera capabilities and update config with runtime values
+            opening: list[tuple[Device, tp.Callable[[], None]]] = [
+                (Device.MAIN_CAMERA, lambda: main_camera.open(device_type="main")),
+                (Device.FOCUS_CAMERA, lambda: focus_camera.open(device_type="autofocus")),
+                (Device.MICROCONTROLLER, self.microcontroller.open),
+            ]
+            for device, open_device in opening:
+                try:
+                    with self._watchdog.guard(device, "open", OPEN_DEADLINE_S):
+                        open_device()
+                except DeviceAlreadyInUseError as e:
+                    # its own error, so the client can say "close the other seafront"
+                    self._health.open_failed(device, e)
+                    raise
+                except Exception as e:
+                    # Whatever opening raised, the device is not available, and that is what
+                    # the caller needs to know - with which one it was and why, kept as cause.
+                    # Devices opened before this one stay open; the next attempt closes them
+                    # first, as does shutdown.
+                    self._health.open_failed(device, e)
+                    logger.critical(f"startup - could not open {device}: {describe(e)}")
+                    raise DisconnectError(device) from e
+                self._health.connected(device)
+                logger.debug(f"startup - connected to {device}")
+
+            # Offer only the pixel formats the cameras actually have. Not optional: without
+            # this the config lists formats a camera may not support, and choosing one fails
+            # much later, far from the cause.
             from seafront.config.basics import GlobalConfigHandler
 
-            try:
+            with self._watchdog.guard(Device.MAIN_CAMERA, "pixel format query", CALL_DEADLINE_S):
                 main_formats = main_camera.get_supported_pixel_formats()
+            with self._watchdog.guard(Device.FOCUS_CAMERA, "pixel format query", CALL_DEADLINE_S):
                 focus_formats = focus_camera.get_supported_pixel_formats()
-                logger.debug(f"startup - main camera supports formats: {main_formats}")
-                logger.debug(f"startup - focus camera supports formats: {focus_formats}")
-                GlobalConfigHandler.update_pixel_format_options(main_formats, focus_formats)
-                logger.info("startup - updated config with actual camera pixel format capabilities")
-            except Exception as e:
-                logger.warning(f"startup - failed to update pixel format options: {e}")
-                # Don't fail startup if this fails, but log the warning
+            logger.debug(f"startup - main camera supports formats: {main_formats}")
+            logger.debug(f"startup - focus camera supports formats: {focus_formats}")
+            GlobalConfigHandler.update_pixel_format_options(main_formats, focus_formats)
+            logger.info("startup - updated config with actual camera pixel format capabilities")
 
             logger.info("startup - connection to hardware devices established")
             self.is_connected = True
 
+    @classmethod
+    def hardware_devices(cls) -> list[Device]:
+        return [Device.MAIN_CAMERA, Device.FOCUS_CAMERA, Device.MICROCONTROLLER]
+
+    def _camera_device(self, camera: Camera) -> Device:
+        if camera is self.main_camera.value:
+            return Device.MAIN_CAMERA
+        if camera is self.focus_camera.value:
+            return Device.FOCUS_CAMERA
+        raise ValueError(f"camera {camera.sn} is not one of this microscope's")
+
+    def _drop_connection(self, device: Device, operation: str, error: BaseException) -> DisconnectError:
+        """
+        `device` failed in a way that means its connection is gone. Close everything - a
+        microscope missing one device cannot run anything, and the next command reconnects all
+        of them - then record which device it was, and hand back the error to raise.
+
+        Recorded after the close, which marks every device closed: the one that was lost must
+        end up marked as such.
+        """
+        logger.critical(f"squid - lost {device} during {operation}: {describe(error)}")
+        disconnect = DisconnectError(device)
+        disconnect.add_note(f"{operation}: {describe(error)}")
+        try:
+            self.close()
+        except HardwareCloseError as close_error:
+            disconnect.add_note(str(close_error))
+        self._health.lost(device, operation, error)
+        return disconnect
+
     def close(self):
         """
-        close connection to microcontroller and cameras
+        close connection to microcontroller and cameras (see Microscope.close for the contract)
 
-        may also be used to close connection to remaining devices if connection to one has failed
+        Does not look at is_connected: after a partial open, or a drop, some devices are open
+        while the adapter as a whole is not, and those must be closed too.
         """
-        if not self.is_connected:
-            return
-
         # Outside the camera lock, and first: a disconnected adapter must not be left
         # claiming to stream, and clearing the state stops the SDK's capture callback from
         # forwarding into a camera that is being torn down.
@@ -318,23 +388,23 @@ class SquidAdapter(Microscope):
 
             self.is_connected = False
 
-            logger.debug("closing microcontroller")
-            try:
-                self.microcontroller.close()
-            except Exception:
-                pass
+            closing: list[tuple[Device, tp.Callable[[], None]]] = [
+                (Device.MICROCONTROLLER, self.microcontroller.close),
+                (Device.MAIN_CAMERA, main_camera.close),
+                (Device.FOCUS_CAMERA, focus_camera.close),
+            ]
+            failures: dict[Device, BaseException] = {}
+            for device, close_device in closing:
+                logger.debug(f"closing {device}")
+                try:
+                    with self._watchdog.guard(device, "close", CALL_DEADLINE_S):
+                        close_device()
+                except Exception as e:
+                    failures[device] = e
+                self._health.closed(device, failures.get(device))
 
-            logger.debug("closing main camera")
-            try:
-                main_camera.close()
-            except Exception:
-                pass
-            logger.debug("closing focus camera")
-            try:
-                focus_camera.close()
-            except Exception:
-                pass
-            logger.debug("closing microcontroller")
+            if failures:
+                raise HardwareCloseError(failures)
 
             logger.info("closed connection to hardware devices")
 
@@ -427,9 +497,7 @@ class SquidAdapter(Microscope):
             logger.info("done initializing microscope")
 
         except IOError as e:
-            logger.critical("lost connection to microcontroller")
-            self.close()
-            raise DisconnectError() from e
+            raise self._drop_connection(Device.MICROCONTROLLER, "home_impl", e) from e
 
     def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
         """
@@ -697,8 +765,7 @@ class SquidAdapter(Microscope):
             else:
                 qmc.move_by_mm("z", -half_z_mm)
         except IOError as e:
-            self.close()
-            raise DisconnectError() from e
+            raise self._drop_connection(Device.MICROCONTROLLER, "LaserAutofocusCalibrate", e) from e
 
         class CalibrationData(BaseModel):
             z_mm: float
@@ -719,8 +786,7 @@ class SquidAdapter(Microscope):
                 try:
                     qmc.move_by_mm("z", z_step_mm)
                 except IOError as e:
-                    self.close()
-                    raise DisconnectError() from e
+                    raise self._drop_connection(Device.MICROCONTROLLER, "LaserAutofocusCalibrate", e) from e
 
             measurement = measure()
 
@@ -730,8 +796,7 @@ class SquidAdapter(Microscope):
         try:
             qmc.move_by_mm("z", -half_z_mm)
         except IOError as e:
-            self.close()
-            raise DisconnectError() from e
+            raise self._drop_connection(Device.MICROCONTROLLER, "LaserAutofocusCalibrate", e) from e
 
         class DomainInfo(BaseModel):
             lowest_x: float
@@ -947,8 +1012,7 @@ class SquidAdapter(Microscope):
         try:
             calibration_position = qmc.get_last_position()
         except IOError as e:
-            self.close()
-            raise DisconnectError() from e
+            raise self._drop_connection(Device.MICROCONTROLLER, "LaserAutofocusCalibrate", e) from e
 
         # Calculate offset correction to zero out error at calibration position
         # Measure displacement multiple times and average to reduce noise
@@ -985,13 +1049,26 @@ class SquidAdapter(Microscope):
         self.record_laser_autofocus_calibration(calibration_data)
         return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)
 
+    def health(self) -> list[DeviceHealth]:
+        # the microcontroller keeps its own last-heard time as it reads; bring it over first,
+        # so whoever asks sees when the device last spoke rather than when someone last looked
+        heard_at = self.microcontroller.last_heard_at()
+        if heard_at is not None:
+            self._health.heard(Device.MICROCONTROLLER, at=heard_at)
+        return super().health()
+
     async def get_current_state(self) -> AdapterState:
         try:
             current_position = self._get_current_position(self.microcontroller)
         except IOError as e:
-            self.close()
-            logger.debug("microcontroller disconnected (IOError)")
-            raise DisconnectError() from e
+            # The status read runs beside the worker, not on it, so dropping the connection
+            # from here would pull the hardware out from under whatever command is running.
+            # It records what it saw instead - the health board is what the operator reads -
+            # and hands back the last position the device did report, which the board marks
+            # as not current. The next command to talk to the device meets the same silence
+            # and drops the connection from where that is safe to do.
+            self._health.unresponsive(Device.MICROCONTROLLER, "status read", describe(e))
+            current_position = self._position_to_real(self.microcontroller.last_position_cached())
 
         self.last_state = AdapterState(
             is_in_loading_position=self.is_in_loading_position,
@@ -1002,7 +1079,10 @@ class SquidAdapter(Microscope):
 
     def _get_current_position(self, qmc: Microcontroller) -> cmd.Position:
         """Stage position in the calibrated coordinate frame used by public commands."""
-        measured = qmc.get_last_position()
+        return self._position_to_real(qmc.get_last_position())
+
+    def _position_to_real(self, measured: Position) -> cmd.Position:
+        """a measured stage position, in the calibrated frame"""
         return cmd.Position(
             x_pos_mm=self._pos_x_measured_to_real(measured.x_pos_mm),
             y_pos_mm=self._pos_y_measured_to_real(measured.y_pos_mm),
@@ -1018,11 +1098,9 @@ class SquidAdapter(Microscope):
             if main_camera is None:
                 raise RuntimeError("Main camera not available for hardware limits query")
 
-            # Get exposure time limits from camera hardware
-            exposure_limits = main_camera.get_exposure_time_limits()
-
-            # Get analog gain limits from camera hardware
-            gain_limits = main_camera.get_analog_gain_limits()
+            with self._watchdog.guard(Device.MAIN_CAMERA, "limits query", CALL_DEADLINE_S):
+                exposure_limits = main_camera.get_exposure_time_limits()
+                gain_limits = main_camera.get_analog_gain_limits()
 
         # Create SQUID-specific mechanical and power limits as HardwareLimitValue objects
         focus_offset_limits = HardwareLimitValue(min=-200, max=200, step=0.1)
@@ -1094,8 +1172,11 @@ class SquidAdapter(Microscope):
                 logger.critical(f"squid - connect - {e}")
                 logger.critical("Please close any other instances of Seafront before starting a new one.")
                 error_device_in_use(e.device_type, e.device_id)
-            except DisconnectError:
-                error_message = "hardware connection could not be established"
+            except DisconnectError as e:
+                # say which device and why: "could not be established" alone sends the operator
+                # to check every cable
+                reason = describe(e.__cause__) if e.__cause__ is not None else "no further detail"
+                error_message = f"hardware connection could not be established - {e}: {reason}"
                 logger.critical(f"squid - connect - {error_message}")
                 error_internal(error_message)
 
@@ -1163,8 +1244,7 @@ class SquidAdapter(Microscope):
         try:
             current_stage_position = qmc.get_last_position()
         except IOError as e:
-            self.close()
-            raise DisconnectError() from e
+            raise self._drop_connection(Device.MICROCONTROLLER, "MoveBy", e) from e
 
         current_x = self._pos_x_measured_to_real(current_stage_position.x_pos_mm)
         current_y = self._pos_y_measured_to_real(current_stage_position.y_pos_mm)
@@ -1338,36 +1418,82 @@ class SquidAdapter(Microscope):
         # stop_streaming()'s stream_off()/unregister_capture_callback() cannot block on it.
         # The lock still provides mutual exclusion against snap/start_streaming; blocking=True
         # so we reliably stop instead of silently leaving the camera streaming.
+        #
+        # Both halves are attempted whatever happens to the other: a camera that fails to stop
+        # is no reason to leave the light on. Either failing fails the command.
+        failures: list[tuple[str, BaseException]] = []
         try:
             with self.main_camera.locked() as cam:
-                if cam is None:
-                    raise RuntimeError("failed to acquire camera to stop streaming!")
+                assert cam is not None, "blocking lock acquire returned no camera"
 
                 logger.debug("squid - stopping camera streaming")
-                cam.stop_streaming()
+                with self._watchdog.guard(
+                    Device.MAIN_CAMERA,
+                    "stop streaming",
+                    CALL_DEADLINE_S,
+                    on_stall=self._illumination_off_during_stall,
+                ):
+                    cam.stop_streaming()
                 logger.debug("squid - camera streaming stopped")
         except Exception as e:
-            logger.warning(f"squid - failed to stop camera streaming: {e}")
+            failures.append(("stop camera streaming", e))
 
-        # Turn off illumination for the channel that was actually streaming
-        channel_config = None
-        for ch in self.channels:
-            if ch.handle == stopped.channel.handle:
-                channel_config = ch
-                break
-
-        if channel_config is not None:
-            try:
+        # Turn off illumination for the channel that was actually streaming. If that channel
+        # is no longer configured (the config changed under a running stream), which source it
+        # used is unknown, so all of them go off.
+        channel_config = next((ch for ch in self.channels if ch.handle == stopped.channel.handle), None)
+        try:
+            if channel_config is None:
+                logger.warning(
+                    f"squid - streamed channel {stopped.channel.handle} is no longer configured, "
+                    "turning off all illumination"
+                )
+                self._illumination_end_all(self.microcontroller)
+            else:
                 illum_code = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
                 self.microcontroller.illumination_end(illum_code.value)
                 logger.debug(f"squid - illumination cleanup for channel {stopped.channel.handle}")
-            except Exception as e:
-                logger.warning(f"squid - failed illumination cleanup: {e}")
+        except Exception as e:
+            failures.append(("turn off illumination", e))
+
+        _raise_collected(failures)
 
         logger.debug("squid - completed stream stop")
 
         result = cmd.BasicSuccessResponse()
         return result  # type: ignore[no-any-return]
+
+    def _illumination_off_during_stall(self) -> str:
+        """
+        The stall action for main camera calls made with the light on. Runs on the watchdog
+        thread while the worker is stuck in the camera, so the microcontroller is free.
+        """
+        self._illumination_end_all(self.microcontroller)
+        return "all illumination was turned off"
+
+    def _af_laser_off_during_stall(self) -> str:
+        "the stall action for focus camera snaps, which are made with the autofocus laser on"
+        self.microcontroller.af_laser_off()
+        return "the autofocus laser was turned off"
+
+    def _illumination_end_all(self, qmc: Microcontroller) -> None:
+        """
+        Turn off every configured illumination source. Each is attempted whatever happened to
+        the others - one that fails is no reason to leave the rest on - and any failure fails
+        the call.
+        """
+        failures: list[tuple[str, BaseException]] = []
+        for channel_config in self.channels:
+            try:
+                illum_src = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
+                qmc.illumination_end(illum_src.value)
+                logger.debug(
+                    f"squid - illumination end all - turned off illumination for {channel_config.name} (slot {channel_config.source_slot})"
+                )
+            except Exception as e:
+                failures.append((f"turn off {channel_config.name} (slot {channel_config.source_slot})", e))
+        _raise_collected(failures)
+        logger.debug("squid - turned off all illumination")
 
     def _execute_ChannelSnapshot(
         self,
@@ -1455,7 +1581,13 @@ class SquidAdapter(Microscope):
 
             # even if acqusition fails, ensure light is turned off again!
             try:
-                img = main_camera.snap(command.channel)
+                with self._watchdog.guard(
+                    Device.MAIN_CAMERA,
+                    "snap",
+                    command.channel.exposure_time_ms / 1000 + SNAP_DEADLINE_MARGIN_S,
+                    on_stall=self._illumination_off_during_stall,
+                ):
+                    img = main_camera.snap(command.channel)
             finally:
                 logger.debug("channel snap - after acq")
 
@@ -1584,10 +1716,16 @@ class SquidAdapter(Microscope):
             # refused begin cannot leave the adapter claiming a stream that is not running.
             self._stream_started(command.channel)
             try:
-                main_camera.start_streaming(
-                    command.channel,
-                    callback=forward_image,
-                )
+                with self._watchdog.guard(
+                    Device.MAIN_CAMERA,
+                    "start streaming",
+                    CALL_DEADLINE_S,
+                    on_stall=self._illumination_off_during_stall,
+                ):
+                    main_camera.start_streaming(
+                        command.channel,
+                        callback=forward_image,
+                    )
             except Exception:
                 self._stream_stopped()
                 raise
@@ -1753,7 +1891,13 @@ class SquidAdapter(Microscope):
             with self.focus_camera.locked() as focus_camera:
                 if focus_camera is None:
                     error_internal("focus camera is busy")
-                img = focus_camera.snap(channel_config)
+                with self._watchdog.guard(
+                    Device.FOCUS_CAMERA,
+                    "snap",
+                    command.exposure_time_ms / 1000 + SNAP_DEADLINE_MARGIN_S,
+                    on_stall=self._af_laser_off_during_stall,
+                ):
+                    img = focus_camera.snap(channel_config)
 
             logger.debug("squid - autofocus - acquired image")
         finally:
@@ -1774,22 +1918,20 @@ class SquidAdapter(Microscope):
     async def execute[T](self, command: cmd.BaseCommand[T]) -> T:
         # Single owner (the worker) — no hardware lock needed. ChannelStreamEnd still
         # dispatches directly (it must run while a stream is active but the worker is idle).
-        if isinstance(command, cmd.ChannelStreamEnd):
-            self.validate_command(command)
-            result = self._execute_ChannelStreamEnd(command)
-            return result # type: ignore[no-any-return]
-
-        qmc = self.microcontroller
+        # Either way through the same boundary, so a device lost while stopping a stream is
+        # dropped like one lost anywhere else.
+        operation = type(command).__name__
         try:
-            result = self._dispatch(qmc, command)
+            if isinstance(command, cmd.ChannelStreamEnd):
+                self.validate_command(command)
+                result = self._execute_ChannelStreamEnd(command)
+            else:
+                result = self._dispatch(self.microcontroller, command)
             return result # type: ignore[no-any-return]
-        except GalaxyCameraOffline as e:
-            logger.critical("squid - lost camera connection")
-            raise DisconnectError() from e
+        except CameraOfflineError as e:
+            raise self._drop_connection(self._camera_device(e.camera), operation, e) from e
         except IOError as e:
-            logger.critical("squid - lost connection to microcontroller")
-            self.close()
-            raise DisconnectError() from e
+            raise self._drop_connection(Device.MICROCONTROLLER, operation, e) from e
 
     def _dispatch(self, qmc: Microcontroller, command: cmd.BaseCommand[tp.Any]) -> tp.Any:
         """Synchronous command dispatch. Caller must already hold the microcontroller lock.
@@ -1879,21 +2021,7 @@ class SquidAdapter(Microscope):
             return cmd.BasicSuccessResponse()
 
         elif isinstance(command, cmd.IlluminationEndAll):
-            # Turn off all configured illumination sources
-            for channel_config in self.channels:
-                try:
-                    illum_src = ILLUMINATION_CODE.from_slot(channel_config.source_slot)
-                    qmc.illumination_end(illum_src.value)
-                    logger.debug(
-                        f"squid - illumination end all - turned off illumination for {channel_config.name} (slot {channel_config.source_slot})"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to turn off illumination for channel {channel_config.name} (slot {channel_config.source_slot}): {e}"
-                    )
-
-            logger.debug("squid - turned off all illumination")
-
+            self._illumination_end_all(qmc)
             return cmd.BasicSuccessResponse()
 
         elif isinstance(command, cmd.ChannelSnapshot):

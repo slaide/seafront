@@ -16,6 +16,8 @@ from seafront.config.handles import ProtocolConfig
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import AdapterState, Position
 from seafront.hardware.forbidden_areas import ForbiddenArea, ForbiddenAreaList
+from seafront.hardware.health import DeviceHealth
+from seafront.hardware.watchdog import Stall
 from seafront.hardware.limits import HardwareLimits
 
 from ..hardware.camera.camera import bits_for_pixel_format
@@ -973,9 +975,24 @@ class EstablishHardwareConnection(BaseModel, BaseCommand[BasicSuccessResponse]):
 
 
 class HealthResponse(BaseModel):
-    """/api/health: answered without touching the hardware, and without a target_device"""
+    """
+    /api/health: answered without touching the hardware, and without a target_device.
 
-    status: tp.Literal["ok"] = "ok"
+    Always 200 while the server runs: that it answered is the liveness. Whether the microscope
+    can do its job is `status`, and `reasons` says why when it cannot.
+    """
+
+    status: tp.Literal["ok", "degraded", "down"]
+    """
+    ok: every device connected and answering. degraded: a device has been seen not answering
+    but is still connected. down: a device is not connected, or a hardware call is stuck
+    """
+    reasons: list[str] = Field(default_factory=list)
+    "one line per thing that keeps the status from ok"
+    hardware: list["DeviceHealth"]
+    stalls: list["Stall"] = Field(default_factory=list)
+    last_acquisition_error: str | None = None
+    last_acquisition_error_timestamp: str | None = None
     microscope_name: str
     time_since_last_request_s: float | None
     "seconds since the last request this server answered, or null if it has answered none"

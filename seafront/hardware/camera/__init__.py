@@ -4,6 +4,7 @@ from .camera import (
     AcquisitionMode,
     Camera,
     CameraDriver,
+    CameraOfflineError,
     CameraOpenRequest,
     HardwareLimitValue,
     bits_for_pixel_format,
@@ -14,6 +15,7 @@ from .mock_camera import MockCamera
 
 __all__ = [
     "Camera",
+    "CameraOfflineError",
     "CameraDriver",
     "HardwareLimitValue",
     "AcquisitionMode",

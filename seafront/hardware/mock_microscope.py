@@ -36,6 +36,7 @@ from seafront.hardware.firmware_config import (
 )
 from seafront.hardware.illumination import IlluminationController
 from seafront.hardware.microscope import HardwareLimits, Locked, Microscope
+from seafront.hardware.health import Device, HardwareCloseError
 from seafront.logger import logger
 from seafront.server import commands as cmd
 
@@ -202,6 +203,7 @@ class MockMicroscope(Microscope):
 
     def model_post_init(self, __context: tp.Any) -> None:
         """Initialize movement parameters from firmware profile"""
+        super().model_post_init(__context)
         # Load firmware configuration based on SEAFRONT_FIRMWARE_PROFILE environment variable
         firmware_config = get_firmware_config()
 
@@ -415,20 +417,30 @@ class MockMicroscope(Microscope):
             main_camera=Locked(mock_camera),
         )
 
+    @classmethod
+    def hardware_devices(cls) -> list[Device]:
+        return [Device.MAIN_CAMERA]
+
     def open_connections(self) -> None:
         """Mock connection opening - always succeeds."""
         logger.info("Mock microscope: opening connections")
         self.main_camera.value.open("main")
+        self._health.connected(Device.MAIN_CAMERA)
         self.is_connected = True
 
     def close(self) -> None:
-        """Mock connection closing."""
+        """Mock connection closing (see Microscope.close for the contract)."""
         logger.info("Mock microscope: closing connections")
 
         # Ensure streaming is stopped (safety measure - should be done via ChannelStreamEnd)
         self._stream_stopped()
-        self.main_camera.value.stop_streaming()
         self.is_connected = False
+        try:
+            self.main_camera.value.close()
+        except Exception as e:
+            self._health.closed(Device.MAIN_CAMERA, e)
+            raise HardwareCloseError({Device.MAIN_CAMERA: e}) from e
+        self._health.closed(Device.MAIN_CAMERA)
 
     async def home(self) -> None:
         """Mock homing sequence."""

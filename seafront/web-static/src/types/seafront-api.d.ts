@@ -325,6 +325,8 @@ declare global {
         channel_handles: string[];
     };
 
+    type Condition = "not_connected" | "ok" | "unresponsive" | "disconnected";
+
     type ConfigFetchRequest = {
         /** Target device name for request routing */
         target_device: string;
@@ -416,6 +418,23 @@ declare global {
         lock_token?: string | null;
     };
 
+    type Device = "main_camera" | "focus_camera" | "microcontroller";
+
+    /** one thing that went wrong with a device */
+    type DeviceFault = {
+        operation: string;
+        message: string;
+        at: number;
+    };
+
+    type DeviceHealth = {
+        device: Device;
+        condition: Condition;
+        since: number;
+        last_fault?: DeviceFault | null;
+        last_heard_at?: number | null;
+    };
+
     type EstablishHardwareConnectionRequest = {
         hardware_identifier?: string;
         /** Target device name for request routing */
@@ -502,9 +521,19 @@ declare global {
         imaging_delta_z_um: HardwareLimitValue;
     };
 
-    /** /api/health: answered without touching the hardware, and without a target_device */
+    /**
+     * /api/health: answered without touching the hardware, and without a target_device.
+     * 
+     * Always 200 while the server runs: that it answered is the liveness. Whether the microscope
+     * can do its job is `status`, and `reasons` says why when it cannot.
+     */
     type HealthResponse = {
-        status?: "ok";
+        status: "ok" | "degraded" | "down";
+        reasons?: string[];
+        hardware: DeviceHealth[];
+        stalls?: Stall[];
+        last_acquisition_error?: string | null;
+        last_acquisition_error_timestamp?: string | null;
         microscope_name: string;
         time_since_last_request_s: number | null;
         server_time: number;
@@ -863,6 +892,15 @@ declare global {
     type SocketMisdirected = {
         error?: "target_device_mismatch";
         message: string;
+    };
+
+    /** a guarded call that is past its deadline and still running */
+    type Stall = {
+        device: Device;
+        operation: string;
+        started_at: number;
+        deadline_s: number;
+        thread: string;
     };
 
     type StreamChannelBeginRequest = {

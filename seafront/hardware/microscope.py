@@ -24,15 +24,25 @@ from seafront.config.basics import (
 )
 from seafront.config.handles import LaserAutofocusConfig
 from seafront.hardware.adapter import AdapterState
+from seafront.hardware.camera import Camera
+from seafront.hardware.health import Device, DeviceHealth, HealthBoard
+from seafront.hardware.watchdog import Stall, StallWatchdog
 from seafront.hardware.limits import HardwareLimits
 from seafront.server import commands as cmd
 
 
 class DisconnectError(BaseException):
-    """Indicate that the hardware was disconnected."""
+    """
+    Indicate that the hardware was disconnected.
 
-    def __init__(self):
-        super().__init__()
+    `device` is which one was lost, when the adapter knows. If dropping the connections on the
+    way out did not go cleanly either, that failure rides along as a note rather than
+    replacing this error: the disconnect is what happened, the untidy close is detail.
+    """
+
+    def __init__(self, device: Device | None = None):
+        super().__init__(f"{device} disconnected" if device is not None else "hardware disconnected")
+        self.device = device
 
 
 class OperationCancelledError(Exception):
@@ -108,6 +118,8 @@ class Microscope(BaseModel, abc.ABC):
 
     last_state: AdapterState | None = None
 
+    main_camera: Locked[Camera]
+
     _stream: StreamState | None = PrivateAttr(default=None)
     """
     the one answer to "is the camera streaming, and with what"
@@ -128,7 +140,40 @@ class Microscope(BaseModel, abc.ABC):
     """Cancel event of the command currently executing, set by the worker. Single
     owner => at most one command runs at a time, so this is unambiguous."""
 
+    _health: HealthBoard = PrivateAttr()
+    "the condition of each device this adapter drives; see hardware/health.py"
+
+    _watchdog: StallWatchdog = PrivateAttr()
+    "deadlines on the hardware calls that can hang; see hardware/watchdog.py"
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def model_post_init(self, context: tp.Any, /) -> None:
+        super().model_post_init(context)
+        self._health = HealthBoard(self.hardware_devices())
+        self._watchdog = StallWatchdog(self._health)
+
+    @classmethod
+    @abc.abstractmethod
+    def hardware_devices(cls) -> list[Device]:
+        "the devices this adapter drives, which is what its health board reports on"
+
+    def health(self) -> list[DeviceHealth]:
+        "the condition of every device, as one snapshot. Never touches the hardware."
+        return self._health.snapshot()
+
+    def stalls(self) -> list[Stall]:
+        """
+        hardware calls past their deadline and still running. Never touches the hardware, and
+        never waits on it - which is the point: while one of these lasts, anything that takes a
+        device lock waits for as long as the stuck call does.
+        """
+        return self._watchdog.stalls()
+
+    def main_camera_info(self) -> cmd.CameraInfo:
+        "the main camera's identity, which its driver knows from before it is opened. No I/O."
+        camera = self.main_camera.value
+        return cmd.CameraInfo(vendor=camera.vendor_name, model=camera.model_name, serial_number=camera.sn)
 
     # -- streaming: the adapter owns whether it is happening ----------------------------------
 
@@ -215,8 +260,11 @@ class Microscope(BaseModel, abc.ABC):
     def close(self) -> None:
         """
         Close connections to all hardware devices.
-        
-        Should be safe to call even if some devices are already disconnected.
+
+        Every device is attempted and released whatever happens to the others, and calling this
+        with some or all of them already closed is fine. If any device did not close cleanly,
+        raises HardwareCloseError afterwards - by then everything has been let go of, so the
+        error reports what state the devices may have been left in, not a close to retry.
         """
         pass
 

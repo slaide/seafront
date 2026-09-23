@@ -13,6 +13,7 @@ import pathlib as path
 import re
 import traceback
 import time
+import threading
 import typing as tp
 import uuid
 from concurrent.futures import Future as CCFuture
@@ -45,6 +46,7 @@ from seafront.config.registry import ConfigRegistry
 from seafront.debug_introspect import register_signal_dumper
 from seafront.hardware.camera.camera import bits_for_pixel_format
 from seafront.hardware.forbidden_areas import ForbiddenArea, ForbiddenAreaList
+from seafront.hardware.health import Condition, HardwareCloseError, describe
 from seafront.hardware.microscope import (
     DisconnectError,
     HardwareLimits,
@@ -62,7 +64,7 @@ from seafront.server.commands import (
     AutofocusSnapResult,
     BaseCommand,
     BasicSuccessResponse,
-    CameraInfo,
+    HealthResponse,
     ChannelSnapProgressiveStatus,
     ChannelSnapSelectionResult,
     ChannelSnapshot,
@@ -262,6 +264,37 @@ class Core:
             logger.warning(f"could not install SIGUSR2 stack dumper: {e}")
 
     # -- what the api layer calls into -------------------------------------------------------
+
+    def health_report(self, *, time_since_last_request_s: float | None, now: float) -> HealthResponse:
+        "what /api/health answers; reads the health board, never the hardware"
+        hardware = self.microscope.health()
+        stalls = self.microscope.stalls()
+
+        down: list[str] = [f"hardware stalled: {stall.describe(now)}" for stall in stalls]
+        degraded: list[str] = []
+        for device in hardware:
+            fault = f": {device.last_fault.message}" if device.last_fault is not None else ""
+            match device.condition:
+                case Condition.OK:
+                    pass
+                case Condition.UNRESPONSIVE:
+                    degraded.append(f"{device.device} is not answering{fault}")
+                case Condition.DISCONNECTED:
+                    down.append(f"{device.device} is disconnected{fault}")
+                case Condition.NOT_CONNECTED:
+                    down.append(f"{device.device} is not connected")
+
+        return HealthResponse(
+            status="down" if down else "degraded" if degraded else "ok",
+            reasons=down + degraded,
+            hardware=hardware,
+            stalls=stalls,
+            last_acquisition_error=self._last_acquisition_error,
+            last_acquisition_error_timestamp=self._last_acquisition_error_timestamp,
+            microscope_name=self.microscope_name,
+            time_since_last_request_s=time_since_last_request_s,
+            server_time=now,
+        )
 
     def mark_request_served(self) -> None:
         "record that a request was answered, for /api/health"
@@ -832,9 +865,15 @@ class Core:
         status response says is busy and what it says is running come from the same instant."""
         if label is None:
             label = self.worker.current_label()
-        if label is not None:
-            return [f"hardware busy: {label}"]
-        return ["hardware command in progress"]
+        reasons = [f"hardware busy: {label}"] if label is not None else ["hardware command in progress"]
+        # a stall is why the hardware is busy, and why it will stay busy: without it the
+        # rejection reads as a wait-and-retry when retrying will never get through
+        reasons += [
+            f"hardware stalled: {stall.describe()}; it will stay busy until that call returns, "
+            f"which may need a restart of the server"
+            for stall in self.microscope.stalls()
+        ]
+        return reasons
 
     @property
     def acquisition_is_running(self) -> bool:
@@ -928,16 +967,7 @@ class Core:
             self._hardware_limits_cache = self.microscope.get_hardware_limits()
         hardware_limits_obj = self._hardware_limits_cache
 
-        main_camera = CameraInfo()
-        try:
-            camera = self.microscope.main_camera.value  # type: ignore[attr-defined]
-            main_camera = CameraInfo(
-                vendor=str(getattr(camera, "vendor_name", "")),
-                model=str(getattr(camera, "model_name", "")),
-                serial_number=str(getattr(camera, "sn", "")),
-            )
-        except Exception as e:
-            logger.debug(f"camera identity unavailable for hardware capabilities: {e}")
+        main_camera = self.microscope.main_camera_info()
 
         # Filter positions and forbidden areas are stored as config objects. Parsing them here
         # means a client reads a typed list instead of digging through machine config for a
@@ -1068,18 +1098,7 @@ class Core:
             error_internal(detail=f"plate name is not acceptable: {plate_name_issue}")
 
         # Get camera info for OME metadata from microscope
-        camera_vendor = ""
-        camera_model = ""
-        camera_sn = ""
-        try:
-            if hasattr(self.microscope, 'main_camera') and self.microscope.main_camera is not None:  # type: ignore
-                # main_camera is a Locked[Camera], need to access the camera object
-                camera = self.microscope.main_camera.value  # type: ignore
-                camera_vendor = getattr(camera, 'vendor_name', '')
-                camera_model = getattr(camera, 'model_name', '')
-                camera_sn = getattr(camera, 'sn', '')
-        except Exception as e:
-            logger.warning(f"Could not get camera info for OME metadata: {e}")
+        camera = self.microscope.main_camera_info()
 
         # Extract objective magnification from configuration
         objective_magnification: int | None = None
@@ -1099,9 +1118,9 @@ class Core:
         # Build OME template with microscope-wide metadata
         ome_template = build_ome_instrument(
             microscope_name=self.microscope_name,
-            camera_vendor=camera_vendor,
-            camera_model=camera_model,
-            camera_sn=camera_sn,
+            camera_vendor=camera.vendor,
+            camera_model=camera.model,
+            camera_sn=camera.serial_number,
             hardware_channels=self.microscope.channels,
             objective_magnification=objective_magnification,
         )
@@ -1407,17 +1426,89 @@ class Core:
                 error_detail=str(e)
             ))
 
-    def close(self):
+    SHUTDOWN_CLOSE_DEADLINE_S: tp.ClassVar[float] = 90.0
+    "how long shutdown waits for the hardware to close: past the adapter's own close deadlines"
+
+    def _close_microscope(self) -> bool:
+        """
+        Close the hardware, without waiting forever on it. Returns whether it closed cleanly.
+
+        A hardware call stuck in an SDK holds its device lock for as long as it is stuck, and
+        closing takes every device lock, so closing behind a stall would never return and the
+        process would never exit. With a stall known up front there is nothing to wait for;
+        otherwise the close runs on its own thread, with a deadline in case one begins.
+        """
+        stalls = self.microscope.stalls()
+        if stalls:
+            for stall in stalls:
+                logger.error(
+                    f"shutdown - not closing the hardware: {stall.describe()}, and closing would "
+                    f"wait on it. The SDK still holds the device; power-cycle it if the next "
+                    f"start reports it in use"
+                )
+            return False
+
+        outcome: list[BaseException | None] = []
+
+        def close() -> None:
+            try:
+                self.microscope.close()
+                outcome.append(None)
+            except BaseException as e:
+                outcome.append(e)
+
+        closer = threading.Thread(target=close, name="shutdown-close", daemon=True)
+        closer.start()
+        closer.join(self.SHUTDOWN_CLOSE_DEADLINE_S)
+
+        if closer.is_alive():
+            stalled = "; ".join(stall.describe() for stall in self.microscope.stalls())
+            logger.error(
+                f"shutdown - the hardware did not close within {self.SHUTDOWN_CLOSE_DEADLINE_S:.0f} s"
+                + (f": {stalled}" if stalled else "")
+                + ". Exiting with it still open; power-cycle it if the next start reports it in use"
+            )
+            return False
+
+        error = outcome[0]
+        if error is None:
+            return True
+        if isinstance(error, HardwareCloseError):
+            for device, failure in error.failures.items():
+                logger.error(f"shutdown - {device} did not close cleanly: {describe(failure)}")
+        else:
+            logger.opt(exception=error).error("shutdown - closing the microscope failed")
+        return False
+
+    def close(self) -> bool:
+        """
+        Shut down: release the hardware, save the config, finish writing images.
+
+        Every step runs whatever happened to the ones before it - hardware that would not
+        close is no reason to lose the config or the images still queued. Each failure is
+        logged as it happens. Returns whether everything went cleanly, so the process can exit
+        non-zero when it did not: a device left open is what makes the next start fail with
+        "device in use", and that start needs to be able to find out why.
+        """
+        clean = True
+
         logger.debug("shutdown - closing microscope")
-        try:
-            self.microscope.close()
-        except:
-            pass
+        if not self._close_microscope():
+            clean = False
 
         logger.debug("shutdown - storing global config")
-        GlobalConfigHandler.store()
+        try:
+            GlobalConfigHandler.store()
+        except Exception:
+            clean = False
+            logger.exception("shutdown - storing the global config failed")
 
         logger.debug("shutdown - closing image store threadpool")
-        self.image_store_threadpool.join()
+        try:
+            self.image_store_threadpool.join()
+        except Exception:
+            clean = False
+            logger.exception("shutdown - finishing queued image writes failed")
 
         logger.debug("shutdown - done")
+        return clean
