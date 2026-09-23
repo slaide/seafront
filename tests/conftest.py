@@ -7,13 +7,35 @@ here lets other test modules build a `MockMicroscope` in-process too.
 
 import json
 import os
+import shutil
+import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
+# The seafront home is resolved, created and written to (the log file, the default config) on
+# the first import of seafront, so the tests' own home has to be in place before that import.
+# A seafront imported earlier (a plugin, a -p option) already has the user's real home, and
+# the run would write there; that is refused rather than cleaned up after.
+if any(name == "seafront" or name.startswith("seafront.") for name in sys.modules):
+    raise RuntimeError(
+        "seafront was imported before tests/conftest.py could point SEAFRONT_HOME at a "
+        "scratch directory; the run would write to the real seafront home"
+    )
+_TEST_HOME = Path(tempfile.mkdtemp(prefix="seafront-test-home-"))
+os.environ["SEAFRONT_HOME"] = str(_TEST_HOME)
 
-from seafront.config.basics import GlobalConfigHandler
-from seafront.config.registry import ConfigRegistry
+import pytest  # noqa: E402
+
+from seafront.config.basics import GlobalConfigHandler  # noqa: E402
+from seafront.config.registry import ConfigRegistry  # noqa: E402
+
+assert GlobalConfigHandler.home() == _TEST_HOME, GlobalConfigHandler.home()
+
+
+def pytest_unconfigure(config):
+    "the scratch home goes with the run"
+    shutil.rmtree(_TEST_HOME)
 
 
 @pytest.fixture

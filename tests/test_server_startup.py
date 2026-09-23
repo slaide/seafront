@@ -1,68 +1,23 @@
 """Tests for server startup with mock microscope."""
 
 import json
-import os
-import subprocess
 import time
 import urllib.error
 import urllib.request
 
 import pytest
 
+from tests.mock_server import MOCK, mock_server
+
 
 @pytest.fixture(scope="class")
 def running_server(request, tmp_path_factory):
     """Start server once for all tests in the class."""
-    env = os.environ.copy()
-    env["MOCK_NO_DELAYS"] = "1"
-
-    # To a file, never a PIPE: nothing here reads the pipe, and a full pipe buffer blocks
-    # the server's event loop. Tests that need to see what startup did read this back.
-    log_path = tmp_path_factory.mktemp("server-log") / "server.log"
-    log = log_path.open("w")
-    request.cls.server_log = log_path
-
-    proc = subprocess.Popen(
-        ["uv", "run", "python", "-m", "seafront", "--microscope", "mocroscope"],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        text=True,
-        env=env,
-    )
-
-    # Wait for server to start
-    server_ready = False
-    start_time = time.time()
-    timeout = 15
-
-    while time.time() - start_time < timeout:
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:5000/", timeout=1) as response:
-                if response.status == 200:
-                    server_ready = True
-                    break
-        except (urllib.error.URLError, ConnectionRefusedError):
-            time.sleep(0.5)
-
-    if not server_ready:
-        proc.terminate()
-        proc.wait()
-        log.close()
-        pytest.fail("Server did not start within timeout")
-
-    # Make server URL available to tests
-    request.cls.server_url = "http://127.0.0.1:5000"
-
-    yield proc
-
-    # Cleanup
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-    log.close()
+    with mock_server(tmp_path_factory) as server:
+        request.cls.server_url = server.url
+        # tests that need to see what startup did read the server's log back
+        request.cls.server_log = server.log_path
+        yield server.proc
 
 
 @pytest.mark.usefixtures("running_server")
@@ -170,7 +125,7 @@ class TestStartupConnectsTheHardware:
         would be locked out by their own server.
         """
         self._log()
-        body = json.dumps({"target_device": "mocroscope"}).encode()
+        body = json.dumps({"target_device": MOCK}).encode()
         req = urllib.request.Request(
             f"{self.server_url}/api/lock/status",
             data=body,

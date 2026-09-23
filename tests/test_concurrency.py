@@ -16,20 +16,18 @@ production code.
 
 import http.client
 import json
-import os
-import socket
-import subprocess
 import threading
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect as ws_connect
 
-MOCK_MICROSCOPE_NAME = "mocroscope"
+from tests.mock_server import MOCK, MockServer, mock_server
+
+MOCK_MICROSCOPE_NAME = MOCK
 
 
 def make_request(
@@ -69,20 +67,8 @@ def make_request(
         return e.code, json.loads(body) if body else None
 
 
-def _wait_for_free_port(timeout_s: float = 20) -> None:
-    """Wait for port 5000 to be free.
-
-    The previous class's server is terminated at teardown but takes a moment to let go of
-    the port. Starting before then gives a server that cannot bind and dies, while the
-    readiness probe below happily talks to the dying one instead.
-    """
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        with socket.socket() as s:
-            if s.connect_ex(("127.0.0.1", 5000)) != 0:
-                return
-        time.sleep(0.2)
-    pytest.fail("port 5000 is still in use; another seafront is running")
+# the server the running class talks to; `_default_protocol` fetches its protocol from there
+_server: MockServer | None = None
 
 
 @pytest.fixture(scope="class")
@@ -90,51 +76,13 @@ def running_server_with_delays(request, tmp_path_factory):
     """Start the mock server WITH realistic delays (unlike test_api_operations, which
     sets MOCK_NO_DELAYS=1). Delays make a move take real wall-clock time, which is what
     lets these tests observe a command in flight."""
-    env = os.environ.copy()
-    env["MOCK_NO_DELAYS"] = "0"  # delays ON, so a move takes observable wall-clock time
-
-    _wait_for_free_port()
-    # Output goes to a file, never a PIPE: these tests fire thousands of requests, and an
-    # unread pipe fills up after a few hundred access log lines and then blocks the server's
-    # event loop on every further log write - which looks exactly like the server hanging.
-    log_path = tmp_path_factory.mktemp("server-log") / "server.log"
-    log = log_path.open("w")
-    proc = subprocess.Popen(
-        ["uv", "run", "python", "-m", "seafront", "--microscope", MOCK_MICROSCOPE_NAME],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        text=True,
-        env=env,
-    )
-
-    server_ready = False
-    start_time = time.time()
-    while time.time() - start_time < 15:
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:5000/", timeout=1) as response:
-                if response.status == 200:
-                    server_ready = True
-                    break
-        except (urllib.error.URLError, ConnectionRefusedError):
-            time.sleep(0.5)
-
-    if not server_ready:
-        proc.terminate()
-        proc.wait()
-        log.close()
-        pytest.fail(f"Server did not start within timeout; log at {log_path}")
-
-    request.cls.server_url = "http://127.0.0.1:5000"
-
-    yield proc
-
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-    log.close()
+    global _server, _default_protocol_cache
+    with mock_server(tmp_path_factory, no_delays=False) as server:
+        _server, _default_protocol_cache = server, None
+        request.cls.server_url = server.url
+        request.cls.server_port = server.port
+        yield server.proc
+        _server, _default_protocol_cache = None, None
 
 
 @pytest.fixture(scope="class")
@@ -282,7 +230,7 @@ class TestOneRequestIsOneClaim:
         stop = threading.Event()
 
         def poll():
-            conn = http.client.HTTPConnection("127.0.0.1", 5000, timeout=10)
+            conn = http.client.HTTPConnection("127.0.0.1", self.server_port, timeout=10)
             body = json.dumps({"target_device": MOCK_MICROSCOPE_NAME})
             headers = {"Content-Type": "application/json"}
             try:
@@ -594,7 +542,7 @@ class TestStatusNeverContradictsItself:
 
         def poll():
             nonlocal samples
-            conn = http.client.HTTPConnection("127.0.0.1", 5000, timeout=10)
+            conn = http.client.HTTPConnection("127.0.0.1", self.server_port, timeout=10)
             body = json.dumps({"target_device": MOCK_MICROSCOPE_NAME})
             headers = {"Content-Type": "application/json"}
             try:
@@ -745,7 +693,7 @@ class TestStatusWebsocket:
         return json.loads(ws.recv(timeout=10))
 
     def test_the_socket_answers_every_poke_with_a_state(self):
-        with ws_connect("ws://127.0.0.1:5000/ws/get_info/current_state") as ws:
+        with ws_connect(f"ws://127.0.0.1:{self.server_port}/ws/get_info/current_state") as ws:
             ws.send(json.dumps({"target_device": MOCK_MICROSCOPE_NAME}))
             for _ in range(20):
                 state = self._state(ws)
@@ -754,7 +702,7 @@ class TestStatusWebsocket:
 
     def test_a_socket_client_sees_the_hardware_go_busy_and_idle_again(self):
         """the socket is a live view, not a snapshot taken when it was opened"""
-        with ws_connect("ws://127.0.0.1:5000/ws/get_info/current_state") as ws:
+        with ws_connect(f"ws://127.0.0.1:{self.server_port}/ws/get_info/current_state") as ws:
             ws.send(json.dumps({"target_device": MOCK_MICROSCOPE_NAME}))
             assert self._state(ws)["is_busy"] is False
 
@@ -789,7 +737,7 @@ class TestStatusWebsocket:
 
         def watcher():
             try:
-                with ws_connect("ws://127.0.0.1:5000/ws/get_info/current_state") as ws:
+                with ws_connect(f"ws://127.0.0.1:{self.server_port}/ws/get_info/current_state") as ws:
                     ws.send(json.dumps({"target_device": MOCK_MICROSCOPE_NAME}))
                     ready.wait(timeout=20)
                     while not stop.is_set():
@@ -819,7 +767,7 @@ class TestStatusWebsocket:
         assert not errors, errors[:5]
 
     def test_a_socket_for_the_wrong_microscope_is_closed(self):
-        with ws_connect("ws://127.0.0.1:5000/ws/get_info/current_state") as ws:
+        with ws_connect(f"ws://127.0.0.1:{self.server_port}/ws/get_info/current_state") as ws:
             ws.send(json.dumps({"target_device": "some-other-microscope"}))
             reply = json.loads(ws.recv(timeout=10))
             assert reply["error"] == "target_device_mismatch"
@@ -839,10 +787,15 @@ _default_protocol_cache: dict | None = None
 def _default_protocol() -> dict:
     global _default_protocol_cache
     if _default_protocol_cache is None:
-        from scripts.generate_default_protocol import generate_default_protocol
-
-        path = generate_default_protocol(microscope_name=MOCK_MICROSCOPE_NAME)
-        _default_protocol_cache = json.loads(Path(path).read_text())
+        assert _server is not None, "the default protocol is fetched from the running server"
+        status, listing = make_request(f"{_server.url}/api/acquisition/config_list")
+        assert status == 200 and listing is not None, (status, listing)
+        name = listing["configs"][0]["filename"]
+        status, fetched = make_request(
+            f"{_server.url}/api/acquisition/config_fetch", data={"config_file": name}
+        )
+        assert status == 200 and fetched is not None, (status, fetched)
+        _default_protocol_cache = fetched["file"]
     return json.loads(json.dumps(_default_protocol_cache))  # deep copy
 
 

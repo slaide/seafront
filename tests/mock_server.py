@@ -19,6 +19,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 import typing as tp
 import urllib.error
@@ -96,7 +97,7 @@ def mock_server(tmp_path_factory, *, no_delays: bool = True) -> tp.Iterator[Mock
     log_path = home / "server.log"
     log = log_path.open("w")
     proc = subprocess.Popen(
-        ["uv", "run", "python", "-m", "seafront", "--microscope", MOCK, "--port", str(port)],
+        [sys.executable, "-m", "seafront", "--microscope", MOCK, "--port", str(port)],
         stdout=log, stderr=subprocess.STDOUT, text=True, env=env,
     )
     try:
