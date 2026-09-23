@@ -12,7 +12,7 @@ import seaconfig as sc
 
 from matplotlib import pyplot as plt
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 from scipy import stats  # for linear regression
 
 from seafront.config.basics import (
@@ -194,6 +194,9 @@ class SquidAdapter(Microscope):
     focus_camera: Locked[Camera]
     microcontroller: Microcontroller
     illumination_controller: IlluminationController
+
+    _filter_wheel_fault: str | None = PrivateAttr(default=None)
+    "why the filter wheel cannot be used, set when homing it failed; the next homing retries"
 
     @classmethod
     def make(cls) -> "SquidAdapter":
@@ -480,17 +483,30 @@ class SquidAdapter(Microscope):
             filter_wheel_available = ConfigRegistry.get(FilterWheelConfig.AVAILABLE)
             if filter_wheel_available and filter_wheel_available.boolvalue:
                 # Initialize filter wheel with homing sequence (matching Squid behavior)
+                # A wheel that failed to home is at an unknown position, so every filter move
+                # is refused with the reason until a later homing succeeds. The stage is
+                # homed either way, and channels are refused rather than imaged through
+                # whichever filter the wheel happens to be on.
                 logger.info("initializing filter wheel...")
+                self._filter_wheel_fault = None
+                step = "init"
                 try:
                     qmc.filter_wheel_init()
+                    step = "configure actuator"
                     logger.info("configuring filter wheel actuator...")
                     qmc.filter_wheel_configure_actuator()
+                    step = "home"
                     logger.info("performing filter wheel homing...")
                     qmc.filter_wheel_home()
-                    logger.info("✓ Filter wheel initialized, configured, and homed")
+                    logger.info("filter wheel initialized, configured, and homed")
+                except IOError:
+                    raise
                 except Exception as e:
-                    logger.warning(f"Filter wheel initialization/configuration/homing failed: {e}")
-                    logger.info("Continuing with microscope initialization...")
+                    self._filter_wheel_fault = f"filter wheel {step} failed: {describe(e)}"
+                    logger.opt(exception=e).error(
+                        f"squid - {self._filter_wheel_fault}; filter moves are refused until "
+                        "the microscope is homed again"
+                    )
 
             logger.info("done initializing microscope")
 
@@ -1451,6 +1467,30 @@ class SquidAdapter(Microscope):
         _raise_collected(failures)
         logger.debug("squid - turned off all illumination")
 
+    def _move_filter_wheel(self, qmc: Microcontroller, channel: sc.AcquisitionChannelConfig) -> None:
+        "put the channel's filter in the light path; a channel without a filter leaves the wheel"
+        if channel.filter_handle is None:
+            return
+
+        filter_config = next((f for f in self.filters if f.handle == channel.filter_handle), None)
+        if filter_config is None:
+            cmd.error_internal(
+                detail=f"Filter handle '{channel.filter_handle}' not found in filter configuration"
+            )
+        if self._filter_wheel_fault is not None:
+            cmd.error_internal(
+                detail=f"cannot select filter '{filter_config.name}': {self._filter_wheel_fault}. "
+                "Home the microscope to retry."
+            )
+
+        try:
+            logger.debug(f"squid - filter wheel to position {filter_config.slot} ({filter_config.name})")
+            qmc.filter_wheel_set_position(filter_config.slot)
+        except Exception as e:
+            cmd.error_internal(
+                detail=f"Failed to set filter wheel to position {filter_config.slot}: {describe(e)}"
+            )
+
     def _execute_ChannelSnapshot(
         self,
         qmc: Microcontroller,
@@ -1486,29 +1526,7 @@ class SquidAdapter(Microscope):
         # Validate channel configuration for acquisition
         self.validate_channel_for_acquisition(command.channel)
 
-        # Handle filter wheel positioning if filter is specified
-        if command.channel.filter_handle is not None:
-            # Find filter config by handle
-            filter_config = None
-            for f in self.filters:
-                if f.handle == command.channel.filter_handle:
-                    filter_config = f
-                    break
-
-            if filter_config is None:
-                cmd.error_internal(
-                    detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
-                )
-
-            try:
-                logger.debug(f"channel snap - using filter '{filter_config.name}' (handle: {filter_config.handle}, wheel position: {filter_config.slot})")
-                qmc.filter_wheel_set_position(filter_config.slot)
-            except Exception as e:
-                cmd.error_internal(
-                    detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
-                )
-        else:
-            logger.debug("channel snap - no filter specified for this channel")
+        self._move_filter_wheel(qmc, command.channel)
 
         logger.debug("channel snap - before illum on")
         # Get calibrated intensity for this channel
@@ -1609,27 +1627,7 @@ class SquidAdapter(Microscope):
         # Validate channel configuration for acquisition
         self.validate_channel_for_acquisition(command.channel)
 
-        # Handle filter wheel positioning if filter is specified
-        if command.channel.filter_handle is not None:
-            # Find filter config by handle
-            filter_config = None
-            for f in self.filters:
-                if f.handle == command.channel.filter_handle:
-                    filter_config = f
-                    break
-
-            if filter_config is None:
-                cmd.error_internal(
-                    detail=f"Filter handle '{command.channel.filter_handle}' not found in filter configuration"
-                )
-
-            try:
-                logger.debug(f"channel stream - setting filter wheel to position {filter_config.slot} ({filter_config.name})")
-                qmc.filter_wheel_set_position(filter_config.slot)
-            except Exception as e:
-                cmd.error_internal(
-                    detail=f"Failed to set filter wheel to position {filter_config.slot}: {e}"
-                )
+        self._move_filter_wheel(qmc, command.channel)
 
         # Get calibrated intensity for this channel
         calibrated_intensity = self.illumination_controller.get_calibrated_intensity(
