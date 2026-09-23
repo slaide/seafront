@@ -175,6 +175,10 @@ class Microscope(BaseModel, abc.ABC):
         camera = self.main_camera.value
         return cmd.CameraInfo(vendor=camera.vendor_name, model=camera.model_name, serial_number=camera.sn)
 
+    @abc.abstractmethod
+    def illumination_state(self) -> cmd.IlluminationState:
+        "which lights are on, as far as the adapter has told them. No I/O."
+
     # -- streaming: the adapter owns whether it is happening ----------------------------------
 
     def set_frame_sink(self, sink: FrameSink | None) -> None:

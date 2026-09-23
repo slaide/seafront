@@ -2505,6 +2505,16 @@ This reads the laser reflection position without moving the stage. Instant resul
                             .lock-indicator.lock-foreign {
                                 color: #e74c3c;
                             }
+                            .hardware-indicator {
+                                margin-left: 0.75em;
+                            }
+                            .hardware-problem, .lights-indicator {
+                                color: #e74c3c;
+                                font-weight: bold;
+                            }
+                            .lights-indicator {
+                                margin-left: 0.75em;
+                            }
                         </style>
                         <span x-text="connectionText"></span>
                         <span
@@ -2518,6 +2528,12 @@ This reads the laser reflection position without moving the stage. Instant resul
                             x-init="enabletooltip($el)"
                             tooltip="Device lock: while a client holds it, only that client can drive the hardware. Cancelling always works. Acquire or release it in this panel."
                         ></span>
+                        <span
+                            class="hardware-indicator"
+                            x-text="hardwareText"
+                            x-bind:class="{ 'hardware-problem': hardwareProblems.length > 0 }"
+                        ></span>
+                        <span class="lights-indicator" x-show="lightsOnText" x-text="lightsOnText"></span>
                         
                         <!-- Server Details Popup -->
                         <div class="popup">
@@ -2537,6 +2553,25 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 <span x-text="connectionText"></span>
                                 <label>Lock:</label>
                                 <span x-text="`${lockText} ${lockExpiresText}`.trim()"></span>
+                                <label>Objective:</label>
+                                <span x-text="state.objective ?? '(none configured)'"></span>
+                                <label>Main camera:</label>
+                                <span x-text="`${state.main_camera?.identity?.vendor ?? ''} ${state.main_camera?.identity?.model ?? ''} (${state.main_camera?.identity?.serial_number ?? ''}), ${state.main_camera?.pixel_format ?? ''}`"></span>
+                                <template x-for="h in (state.hardware ?? [])">
+                                    <div style="display: contents;">
+                                        <label x-text="`${h.device}:`"></label>
+                                        <span
+                                            x-bind:class="{ 'hardware-problem': h.condition !== 'ok' }"
+                                            x-text="`${h.condition}${h.last_fault ? ` - last fault at ${new Date(h.last_fault.at * 1000).toLocaleTimeString()}: ${h.last_fault.operation}: ${h.last_fault.message}` : ''}`"
+                                        ></span>
+                                    </div>
+                                </template>
+                                <template x-for="s in (state.stalls ?? [])">
+                                    <div style="display: contents;">
+                                        <label>Stalled:</label>
+                                        <span class="hardware-problem" x-text="`${s.device} ${s.operation}, since ${new Date(s.started_at * 1000).toLocaleTimeString()} (deadline ${s.deadline_s} s)`"></span>
+                                    </div>
+                                </template>
                                 <label>Your name:</label>
                                 <input
                                     type="text"
@@ -2606,14 +2641,14 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 <label style="grid-area: llp">Loading Position</label>
                                 <button
                                     style="grid-area: lpe"
-                                    x-effect="disableElement($el,()=>state?.adapter_state.is_in_loading_position??true)"
+                                    x-effect="disableElement($el,()=>state?.adapter_state?.is_in_loading_position??true)"
                                     @click="await Actions.enterLoadingPosition()"
                                 >
                                     Enter
                                 </button>
                                 <button
                                     style="grid-area: lpl"
-                                    x-effect="disableElement($el,()=>!(state?.adapter_state.is_in_loading_position??false))"
+                                    x-effect="disableElement($el,()=>!(state?.adapter_state?.is_in_loading_position??false))"
                                     @click="await Actions.leaveLoadingPosition()"
                                 >
                                     Leave

@@ -226,6 +226,19 @@ class Microcontroller(ABC):
         """
         pass
 
+    @abstractmethod
+    def illumination_lit(self) -> dict[int, float]:
+        """
+        illumination source code -> intensity percent, for every source told to turn on and
+        not since confirmed off. A failed command leaves a source counted as on. No I/O.
+        """
+        pass
+
+    @abstractmethod
+    def af_laser_is_on(self) -> bool:
+        "whether the autofocus laser was told to turn on and not since confirmed off. No I/O."
+        pass
+
     # Autofocus laser
 
     @abstractmethod

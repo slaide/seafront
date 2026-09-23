@@ -1078,6 +1078,23 @@ class SquidAdapter(Microscope):
 
         return self.last_state
 
+    def illumination_state(self) -> cmd.IlluminationState:
+        # the code sent is the slot number (ILLUMINATION_CODE.from_slot), without the check a
+        # status read has no use for
+        by_code = {channel.source_slot: channel for channel in self.channels}
+        lit = []
+        for code, intensity in sorted(self.microcontroller.illumination_lit().items()):
+            channel = by_code.get(code)
+            lit.append(
+                cmd.LitIllumination(
+                    handle=channel.handle if channel is not None else "",
+                    name=channel.name if channel is not None
+                    else f"illumination source {code} (no channel is configured for it)",
+                    intensity_percent=intensity,
+                )
+            )
+        return cmd.IlluminationState(lit=lit, af_laser_on=self.microcontroller.af_laser_is_on())
+
     def _get_current_position(self, qmc: Microcontroller) -> cmd.Position:
         """Stage position in the calibrated coordinate frame used by public commands."""
         return self._position_to_real(qmc.get_last_position())

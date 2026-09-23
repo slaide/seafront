@@ -501,6 +501,20 @@ function checkMockLease(endpoint, body) {
     if ((body?.lock_token ?? null) !== mockLock.token) throw mockLockedError('held_by_other');
 }
 
+/** the hardware part of a status read, for a mock with nothing wrong and nothing lit */
+function mockHardwareState() {
+    const now = Date.now() / 1000;
+    return {
+        hardware: ["main_camera", "focus_camera", "microcontroller"].map(device => ({
+            device, condition: "ok", since: now, last_fault: null, last_heard_at: null,
+        })),
+        stalls: [],
+        illumination: { lit: [], af_laser_on: false },
+        objective: null,
+        main_camera: { identity: { vendor: "Mock", model: "Offline", serial_number: "" }, pixel_format: "mono8" },
+    };
+}
+
 class MockAPIClient {
     /**
      * @param {string} baseURL
@@ -683,6 +697,7 @@ class MockAPIClient {
                 last_acquisition_error: null,
                 last_acquisition_error_timestamp: null,
                 lock: { held: mockLock.held, owner: mockLock.owner, lock_id: mockLock.lock_id, expires_at: mockLock.expires_at },
+                ...mockHardwareState(),
             };
         }
 
@@ -1319,6 +1334,7 @@ class MockWebSocketManager {
                 microscope_name: "Mock Microscope (Offline)",
                 last_acquisition_error: null,
                 last_acquisition_error_timestamp: null,
+                ...mockHardwareState(),
             };
 
             const statusJson = JSON.stringify(statusUpdate);

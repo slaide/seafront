@@ -418,7 +418,12 @@ declare global {
     };
 
     type CoreCurrentState = {
-        adapter_state: AdapterState;
+        adapter_state: AdapterState | null;
+        hardware: DeviceHealth[];
+        stalls?: Stall[];
+        illumination: IlluminationState;
+        objective: string | null;
+        main_camera: MainCameraState;
         latest_imgs: { [key: string]: ImageStoreInfo };
         current_acquisition_id: string | null;
         is_streaming: boolean;
@@ -567,6 +572,16 @@ declare global {
     };
 
     /**
+     * what the microcontroller was told about the lights. A source counts as on from the moment
+     * it is asked to turn on until it has confirmed turning off, so a failed command leaves it
+     * listed: this errs toward "possibly on".
+     */
+    type IlluminationState = {
+        lit?: LitIllumination[];
+        af_laser_on?: boolean;
+    };
+
+    /**
      * indicates that an image has been acquired
      * 
      * acquired image data is only present for internal use.
@@ -616,6 +631,12 @@ declare global {
     type LaserAutofocusCalibrationResponse = {
         calibration_data: LaserAutofocusCalibrationData;
         microscope_name?: string;
+    };
+
+    type LitIllumination = {
+        handle: string;
+        name: string;
+        intensity_percent: number;
     };
 
     type LoadingPositionEnterRequest = {
@@ -736,6 +757,11 @@ declare global {
         target_device: string;
         /** Device lease token from /api/lock/acquire; required while another client holds the lease */
         lock_token?: string | null;
+    };
+
+    type MainCameraState = {
+        identity: CameraInfo;
+        pixel_format: string;
     };
 
     type MoveByRequest = {

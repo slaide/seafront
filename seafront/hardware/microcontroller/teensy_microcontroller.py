@@ -1002,6 +1002,15 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
     # Filter wheel state
     filter_wheel_position: int = Field(default=firmware_config.FILTERWHEEL_MIN_INDEX)
 
+    # What the lights were told. A source counts as on from the moment it is asked to turn on
+    # until it has confirmed turning off, so a command that fails leaves it counted as on: the
+    # state errs toward "possibly on", which is the side an operator can act on safely.
+    _lit: dict[int, float] = PrivateAttr(default_factory=dict)
+    "illumination source code -> intensity percent as sent"
+    _af_laser_on: bool = PrivateAttr(default=False)
+    _light_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    "the status read takes these from another thread than the one changing them"
+
     # Reconnection grace period state
     _last_disconnect_time: float | None = PrivateAttr(default=None)
     """ timestamp of when the last disconnect was detected """
@@ -1102,6 +1111,8 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
     ) -> None:
         """Turn on illumination."""
         illum_source = ILLUMINATION_CODE(source)
+        with self._light_lock:
+            self._lit[source] = intensity_percent
         if rgb is not None:
             self.send_cmd(Command.illumination_begin(illum_source, intensity_percent, rgb[0], rgb[1], rgb[2]))
         else:
@@ -1112,16 +1123,32 @@ class TeensyMicrocontroller(Microcontroller, BaseModel):
         if source is not None:
             illum_source = ILLUMINATION_CODE(source)
             self.send_cmd(Command.illumination_end(illum_source))
+            with self._light_lock:
+                self._lit.pop(source, None)
         else:
             self.send_cmd(Command.illumination_end(None))
+            with self._light_lock:
+                self._lit.clear()
 
     def af_laser_on(self) -> None:
         """Turn on the autofocus laser."""
+        with self._light_lock:
+            self._af_laser_on = True
         self.send_cmd(Command.af_laser_illum_begin())
 
     def af_laser_off(self) -> None:
         """Turn off the autofocus laser."""
         self.send_cmd(Command.af_laser_illum_end())
+        with self._light_lock:
+            self._af_laser_on = False
+
+    def illumination_lit(self) -> dict[int, float]:
+        with self._light_lock:
+            return dict(self._lit)
+
+    def af_laser_is_on(self) -> bool:
+        with self._light_lock:
+            return self._af_laser_on
 
     # ==================== Internal Implementation ====================
 

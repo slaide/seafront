@@ -135,6 +135,25 @@ function cloneObject(o) {
     }
 }
 
+/**
+ * the stage position from a status read, for moving relative to it. Throws when the position
+ * is not current (the stage never reported, or the microcontroller is not connected): a z
+ * reference taken from a stale reading would put every following move somewhere else.
+ * @param {CoreCurrentState} currentState
+ * @returns {AdapterState["stage_position"]}
+ */
+function currentStagePosition(currentState) {
+    const mcu = currentState.hardware?.find(h => h.device === "microcontroller");
+    if (currentState.adapter_state == null) {
+        throw new Error("stage position unavailable: the stage has not reported a position since the server started");
+    }
+    if (mcu && mcu.condition !== "ok") {
+        const fault = mcu.last_fault ? ` (${mcu.last_fault.operation}: ${mcu.last_fault.message})` : "";
+        throw new Error(`stage position is not current: the microcontroller is ${mcu.condition}${fault}`);
+    }
+    return currentState.adapter_state.stage_position;
+}
+
 const generate_alpine_object=() => ({
     /** url to microscope (hardware) server (default to same origin as gui) */
     server_url: window.location.origin,
@@ -236,6 +255,27 @@ const generate_alpine_object=() => ({
         const s = this.lockState;
         if (!s.held) return 'Unlocked';
         return this.lockIsMine ? 'Locked by you' : `Locked by ${s.owner ?? 'another client'}`;
+    },
+    /** devices not in working order, and calls stuck in the hardware */
+    get hardwareProblems() {
+        const devices = (this.state.hardware ?? [])
+            .filter(h => h.condition !== "ok")
+            .map(h => `${h.device} ${h.condition.replace("_", " ")}${h.last_fault ? `: ${h.last_fault.message}` : ""}`);
+        const stalls = (this.state.stalls ?? []).map(s => `${s.device} ${s.operation} stuck since ${new Date(s.started_at * 1000).toLocaleTimeString()}`);
+        return [...devices, ...stalls];
+    },
+    get hardwareText() {
+        const problems = this.hardwareProblems;
+        if (problems.length === 0) return 'Hardware ok';
+        return problems.length === 1 ? problems[0] : `${problems.length} hardware problems`;
+    },
+    /** what the microcontroller was told to light, and not since confirmed off */
+    get lightsOnText() {
+        const illumination = this.state.illumination;
+        if (!illumination) return '';
+        const lit = (illumination.lit ?? []).map(l => `${l.name} ${l.intensity_percent.toFixed(0)}%`);
+        if (illumination.af_laser_on) lit.push('autofocus laser');
+        return lit.length ? `Light on: ${lit.join(', ')}` : '';
     },
     get lockExpiresText() {
         const s = this.lockState;
@@ -1216,6 +1256,11 @@ const generate_alpine_object=() => ({
                 last_acquisition_error:null,
                 last_acquisition_error_timestamp:null,
                 lock: { held: false, owner: null, lock_id: null, expires_at: null },
+                hardware: [],
+                stalls: [],
+                illumination: { lit: [], af_laser_on: false },
+                objective: null,
+                main_camera: { identity: { vendor: "", model: "", serial_number: "" }, pixel_format: "" },
             };
         }
         //@ts-ignore
@@ -2504,7 +2549,7 @@ const generate_alpine_object=() => ({
                 let currentState = await this.api.post('/api/get_info/current_state', {}, {
                     context: 'Get current state'
                 });
-                let focusedZ_mm = currentState.adapter_state.stage_position.z_pos_mm;
+                let focusedZ_mm = currentStagePosition(currentState).z_pos_mm;
 
                 // Step 1: If autofocus enabled, focus to offset 0
                 if (this.microscope_config.autofocus_enabled) {
@@ -2517,7 +2562,7 @@ const generate_alpine_object=() => ({
                     currentState = await this.api.post('/api/get_info/current_state', {}, {
                         context: 'Get current state after autofocus'
                     });
-                    focusedZ_mm = currentState.adapter_state.stage_position.z_pos_mm;
+                    focusedZ_mm = currentStagePosition(currentState).z_pos_mm;
                 }
 
                 // Step 2: Snap each enabled channel with z-offset

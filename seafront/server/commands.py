@@ -310,7 +310,20 @@ class ConfigListResponse(BaseModel):
 
 
 class CoreCurrentState(BaseModel):
-    adapter_state: AdapterState
+    adapter_state: AdapterState | None
+    """
+    the stage as last read. When the stage cannot be read (disconnected) this is the last state
+    it did report, and `hardware` says the microcontroller is not connected; None only if it has
+    not reported once since the server started.
+    """
+    hardware: list["DeviceHealth"]
+    "condition of every device, and its last fault"
+    stalls: list["Stall"] = Field(default_factory=list)
+    "hardware calls past their deadline and still running"
+    illumination: "IlluminationState"
+    objective: str | None
+    "the configured main objective handle; None if none is configured"
+    main_camera: "MainCameraState"
     latest_imgs: dict[str, ImageStoreInfo]
     current_acquisition_id: str | None
     is_streaming: bool
@@ -639,6 +652,31 @@ class CameraInfo(BaseModel):
     vendor: str = ""
     model: str = ""
     serial_number: str = ""
+
+
+class LitIllumination(BaseModel):
+    handle: str
+    "the channel handle whose source this is"
+    name: str
+    intensity_percent: float
+    "as sent to the hardware, after calibration"
+
+
+class IlluminationState(BaseModel):
+    """
+    what the microcontroller was told about the lights. A source counts as on from the moment
+    it is asked to turn on until it has confirmed turning off, so a failed command leaves it
+    listed: this errs toward "possibly on".
+    """
+
+    lit: list[LitIllumination] = Field(default_factory=list)
+    af_laser_on: bool = False
+
+
+class MainCameraState(BaseModel):
+    identity: CameraInfo
+    pixel_format: str
+    "the configured format images are taken in"
 
 
 class HardwareCapabilitiesResponse(BaseModel):

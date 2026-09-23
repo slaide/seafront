@@ -464,6 +464,24 @@ class MockMicroscope(Microscope):
 
         return self.last_state
 
+    def illumination_state(self) -> cmd.IlluminationState:
+        """
+        the mock has no lights; it reports what a real one would have on: the streamed
+        channel's, for as long as the stream runs
+        """
+        stream = self.stream_state()
+        if stream is None:
+            return cmd.IlluminationState()
+        return cmd.IlluminationState(
+            lit=[
+                cmd.LitIllumination(
+                    handle=stream.channel.handle,
+                    name=stream.channel.name,
+                    intensity_percent=stream.channel.illum_perc,
+                )
+            ]
+        )
+
     def _get_current_position(self) -> Position:
         """Stage position in the calibrated coordinate frame used by public commands."""
         return Position(

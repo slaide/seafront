@@ -54,6 +54,7 @@ from seafront.hardware.microscope import (
 )
 from seafront.hardware.mock_microscope import MockMicroscope
 from seafront.logger import logger
+from seafront.hardware.adapter import AdapterState
 from seafront.server.commands import (
     AcquisitionEstimate,
     AcquisitionStartResponse,
@@ -64,6 +65,7 @@ from seafront.server.commands import (
     BaseCommand,
     BasicSuccessResponse,
     HealthResponse,
+    MainCameraState,
     ChannelSnapProgressiveStatus,
     ChannelSnapSelectionResult,
     ChannelSnapshot,
@@ -698,10 +700,13 @@ class Core:
         """
 
 
+        # A status read answers even with the stage gone: it is what tells the operator the
+        # stage is gone. The microcontroller's entry in `hardware` says it is not connected,
+        # and the position shown is the last one it reported.
         try:
-            microscope_adapter_state = await self.microscope.get_current_state()
+            microscope_adapter_state: AdapterState | None = await self.microscope.get_current_state()
         except DisconnectError:
-            error_internal("hardware disconnect")
+            microscope_adapter_state = self.microscope.last_state
 
         # One locked read of the adapter for both answers, so a client can never be handed a
         # stream with no channel or a channel that is not streaming.
@@ -737,7 +742,20 @@ class Core:
             last_acquisition_error_timestamp=self._last_acquisition_error_timestamp,
             microscope_name=self.microscope_name,
             lock=self.lock.state(),
+            hardware=self.microscope.health(),
+            stalls=self.microscope.stalls(),
+            illumination=self.microscope.illumination_state(),
+            objective=self._configured_objective(),
+            main_camera=MainCameraState(
+                identity=self.microscope.main_camera_info(),
+                pixel_format=ConfigRegistry.get(CameraConfig.MAIN_PIXEL_FORMAT).strvalue,
+            ),
         )
+
+    @staticmethod
+    def _configured_objective() -> str | None:
+        item = GlobalConfigHandler.get_dict().get(CameraConfig.MAIN_OBJECTIVE.value)
+        return item.strvalue if item is not None else None
 
     def lock_acquire(
         self, owner: str, ttl_s: float | None = None, lock_token: str | None = None
@@ -1087,20 +1105,14 @@ class Core:
         # Get camera info for OME metadata from microscope
         camera = self.microscope.main_camera_info()
 
-        # Extract objective magnification from configuration
+        # magnification from the objective handle ("20xolympus" -> 20). A handle that does not
+        # start with one leaves it out of the metadata, which then says it is unknown rather
+        # than guessing.
         objective_magnification: int | None = None
-        try:
-            g_config = GlobalConfigHandler.get_dict()
-            objective_config_item = g_config.get(CameraConfig.MAIN_OBJECTIVE.value)
-            if objective_config_item:
-                # Parse objective value (e.g., "20xolympus" -> 20)
-                objective_value = objective_config_item.strvalue
-                # Extract magnification from objective string
-                mag_match = re.match(r'(\d+)x', objective_value)
-                if mag_match:
-                    objective_magnification = int(mag_match.group(1))
-        except Exception as e:
-            logger.debug(f"Could not extract objective magnification: {e}")
+        objective = self._configured_objective()
+        mag_match = re.match(r"(\d+)x", objective) if objective is not None else None
+        if mag_match:
+            objective_magnification = int(mag_match.group(1))
 
         # Build OME template with microscope-wide metadata
         ome_template = build_ome_instrument(
