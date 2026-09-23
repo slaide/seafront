@@ -19,6 +19,7 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from seafront.hardware.health import describe
 from seafront.logger import logger
 from seafront.server.api.messages import (
     AcquiredImageInfo,
@@ -42,12 +43,6 @@ from seafront.server.core import Core
 from seafront.server.protocol import make_unique_acquisition_id
 
 router = APIRouter()
-
-_status_pushes: set[asyncio.Task] = set()
-"""
-strong references to in-flight status sends. A task with no reference can be collected
-before it runs, which silently drops the update it was carrying.
-"""
 
 HANDSHAKE = Frame(
     "handshake",
@@ -292,41 +287,51 @@ async def ws_snap_selected_channels_progressive(
             await ws.close(code=4400)
             return
 
-        # The snap loop runs on the worker thread, so marshal each status onto this socket's
-        # event loop with call_soon_threadsafe before touching the socket.
+        # The snap loop runs on the worker thread. Each status is handed to this socket's
+        # event loop and queued; one sender sends them in order, and the handler waits for
+        # it before returning, so the last status is sent before the socket closes.
         loop = asyncio.get_running_loop()
+        outbox: asyncio.Queue[ChannelSnapProgressiveStatus | None] = asyncio.Queue()
+        # whether the snap has sent its last status ("finished" or "error"); a failure it
+        # has not reported, such as a refusal before it started, is reported here instead
+        ended = False
 
         def send_status_update(status: ChannelSnapProgressiveStatus):
-            def _send():
-                try:
-                    task = asyncio.create_task(send(ws, status))
-                    _status_pushes.add(task)
-                    task.add_done_callback(_status_pushes.discard)
-                except Exception as e:
-                    logger.warning(f"Failed to send progressive snap status: {e}")
+            nonlocal ended
+            ended = ended or status.status in ("finished", "error")
+            loop.call_soon_threadsafe(outbox.put_nowait, status)
 
-            loop.call_soon_threadsafe(_send)
+        async def sender() -> None:
+            while (status := await outbox.get()) is not None:
+                if not await send(ws, status):
+                    return  # the client left; the snap runs to its end regardless
 
+        sending = asyncio.create_task(sender())
         core._progressive_snap_callbacks[callback_id] = send_status_update
 
         try:
             await core.start_progressive_channel_snap(request.config_file, callback_id)
         except Exception as e:
-            send_status_update(
-                ChannelSnapProgressiveStatus(
-                    channel_handle="",
-                    channel_name="",
-                    status="error",
-                    total_channels=0,
-                    completed_channels=0,
-                    message="Failed to start progressive snap",
-                    error_detail=str(e),
+            if not ended:
+                send_status_update(
+                    ChannelSnapProgressiveStatus(
+                        channel_handle="",
+                        channel_name="",
+                        status="error",
+                        total_channels=0,
+                        completed_channels=0,
+                        message="Failed to start progressive snap",
+                        error_detail=describe(e),
+                    )
                 )
-            )
+        finally:
+            core._progressive_snap_callbacks.pop(callback_id, None)
+            loop.call_soon_threadsafe(outbox.put_nowait, None)
+            await sending
 
     except WebSocketDisconnect:
         raise  # a client leaving mid-snap is not an error; the gate swallows it
     except Exception as e:
-        logger.error(f"Progressive snap WebSocket error: {e}")
+        logger.opt(exception=e).error(f"progressive snap socket - {describe(e)}")
     finally:
         core._progressive_snap_callbacks.pop(callback_id, None)

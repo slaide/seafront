@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ValidationError
+from starlette.websockets import WebSocketState
 
 from seafront.logger import logger
 from seafront.server.api.messages import (
@@ -210,7 +211,15 @@ def socket(
                     return
                 await fn(ws, core, opening)
             except WebSocketDisconnect:
-                pass
+                return
+            # a handler that returns is done with the socket; closing it is what tells the
+            # client that nothing more is coming
+            if ws.application_state == WebSocketState.CONNECTED:
+                try:
+                    await ws.close()
+                except Exception as exc:
+                    # the client left first, as `send` finds out the same way
+                    logger.debug(f"websocket close failed: {exc}")
 
         gated.__name__ = fn.__name__
         gated.__doc__ = fn.__doc__

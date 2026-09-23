@@ -1324,101 +1324,67 @@ class Core:
         config_file: sc.AcquisitionConfig,
         callback: tp.Callable[[ChannelSnapProgressiveStatus], None],
     ) -> None:
-        """Worker-thread body of progressive snap: snap each channel in turn, reporting
-        status via `callback` (which marshals onto the WebSocket's loop) as each completes."""
+        """
+        Worker-thread body of progressive snap: snap each channel in turn, reporting status
+        via `callback` (which marshals onto the WebSocket's loop) as each starts and completes.
+
+        The statuses end with exactly one "finished" or "error". A snap that stops early sends
+        its "error" (naming the channel it stopped at, if any) and re-raises, so the job ends
+        failed or cancelled rather than finished.
+        """
         total_channels = len(enabled_channels)
         completed_channels = 0
+        current: sc.AcquisitionChannelConfig | None = None
+
+        def status(**fields: tp.Any) -> None:
+            callback(ChannelSnapProgressiveStatus(
+                channel_handle=current.handle if current is not None else "",
+                channel_name=current.name if current is not None else "",
+                total_channels=total_channels,
+                completed_channels=completed_channels,
+                **fields,
+            ))
 
         try:
             for channel in enabled_channels:
+                current = None
                 self.microscope.raise_if_cancelled()
+                current = channel
 
-                # Send starting status
-                callback(ChannelSnapProgressiveStatus(
-                    channel_handle=channel.handle,
-                    channel_name=channel.name,
-                    status="starting",
-                    total_channels=total_channels,
-                    completed_channels=completed_channels,
-                    message=f"Starting acquisition for {channel.name}"
-                ))
+                status(status="starting", message=f"Starting acquisition for {channel.name}")
 
-                try:
-                    snap_command = ChannelSnapshot(
-                        channel=channel,
-                        machine_config=config_file.machine_config or []
-                    )
-                    result = await self.microscope.execute(snap_command)
+                snap_command = ChannelSnapshot(
+                    channel=channel,
+                    machine_config=config_file.machine_config or []
+                )
+                result = await self.microscope.execute(snap_command)
 
-                    # Store the image
-                    g_dict = GlobalConfigHandler.get_dict()
-                    pixel_format = g_dict[CameraConfig.MAIN_PIXEL_FORMAT.value].strvalue
-                    await self._store_new_image(
-                        img=result._img,
-                        pixel_format=pixel_format,
-                        channel_config=channel,
-                        image_id=result.image_id,
-                        capture=result,
-                    )
+                # Store the image
+                g_dict = GlobalConfigHandler.get_dict()
+                pixel_format = g_dict[CameraConfig.MAIN_PIXEL_FORMAT.value].strvalue
+                await self._store_new_image(
+                    img=result._img,
+                    pixel_format=pixel_format,
+                    channel_config=channel,
+                    image_id=result.image_id,
+                    capture=result,
+                )
 
-                    completed_channels += 1
-
-                    # Send completed status
-                    callback(ChannelSnapProgressiveStatus(
-                        channel_handle=channel.handle,
-                        channel_name=channel.name,
-                        status="completed",
-                        total_channels=total_channels,
-                        completed_channels=completed_channels,
-                        message=f"Completed {channel.name} ({completed_channels}/{total_channels})"
-                    ))
-
-                except OperationCancelledError:
-                    raise
-                except Exception as e:
-                    # Send error status
-                    callback(ChannelSnapProgressiveStatus(
-                        channel_handle=channel.handle,
-                        channel_name=channel.name,
-                        status="error",
-                        total_channels=total_channels,
-                        completed_channels=completed_channels,
-                        message=f"Error acquiring {channel.name}",
-                        error_detail=str(e)
-                    ))
-                    break
-
-            # Send finished status
-            callback(ChannelSnapProgressiveStatus(
-                channel_handle="",
-                channel_name="",
-                status="finished",
-                total_channels=total_channels,
-                completed_channels=completed_channels,
-                message=f"All channels complete ({completed_channels}/{total_channels})"
-            ))
-
+                completed_channels += 1
+                status(
+                    status="completed",
+                    message=f"Completed {channel.name} ({completed_channels}/{total_channels})",
+                )
         except OperationCancelledError:
-            callback(ChannelSnapProgressiveStatus(
-                channel_handle="",
-                channel_name="",
-                status="error",
-                total_channels=total_channels,
-                completed_channels=completed_channels,
-                message="Progressive snap cancelled",
-                error_detail="cancelled"
-            ))
+            status(status="error", message="Progressive snap cancelled", error_detail="cancelled")
+            raise
         except Exception as e:
-            # Send error status for unexpected errors
-            callback(ChannelSnapProgressiveStatus(
-                channel_handle="",
-                channel_name="",
-                status="error",
-                total_channels=total_channels,
-                completed_channels=completed_channels,
-                message="Unexpected error during progressive snap",
-                error_detail=str(e)
-            ))
+            where = f"acquiring {current.name}" if current is not None else "progressive snap"
+            status(status="error", message=f"Error {where}", error_detail=describe(e))
+            raise
+
+        current = None
+        status(status="finished", message=f"All {total_channels} channels complete")
 
     SHUTDOWN_CLOSE_DEADLINE_S: tp.ClassVar[float] = 90.0
     "how long shutdown waits for the hardware to close: past the adapter's own close deadlines"
