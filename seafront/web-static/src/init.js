@@ -38,7 +38,7 @@ import {
     collapseAllNamespaces,
 } from "./namespace-parser.js";
 
-import { APIClient, WebSocketManager, errorText, strvalue, numvalue } from "./api-client.js";
+import { APIClient, WebSocketManager, ImageFetchError, errorText, strvalue, numvalue } from "./api-client.js";
 import { MockAPIClient, MockWebSocketManager } from "./mock-api-client.js";
 
 import {
@@ -881,101 +881,135 @@ const generate_alpine_object=() => ({
     // keep track of number of open websockets (to limit frontend load)
     _numOpenWebsockets: 0,
     
-    /** @typedef {{resolve: Function, reject: Function, channel_info:ChannelInfo}} PendingImageRequest */
-    /** @type {Map<string, PendingImageRequest>} */
-    pending_image_requests: new Map(),
-    /** @type {{channel_handle:string,request:PendingImageRequest,metadata:any}|null} */
-    _image_current_request: null,
+    /**
+     * @typedef {{resolve: Function, reject: Function, channel_info:ChannelInfo}} PendingImageRequest
+     */
+    /**
+     * Requests sent on the current image socket and not yet answered, oldest first.
+     *
+     * The server answers every request exactly once and in the order they were sent - with
+     * the image, with "nothing in that channel yet", or with a failure - so the oldest request
+     * is always the one an answer belongs to. Matching by channel handle instead, as this used
+     * to, left requests unanswered forever whenever the answer did not carry the handle.
+     *
+     * Each socket gets its own queue: the old socket closing must not fail requests already
+     * sent on the new one.
+     * @type {PendingImageRequest[]}
+     */
+    _image_queue: [],
+    /**
+     * Last image fetch failure per channel handle, cleared when a fetch for it succeeds.
+     * Shown on the channel's panel: the image there is otherwise just stale, with nothing to
+     * say it is not the latest.
+     * @type {Record<string, {message: string, image_id: string, permanent: boolean}>}
+     */
+    image_fetch_errors: {},
+
+    /**
+     * Whether the image socket is open, and if it is not, why. Images arrive only through it,
+     * so with the status socket up and this one down the UI is connected but cannot show a
+     * single image, and says so next to the connection indicator.
+     */
+    imageSocketOpen: false,
+    /** @type {string} */
+    imageSocketProblem: '',
 
     initImageWebSocket() {
-        // Check if already connected via WebSocketManager
-        if (this.wsManager.isConnected('image')) {
+        // An existing connection that is open, opening, or waiting to reconnect is kept: making
+        // a new one would orphan the requests queued on it.
+        const existing = this.wsManager.getConnection('image');
+        if (existing && existing.readyState !== WebSocket.CLOSED) {
             return;
         }
+
+        /** @type {PendingImageRequest[]} */
+        const queue = [];
+        this._image_queue = queue;
+        /** the answer whose pixels are the next binary frame */
+        /** @type {{request: PendingImageRequest, metadata: any}|null} */
+        let awaiting_pixels = null;
+
+        /** @param {Error} error */
+        const fail_all = (error) => {
+            for (const request of queue.splice(0)) request.reject(error);
+            awaiting_pixels = null;
+        };
 
         try {
             this.wsManager.createConnection('image', '/ws/get_info/acquired_image', {
                 onOpen: (ws) => {
                     console.log('Image WebSocket connected');
+                    this.imageSocketOpen = true;
+                    this.imageSocketProblem = '';
                     // Set initial binary type for metadata (string)
                     ws.binaryType = "blob";
                 },
                 onMessage: (ev) => {
-                    // The protocol sends metadata first (string), then image data (ArrayBuffer)
-                    if (typeof ev.data === 'string') {
-                        // Metadata message
-                        const metadata = json5.parse(ev.data);
-                        if (metadata.error) {
-                            const request = this.pending_image_requests.get(metadata.channel_handle);
-                            if (request) {
-                                request.reject(new Error(metadata.message));
-                                this.pending_image_requests.delete(metadata.channel_handle);
-                            }
-                            this._image_current_request = null;
-                            return;
-                        }
-                        // Find the matching request by channel_handle from metadata
-                        const channel_handle = metadata.channel_handle;
-                        const request = this.pending_image_requests.get(channel_handle);
-                        if (request) {
-                            this._image_current_request = { channel_handle, request, metadata };
-                        } else {
-                            // No matching request - will discard the image data
-                            this._image_current_request = null;
-                        }
-                        // Always switch to arraybuffer to receive image data (server always sends it)
-                        const ws = this.wsManager.getConnection('image');
-                        if (ws) ws.binaryType = "arraybuffer";
-                    } else {
-                        // Image data (ArrayBuffer)
-                        if (this._image_current_request) {
-                            const img_data = ev.data;
-
+                    const ws = this.wsManager.getConnection('image');
+                    if (typeof ev.data !== 'string') {
+                        // the pixels for the metadata that came just before
+                        if (awaiting_pixels) {
                             /** @type {CachedChannelImage} */
-                            const img = Object.assign(this._image_current_request.metadata, {
-                                data: img_data,
-                                info: this._image_current_request.request.channel_info,
+                            const img = Object.assign(awaiting_pixels.metadata, {
+                                data: ev.data,
+                                info: awaiting_pixels.request.channel_info,
                             });
-
-                            this._image_current_request.request.resolve(img);
-                            this.pending_image_requests.delete(this._image_current_request.channel_handle);
+                            awaiting_pixels.request.resolve(img);
                         }
-                        // Always reset state and switch back to blob for next metadata
-                        this._image_current_request = null;
-                        const ws = this.wsManager.getConnection('image');
+                        awaiting_pixels = null;
                         if (ws) ws.binaryType = "blob";
+                        return;
                     }
+
+                    const metadata = json5.parse(ev.data);
+                    const request = queue.shift();
+                    if (!request) {
+                        console.error('Image WebSocket: answer with no request waiting for it', metadata);
+                        return;
+                    }
+                    if (metadata.error) {
+                        request.reject(new ImageFetchError(metadata.message, true));
+                        return;
+                    }
+                    if (metadata.channel_handle === undefined) {
+                        // an empty object: that channel has no image on the server
+                        request.reject(new ImageFetchError(
+                            `the server has no image for channel ${request.channel_info.channel.handle}`,
+                            true,
+                        ));
+                        return;
+                    }
+                    // image metadata; the pixels follow as one binary frame
+                    awaiting_pixels = { request, metadata };
+                    if (ws) ws.binaryType = "arraybuffer";
                 },
                 onError: (event) => {
                     console.warn('Image WebSocket error:', event);
-                    // Reject all pending requests
-                    this.pending_image_requests.forEach(request => {
-                        request.reject(new Error('WebSocket error'));
-                    });
-                    this.pending_image_requests.clear();
-                    this._image_current_request = null;
+                    this.imageSocketOpen = false;
+                    this.imageSocketProblem = 'image connection failed';
+                    fail_all(new ImageFetchError('image connection failed', false));
                 },
                 onClose: () => {
                     console.log('Image WebSocket closed');
-                    // Reject all pending requests
-                    this.pending_image_requests.forEach(request => {
-                        request.reject(new Error('WebSocket closed'));
-                    });
-                    this.pending_image_requests.clear();
-                    this._image_current_request = null;
+                    this.imageSocketOpen = false;
+                    // an error or a timeout closing it has already said why
+                    this.imageSocketProblem ||= 'image connection closed';
+                    fail_all(new ImageFetchError('image connection closed', false));
                 },
                 autoReconnect: true,
             });
         } catch (error) {
             console.warn('Failed to create image WebSocket:', error);
+            this.imageSocketOpen = false;
+            this.imageSocketProblem = `image connection could not be created: ${errorText(error)}`;
         }
     },
-    
+
     /**
      *
      * @param {ChannelInfo} channel_info
      * @param {number} [downsample_factor=1]
-     * @returns
+     * @returns {Promise<CachedChannelImage>}
      */
     async fetch_image(channel_info, downsample_factor = 1) {
         // Initialize persistent WebSocket if needed
@@ -984,29 +1018,52 @@ const generate_alpine_object=() => ({
         // Wait for WebSocket to be ready
         const isReady = await this.wsManager.waitForConnection('image', 5000);
         if (!isReady) {
-            throw new Error('Image WebSocket not available');
+            throw new ImageFetchError('image connection could not be opened within 5 s', false);
         }
 
         const channel_handle = channel_info.channel.handle;
+        const image_id = channel_info.image_id;
+        if (image_id == null) {
+            throw new ImageFetchError(`channel ${channel_handle} has no image to fetch`, true);
+        }
+        const queue = this._image_queue;
+        const timeout_ms = 10000;
 
         /**@type {Promise<CachedChannelImage>}*/
         const finished = new Promise((resolve, reject) => {
-            // Store the request
-            this.pending_image_requests.set(channel_handle, {
-                resolve,
-                reject,
+            // A server that has not answered in this long is not going to: the socket is
+            // stuck. Every later answer on it would be matched to the wrong request, so it is
+            // closed (failing everything still queued on it) and a new one opened at once, so
+            // the connection indicator shows whether the server takes image requests again.
+            const timer = setTimeout(() => {
+                console.error(`Image WebSocket: no answer for ${channel_handle} within ${timeout_ms / 1000} s, reconnecting`);
+                const problem = `no answer from the server within ${timeout_ms / 1000} s`;
+                for (const request of queue.splice(0)) {
+                    request.reject(new ImageFetchError(problem, false));
+                }
+                this.imageSocketOpen = false;
+                this.imageSocketProblem = problem;
+                this.wsManager.closeConnection('image');
+                this.initImageWebSocket();
+            }, timeout_ms);
+
+            queue.push({
+                resolve: (/** @type {CachedChannelImage} */ img) => { clearTimeout(timer); resolve(img); },
+                reject: (/** @type {Error} */ err) => { clearTimeout(timer); reject(err); },
                 channel_info,
             });
 
-            // Send the request through WebSocketManager
-            this.wsManager.send('image', channel_handle);
-            this.wsManager.send('image', channel_info.image_id);
-            this.wsManager.send('image', `${downsample_factor}`);
+            const sent = this.wsManager.send('image', channel_handle)
+                && this.wsManager.send('image', image_id)
+                && this.wsManager.send('image', `${downsample_factor}`);
+            if (!sent) {
+                queue.splice(queue.length - 1, 1)[0]?.reject(
+                    new ImageFetchError('image connection closed while sending the request', false),
+                );
+            }
         });
 
-        const data = await finished;
-        // console.log("fetched image",data.info.channel.name, data);
-        return data;
+        return await finished;
     },
     /**
      *
@@ -1265,6 +1322,17 @@ const generate_alpine_object=() => ({
 
     /** indicate of connection to server is currently established */
     isConnectedToServer: false,
+    /** the status socket and the image socket are both open */
+    get isFullyConnected() {
+        return this.isConnectedToServer && this.imageSocketOpen;
+    },
+    get connectionText() {
+        if (!this.isConnectedToServer) return 'Disconnected';
+        if (!this.imageSocketOpen) {
+            return `Connected, but images cannot be fetched (${this.imageSocketProblem || 'image connection opening'})`;
+        }
+        return 'Connected';
+    },
     statusPollIntervalMs: 33,
     /** @type {number|null} */
     _statusPollTimer: null,
@@ -1326,6 +1394,9 @@ const generate_alpine_object=() => ({
                     }
                 },
                 onOpen: (ws) => {
+                    // opened with the status socket rather than on the first image fetch, so a
+                    // server that takes status requests but not image requests shows up at once
+                    this.initImageWebSocket();
                     this._statusRequestInFlight = false;
                     // Send initial message immediately to trigger server response
                     this.wsManager.send('status', "info");

@@ -222,6 +222,23 @@ class APIClient {
 }
 
 /**
+ * An image could not be fetched. `permanent` when the server answered that it cannot supply
+ * that image (asking again for the same image will get the same answer); otherwise the
+ * connection failed, and asking again may work.
+ */
+class ImageFetchError extends Error {
+    /**
+     * @param {string} message
+     * @param {boolean} permanent
+     */
+    constructor(message, permanent) {
+        super(message);
+        this.name = 'ImageFetchError';
+        this.permanent = permanent;
+    }
+}
+
+/**
  * Manages WebSocket connections with automatic reconnection and lifecycle management.
  * Handles multiple named connections (e.g., status, image, acquisition).
  */
@@ -481,4 +498,4 @@ class WebSocketManager {
     }
 }
 
-export { APIClient, WebSocketManager, errorText, strvalue, numvalue };
+export { APIClient, WebSocketManager, ImageFetchError, errorText, strvalue, numvalue };

@@ -8,6 +8,7 @@
  */
 
 import { calculateSitePositionPython } from "platenavigator";
+import { ImageFetchError } from "./api-client.js";
 
 const placeholder_microscope_name = "<undefined>";
 
@@ -130,12 +131,27 @@ export async function updateMicroscopeStatus(data) {
                 continue;
             }
 
+            // the server already said it cannot supply this image; asking again every status
+            // update would only get the same answer, until a newer image replaces it
+            const previous_error = this.image_fetch_errors[channel_handle];
+            if (previous_error?.permanent && previous_error.image_id === channel_info.image_id) {
+                continue;
+            }
+
             try {
                 const img = await this.fetch_image(channel_info, 2);
                 this.cached_channel_image.set(channel_handle, img);
+                delete this.image_fetch_errors[channel_handle];
             } catch (err) {
-                // Image fetch failed (e.g., WebSocket error) - will retry on next status update
-                console.debug(`Failed to fetch image for ${channel_handle}:`, err);
+                // shown on the channel's panel; a connection failure is retried on the next
+                // status update, one the server reported is not (see above)
+                const message = err instanceof Error ? err.message : String(err);
+                console.warn(`Failed to fetch image for ${channel_handle}: ${message}`);
+                this.image_fetch_errors[channel_handle] = {
+                    message,
+                    image_id: channel_info.image_id ?? "",
+                    permanent: err instanceof ImageFetchError && err.permanent,
+                };
             }
         }
     }

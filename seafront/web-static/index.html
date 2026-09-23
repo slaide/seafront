@@ -642,6 +642,10 @@
                                         border: 1px solid var(--highlight-color);
                                     }
                                 }
+                                .channel-box-fetch-error {
+                                    color: #ff4444;
+                                    font-size: 0.9em;
+                                }
                                 .channel-display-channelname {
                                     text-align: center;
                                     font-weight: bold;
@@ -669,6 +673,11 @@
                                             x-effect="updateChannelCache($el)"
                                             class="channel-box-image"
                                             x-bind:id="`channelview-item-${channel.handle}`"
+                                        ></div>
+                                        <div
+                                            class="channel-box-fetch-error"
+                                            x-show="image_fetch_errors[channel.handle]"
+                                            x-text="`latest image could not be loaded: ${image_fetch_errors[channel.handle]?.message ?? ''}`"
                                         ></div>
                                     </div>
                                 </template>
@@ -2484,6 +2493,9 @@ This reads the laser reflection position without moving the stage. Instant resul
                             .connection-indicator:not(.connected) {
                                 background-color: #e74c3c;
                             }
+                            .connection-indicator.partial {
+                                background-color: #f39c12;
+                            }
                             .lock-indicator {
                                 margin-left: 0.75em;
                             }
@@ -2494,9 +2506,9 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 color: #e74c3c;
                             }
                         </style>
-                        <span x-text="isConnectedToServer ? 'Connected' : 'Disconnected'"></span>
+                        <span x-text="connectionText"></span>
                         <span
-                            x-bind:class="`connection-indicator ${isConnectedToServer?'connected':''}`"
+                            x-bind:class="`connection-indicator ${isFullyConnected?'connected':(isConnectedToServer?'partial':'')}`"
                             >&nbsp;</span
                         >
                         <span
@@ -2522,7 +2534,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 <label>Microscope:</label>
                                 <span x-text="getMachineConfigItem('system.microscope_name')?.value ?? '(none)'"></span>
                                 <label>Status:</label>
-                                <span x-text="isConnectedToServer ? 'Connected' : 'Disconnected'"></span>
+                                <span x-text="connectionText"></span>
                                 <label>Lock:</label>
                                 <span x-text="`${lockText} ${lockExpiresText}`.trim()"></span>
                                 <label>Your name:</label>
