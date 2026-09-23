@@ -22,6 +22,7 @@ from seafront.config.basics import ConfigFileError, GlobalConfigHandler, Microsc
 from seafront.config.core_config import UnconfiguredDeviceIdError
 from seafront.config.default_protocol import generate_default_protocol
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig, SystemConfig
+from seafront.hardware.health import describe
 from seafront.logger import logger
 from seafront.server.app import make_app
 from seafront.server.commands import EstablishHardwareConnection
@@ -167,11 +168,16 @@ def serve() -> int:
                 # Send SIGINT to gracefully shut down uvicorn
                 os.kill(os.getpid(), signal.SIGINT)
             else:
-                logger.warning(f"hardware connection failed: {e.detail}")
-                logger.warning("Hardware connection could not be established. You may retry via the UI.")
+                logger.error(
+                    f"hardware connection failed at startup: {e.detail}. "
+                    "The server keeps running; retry the connection from the UI."
+                )
             return
         except Exception as e:
-            logger.warning(f"failed to establish hardware connection at startup: {e}")
+            logger.opt(exception=e).error(
+                f"hardware connection failed at startup: {describe(e)}. "
+                "The server keeps running; retry the connection from the UI."
+            )
             return
 
         # Warm the hardware limits cache while we are here: it is a one-off camera query, and
@@ -181,7 +187,8 @@ def serve() -> int:
             core.get_hardware_capabilities()
             logger.info("hardware limits cache initialized")
         except Exception as e:
-            logger.warning(f"failed to initialize hardware limits cache: {e}")
+            # not cached, so the first request that needs the limits asks the camera again
+            logger.opt(exception=e).error(f"hardware limits query failed at startup: {describe(e)}")
 
     logger.info("starting http server")
 
