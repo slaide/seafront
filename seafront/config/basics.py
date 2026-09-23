@@ -7,7 +7,7 @@ from pathlib import Path
 
 import json5
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
 from seafront.config.registry import ConfigRegistry, OverrideResult, restrict_to_options
@@ -323,6 +323,29 @@ class FilterConfig(BaseModel):
     "Filter wheel slot position (1-8)"
 
 
+class ConfigFileError(Exception):
+    """
+    The config file cannot be used, with every reason found, each naming the key it is about.
+
+    Startup refuses such a file and prints this, not a traceback: the fix is an edit to the
+    file, and the operator needs to know which lines, not which of our functions noticed.
+    """
+
+    def __init__(self, path: Path, problems: list[str]):
+        self.path = path
+        self.problems = problems
+        listing = "\n".join(f"  - {p}" for p in problems)
+        super().__init__(f"the config file {path} cannot be used:\n{listing}")
+
+
+def pydantic_problems(error: ValidationError, prefix: str) -> list[str]:
+    "one line per field a validation error is about, as `prefix.field.subfield: message`"
+    return [
+        ".".join([prefix, *(str(part) for part in e["loc"])]).strip(".") + f": {e['msg']}"
+        for e in error.errors()
+    ]
+
+
 class ServerConfig(BaseModel):
     port: int = 5000
     # Bind address for the HTTP server. Defaults to loopback only (local access).
@@ -395,6 +418,23 @@ class GlobalConfigHandler:
         return CONFIG_FILE_PATH
 
     @staticmethod
+    def load_server_config() -> ServerConfig:
+        "the config file, parsed and checked against ServerConfig; raises ConfigFileError"
+        path = GlobalConfigHandler.home_config()
+        try:
+            with path.open("r") as f:
+                data = json5.load(f)
+        except ValueError as e:
+            # json5 says where: "<line>:<column>: ..."
+            raise ConfigFileError(path, [f"not valid JSON5: {e}"]) from None
+        if not isinstance(data, dict):
+            raise ConfigFileError(path, [f"expected an object at the top, got {type(data).__name__}"])
+        try:
+            return ServerConfig(**data)
+        except ValidationError as e:
+            raise ConfigFileError(path, pydantic_problems(e, "")) from None
+
+    @staticmethod
     def store():
         """
         Write current global config to disk.
@@ -404,10 +444,7 @@ class GlobalConfigHandler:
         from seafront.config.handles import SystemConfig
 
         CONFIG_FILE_PATH = GlobalConfigHandler.home_config()
-
-        with CONFIG_FILE_PATH.open("r") as config_file:
-            current_file_contents = json5.load(config_file)
-            server_config = ServerConfig(**current_file_contents)
+        server_config = GlobalConfigHandler.load_server_config()
 
         current_config = ConfigRegistry.get_dict()
 
@@ -719,27 +756,25 @@ class GlobalConfigHandler:
         ConfigRegistry.reset()
 
         # Load config file and find target microscope
-        with GlobalConfigHandler.home_config().open("r") as f:
-            server_config_json = json5.load(f)
-            server_config = ServerConfig(**server_config_json)
-            if len(server_config.microscopes) == 0:
-                raise ValueError("no microscope found in server config")
+        server_config = GlobalConfigHandler.load_server_config()
+        if len(server_config.microscopes) == 0:
+            raise ValueError("no microscope found in server config")
 
-            # Select microscope by name or default to first
-            microscope_config: MicroscopeConfig = {}
-            if microscope_name is not None:
-                for m in server_config.microscopes:
-                    if m.get(SystemConfig.MICROSCOPE_NAME.value) == microscope_name:
-                        microscope_config = m
-                        break
-                if not microscope_config:
-                    available_names = [
-                        m.get(SystemConfig.MICROSCOPE_NAME.value, "<unnamed>")
-                        for m in server_config.microscopes
-                    ]
-                    raise ValueError(f"microscope '{microscope_name}' not found. Available: {available_names}")
-            else:
-                microscope_config = server_config.microscopes[0]
+        # Select microscope by name or default to first
+        microscope_config: MicroscopeConfig = {}
+        if microscope_name is not None:
+            for m in server_config.microscopes:
+                if m.get(SystemConfig.MICROSCOPE_NAME.value) == microscope_name:
+                    microscope_config = m
+                    break
+            if not microscope_config:
+                available_names = [
+                    m.get(SystemConfig.MICROSCOPE_NAME.value, "<unnamed>")
+                    for m in server_config.microscopes
+                ]
+                raise ValueError(f"microscope '{microscope_name}' not found. Available: {available_names}")
+        else:
+            microscope_config = server_config.microscopes[0]
 
         # Initialize registry with config file values
         ConfigRegistry.init(microscope_config)
@@ -750,12 +785,53 @@ class GlobalConfigHandler:
         default_channels = default_config.get("imaging.channels", [])
         default_forbidden_areas = default_config.get("protocol.forbidden_areas", [])
 
-        # Register core config items
-        register_core_config(default_image_dir, default_channels, default_forbidden_areas)
+        # every group is registered even when an earlier one had bad values, so the operator
+        # hears about all of them at once
+        with ConfigRegistry.collect_file_problems() as problems:
+            register_core_config(default_image_dir, default_channels, default_forbidden_areas)
 
-        # Register optional subsystem configs based on availability
-        if ConfigRegistry.get(LaserAutofocusConfig.AVAILABLE).boolvalue:
-            register_laser_autofocus_config()
+            # Register optional subsystem configs based on availability
+            if ConfigRegistry.get(LaserAutofocusConfig.AVAILABLE).boolvalue:
+                register_laser_autofocus_config()
 
-        if ConfigRegistry.get(FilterWheelConfig.AVAILABLE).boolvalue:
-            register_filter_wheel_config()
+            if ConfigRegistry.get(FilterWheelConfig.AVAILABLE).boolvalue:
+                register_filter_wheel_config()
+
+        problems += _object_config_problems()
+        if problems:
+            raise ConfigFileError(GlobalConfigHandler.home_config(), problems)
+
+
+def _object_config_problems() -> list[str]:
+    """
+    what is wrong with the structured values (channels, filters, forbidden areas), each read
+    the way the code that uses them reads them, so a file that passes here does not fail later
+    in the middle of opening the hardware or on the first move
+    """
+    from seafront.config.handles import FilterWheelConfig, ImagingConfig
+    from seafront.hardware.forbidden_areas import ForbiddenAreaList, ForbiddenAreasConfigError
+
+    problems: list[str] = []
+    channels_handle = ImagingConfig.CHANNELS.value
+    for i, channel in enumerate(ConfigRegistry.get(channels_handle).objectvalue):  # type: ignore[misc]
+        prefix = f"{channels_handle}[{i}]"
+        try:
+            ChannelConfig.model_validate(channel).validate_calibration()
+        except ValidationError as e:
+            problems += pydantic_problems(e, prefix)
+        except ValueError as e:
+            problems.append(f"{prefix}: {e}")
+
+    filters_handle = FilterWheelConfig.CONFIGURATION.value
+    if filters_handle in ConfigRegistry.get_dict():
+        for i, filter_ in enumerate(ConfigRegistry.get(filters_handle).objectvalue):  # type: ignore[misc]
+            try:
+                FilterConfig.model_validate(filter_)
+            except ValidationError as e:
+                problems += pydantic_problems(e, f"{filters_handle}[{i}]")
+
+    try:
+        ForbiddenAreaList.from_config()
+    except ForbiddenAreasConfigError as e:
+        problems.append(str(e))
+    return problems

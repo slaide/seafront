@@ -26,6 +26,7 @@ Usage in a component file (e.g., kiri_camera.py):
 
 from __future__ import annotations
 
+import contextlib
 import typing as tp
 from enum import Enum
 
@@ -53,6 +54,14 @@ class OverrideResult(BaseModel):
     "handle -> reason, for values rejected by type/option validation; left untouched"
 
 
+class ConfigValueError(TypeError):
+    "config file values of the wrong kind, each as `handle: why`"
+
+    def __init__(self, problems: list[str]):
+        self.problems = problems
+        super().__init__("; ".join(problems))
+
+
 class ConfigRegistry:
     """
     Central registry for config items defined across the codebase.
@@ -66,6 +75,7 @@ class ConfigRegistry:
     _items: dict[str, ConfigItem] = {}
     _persistent_handles: set[str] = set()
     _file_values: dict[str, tp.Any] = {}
+    _collecting: list[str] | None = None
     _initialized: bool = False
 
     @classmethod
@@ -82,20 +92,23 @@ class ConfigRegistry:
         """
         Register one or more config items.
 
-        If the config file has a value for the handle, it overrides the default.
+        If the config file has a value for the handle, it overrides the default. A file value
+        of the wrong kind is refused with ConfigValueError, once the whole group is registered
+        and naming every bad value in it. Inside `collect_file_problems()` the problems go to
+        its list instead, and registration carries on; the items are registered either way,
+        with their defaults in place of the refused values.
         """
+        problems: list[str] = []
         for spec in items:
-            # Get value from file or use default
-            value = cls._file_values.get(spec.handle, spec.default)
-
-            # For "object" type, validate it's actually a dict or list
-            if spec.value_kind == "object":
-                if not isinstance(value, (dict, list)):
-                    raise TypeError(
-                        f"Config item '{spec.handle}' has value_kind='object' but got {type(value).__name__}. "
-                        f"Object types require a dict or list, not a string. "
-                        f"Update your config file to use native JSON instead of a JSON string."
-                    )
+            value = spec.default
+            if spec.handle in cls._file_values:
+                # options filled in from the hardware are checked when it connects
+                options = None if spec.options_from_hardware else spec.options
+                reason = _check_value(spec.value_kind, options, cls._file_values[spec.handle])
+                if reason is None:
+                    value = cls._file_values[spec.handle]
+                else:
+                    problems.append(f"{spec.handle}: {reason}")
 
             # Create the ConfigItem
             item = ConfigItem(
@@ -111,6 +124,25 @@ class ConfigRegistry:
 
             if spec.persistent:
                 cls._persistent_handles.add(spec.handle)
+
+        if problems:
+            if cls._collecting is None:
+                raise ConfigValueError(problems)
+            cls._collecting.extend(problems)
+
+    @classmethod
+    @contextlib.contextmanager
+    def collect_file_problems(cls) -> tp.Iterator[list[str]]:
+        """
+        register() adds bad file values to the yielded list instead of raising, so a file
+        registered in many groups has all of its problems found in one pass
+        """
+        problems: list[str] = []
+        cls._collecting = problems
+        try:
+            yield problems
+        finally:
+            cls._collecting = None
 
     @classmethod
     def get(cls, handle: str | Enum) -> ConfigItem:
@@ -182,28 +214,7 @@ class ConfigRegistry:
         item = cls._items.get(handle)
         if item is None:
             return "unknown handle"
-        kind = item.value_kind
-        # bool is a subclass of int; never accept it for numeric kinds
-        if kind == "int":
-            if isinstance(value, bool) or not isinstance(value, int):
-                return f"expected int, got {type(value).__name__}"
-        elif kind == "float":
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                return f"expected float, got {type(value).__name__}"
-        elif kind == "text" or kind == "action":
-            if not isinstance(value, str):
-                return f"expected str, got {type(value).__name__}"
-        elif kind == "option":
-            if not isinstance(value, str):
-                return f"expected option handle (str), got {type(value).__name__}"
-            if item.options:
-                allowed = [o.handle for o in item.options]
-                if value not in allowed:
-                    return f"{value!r} is not one of {allowed}"
-        elif kind == "object":
-            if not isinstance(value, dict | list):
-                return f"expected dict or list, got {type(value).__name__}"
-        return None
+        return _check_value(item.value_kind, item.options, value)
 
     @classmethod
     def apply(cls, items: tp.Iterable[ConfigItem], *, privileged: bool = False) -> OverrideResult:
@@ -257,6 +268,35 @@ class ConfigRegistry:
         cls._initialized = False
 
 
+def _check_value(
+    kind: str, options: list[ConfigItemOption] | None, value: tp.Any
+) -> str | None:
+    "None when `value` is acceptable for an item of this kind and these options, else why not"
+    # bool is a subclass of int; never accept it for numeric kinds
+    if kind == "int":
+        if isinstance(value, bool) or not isinstance(value, int):
+            return f"expected int, got {type(value).__name__}"
+    elif kind == "float":
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return f"expected float, got {type(value).__name__}"
+    elif kind == "text" or kind == "action":
+        if not isinstance(value, str):
+            return f"expected str, got {type(value).__name__}"
+    elif kind == "option":
+        if not isinstance(value, str):
+            return f"expected option handle (str), got {type(value).__name__}"
+        if options:
+            allowed = [o.handle for o in options]
+            if value not in allowed:
+                return f"{value!r} is not one of {allowed}"
+    elif kind == "object":
+        if isinstance(value, str):
+            return "expected a JSON object or list, got str: write it as native JSON, not as a JSON string"
+        if not isinstance(value, dict | list):
+            return f"expected dict or list, got {type(value).__name__}"
+    return None
+
+
 def restrict_to_options(item: ConfigItem, supported: list[str], device: str) -> None:
     """
     offer only the option handles `device` supports for `item`, and move a value it does not
@@ -287,6 +327,8 @@ class ConfigItemSpec(tp.NamedTuple):
     options: list[ConfigItemOption] | None = None
     privileged: bool = False
     persistent: bool = False
+    options_from_hardware: bool = False
+    "`options` is a placeholder until the device connects and says what it supports"
 
 
 def config_item(
@@ -297,6 +339,7 @@ def config_item(
     options: list[ConfigItemOption] | None = None,
     privileged: bool = False,
     persistent: bool = False,
+    options_from_hardware: bool = False,
 ) -> ConfigItemSpec:
     """
     Create a config item specification for registration.
@@ -311,6 +354,8 @@ def config_item(
             a request may only overwrite it by explicitly asserting privilege, and such
             a write is persisted at once. Changing one may require a server restart.
         persistent: If True, will be saved to config file on store()
+        options_from_hardware: If True, `options` are replaced by what the device supports
+            once it connects, so a file value outside them is not refused at startup
     """
     return ConfigItemSpec(
         handle=handle,
@@ -320,6 +365,7 @@ def config_item(
         options=options,
         privileged=privileged,
         persistent=persistent,
+        options_from_hardware=options_from_hardware,
     )
 
 

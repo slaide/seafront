@@ -148,6 +148,7 @@ def register_core_config(default_image_dir: str, default_channels: list | str, d
                 ConfigItemOption(name="12 Bit", handle="mono12"),
                 ConfigItemOption(name="16 Bit", handle="mono16"),
             ],
+            options_from_hardware=True,
         ),
         config_item(
             handle=CameraConfig.MAIN_IMAGE_WIDTH_PX.value,
@@ -543,6 +544,7 @@ def register_laser_autofocus_config() -> None:
                 ConfigItemOption(name="8 Bit", handle="mono8"),
                 ConfigItemOption(name="10 Bit", handle="mono10"),
             ],
+            options_from_hardware=True,
         ),
         config_item(
             handle=LaserAutofocusConfig.WARM_UP_LASER.value,

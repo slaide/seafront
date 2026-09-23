@@ -15,11 +15,10 @@ import socket
 import sys
 import threading
 
-import json5
 import uvicorn
 from fastapi import HTTPException
 
-from seafront.config.basics import GlobalConfigHandler, MicroscopeConfig, ServerConfig
+from seafront.config.basics import ConfigFileError, GlobalConfigHandler, MicroscopeConfig
 from seafront.config.core_config import UnconfiguredDeviceIdError
 from seafront.config.default_protocol import generate_default_protocol
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig, SystemConfig
@@ -29,13 +28,21 @@ from seafront.server.commands import EstablishHardwareConnection
 from seafront.server.core import Core
 
 
-# an exception that escapes is logged with its traceback, and the process exits 1 rather than 0
-@logger.catch(onerror=lambda _: sys.exit(1))
 def main() -> int:
     """run the server; returns the process exit code: 0 for a clean run and shutdown, 1 otherwise"""
+    try:
+        return serve()
+    except ConfigFileError as e:
+        # the fix is an edit to the file: say what to edit, without a traceback in the way
+        logger.critical(f"startup - {e}")
+        return 1
+
+
+# an exception that escapes is logged with its traceback, and the process exits 1 rather than 0
+@logger.catch(onerror=lambda _: sys.exit(1), exclude=ConfigFileError)
+def serve() -> int:
     # Load server config to get available microscopes and port for help message
-    with GlobalConfigHandler.home_config().open("r") as f:
-        server_config = ServerConfig(**json5.load(f))
+    server_config = GlobalConfigHandler.load_server_config()
 
     available_microscopes = [m.get(SystemConfig.MICROSCOPE_NAME.value, "<unnamed>") for m in server_config.microscopes]
     microscope_list = ", ".join(f'"{name}"' for name in available_microscopes)

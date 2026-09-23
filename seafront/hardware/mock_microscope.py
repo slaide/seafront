@@ -379,11 +379,9 @@ class MockMicroscope(Microscope):
 
         # Parse filters from configuration (optional - may not be registered if filter wheel unavailable)
         filter_configs = []
-        try:
+        if ConfigRegistry.get(FilterWheelConfig.AVAILABLE).boolvalue:
             filters_data = ConfigRegistry.get(FilterWheelConfig.CONFIGURATION).objectvalue
             filter_configs = [FilterConfig(**f) for f in filters_data]  # type: ignore
-        except KeyError:
-            pass  # Filter wheel config not registered (filter wheel not available)
 
         # Create illumination controller
         illumination_controller = IlluminationController(channel_configs)
