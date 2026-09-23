@@ -1636,55 +1636,64 @@ class SquidAdapter(Microscope):
             command.channel.handle, command.channel.illum_perc
         )
 
-        # For LED matrix sources (brightfield), intensity is controlled via RGB values
-        if illum_code.is_led_matrix:
-            # Convert calibrated intensity to RGB brightness (0-1 range)
-            rgb_brightness = calibrated_intensity / 100.0
-            qmc.illumination_begin(
-                illum_code.value,
-                100.0,  # intensity_percent is ignored for LED matrix
-                (rgb_brightness, rgb_brightness, rgb_brightness)
-            )
-        else:
-            # For regular sources (lasers), use intensity directly
-            qmc.illumination_begin(illum_code.value, calibrated_intensity)
+        # The light goes on before the camera starts, so anything that fails from here on
+        # turns it off again before the failure is passed on.
+        try:
+            # For LED matrix sources (brightfield), intensity is controlled via RGB values
+            if illum_code.is_led_matrix:
+                # Convert calibrated intensity to RGB brightness (0-1 range)
+                rgb_brightness = calibrated_intensity / 100.0
+                qmc.illumination_begin(
+                    illum_code.value,
+                    100.0,  # intensity_percent is ignored for LED matrix
+                    (rgb_brightness, rgb_brightness, rgb_brightness)
+                )
+            else:
+                # For regular sources (lasers), use intensity directly
+                qmc.illumination_begin(illum_code.value, calibrated_intensity)
 
-        with self.main_camera.locked() as main_camera:
-            if main_camera is None:
-                error_internal("main camera is busy")
+            with self.main_camera.locked() as main_camera:
+                if main_camera is None:
+                    error_internal("main camera is busy")
 
-            # Snapshot the pixel format now, while we hold the lock, so the streaming
-            # callback (which runs on the camera SDK's acquisition thread) never has to
-            # touch the camera or take the camera lock. Taking the camera lock inside the
-            # callback deadlocks against stop_streaming(): stream_off()/unregister_capture_callback()
-            # block until the in-flight callback returns, while the callback blocks on the lock.
-            stream_pixel_format = main_camera.pixel_format
+                # Snapshot the pixel format now, while we hold the lock, so the streaming
+                # callback (which runs on the camera SDK's acquisition thread) never has to
+                # touch the camera or take the camera lock. Taking the camera lock inside the
+                # callback deadlocks against stop_streaming(): stream_off()/unregister_capture_callback()
+                # block until the in-flight callback returns, while the callback blocks on the lock.
+                stream_pixel_format = main_camera.pixel_format
 
-            def forward_image(img: np.ndarray) -> None:
-                # Runs on the SDK acquisition thread. _forward_frame checks the stream state
-                # under the narrow lock and calls the sink from outside it, so a slow
-                # consumer never holds up stream-end.
-                img_np, _cambits = _process_image(img.copy(), pixel_format=stream_pixel_format)
-                self._forward_frame(img_np)
+                def forward_image(img: np.ndarray) -> None:
+                    # Runs on the SDK acquisition thread. _forward_frame checks the stream state
+                    # under the narrow lock and calls the sink from outside it, so a slow
+                    # consumer never holds up stream-end.
+                    img_np, _cambits = _process_image(img.copy(), pixel_format=stream_pixel_format)
+                    self._forward_frame(img_np)
 
-            # Marked as streaming before the camera starts, so the first frame the SDK
-            # produces already has somewhere to go. Rolled back if the start fails, so a
-            # refused begin cannot leave the adapter claiming a stream that is not running.
-            self._stream_started(command.channel)
+                # Marked as streaming before the camera starts, so the first frame the SDK
+                # produces already has somewhere to go. Rolled back if the start fails, so a
+                # refused begin cannot leave the adapter claiming a stream that is not running.
+                self._stream_started(command.channel)
+                try:
+                    with self._watchdog.guard(
+                        Device.MAIN_CAMERA,
+                        "start streaming",
+                        CALL_DEADLINE_S,
+                        on_stall=self._illumination_off_during_stall,
+                    ):
+                        main_camera.start_streaming(
+                            command.channel,
+                            callback=forward_image,
+                        )
+                except Exception:
+                    self._stream_stopped()
+                    raise
+        except BaseException as e:
             try:
-                with self._watchdog.guard(
-                    Device.MAIN_CAMERA,
-                    "start streaming",
-                    CALL_DEADLINE_S,
-                    on_stall=self._illumination_off_during_stall,
-                ):
-                    main_camera.start_streaming(
-                        command.channel,
-                        callback=forward_image,
-                    )
-            except Exception:
-                self._stream_stopped()
-                raise
+                qmc.illumination_end(illum_code.value)
+            except Exception as off_error:
+                e.add_note(f"turning the illumination off again also failed: {off_error!r}")
+            raise
 
         logger.debug("squid - channel stream begin")
 

@@ -114,6 +114,24 @@ class TestTheIlluminationAroundAnExposure:
         assert adapter.microcontroller.illum.acquire(blocking=False)
         adapter.microcontroller.illum.release()
 
+    def test_a_stream_that_fails_to_start_turns_the_light_off(self, squid_adapter):
+        """
+        a stream turns the light on before the camera starts, so a camera that refuses to
+        start must not leave it on, and the adapter must not claim a stream
+        """
+        adapter, device = squid_adapter
+
+        def explode(_config, callback):
+            raise RuntimeError("camera would not start")
+
+        adapter.main_camera.value.start_streaming = explode
+        with pytest.raises(RuntimeError, match="camera would not start"):
+            run(adapter, cmd.ChannelStreamBegin(channel=channel()))
+
+        lights = [n for n in names(device) if n in ("TURN_ON_ILLUMINATION", "TURN_OFF_ILLUMINATION")]
+        assert lights[-1:] == ["TURN_OFF_ILLUMINATION"], f"the light was left on: {lights}"
+        assert not adapter.is_streaming
+
     def test_a_brightfield_channel_drives_the_led_matrix_by_colour(self, squid_adapter):
         """
         intensity reaches a matrix source as RGB, because the intensity field is ignored there
