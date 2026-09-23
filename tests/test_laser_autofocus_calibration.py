@@ -318,6 +318,29 @@ class TestWhenItCannotProduceAScale:
             _calibrate(adapter)
         assert "right dot" in str(excinfo.value).lower()
 
+    def test_a_right_dot_that_cannot_be_fitted_is_refused_for_that_reason(self, drawn_spots):
+        """
+        seen, but at one z only: there is no line through one point
+
+        The refusal says so, rather than claiming the dot was never detected, which would
+        send whoever reads it looking for a laser or alignment problem that is not there.
+        """
+        adapter, camera = drawn_spots
+        draw = camera.snap
+
+        def right_dot_once(config):
+            camera.num_spots = 2 if not camera.snaps else 1
+            return draw(config)
+
+        camera.snap = right_dot_once
+        ConfigRegistry.set_value(LaserAutofocusConfig.USE_RIGHT_DOT, "yes")
+        with pytest.raises(Exception) as excinfo:
+            _calibrate(adapter)
+        message = str(excinfo.value).lower()
+        assert "right dot" in message
+        assert "no right dot was detected" not in message
+        assert "fit" in message
+
     def test_one_dot_is_enough_when_the_right_one_was_not_asked_for(self, drawn_spots):
         """the counterpart: the refusal above is about the request, not about the frame"""
         adapter, camera = drawn_spots

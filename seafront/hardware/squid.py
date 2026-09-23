@@ -826,16 +826,20 @@ class SquidAdapter(Microscope):
             left_dot_x.append(peak_x[1])
             left_dot_y.append(peak_y[1])
 
-        left_dot_regression = linear_regression(left_dot_x, left_dot_y)
-        right_dot_regression = 0, 0
-        if len(right_dot_x) > 0:
-            # there are at least two possible issues here, that we ignore:
-            # 1) no values present (zero/low signal)
-            # 2) all values are identical (caused by only measuring noise)
+        def fit(dot: str, xs: list[float], ys: list[float]) -> tuple[float, float] | str:
+            "the dot's (slope, intercept), or why there is none"
+            if not xs:
+                return f"no {dot} dot was detected during calibration"
             try:
-                right_dot_regression = linear_regression(right_dot_x, right_dot_y)
-            except Exception:
-                pass
+                slope, intercept = linear_regression(xs, ys)
+            except Exception as e:
+                return f"the {dot} dot's positions gave no fit ({len(xs)} points): {describe(e)}"
+            if not (math.isfinite(slope) and math.isfinite(intercept)):
+                return f"the {dot} dot's positions gave no finite fit ({len(xs)} points)"
+            return slope, intercept
+
+        left_dot_regression = fit("left", left_dot_x, left_dot_y)
+        right_dot_regression = fit("right", right_dot_x, right_dot_y)
 
         if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_REGRESSION_FIT:
             # plot one peak domain
@@ -862,23 +866,13 @@ class SquidAdapter(Microscope):
 
             plt.scatter(domain_x, domain_y, color="red", marker="x", label="two peak domain")
 
-            # plot left dot regression
-            slope, intercept = left_dot_regression
-            plt.axline(
-                (0, intercept),
-                slope=slope,
-                color="purple",
-                label="left dot regression",
-            )
-
-            # plot right dot regression
-            slope, intercept = right_dot_regression
-            plt.axline(
-                (0, intercept),
-                slope=slope,
-                color="black",
-                label="right dot regression",
-            )
+            for regression, color, label in (
+                (left_dot_regression, "purple", "left dot regression"),
+                (right_dot_regression, "black", "right dot regression"),
+            ):
+                if isinstance(regression, tuple):
+                    slope, intercept = regression
+                    plt.axline((0, intercept), slope=slope, color=color, label=label)
 
             plt.xlabel("physical z coordinate")
             plt.ylabel("sensor x coordinate")
@@ -887,7 +881,7 @@ class SquidAdapter(Microscope):
             plt.show()
 
         # -- eval performance, display with pyplot
-        if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_EVAL_FIT:
+        if DEBUG_LASER_AF_CALIBRATION and DEBUG_LASER_AF_SHOW_EVAL_FIT and isinstance(left_dot_regression, tuple):
             current_pos = qmc.get_last_position()
             start_z = current_pos.z_pos_mm
 
@@ -957,12 +951,13 @@ class SquidAdapter(Microscope):
         # Select regression and reference dot based on use_right_dot config
         # Regression fits dot_x = slope * z_mm + intercept, so slope is px/mm
         # To get um_per_px: um_per_px = 1000 / slope_px_per_mm
-        if use_right_dot:
-            if right_dot_regression == (0, 0):
-                cmd.error_internal(detail="use_right_dot is enabled but no right dot was detected during calibration")
-            px_per_mm, _x_reference = right_dot_regression
-        else:
-            px_per_mm, _x_reference = left_dot_regression
+        chosen = right_dot_regression if use_right_dot else left_dot_regression
+        if isinstance(chosen, str):
+            cmd.error_internal(
+                detail=f"laser autofocus calibration failed: {chosen}"
+                + (" (use_right_dot is enabled)" if use_right_dot else "")
+            )
+        px_per_mm, _x_reference = chosen
 
         # A slope of zero means the spot did not move as z changed - the laser was off, or
         # nothing was reflecting - so there is no scale to compute and dividing produces a
