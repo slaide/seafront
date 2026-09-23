@@ -8,8 +8,9 @@ from pydantic import BaseModel, ConfigDict
 
 from seaconfig import AcquisitionChannelConfig
 
-from seafront.config.basics import GlobalConfigHandler, set_config_item_bool, ConfigItem, ConfigItemOption
+from seafront.config.basics import GlobalConfigHandler, set_config_item_bool, ConfigItem
 from seafront.config.handles import CameraConfig, LaserAutofocusConfig
+from seafront.config.registry import restrict_to_options
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.camera import AcquisitionMode, Camera, HardwareLimitValue
 from seafront.hardware.health import DeviceCloseError, describe
@@ -627,20 +628,11 @@ class ToupCamCamera(Camera):
                 # Should not happen due to early return, but handle defensively
                 return
 
-        # Build the new options list
-        new_options = [
-            ConfigItemOption(name=fmt.capitalize(), handle=fmt)
-            for fmt in sorted(supported_formats)
-        ]
-
         # Find and update existing item, or create if missing
         found = False
         for item in config_items:
             if item.handle == config_key:
-                item.options = new_options
-                # Ensure current value is valid
-                if item.value not in supported_formats:
-                    item.value = supported_formats[0]
+                restrict_to_options(item, supported_formats, f"the {self.device_type} camera")
                 found = True
                 break
 
@@ -651,8 +643,8 @@ class ToupCamCamera(Camera):
                 name="Pixel Format",
                 value=supported_formats[0],
                 value_kind="option",
-                options=new_options,
             )
+            restrict_to_options(new_item, supported_formats, f"the {self.device_type} camera")
             config_items.append(new_item)
 
         # Set camera-specific image flip defaults for main ToupCam cameras only

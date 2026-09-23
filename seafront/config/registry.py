@@ -29,6 +29,8 @@ from __future__ import annotations
 import typing as tp
 from enum import Enum
 
+# loguru directly: seafront.logger imports the config module this one is part of
+from loguru import logger
 from pydantic import BaseModel, Field
 from seaconfig import ConfigItem, ConfigItemOption
 
@@ -150,7 +152,19 @@ class ConfigRegistry:
         key = handle.value if isinstance(handle, Enum) else handle
         if key not in cls._items:
             raise KeyError(f"no config item registered under {key!r}")
-        cls._items[key].value = value
+        cls._write(cls._items[key], value)
+
+    @staticmethod
+    def _write(item: ConfigItem, value: tp.Any) -> None:
+        """
+        the one place a registered value changes after startup, so the log has every change
+
+        A run that behaves differently from the one before it can then be traced to the
+        setting that changed in between, and to what it was before.
+        """
+        if item.value != value:
+            logger.info(f"config - {item.handle}: {_shown(item.value)} -> {_shown(value)}")
+        item.value = value
 
     @classmethod
     def is_privileged(cls, handle: str | Enum) -> bool:
@@ -220,7 +234,7 @@ class ConfigRegistry:
                 result.changed.append(item.handle)
                 if current.privileged:
                     result.changed_privileged.append(item.handle)
-            current.value = item.value
+            cls._write(current, item.value)
         return result
 
     @classmethod
@@ -241,6 +255,27 @@ class ConfigRegistry:
         cls._persistent_handles.clear()
         cls._file_values.clear()
         cls._initialized = False
+
+
+def restrict_to_options(item: ConfigItem, supported: list[str], device: str) -> None:
+    """
+    offer only the option handles `device` supports for `item`, and move a value it does not
+    support onto the first one it does, saying so: the operator configured the other value, and
+    otherwise nothing tells them it is not the one in use
+    """
+    item.options = [ConfigItemOption(name=fmt.capitalize(), handle=fmt) for fmt in sorted(supported)]
+    if item.value not in supported:
+        logger.warning(
+            f"config - {item.handle}: {device} does not support {item.value!r} "
+            f"(supports {sorted(supported)}); using {supported[0]!r}"
+        )
+        ConfigRegistry._write(item, supported[0])
+
+
+def _shown(value: tp.Any, limit: int = 200) -> str:
+    "a config value for a log line; object values (channel lists and such) can be long"
+    text = repr(value)
+    return text if len(text) <= limit else f"{text[:limit]}... ({len(text)} chars)"
 
 
 class ConfigItemSpec(tp.NamedTuple):

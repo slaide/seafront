@@ -10,7 +10,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
 
-from seafront.config.registry import ConfigRegistry, OverrideResult
+from seafront.config.registry import ConfigRegistry, OverrideResult, restrict_to_options
 
 CameraDriver = tp.Literal["galaxy", "toupcam"]
 MicroscopeType = tp.Literal["squid", "mock"]
@@ -654,11 +654,11 @@ class GlobalConfigHandler:
                 f"ignored unprivileged change to privileged config: {result.skipped_privileged}"
             )
         if result.unknown_handles:
-            logger.debug(f"ignored unknown config handles: {result.unknown_handles}")
+            logger.warning(f"ignored unknown config handles: {result.unknown_handles}")
         if result.invalid:
             logger.warning(f"rejected invalid config values: {result.invalid}")
         if privileged and result.changed_privileged:
-            logger.info(f"privileged config change: {result.changed_privileged}")
+            # each changed value was logged as it was written
             GlobalConfigHandler.store()
         return result
 
@@ -689,31 +689,14 @@ class GlobalConfigHandler:
         # Update main camera pixel format options
         main_format_item = config_dict.get(CameraConfig.MAIN_PIXEL_FORMAT.value)
         if main_format_item is not None:
-            # Create new options list from actual camera capabilities
-            new_options = [
-                ConfigItemOption(name=fmt.capitalize(), handle=fmt)
-                for fmt in sorted(main_camera_formats)
-            ]
-            main_format_item.options = new_options
+            restrict_to_options(main_format_item, main_camera_formats, "the main camera")
 
-            # Ensure current value is still valid, reset to first if not
-            if main_format_item.value not in main_camera_formats:
-                main_format_item.value = main_camera_formats[0]
-
-        # Update autofocus camera pixel format options if available
         if autofocus_camera_formats is not None:
             autofocus_format_item = config_dict.get(LaserAutofocusConfig.CAMERA_PIXEL_FORMAT.value)
             if autofocus_format_item is not None:
-                # Create new options list from actual camera capabilities
-                new_options = [
-                    ConfigItemOption(name=fmt.capitalize(), handle=fmt)
-                    for fmt in sorted(autofocus_camera_formats)
-                ]
-                autofocus_format_item.options = new_options
-
-                # Ensure current value is still valid, reset to first if not
-                if autofocus_format_item.value not in autofocus_camera_formats:
-                    autofocus_format_item.value = autofocus_camera_formats[0]
+                restrict_to_options(
+                    autofocus_format_item, autofocus_camera_formats, "the autofocus camera"
+                )
 
     @staticmethod
     def reset(microscope_name: str | None = None):
