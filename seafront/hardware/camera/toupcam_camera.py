@@ -215,6 +215,7 @@ def pullmode_callback(event_type: int, ctx: ImageContext) -> None:
                 ctx.image_ready = True
             case "until_stop":
                 ctx.stop_acquisition = True
+                ctx.cam._stream_failed(e)
 
 class ToupCamCamera(Camera):
     """ToupCam Camera implementation using the toupcam SDK."""
@@ -878,10 +879,24 @@ class ToupCamCamera(Camera):
             raise RuntimeError("Camera not opened")
 
         if self._streaming_active:
-            logger.warning("streaming already active")
-            return
+            raise RuntimeError("toupcam - already streaming; stop the stream first")
 
+        self._stream_failure = None
         self._streaming_active = True
+        try:
+            self._start_streaming(config, callback)
+        except BaseException:
+            # nothing is streaming, so nothing may claim to be
+            self._streaming_active = False
+            raise
+
+    def _start_streaming(
+        self,
+        config: AcquisitionChannelConfig,
+        callback: tp.Callable[[np.ndarray], None],
+    ) -> None:
+        "start_streaming's body, once it has claimed the stream"
+        assert self.handle is not None
 
         # set pixel format (determined from device_type config)
         bytes_per_pixel, dtype, pullimage_pix_format = self._set_pixel_format()
@@ -924,7 +939,7 @@ class ToupCamCamera(Camera):
                 try:
                     self.handle.Trigger(1)
                 except Exception as e:
-                    logger.warning(f"toupcam - failed to trigger next streaming frame: {e}")
+                    self._stream_failed(e)
                     return True
 
             return False
@@ -942,6 +957,7 @@ class ToupCamCamera(Camera):
         Stop continuous image streaming and reset to trigger mode.
         """
         if not self._streaming_active:
+            self._raise_stream_failure()
             return
 
         self._streaming_active = False
@@ -955,4 +971,5 @@ class ToupCamCamera(Camera):
         self.ctx.stop_acquisition = False
 
         logger.debug("toupcam camera - streaming stopped")
+        self._raise_stream_failure()
 

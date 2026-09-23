@@ -8,6 +8,7 @@ import numpy as np
 from seaconfig import AcquisitionChannelConfig
 
 from seafront.config.basics import ConfigItem
+from seafront.hardware.health import describe
 from seafront.hardware.limits import HardwareLimitValue
 from seafront.logger import logger
 
@@ -76,9 +77,25 @@ class CameraOfflineError(Exception):
         super().__init__(f"camera {camera.sn} ({camera.device_type or 'not opened'}) is offline")
 
 
+class StreamEndedEarlyError(RuntimeError):
+    "a stream stopped delivering frames before stop_streaming() was called; raised by it"
+
+    def __init__(self, camera: "Camera", cause: BaseException):
+        super().__init__(
+            f"camera {camera.sn} ({camera.device_type or 'not opened'}) stopped streaming "
+            f"on its own: {describe(cause)}"
+        )
+
+
 class Camera(ABC):
     """
     Abstract interface for camera implementations to support different manufacturers.
+
+    Streaming: a stream that ends before `stop_streaming()` (a frame could not be read, the
+    next frame could not be triggered, or the frame callback raised) happens on the SDK's
+    thread, where raising reaches nobody. The driver calls `_stream_failed()` there, which
+    logs it at once, and `stop_streaming()` raises it as StreamEndedEarlyError after
+    cleaning up.
     """
 
     def __init__(self, device_info: tp.Any):
@@ -89,6 +106,22 @@ class Camera(ABC):
         self.device_type: tp.Literal["main", "autofocus"] | None = None
         self.acquisition_ongoing: bool = False
         self.pixel_format:tp.Literal["mono8","mono10","mono12","mono14","mono16"]="mono8"
+        self._stream_failure: BaseException | None = None
+        "what ended the current stream early, if anything; see the class docstring"
+
+    def _stream_failed(self, error: BaseException) -> None:
+        "record what ended the stream early; the first failure is the one reported"
+        logger.opt(exception=error).error(
+            f"camera {self.sn} ({self.device_type}) - stream ended early: {describe(error)}"
+        )
+        if self._stream_failure is None:
+            self._stream_failure = error
+
+    def _raise_stream_failure(self) -> None:
+        "for stop_streaming, once it has stopped: raise what ended the stream early, if anything"
+        failure, self._stream_failure = self._stream_failure, None
+        if failure is not None:
+            raise StreamEndedEarlyError(self, failure) from failure
 
     @staticmethod
     @abstractmethod
@@ -136,7 +169,7 @@ class Camera(ABC):
         Start continuous image streaming in continuous mode.
 
         The callback will be called for each acquired image. The callback return value
-        is ignored - use stop_streaming() to end streaming.
+        is ignored - use stop_streaming() to end streaming. Raises if already streaming.
 
         Args:
             config: Acquisition configuration (exposure time, gain, pixel format, etc.)
@@ -149,7 +182,8 @@ class Camera(ABC):
         """
         Stop continuous image streaming and reset to trigger mode.
 
-        Safe to call even if streaming is not active.
+        Safe to call even if streaming is not active. Raises StreamEndedEarlyError, after
+        stopping, if the stream had already ended on its own.
         """
         pass
 

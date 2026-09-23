@@ -99,7 +99,7 @@ def test_a_snap_of_every_channel_ends_with_finished(connected):
 
 def test_a_failed_channel_ends_the_snap_with_one_error_naming_it(connected, monkeypatch):
     fail_channel(connected, monkeypatch, "fluo488")
-    statuses, error = snap(connected, config("bfledfull", "fluo488", "fluo561"))
+    statuses, _error = snap(connected, config("bfledfull", "fluo488", "fluo561"))
 
     ends = terminal(statuses)
     assert [s.status for s in ends] == ["error"], [s.message for s in statuses]

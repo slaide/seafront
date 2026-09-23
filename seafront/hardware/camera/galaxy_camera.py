@@ -393,6 +393,7 @@ class GalaxyCamera(Camera):
         self.is_streaming = False
         self.acq_mode = None
         self._streaming_active = False
+        self._incomplete_stream_frames = 0
         self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
         # turning stream on takes 25ms for continuous mode, 20ms for single frame mode
@@ -710,11 +711,24 @@ class GalaxyCamera(Camera):
         assert self.handle is not None
 
         if self._streaming_active:
-            logger.warning("streaming already active")
-            return
+            raise RuntimeError("galaxy - already streaming; stop the stream first")
 
+        self._stream_failure = None
+        self._incomplete_stream_frames = 0
         self._streaming_active = True
+        try:
+            self._start_streaming(config, callback)
+        except BaseException:
+            # nothing is streaming, so nothing may claim to be
+            self._streaming_active = False
+            raise
 
+    def _start_streaming(
+        self,
+        config: AcquisitionChannelConfig,
+        callback: tp.Callable[[np.ndarray], None],
+    ) -> None:
+        "start_streaming's body, once it has claimed the stream"
         # set pixel format (determined from device_type config)
         self._set_pixel_format()
 
@@ -722,23 +736,30 @@ class GalaxyCamera(Camera):
         self._set_analog_gain(config.analog_gain)
 
         def streaming_callback(img: gxiapi.RawImage):
-            """Internal callback that ignores return value and checks streaming flag."""
+            """
+            Runs on the SDK's thread, where an exception reaches nobody: a failure is recorded
+            for stop_streaming to raise, and the frames after it are dropped.
+            """
             if not self._streaming_active or img is None:  # type: ignore
                 self._clear_acquisition_state()
                 return
+            if self._stream_failure is not None:
+                return
 
-            img_status = img.get_status()
-            match img_status:
-                case gxiapi.GxFrameStatusList.INCOMPLETE:
-                    raise RuntimeError("incomplete frame")
-                case gxiapi.GxFrameStatusList.SUCCESS:
-                    pass
+            try:
+                if img.get_status() == gxiapi.GxFrameStatusList.INCOMPLETE:
+                    # a frame the camera could not finish: this one is skipped, the stream
+                    # goes on, and stop_streaming says how many there were
+                    self._incomplete_stream_frames += 1
+                    return
 
-            img_np = img.get_numpy_array()
-            assert img_np is not None
+                img_np = img.get_numpy_array()
+                if img_np is None:
+                    raise RuntimeError("the SDK returned a frame with no image data")
 
-            # Call user callback and ignore return value
-            callback(img_np)
+                callback(img_np)
+            except Exception as e:
+                self._stream_failed(e)
 
         self._set_acquisition_mode(
             AcquisitionMode.CONTINUOUS,
@@ -751,6 +772,7 @@ class GalaxyCamera(Camera):
         Stop continuous image streaming and reset to trigger mode.
         """
         if not self._streaming_active:
+            self._raise_stream_failure()
             return
 
         # Cleared first: the capture callback checks it, so from here on any frame still
@@ -762,7 +784,13 @@ class GalaxyCamera(Camera):
         # error to report, not a warning to write down and carry on from.
         self._set_acquisition_mode(AcquisitionMode.ON_TRIGGER)
 
+        if self._incomplete_stream_frames:
+            logger.warning(
+                f"galaxy camera - skipped {self._incomplete_stream_frames} incomplete frames "
+                "during the stream"
+            )
         logger.debug("galaxy camera - streaming stopped")
+        self._raise_stream_failure()
 
     def _set_pixel_format(self, pixel_format: str | None = None) -> None:
         """

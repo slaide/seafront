@@ -49,7 +49,7 @@ class MockCamera(Camera):
 
     def close(self):
         """Close device handle (mock: no-op)."""
-        if self._streaming_active:
+        if self._streaming_thread is not None:
             self.stop_streaming()
         logger.debug("mock camera - closed")
 
@@ -99,9 +99,9 @@ class MockCamera(Camera):
             raise RuntimeError("Camera not opened")
 
         if self._streaming_active:
-            logger.warning("mock camera - streaming already active")
-            return
+            raise RuntimeError("mock camera - already streaming; stop the stream first")
 
+        self._stream_failure = None
         self._streaming_active = True
         self._streaming_stop_event.clear()
 
@@ -116,20 +116,18 @@ class MockCamera(Camera):
 
     def stop_streaming(self) -> None:
         """Stop continuous image streaming."""
-        if not self._streaming_active:
-            return
-
         self._streaming_active = False
         self._streaming_stop_event.set()
 
-        # Wait for streaming thread to finish
+        # Wait for the streaming thread to finish, including one that already ended itself
         if self._streaming_thread is not None:
             thread, self._streaming_thread = self._streaming_thread, None
             thread.join(timeout=2.0)
             if thread.is_alive():
                 raise RuntimeError("mock camera - streaming thread did not stop within 2 s")
+            logger.debug("mock camera - streaming stopped")
 
-        logger.debug("mock camera - streaming stopped")
+        self._raise_stream_failure()
 
     def get_exposure_time_limits(self) -> HardwareLimitValue:
         """Get camera's exposure time limits in milliseconds."""
@@ -214,18 +212,14 @@ class MockCamera(Camera):
                 self._frame_counter += 1
 
                 # Call callback with image
-                try:
-                    callback(img)
-                except Exception as e:
-                    logger.error(f"mock camera - streaming callback error: {e}")
-                    break
+                callback(img)
 
                 # Simulate frame acquisition time (exposure + small overhead)
                 frame_time = config.exposure_time_ms / 1000.0 + 0.01  # 10ms overhead
                 self._streaming_stop_event.wait(timeout=frame_time)
 
         except Exception as e:
-            logger.error(f"mock camera - streaming thread error: {e}")
+            self._stream_failed(e)
         finally:
             self._streaming_active = False
 
