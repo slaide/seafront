@@ -26,7 +26,7 @@ import numpy as np
 import seaconfig as sc
 from pydantic import PrivateAttr
 
-from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, GlobalConfigHandler, ImagingOrder
+from seafront.config.basics import ChannelConfig, ConfigItem, FilterConfig, GlobalConfigHandler
 from seafront.config.handles import CameraConfig, FilterWheelConfig, ImagingConfig, LaserAutofocusConfig
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import AdapterState, Position
@@ -503,49 +503,6 @@ class MockMicroscope(Microscope):
     def _pos_z_real_to_measured(self, z_mm: float) -> float:
         """Convert real Z position to measured position."""
         return z_mm - self.calibrated_stage_position[2]
-
-    def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
-        """
-        Sort channels according to the specified imaging order.
-        
-        Args:
-            channels: List of enabled AcquisitionChannelConfig objects
-            imaging_order: Sorting strategy to use
-            
-        Returns:
-            Sorted list of channels
-        """
-        if imaging_order == "z_order":
-            # Sort by z_offset_um (lowest to highest z coordinate)
-            return sorted(channels, key=lambda ch: ch.z_offset_um)
-
-        elif imaging_order == "wavelength_order":
-            # Sort by wavelength (highest to lowest), then brightfield last
-            def wavelength_sort_key(ch):
-                # Extract wavelength from channel name if possible
-                import re
-                wavelength_match = re.search(r'(\d+)\s*nm', ch.name, re.IGNORECASE)
-                if wavelength_match:
-                    wavelength = int(wavelength_match.group(1))
-                    # Higher wavelengths first (descending order)
-                    return (0, -wavelength)
-                elif 'brightfield' in ch.name.lower() or 'bf' in ch.name.lower():
-                    # Brightfield comes last
-                    return (1, 0)
-                else:
-                    # Unknown wavelength, put in middle
-                    return (0, -500)  # Assume ~500nm for unknown
-
-            return sorted(channels, key=wavelength_sort_key)
-
-        elif imaging_order == "protocol_order":
-            # Keep original order from config file
-            return channels
-
-        else:
-            # Default to protocol order for unknown values
-            logger.warning(f"Unknown imaging order '{imaging_order}', using protocol_order")
-            return channels
 
     def get_hardware_limits(self) -> HardwareLimits:
         """

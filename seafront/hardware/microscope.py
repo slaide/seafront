@@ -20,7 +20,6 @@ from seafront.config.basics import (
     ConfigItem,
     FilterConfig,
     GlobalConfigHandler,
-    ImagingOrder,
 )
 from seafront.config.handles import LaserAutofocusConfig
 from seafront.hardware.adapter import AdapterState
@@ -373,20 +372,6 @@ class Microscope(BaseModel, abc.ABC):
 
         Returns:
             Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
-        """
-        pass
-
-    @abc.abstractmethod
-    def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
-        """
-        Sort channels according to the specified imaging order.
-
-        Args:
-            channels: List of enabled AcquisitionChannelConfig objects
-            imaging_order: Sorting strategy to use
-
-        Returns:
-            Sorted list of channels
         """
         pass
 

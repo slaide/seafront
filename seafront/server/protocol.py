@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 import seafront.server.commands as cmds
 from seafront.config import basics
-from seafront.config.basics import ImagingOrder
+from seafront.config.basics import ImagingOrder, sort_channels_by_imaging_order
 from seafront.config.handles import (
     CameraConfig,
     ImageConfig,
@@ -951,42 +951,6 @@ class ProtocolGenerator(BaseModel):
         "selected channels"
         return [c for c in self.config_file.channels if c.enabled]
 
-    def _sort_channels_by_imaging_order(self, channels: list, imaging_order: ImagingOrder) -> list:
-        """
-        Sort channels according to the specified imaging order.
-
-        Args:
-            channels: List of enabled AcquisitionChannelConfig objects
-            imaging_order: Sorting strategy to use
-
-        Returns:
-            Sorted list of channels
-        """
-        if imaging_order == "protocol_order":
-            # Keep original order from config file
-            return channels
-
-        elif imaging_order == "wavelength_order":
-            # Sort by emission wavelength (high to low), then brightfield last
-            def wavelength_key(channel):
-                # Brightfield channels go last
-                if hasattr(channel, 'is_brightfield') and channel.is_brightfield:
-                    return (0, channel.name)  # Sort brightfield last with lowest priority
-                # Sort by emission wavelength descending (highest first)
-                emission_nm = getattr(channel, 'emission_wavelength_nm', 500)  # Default 500nm
-                return (emission_nm, channel.name)  # Positive for descending order when reversed
-
-            return sorted(channels, key=wavelength_key, reverse=True)
-
-        elif imaging_order == "z_order":
-            # This case is handled in the z-stacking logic below
-            # For channel ordering, use protocol order as fallback
-            return channels
-
-        else:
-            # Default fallback
-            return channels
-
     def get_greedy_well_order(self) -> list[sc.PlateWellConfig]:
         """
         Get wells in greedy nearest-neighbor traversal order for maximum efficiency.
@@ -1152,11 +1116,8 @@ class ProtocolGenerator(BaseModel):
 
     def iter_channels(self) -> tp.Iterator[ChannelInfo]:
         """Iterator over channels with imaging order applied"""
-        imaging_order_item = ConfigRegistry.get(ImagingConfig.ORDER)
-        assert imaging_order_item is not None
-        imaging_order = tp.cast(ImagingOrder, imaging_order_item.value)
-
-        ordered_channels = self._sort_channels_by_imaging_order(self.channels, imaging_order)
+        imaging_order = tp.cast(ImagingOrder, ConfigRegistry.get(ImagingConfig.ORDER).strvalue)
+        ordered_channels = sort_channels_by_imaging_order(self.channels, imaging_order)
         for channel_index, channel in enumerate(ordered_channels):
             yield ChannelInfo(
                 channel=channel,

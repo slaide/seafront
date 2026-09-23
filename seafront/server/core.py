@@ -30,6 +30,7 @@ from seafront.config.basics import (
     GlobalConfigHandler,
     ImagingOrder,
     MicroscopeConfig,
+    sort_channels_by_imaging_order,
 )
 from seafront.config.handles import (
     CalibrationConfig,
@@ -1301,17 +1302,8 @@ class Core:
             error_internal(detail="no channels selected")
 
         # Get imaging order from machine config and sort channels
-        g_config = GlobalConfigHandler.get_dict()
-        imaging_order = g_config.get(ImagingConfig.ORDER.value, "protocol_order")
-        if isinstance(imaging_order, str):
-            imaging_order_value = imaging_order
-        else:
-            imaging_order_value = imaging_order.strvalue if hasattr(imaging_order, 'strvalue') else "protocol_order"
-
-        # Sort channels (pure computation, no hardware -> no lock).
-        enabled_channels = self.microscope._sort_channels_by_imaging_order(
-            enabled_channels, tp.cast(ImagingOrder, imaging_order_value)
-        )
+        imaging_order = tp.cast(ImagingOrder, ConfigRegistry.get(ImagingConfig.ORDER).strvalue)
+        enabled_channels = sort_channels_by_imaging_order(enabled_channels, imaging_order)
 
         # Run the whole per-channel loop as one worker job (single owner). Await it so the
         # WebSocket stays open and status updates (marshaled onto its loop by the callback)

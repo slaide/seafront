@@ -8,13 +8,47 @@ from pathlib import Path
 import json5
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
-from seaconfig import AcquisitionConfig, ConfigItem, ConfigItemOption
+from seaconfig import AcquisitionChannelConfig, AcquisitionConfig, ConfigItem, ConfigItemOption
 
 from seafront.config.registry import ConfigRegistry, OverrideResult, restrict_to_options
 
 CameraDriver = tp.Literal["galaxy", "toupcam"]
 MicroscopeType = tp.Literal["squid", "mock"]
 ImagingOrder = tp.Literal["z_order", "wavelength_order", "protocol_order"]
+
+
+def sort_channels_by_imaging_order[C: AcquisitionChannelConfig](
+    channels: list[C], imaging_order: ImagingOrder
+) -> list[C]:
+    """
+    the order channels are imaged in, one after another: a protocol run and a progressive snap
+    both use this, so a snap previews the order a run will take
+
+    - z_order: lowest z offset first
+    - wavelength_order: the wavelength in the channel name ("... 488 nm ..."), highest first;
+      brightfield after every fluorescence channel, and a name with no wavelength as if 500 nm
+    - protocol_order: as listed
+    """
+    match imaging_order:
+        case "z_order":
+            return sorted(channels, key=lambda ch: ch.z_offset_um)
+        case "wavelength_order":
+            def wavelength_key(ch: AcquisitionChannelConfig) -> tuple[int, int]:
+                wavelength = re.search(r"(\d+)\s*nm", ch.name, re.IGNORECASE)
+                if wavelength:
+                    return (0, -int(wavelength.group(1)))
+                if "brightfield" in ch.name.lower() or "bf" in ch.name.lower():
+                    return (1, 0)
+                return (0, -500)
+
+            return sorted(channels, key=wavelength_key)
+        case "protocol_order":
+            return list(channels)
+        case _:
+            raise ValueError(
+                f"unknown imaging order {imaging_order!r}; expected one of {list(tp.get_args(ImagingOrder))}"
+            )
+
 
 # Type alias for microscope config - a flat dict of handle -> value
 MicroscopeConfig = dict[str, tp.Any]
