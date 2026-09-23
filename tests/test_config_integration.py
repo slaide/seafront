@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from seafront.config.registry import ConfigRegistry, config_item
-from seafront.config.basics import GlobalConfigHandler, ServerConfig
+from seafront.config.basics import ConfigFileError, GlobalConfigHandler, ServerConfig
 
 
 @pytest.fixture
@@ -333,8 +333,12 @@ class TestObjectTypeEnforcement:
         config_file.write_text(json.dumps(config_data))
 
         with patch.object(GlobalConfigHandler, 'home_config', return_value=config_file):
-            with pytest.raises(TypeError, match="got str"):
+            with pytest.raises(ConfigFileError) as excinfo:
                 GlobalConfigHandler.reset("legacy-scope")
+        # every string-encoded item is named, not just the first one the loader hit
+        message = str(excinfo.value)
+        assert "imaging.channels: expected a JSON object or list, got str" in message
+        assert "protocol.forbidden_areas: expected a JSON object or list, got str" in message
 
     def test_error_message_is_helpful(self):
         """Error message should tell user to use native JSON."""
