@@ -723,7 +723,7 @@ class MockAPIClient {
         // === ACQUISITION ===
 
         if (endpoint === '/api/acquisition/config_list') {
-            return { configs: [] };
+            return { configs: [], unreadable: [] };
         }
 
         if (endpoint === '/api/acquisition/config_store') {

@@ -806,10 +806,26 @@
                                 </div>
                             </div>
 
-                            <div>
-                                <button
-                                    @click="protocol_list=(await getConfigList()).configs"
+                            <div
+                                class="protocol-list-unreadable"
+                                x-show="protocol_list_unreadable.length > 0"
+                            >
+                                <b
+                                    x-text="`${protocol_list_unreadable.length} protocol file${protocol_list_unreadable.length === 1 ? '' : 's'} could not be read:`"
+                                ></b>
+                                <template
+                                    x-for="unreadable in protocol_list_unreadable"
+                                    :key="unreadable.filename"
                                 >
+                                    <div>
+                                        <span x-text="unreadable.filename"></span>
+                                        <pre x-text="unreadable.error"></pre>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <div>
+                                <button @click="await refreshConfigList()">
                                     refresh list
                                 </button>
                             </div>

@@ -45,6 +45,18 @@ body{
         font-style: italic;
     }
 
+    /* protocol files the server could not read, listed under the protocol table */
+    .protocol-list-unreadable {
+        margin: 0.5em 0;
+        padding: 0.5em;
+        border: 2px solid #ff4444;
+        background-color: rgba(255, 68, 68, 0.1);
+        pre {
+            margin: 0.2em 0 0.5em 1em;
+            white-space: pre-wrap;
+        }
+    }
+
     /* Number input error styling - high specificity */
     input[type="text"].number-input-error,
     input[is="number-input"].number-input-error {

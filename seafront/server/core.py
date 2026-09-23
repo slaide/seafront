@@ -72,6 +72,7 @@ from seafront.server.commands import (
     ConfigFetchResponse,
     ConfigFileInfo,
     ConfigListResponse,
+    UnreadableConfigFile,
     CoreCurrentState,
     EstablishHardwareConnection,
     HardwareCapabilitiesResponse,
@@ -367,7 +368,7 @@ class Core:
         these files are already stored on the machine, and can be loaded on request.
         """
 
-        def map_filepath_to_info(c: path.Path) -> ConfigFileInfo | None:
+        def map_filepath_to_info(c: path.Path) -> ConfigFileInfo:
             filename = c.name
             timestamp = None
             comment = None
@@ -396,24 +397,18 @@ class Core:
                 plate_type=plate_type,
             )
 
-        config_list_str = []
+        configs: list[ConfigFileInfo] = []
+        unreadable: list[UnreadableConfigFile] = []
         for c in GlobalConfigHandler.get_config_list():
-            next_config = None
+            # One bad file must not hide the rest, nor disappear itself: a protocol that
+            # silently drops out of the list looks deleted, when it is only broken.
             try:
-                next_config = map_filepath_to_info(c)
-            except:
-                pass
+                configs.append(map_filepath_to_info(c))
+            except Exception as e:
+                logger.warning(f"protocol list - cannot read {c}: {describe(e)}")
+                unreadable.append(UnreadableConfigFile(filename=c.name, error=describe(e)))
 
-            if next_config is None:
-                continue
-
-            config_list_str.append(next_config)
-
-        ret = ConfigListResponse(
-            configs=config_list_str,
-        )
-
-        return ret
+        return ConfigListResponse(configs=configs, unreadable=unreadable)
 
     def config_fetch(self, config_file: str) -> ConfigFetchResponse:
         """

@@ -374,6 +374,7 @@ declare global {
 
     type ConfigListResponse = {
         configs: ConfigFileInfo[];
+        unreadable: UnreadableConfigFile[];
         microscope_name?: string;
     };
 
@@ -925,6 +926,12 @@ declare global {
         /** contains channel configuration used to start a stream */
         channel: AcquisitionChannelConfig;
         microscope_name?: string;
+    };
+
+    /** a protocol file that is there but could not be read: listed so it does not just vanish */
+    type UnreadableConfigFile = {
+        filename: string;
+        error: string;
     };
 
     type ValidationError = {

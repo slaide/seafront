@@ -23,7 +23,9 @@ export async function getConfigList() {
  * @this {AlpineMicroscopeState}
  */
 export async function refreshConfigList() {
-    this.protocol_list = (await this.getConfigList()).configs;
+    const list = await this.getConfigList();
+    this.protocol_list = list.configs;
+    this.protocol_list_unreadable = list.unreadable;
 }
 
 /**

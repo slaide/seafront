@@ -294,8 +294,18 @@ class ConfigFileInfo(BaseModel):
     plate_type: sc.Wellplate
 
 
+class UnreadableConfigFile(BaseModel):
+    "a protocol file that is there but could not be read: listed so it does not just vanish"
+
+    filename: str
+    error: str
+    "why it could not be read, e.g. the JSON syntax error or the field that failed validation"
+
+
 class ConfigListResponse(BaseModel):
     configs: list[ConfigFileInfo]
+    unreadable: list[UnreadableConfigFile]
+    "protocol files that exist but could not be loaded, each with the reason"
     microscope_name: str = ""
     "name of the device that processed this request"
 

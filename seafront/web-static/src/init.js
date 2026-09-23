@@ -657,6 +657,8 @@ const generate_alpine_object=() => ({
 
     /** protocols stored on server @type {ConfigListEntry[]} */
     protocol_list: [],
+    /** protocol files on the server that could not be read, with why @type {UnreadableConfigFile[]} */
+    protocol_list_unreadable: [],
     protol_list_filters: {
         filename: "",
         project_name: "",
