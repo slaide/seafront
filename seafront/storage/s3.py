@@ -66,6 +66,9 @@ class S3Sink:
         self._stored = 0
         self._spilled = 0
         self._failed: list[str] = []
+        "uploads that failed, with the image kept in the spill directory"
+        self._lost: list[str] = []
+        "uploads that failed with no copy kept anywhere"
         self._threads = [
             threading.Thread(target=self._uploader, name=f"s3-upload-{i}", daemon=True)
             for i in range(max(1, upload_threads))
@@ -119,9 +122,20 @@ class S3Sink:
                     payload.unlink(missing_ok=True)
             except Exception as e:
                 # never lose the image: keep (or create) its copy in the spill directory
-                kept = payload if isinstance(payload, Path) else self._spill(relpath, payload)
-                with self._lock:
-                    self._failed.append(f"{relpath}: {e} (kept at {kept})")
+                try:
+                    kept = payload if isinstance(payload, Path) else self._spill(relpath, payload)
+                except Exception as spill_error:
+                    # Caught, because this thread is the only one draining its share of the
+                    # queue: letting it die would leave everything behind this item neither
+                    # uploaded nor reported.
+                    with self._lock:
+                        self._lost.append(
+                            f"{relpath}: upload failed ({e}) and keeping a local copy failed "
+                            f"({spill_error})"
+                        )
+                else:
+                    with self._lock:
+                        self._failed.append(f"{relpath}: {e} (kept at {kept})")
             finally:
                 if isinstance(payload, bytes):
                     with self._lock:
@@ -131,6 +145,10 @@ class S3Sink:
     def bytes_written(self) -> int:
         with self._lock:
             return self._bytes
+
+    def lost(self) -> list[str]:
+        with self._lock:
+            return list(self._lost)
 
     @property
     def queued(self) -> int:
@@ -145,7 +163,7 @@ class S3Sink:
         with self._lock:
             return StoreReport(
                 stored=self._stored,
-                failed=list(self._failed),
+                failed=self._lost + self._failed,
                 bytes_written=self._bytes,
                 spilled_to_disk=self._spilled,
             )

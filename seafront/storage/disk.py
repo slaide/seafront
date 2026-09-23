@@ -26,6 +26,10 @@ class DiskSink:
     def describe(self, relpath: str) -> str:
         return str(self.base_dir / relpath)
 
+    def lost(self) -> list[str]:
+        # nothing is lost here without deliver() raising, and ImageStore records that
+        return []
+
     @property
     def bytes_written(self) -> int:
         with self._lock:

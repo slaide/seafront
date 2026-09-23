@@ -88,6 +88,7 @@ from seafront.server.commands import (
     positionIsForbidden,
 )
 from seafront.server.acquisitions import AcquisitionRegistry
+from seafront.storage import InsufficientStorageError, StorageFailedError, check_capacity
 from seafront.server.lock import DeviceLock, LockDecision, LockReason
 from seafront.server.protocol import (
     AsyncThreadPool,
@@ -1149,6 +1150,13 @@ class Core:
         for channel_info in protocol.iter_channels():
             self.microscope.validate_channel_for_acquisition(channel_info.channel)
 
+        # Room for the images. Checked here with everything else: a run that fills the disk
+        # partway has already cost the sample the time and light of the part it did take.
+        try:
+            check_capacity(int(protocol.max_storage_size_images_GB * 1024**3))
+        except InsufficientStorageError as e:
+            error_internal(detail=f"cannot start the acquisition: {e}")
+
         # Run the whole acquisition as one worker job (single owner). It holds the worker
         # for its entire duration, so every other command is rejected (409) meanwhile —
         # which is exactly what allow_while_acquisition_is_running=False expects. Cancel via
@@ -1208,6 +1216,8 @@ class Core:
         except HTTPException as e:
             # validation / internal errors crash the acquisition
             self._acquisition_crashed(acquisition_status, str(e.detail))
+        except StorageFailedError as e:
+            self._acquisition_crashed(acquisition_status, f"image storage failed: {e}")
         except DisconnectError as e:
             # The adapter has already dropped the hardware and recorded which device went; what
             # is left is to say so on the acquisition, in words the operator can act on.

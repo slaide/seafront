@@ -24,6 +24,16 @@ import tifffile
 from pydantic import BaseModel, Field
 
 
+class StorageFailedError(Exception):
+    "images handed to the store were lost"
+
+    def __init__(self, lost: list[str]):
+        self.lost = lost
+        shown = "; ".join(lost[:3])
+        more = f"; and {len(lost) - 3} more" if len(lost) > 3 else ""
+        super().__init__(f"{len(lost)} image(s) could not be stored: {shown}{more}")
+
+
 class StoreReport(BaseModel):
     "what happened to everything handed to an ImageStore"
 
@@ -42,6 +52,13 @@ class Sink(tp.Protocol):
 
     def describe(self, relpath: str) -> str:
         "human-readable location of an item (path or s3:// URL)"
+        ...
+
+    def lost(self) -> list[str]:
+        """
+        items gone for good, found after deliver() returned (an upload that failed, and whose
+        local copy could not be written either); '<relpath>: <reason>'
+        """
         ...
 
     @property
@@ -124,6 +141,20 @@ class ImageStore:
         finally:
             with self._lock:
                 self._pending -= 1
+
+    def raise_if_failed(self) -> None:
+        """
+        Raise StorageFailedError if anything handed to this store so far is lost.
+
+        For a caller still producing: close() reports the same failures, but only at the end,
+        and a run that goes on after its storage has failed - a full disk stays full - spends
+        hours taking images that go nowhere.
+        """
+        with self._lock:
+            lost = list(self._failures)
+        lost += self.sink.lost()
+        if lost:
+            raise StorageFailedError(lost)
 
     @property
     def pending(self) -> int:

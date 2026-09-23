@@ -1086,17 +1086,9 @@ class ProtocolGenerator(BaseModel):
             - ((self.config_file.grid.num_y - 1) * self.config_file.grid.delta_y_mm) / 2
         )
 
-        base_storage_path = path.Path(ConfigRegistry.get(StorageConfig.BASE_IMAGE_OUTPUT_DIR).strvalue)
-        assert base_storage_path.exists(), f"{base_storage_path = } does not exist"
-
         self.project_relpath = path.Path(self.config_file.project_name) / (
             f"{self.config_file.plate_name!s}_{sc.datetime2str(dt.datetime.now(dt.UTC))}"
         )
-        # backend + writer threads come from machine config (storage.*)
-        self.image_store = image_store_from_config()
-        # the protocol itself travels with the images
-        self.image_store.put_bytes(str(self.project_relpath / "config.json"), self.config_file.json().encode())
-
         self._status_reporter = AcquisitionStatusReporter(
             target=self.acquisition_status,
             acquisition_id=self.acquisition_id,
@@ -1301,8 +1293,13 @@ class ProtocolGenerator(BaseModel):
         last_image_information = None
 
         num_images_acquired = 0
-        image_store = self.image_store
-        assert image_store is not None
+        # Opened here, when the run starts, rather than when the protocol is built: a protocol
+        # is built to be checked, and one that is refused must not leave a project directory
+        # and a pool of writer threads behind. Closed by generate(), however the run ends.
+        # Backend and writer threads come from machine config (storage.*).
+        image_store = self.image_store = image_store_from_config()
+        # the protocol itself travels with the images
+        image_store.put_bytes(str(self.project_relpath / "config.json"), self.config_file.json().encode())
         strip_rows = ConfigRegistry.get(StorageConfig.STRIP_ROWS).intvalue
         codec_threads = ConfigRegistry.get(StorageConfig.CODEC_THREADS).intvalue
 
@@ -1546,6 +1543,10 @@ class ProtocolGenerator(BaseModel):
 
                         self.latest_channel_images[channel.name] = image_store_entry
 
+                        # An image already lost means the storage has failed, and it stays
+                        # failed (a full disk, a gone share): stop now, not after every image
+                        # still to come has gone the same way.
+                        image_store.raise_if_failed()
                         # encode + store off the acquisition path (image-writer threads, then the sink)
                         image_store.put(
                             str(image_relpath),

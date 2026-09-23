@@ -8,17 +8,20 @@ Image storage backends for acquisitions (built-in protocol and the API-driven sc
     report = store.close()
 """
 
-from seafront.storage.base import ImageStore, Sink, StoreReport, encode_ome_tiff
+from seafront.storage.base import ImageStore, Sink, StorageFailedError, StoreReport, encode_ome_tiff
 from seafront.storage.disk import DiskSink
-from seafront.storage.factory import image_store_from_config
+from seafront.storage.factory import InsufficientStorageError, check_capacity, image_store_from_config
 from seafront.storage.s3 import S3Sink
 
 __all__ = [
     "DiskSink",
     "ImageStore",
+    "InsufficientStorageError",
     "S3Sink",
     "Sink",
+    "StorageFailedError",
     "StoreReport",
+    "check_capacity",
     "encode_ome_tiff",
     "image_store_from_config",
 ]
