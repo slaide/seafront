@@ -169,7 +169,7 @@ def filename_check(name: str) -> str | None:
     return name_check(name)
 
 
-class AcquisitionCancelledError(Exception):
+class AcquisitionCancelledError(OperationCancelledError):
     """raised when an acquisition is cancelled by user request"""
 
     def __init__(self, detail: str):
@@ -1222,7 +1222,7 @@ class Core:
             logger.debug("protocol done")
             self._acquisition_ended(acquisition_status, AcquisitionStatusStage.COMPLETED)
 
-        except (AcquisitionCancelledError, OperationCancelledError):
+        except OperationCancelledError:
             # user requested cancellation (via cancel_acquisition -> worker cancel event)
             self._acquisition_ended(acquisition_status, AcquisitionStatusStage.CANCELLED)
         except HTTPException as e:

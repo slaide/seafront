@@ -18,11 +18,16 @@ thread via `asyncio.run`; a later phase replaces that with a pure-sync execute p
 
 import asyncio
 import concurrent.futures
+import itertools
 import queue
 import threading
+import time
 import typing as tp
 
-from seafront.hardware.microscope import Microscope
+from fastapi import HTTPException
+
+from seafront.hardware.health import describe
+from seafront.hardware.microscope import Microscope, OperationCancelledError
 from seafront.logger import logger
 from seafront.server import commands as cmd
 
@@ -30,6 +35,7 @@ from seafront.server import commands as cmd
 class WorkItem(tp.NamedTuple):
     make_coro: tp.Callable[[], tp.Coroutine[tp.Any, tp.Any, tp.Any]]
     label: str
+    seq: int
     reply: concurrent.futures.Future[tp.Any]
     cancel: threading.Event
 
@@ -46,6 +52,7 @@ class RunningJob(tp.NamedTuple):
 
     label: str
     cancel: threading.Event
+    seq: int
 
 
 class MicroscopeWorker:
@@ -78,6 +85,9 @@ class MicroscopeWorker:
         )
         self._started = False
         self._shutdown = threading.Event()
+        # numbers each accepted command, so its start and end lines in the log can be matched
+        # up when other lines (image writes, status reads) land in between
+        self._seq = itertools.count(1)
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -144,13 +154,17 @@ class MicroscopeWorker:
         `scope.raise_if_cancelled()` at checkpoints inside it.
         """
         if self._shutdown.is_set():
+            logger.info(f"command {label} - refused: the microscope worker is shutting down")
             return None
         # reject-on-busy: claim the single slot without waiting.
         if not self._inflight.acquire(blocking=False):
+            job = self._current
+            holder = f"#{job.seq} {job.label}" if job is not None else "a command being handed over"
+            logger.info(f"command {label} - refused: busy with {holder}")
             return None
         reply: concurrent.futures.Future[tp.Any] = concurrent.futures.Future()
         cancel = threading.Event()
-        self._handoff.put(WorkItem(make_coro, label, reply, cancel))
+        self._handoff.put(WorkItem(make_coro, label, next(self._seq), reply, cancel))
         return reply, cancel
 
     def current_job(self) -> RunningJob | None:
@@ -195,13 +209,17 @@ class MicroscopeWorker:
             if item is None:  # shutdown sentinel (see _SHUTDOWN / stop())
                 return
 
-            self._current = RunningJob(item.label, item.cancel)
+            self._current = RunningJob(item.label, item.cancel, item.seq)
             # Publish the cancel event onto the scope so long operations can poll it
             # via raise_if_cancelled().
             self._scope.set_current_cancel(item.cancel)
+            name = f"command #{item.seq} {item.label}"
+            logger.info(f"{name} - started")
+            started = time.monotonic()
             try:
                 result = self._run_coro(item.make_coro, item.label)
             except BaseException as e:
+                _log_ending(name, time.monotonic() - started, e)
                 # Any failure is relayed to the caller's future. Release the slot
                 # BEFORE completing the future so a caller that awaits the result
                 # and immediately resubmits finds the worker free.
@@ -210,6 +228,7 @@ class MicroscopeWorker:
                 self._inflight.release()
                 item.reply.set_exception(e)
             else:
+                logger.info(f"{name} - finished in {time.monotonic() - started:.3f} s")
                 self._current = None
                 self._scope.set_current_cancel(None)
                 self._inflight.release()
@@ -220,5 +239,20 @@ class MicroscopeWorker:
         # it) are still async. Everything under them is sync (Phase 2), so this just
         # drives the coroutine to completion on the worker thread. A later phase
         # introduces a pure-sync execute path and deletes this asyncio.run.
-        logger.debug(f"microscope-worker - running {label}")
         return asyncio.run(make_coro())
+
+
+def _log_ending(name: str, duration_s: float, error: BaseException) -> None:
+    """
+    one line for how a command that did not finish ended
+
+    A cancel and a refusal the command gave for its own input are the command working as
+    meant; anything else is a fault, and gets its traceback in the log file.
+    """
+    after = f"after {duration_s:.3f} s"
+    if isinstance(error, OperationCancelledError):
+        logger.info(f"{name} - cancelled {after}")
+    elif isinstance(error, HTTPException):
+        logger.info(f"{name} - refused {after}: {error.detail}")
+    else:
+        logger.opt(exception=error).error(f"{name} - failed {after}: {describe(error)}")
