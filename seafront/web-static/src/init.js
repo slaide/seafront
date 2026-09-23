@@ -154,9 +154,47 @@ function currentStagePosition(currentState) {
     return currentState.adapter_state.stage_position;
 }
 
+/**
+ * An http(s) server URL without trailing slashes, or an Error saying why it is not one.
+ * @param {string} text
+ * @returns {string|Error}
+ */
+function parseServerUrl(text) {
+    let url;
+    try {
+        url = new URL(text.trim());
+    } catch {
+        return new Error(`"${text}" is not a URL; write it as http://host:port`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return new Error(`"${text}" is not an http or https URL; write it as http://host:port`);
+    }
+    return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+}
+
+/**
+ * The server this page talks to: the one named by `?server=`, else the one that served it. A
+ * `?server=` that is not a server URL falls back to the latter, with `problem` saying so.
+ *
+ * Every piece of per-server state (clients, sockets, machine config, channels, the device lease)
+ * is built from this once, at page load, so a switch to another server is a reload with a new
+ * `?server=` and never a partial swap of some of them.
+ */
+function serverOfPage() {
+    const named = new URLSearchParams(window.location.search).get('server');
+    if (named === null) return { url: window.location.origin, problem: null };
+    const parsed = parseServerUrl(named);
+    if (parsed instanceof Error) {
+        return { url: window.location.origin, problem: `?server= was not used: ${parsed.message}` };
+    }
+    return { url: parsed, problem: null };
+}
+
+const PAGE_SERVER = serverOfPage();
+
 const generate_alpine_object=() => ({
     /** url to microscope (hardware) server (default to same origin as gui) */
-    server_url: window.location.origin,
+    server_url: PAGE_SERVER.url,
 
     // These will be initialized in the init() method. Either the real client or the offline
     // mock ends up here, so the declared type is both: whatever the app uses through these
@@ -1393,19 +1431,22 @@ const generate_alpine_object=() => ({
      * @returns
      */
     status_reconnect(url) {
-        // if new url is same one, and a connection is already [in process of] being established
-        // skip reconnect attempt.
-        if (url == this.server_url && this.wsManager.isConnected('status') && this.isConnectedToServer) {
-            return;
+        if (url) {
+            const parsed = parseServerUrl(url);
+            if (parsed instanceof Error) {
+                this.showError('Server URL', parsed.message);
+                this.server_url_input = this.server_url;
+                return;
+            }
+            if (parsed !== this.server_url) {
+                this.switch_server(parsed);
+                return;
+            }
         }
 
-        // if no url has been provided, reconnect to existing url.
-        // if one has been provided, update current url and proceed.
-        if (url) {
-            this.server_url = url;
-            // Close old connection when URL changes so we reconnect to the new server
-            this.wsManager.closeConnection('status');
-            this.stop_status_getstate_loop();
+        // the field naming the server it is already connected to leaves the connection alone
+        if (url && this.wsManager.isConnected('status') && this.isConnectedToServer) {
+            return;
         }
 
         // reconnection is only attempted if connection is not currently established
@@ -1462,6 +1503,25 @@ const generate_alpine_object=() => ({
                 autoReconnect: true,
             });
         }
+    },
+
+    /**
+     * Talk to another server from now on.
+     *
+     * The clients, the sockets, the machine config, the channels and the device lease were all
+     * built from the old server at page load, and swapping only some of them would leave the page
+     * showing one microscope's settings next to another's images. So the page is loaded again,
+     * with the new server in `?server=`, and builds everything from that one.
+     * @param {string} url
+     */
+    switch_server(url) {
+        const page = new URL(window.location.href);
+        if (url === window.location.origin) {
+            page.searchParams.delete('server');
+        } else {
+            page.searchParams.set('server', url);
+        }
+        window.location.assign(page.toString());
     },
 
     status_getstate_loop() {
@@ -1681,6 +1741,9 @@ const generate_alpine_object=() => ({
         this._useMockAPI = useMockMode;
         if (useMockMode) {
             this.showMockModeIndicator();
+        }
+        if (PAGE_SERVER.problem !== null) {
+            this.showError('Server URL', `${PAGE_SERVER.problem}\n\nConnected to ${this.server_url} instead.`);
         }
 
         this._plateinfo = await this.getPlateTypes();
