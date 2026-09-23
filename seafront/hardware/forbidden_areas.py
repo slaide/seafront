@@ -5,8 +5,20 @@ This module provides AABB (Axis-Aligned Bounding Box) based forbidden area check
 to prevent the microscope stage from moving to physically dangerous locations.
 """
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from typing import Self
+
+from seafront.config.handles import ProtocolConfig
+from seafront.config.registry import ConfigRegistry
+
+
+class ForbiddenAreasConfigError(ValueError):
+    """
+    The configured forbidden areas cannot be read.
+
+    Raised instead of treating the list as empty: an empty list lets the stage go anywhere,
+    so a check that cannot read it has to refuse, not allow.
+    """
 
 
 class ForbiddenArea(BaseModel):
@@ -80,6 +92,22 @@ class ForbiddenAreaList(BaseModel):
     """
 
     areas: list[ForbiddenArea] = Field(default_factory=list, description="List of forbidden areas")
+
+    @classmethod
+    def from_config(cls) -> "ForbiddenAreaList":
+        "the forbidden areas in the machine config, as they are right now"
+        handle = ProtocolConfig.FORBIDDEN_AREAS.value
+        data = ConfigRegistry.get(handle).objectvalue
+        try:
+            return cls.model_validate({"areas": data})
+        except ValidationError as e:
+            problems = "; ".join(
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in e.errors()
+            )
+            raise ForbiddenAreasConfigError(
+                f"the forbidden areas in the config ({handle}) are invalid: {problems}"
+            ) from None
 
     def add_area(self, area: ForbiddenArea) -> None:
         """Add a forbidden area to the list."""

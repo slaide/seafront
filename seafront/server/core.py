@@ -21,7 +21,6 @@ import json5
 import numpy as np
 import seaconfig as sc
 from fastapi import HTTPException
-from pydantic import ValidationError
 from seaconfig.acquisition import AcquisitionConfig
 
 from seafront.config.basics import (
@@ -38,13 +37,12 @@ from seafront.config.handles import (
     FilterWheelConfig,
     ImagingConfig,
     LaserAutofocusConfig,
-    ProtocolConfig,
     SystemConfig,
 )
 from seafront.config.registry import ConfigRegistry
 from seafront.debug_introspect import register_signal_dumper
 from seafront.hardware.camera.camera import bits_for_pixel_format
-from seafront.hardware.forbidden_areas import ForbiddenArea, ForbiddenAreaList
+from seafront.hardware.forbidden_areas import ForbiddenAreaList
 from seafront.hardware.health import Condition, HardwareCloseError, describe
 from seafront.hardware.microscope import (
     DisconnectError,
@@ -993,13 +991,9 @@ class Core:
                 for f in ConfigRegistry.get(FilterWheelConfig.CONFIGURATION).objectvalue  # type: ignore[misc]
             ]
 
-        forbidden_areas: list[ForbiddenArea] = []
-        try:
-            forbidden_areas = ForbiddenAreaList.model_validate(
-                {"areas": ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue}
-            ).areas
-        except (KeyError, ValidationError) as e:
-            logger.warning(f"forbidden areas could not be read for hardware capabilities: {e}")
+        # an unreadable list fails the request: shown as empty, the UI would draw no forbidden
+        # areas at all
+        forbidden_areas = ForbiddenAreaList.from_config().areas
 
         return HardwareCapabilitiesResponse(
             main_camera=main_camera,
@@ -1020,11 +1014,7 @@ class Core:
         config_items = GlobalConfigHandler.get()
 
         # Let the microscope extend config with hardware-specific options
-        try:
-            self.microscope.extend_machine_config(config_items)
-        except Exception as e:
-            logger.debug(f"Could not extend machine config from microscope: {e}")
-            # Continue with default options if hardware unavailable
+        self.microscope.extend_machine_config(config_items)
 
         return config_items
 
@@ -1143,11 +1133,7 @@ class Core:
         # Validate that no site positions fall within forbidden areas
         # This catches forbidden positions during preparation instead of during execution
         # Parse forbidden areas once and reuse for all positions to avoid repeated parsing
-        try:
-            forbidden_areas_data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue
-            forbidden_areas = ForbiddenAreaList.model_validate({"areas": forbidden_areas_data})
-        except KeyError:
-            forbidden_areas = None
+        forbidden_areas = ForbiddenAreaList.from_config()
 
         for position_info in protocol.iter_positions():
             site_x_mm, site_y_mm = position_info.physical_position

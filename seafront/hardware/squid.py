@@ -66,8 +66,6 @@ from seafront.server.commands import (
     error_internal,
 )
 
-from seafront.config.handles import ProtocolConfig
-from seafront.hardware.forbidden_areas import ForbiddenAreaList
 
 # Deadlines on the hardware calls that can hang (see hardware/watchdog.py): the camera SDKs,
 # and opening and closing. Each is far past anything the call takes, including the drivers'
@@ -1146,23 +1144,7 @@ class SquidAdapter(Microscope):
         
         returns (<position is forbidden?>, <forbidden reason>)
         """
-
-        try:
-            data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue
-        except KeyError:
-            # No forbidden areas configured - position is allowed
-            return False, ""
-
-        forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
-        # Check if position is forbidden
-        is_forbidden, conflicting_area = forbidden_areas.is_position_forbidden(x_mm, y_mm)
-
-        if is_forbidden and conflicting_area is not None:
-            reason_text = f" ({conflicting_area.reason})" if conflicting_area.reason else ""
-            error_msg = f"Movement to ({x_mm:.1f}, {y_mm:.1f}) mm is forbidden - conflicts with area '{conflicting_area.name}'{reason_text}"
-            return True, error_msg
-
-        return False, ""
+        return cmd.positionIsForbidden(x_mm, y_mm)
 
     def _execute_EstablishHardwareConnection(
         self,
@@ -2209,18 +2191,19 @@ class SquidAdapter(Microscope):
         Args:
             config_items: List of ConfigItem objects to modify in-place
         """
-        try:
-            # Ask main camera to extend config
-            with self.main_camera.locked(blocking=False) as camera:
-                if camera is not None:
-                    camera.extend_machine_config(config_items)
+        # Before connecting there is no camera to ask; the listing then carries the configured
+        # options, and connecting restricts them (update_pixel_format_options). A camera busy
+        # with a command is skipped for the same reason. A connected camera that fails to answer
+        # is an error for the caller, not a config listing with its options missing.
+        if not self.is_connected:
+            return
+        with self.main_camera.locked(blocking=False) as camera:
+            if camera is not None:
+                camera.extend_machine_config(config_items)
 
-            # Ask focus camera to extend config if available
-            with self.focus_camera.locked(blocking=False) as camera:
-                if camera is not None:
-                    camera.extend_machine_config(config_items)
-        except Exception as e:
-            logger.debug(f"Could not extend machine config from cameras: {e}")
+        with self.focus_camera.locked(blocking=False) as camera:
+            if camera is not None:
+                camera.extend_machine_config(config_items)
 
     def estimate_acquisition(self, config: sc.AcquisitionConfig) -> cmd.AcquisitionEstimate:
         """

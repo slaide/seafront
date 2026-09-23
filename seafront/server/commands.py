@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from seafront.server.lock import LockDecision, LockReason, LockState
 
 from seafront.config.basics import FilterConfig, GlobalConfigHandler
-from seafront.config.handles import ProtocolConfig
 from seafront.config.registry import ConfigRegistry
 from seafront.hardware.adapter import AdapterState, Position
 from seafront.hardware.forbidden_areas import ForbiddenArea, ForbiddenAreaList
@@ -153,15 +152,8 @@ def positionIsForbidden(
     Returns:
         Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
     """
-    # Use provided forbidden areas or parse from config
     if forbidden_areas is None:
-        try:
-            data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue
-        except KeyError:
-            # No forbidden areas configured - allow the movement
-            return False, ""
-
-        forbidden_areas = ForbiddenAreaList.model_validate({"areas": data})
+        forbidden_areas = ForbiddenAreaList.from_config()
 
     # Check if movement is safe
     is_safe, conflicting_area = forbidden_areas.is_movement_safe(x_mm, y_mm)

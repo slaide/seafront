@@ -1283,11 +1283,7 @@ class ProtocolGenerator(BaseModel):
         # Pre-flight validation: check all planned positions against forbidden areas
         logger.info("protocol - performing pre-flight forbidden area validation")
         # Parse forbidden areas once and pass to positionIsForbidden to avoid repeated parsing
-        try:
-            data = ConfigRegistry.get(cmds.ProtocolConfig.FORBIDDEN_AREAS).objectvalue
-            forbidden_areas = cmds.ForbiddenAreaList.model_validate({"areas": data})
-        except KeyError:
-            forbidden_areas = None
+        forbidden_areas = cmds.ForbiddenAreaList.from_config()
 
         forbidden_positions = []
         for pos_info in self.iter_positions():

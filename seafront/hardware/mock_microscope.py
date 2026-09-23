@@ -40,8 +40,6 @@ from seafront.hardware.health import Device, HardwareCloseError
 from seafront.logger import logger
 from seafront.server import commands as cmd
 
-from seafront.config.handles import ProtocolConfig
-from seafront.hardware.forbidden_areas import ForbiddenAreaList
 
 def _simulate_laf_image(
     z_um: float,
@@ -243,24 +241,7 @@ class MockMicroscope(Microscope):
         Returns:
             Tuple of (is_forbidden, error_message). error_message is empty if position is allowed.
         """
-
-        try:
-            forbidden_areas_data = ConfigRegistry.get(ProtocolConfig.FORBIDDEN_AREAS).objectvalue
-        except KeyError:
-            # No forbidden areas configured - allow the movement
-            return False, ""
-
-        forbidden_areas = ForbiddenAreaList.model_validate({"areas": forbidden_areas_data})
-
-        # Check if position is forbidden
-        is_forbidden, conflicting_area = forbidden_areas.is_position_forbidden(x_mm, y_mm)
-
-        if is_forbidden and conflicting_area is not None:
-            reason_text = f" ({conflicting_area.reason})" if conflicting_area.reason else ""
-            error_msg = f"Movement to ({x_mm:.1f}, {y_mm:.1f}) mm is forbidden - conflicts with area '{conflicting_area.name}'{reason_text}"
-            return True, error_msg
-
-        return False, ""
+        return cmd.positionIsForbidden(x_mm, y_mm)
 
     def _calculate_axis_movement_time(self, distance_mm: float, max_vel_mm_s: float, accel_mm_s2: float) -> tuple[float, float]:
         """

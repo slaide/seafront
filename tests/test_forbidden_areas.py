@@ -200,3 +200,41 @@ class TestTheMicroscopeRefusesToGoThere:
                 asyncio.run(mock_scope.execute(cmd.MoveTo(x_mm=15.0, y_mm=35.0)))
         finally:
             mock_scope.close()
+
+
+class TestAnUnreadableListRefusesRatherThanAllows:
+    """
+    a list in the config that does not parse is refused wherever it is read, with what is wrong
+    with it: read as empty it would let the stage go anywhere, and the UI would draw nothing
+    """
+
+    BROKEN = [{"name": "clamp", "min_x_mm": 10.0, "max_x_mm": 20.0, "min_y_mm": 30.0}]
+
+    def test_the_reader_names_the_field(self, mock_scope):
+        from seafront.config.handles import ProtocolConfig
+        from seafront.config.registry import ConfigRegistry
+        from seafront.hardware.forbidden_areas import ForbiddenAreasConfigError
+
+        ConfigRegistry.set_value(ProtocolConfig.FORBIDDEN_AREAS, self.BROKEN)
+        with pytest.raises(ForbiddenAreasConfigError) as caught:
+            ForbiddenAreaList.from_config()
+        message = str(caught.value)
+        assert "protocol.forbidden_areas" in message and "areas.0.max_y_mm" in message
+
+    def test_a_move_check_refuses(self, mock_scope):
+        from seafront.config.handles import ProtocolConfig
+        from seafront.config.registry import ConfigRegistry
+        from seafront.hardware.forbidden_areas import ForbiddenAreasConfigError
+
+        ConfigRegistry.set_value(ProtocolConfig.FORBIDDEN_AREAS, self.BROKEN)
+        with pytest.raises(ForbiddenAreasConfigError):
+            mock_scope.is_position_forbidden(60.0, 60.0)
+
+    def test_the_capabilities_refuse(self, mock_core):
+        from seafront.config.handles import ProtocolConfig
+        from seafront.config.registry import ConfigRegistry
+        from seafront.hardware.forbidden_areas import ForbiddenAreasConfigError
+
+        ConfigRegistry.set_value(ProtocolConfig.FORBIDDEN_AREAS, self.BROKEN)
+        with pytest.raises(ForbiddenAreasConfigError):
+            mock_core.get_hardware_capabilities()
