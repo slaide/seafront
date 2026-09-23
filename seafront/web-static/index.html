@@ -3062,6 +3062,12 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 <span x-text="`${current_acquisition_progress_percent.toFixed(2)}%`"></span>
                                 <span>|</span>
                                 <span x-text="`Done in ${acquisitionTimeLeftString}`"></span>
+                                <template x-if="latest_acquisition_status?.acquisition_progress?.num_autofocus_misses">
+                                    <span>
+                                        <span>|</span>
+                                        <span class="autofocus-misses" x-text="`Autofocus missed ${latest_acquisition_status?.acquisition_progress?.num_autofocus_misses} site(s)`"></span>
+                                    </span>
+                                </template>
                             </span>
                             
                             <div class="popup">
@@ -3078,6 +3084,14 @@ This reads the laser reflection position without moving the stage. Instant resul
                                     <div x-show="latest_acquisition_status?.acquisition_progress?.current_timepoint" x-text="`Timepoint: ${latest_acquisition_status?.acquisition_progress?.current_timepoint} / ${latest_acquisition_status?.acquisition_progress?.total_timepoints}`"></div>
                                     <div x-show="latest_acquisition_status?.acquisition_progress?.estimated_timepoint_duration_s" x-text="`Time per Timepoint: ~${latest_acquisition_status?.acquisition_progress?.estimated_timepoint_duration_s?.toFixed(1)}s`"></div>
                                     <div x-text="`${latest_acquisition_status?.message??''}`" x-show="latest_acquisition_status?.message"></div>
+                                    <template x-if="latest_acquisition_status?.acquisition_progress?.num_autofocus_misses">
+                                        <div class="autofocus-misses" style="margin-top: 0.5em;">
+                                            <div x-text="`Autofocus missed ${latest_acquisition_status?.acquisition_progress?.num_autofocus_misses} site(s), imaged without focus; most recent:`"></div>
+                                            <template x-for="miss in [...(latest_acquisition_status?.acquisition_progress?.recent_autofocus_misses ?? [])].reverse()">
+                                                <div x-text="`${miss.well_name} (${miss.site_x}, ${miss.site_y}) t${miss.timepoint}: ${miss.detail}`"></div>
+                                            </template>
+                                        </div>
+                                    </template>
                                 </div>
                             </div>
                         </div>

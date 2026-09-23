@@ -11,6 +11,7 @@ import scipy  # to find peaks in a signal
 import seaconfig as sc
 
 from matplotlib import pyplot as plt
+from fastapi import HTTPException
 from pydantic import BaseModel
 from scipy import stats  # for linear regression
 
@@ -1808,14 +1809,18 @@ class SquidAdapter(Microscope):
         last_distance_estimate_mm = 0.0
         num_compensating_moves = 0
         reached_threshold = False
+        # the loop only leaves early by setting this; running out of repetitions leaves it as is
+        outcome = cmd.AutofocusOutcome.OUT_OF_MOVES
+        failure: str | None = None
         try:
             last_distance_estimate_mm = _estimate_offset_mm()
             logger.debug("autofocus - estimated offset")
             last_z_mm = (qmc.get_last_position()).z_pos_mm
             MAX_MOVEMENT_RANGE_MM = 0.3  # should be derived from the calibration data, but this value works fine in practice
             if math.fabs(last_distance_estimate_mm) > MAX_MOVEMENT_RANGE_MM:
-                cmd.error_internal(
-                    detail="measured autofocus focal plane offset too large"
+                raise ValueError(
+                    f"measured autofocus focal plane offset too large: {last_distance_estimate_mm:.3f} mm "
+                    f"is outside the {MAX_MOVEMENT_RANGE_MM} mm working range, so the estimate is not trusted"
                 )
 
             for rep_i in range(command.max_num_reps):
@@ -1835,6 +1840,7 @@ class SquidAdapter(Microscope):
                     logger.debug("autofocus - reset z to known good position")
                     # TODO unsure if this is the best approach. we cannot do better, but we also have not actually gotten close to the offset
                     reached_threshold = True
+                    outcome = cmd.AutofocusOutcome.GAVE_UP
                     break
 
                 last_distance_estimate_mm = distance_estimate_mm
@@ -1843,23 +1849,40 @@ class SquidAdapter(Microscope):
                 # if movement distance is not worth compensating, stop
                 if math.fabs(distance_estimate_mm) < OFFSET_MOVEMENT_THRESHOLD_MM:
                     reached_threshold = True
+                    outcome = cmd.AutofocusOutcome.IN_FOCUS
                     break
 
                 qmc.move_by_mm("z", distance_estimate_mm)
                 num_compensating_moves += 1
                 logger.debug("autofocus - refined z")
 
-        except Exception:
-            # if any interaction failed, attempt to reset z position to known somewhat-good position
-            qmc.move_to_mm("z", initial_z)
-            logger.debug("autofocus - reset z position")
+        except Exception as e:
+            # a site the autofocus cannot measure (no spot, a spot out of range) is a result the
+            # caller decides about, so it is returned as FAILED with the reason. The stage goes
+            # back to where it started, since the next move is relative to wherever this stops.
+            # DisconnectError and MicrocontrollerTimeout are BaseExceptions and are not caught.
+            failure = str(e.detail) if isinstance(e, HTTPException) else describe(e)
+            logger.opt(exception=e).warning(
+                f"autofocus - approach failed, returning z to {initial_z:.4f} mm: {failure}"
+            )
+            try:
+                qmc.move_to_mm("z", initial_z)
+            except BaseException as reset_error:
+                reset_error.add_note(
+                    f"while returning z to {initial_z:.4f} mm after the autofocus approach "
+                    f"failed: {failure}"
+                )
+                raise
+            outcome = cmd.AutofocusOutcome.FAILED
 
-        logger.debug("squid - used autofocus to approach target displacement")
+        logger.debug(f"squid - autofocus approach ended: {outcome.value}")
 
         res = cmd.AutofocusApproachTargetDisplacementResult(
             num_compensating_moves=num_compensating_moves,
             uncompensated_offset_mm=last_distance_estimate_mm,
             reached_threshold=reached_threshold,
+            outcome=outcome,
+            failure=failure,
         )
         return res
 
@@ -1984,7 +2007,7 @@ class SquidAdapter(Microscope):
                     calibration_position=cmd.Position.zero(),
                 )
 
-                num_images = 3 or command.override_num_images
+                num_images = command.override_num_images or 3
                 for _ in range(num_images):
                     displacement_um += (
                         self._approximate_laser_af_displacement_um(qmc, calib_params)

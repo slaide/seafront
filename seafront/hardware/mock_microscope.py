@@ -1185,11 +1185,13 @@ class MockMicroscope(Microscope):
             num_compensating_moves = 1
             uncompensated_offset_mm = 0.0  # Successfully reached target
             reached_threshold = True  # Converged to target
+            outcome = cmd.AutofocusOutcome.IN_FOCUS
 
             return cmd.AutofocusApproachTargetDisplacementResult(
                 num_compensating_moves=num_compensating_moves,
                 uncompensated_offset_mm=uncompensated_offset_mm,
                 reached_threshold=reached_threshold,
+                outcome=outcome,
             )  # type: ignore
 
         else:

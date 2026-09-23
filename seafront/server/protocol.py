@@ -1,6 +1,7 @@
 import asyncio
 import asyncio as aio
 import datetime as dt
+import collections
 import functools
 import math
 import pathlib as path
@@ -114,6 +115,29 @@ class AcquisitionStatusReporter:
         self._config = config
         self._total_num_images = total_num_images
         self._max_storage_size_images_gb = max_storage_size_images_gb
+        self._num_autofocus_misses = 0
+        self._recent_autofocus_misses: collections.deque[cmds.AutofocusMiss] = collections.deque(
+            maxlen=self.KEEP_RECENT_AUTOFOCUS_MISSES
+        )
+
+    KEEP_RECENT_AUTOFOCUS_MISSES = 10
+    "each status carries these, and a status is polled continuously: the count covers the rest"
+
+    def autofocus_missed(self, miss: cmds.AutofocusMiss) -> None:
+        "record a site imaged out of focus, and show it now rather than with the next image"
+        self._num_autofocus_misses += 1
+        self._recent_autofocus_misses.append(miss)
+        last = self._target.last_status
+        if last is not None:
+            last.acquisition_progress = last.acquisition_progress.model_copy(
+                update=self._autofocus_fields()
+            )
+
+    def _autofocus_fields(self) -> dict[str, tp.Any]:
+        return {
+            "num_autofocus_misses": self._num_autofocus_misses,
+            "recent_autofocus_misses": list(self._recent_autofocus_misses),
+        }
 
     def publish(
         self,
@@ -143,6 +167,7 @@ class AcquisitionStatusReporter:
                 current_timepoint=current_timepoint,
                 total_timepoints=total_timepoints,
                 estimated_timepoint_duration_s=estimated_timepoint_duration_s,
+                **self._autofocus_fields(),
             ),
             acquisition_meta_information=cmds.AcquisitionMetaInformation(
                 total_num_images=self._total_num_images,
@@ -1371,7 +1396,12 @@ class ProtocolGenerator(BaseModel):
                         res = None
                         total_compensating_moves = 0
                         AUTOFOCUS_NUM_ATTEMPTS_MAX = 3
+                        miss: str | None = None
+                        "why this site is imaged without having reached focus"
                         for autofocus_attempt_num in range(AUTOFOCUS_NUM_ATTEMPTS_MAX):
+                            # each attempt is several frames and moves: a cancel should not
+                            # have to wait for all of them
+                            self.handle_q_in()
                             logger.debug(f"protocol - autofocus attempt {autofocus_attempt_num}")
 
                             # approach target offset
@@ -1385,40 +1415,66 @@ class ProtocolGenerator(BaseModel):
                             ), f"{type(res)=}"
 
                             logger.debug(
-                                f"protocol - autofocus results: {res.num_compensating_moves=} {res.uncompensated_offset_mm=:.3f}"
+                                f"protocol - autofocus results: {res.outcome.value} {res.num_compensating_moves=} {res.uncompensated_offset_mm=:.3f}"
                             )
 
                             total_compensating_moves += res.num_compensating_moves
 
-                            # if the final estimated offset is larger than some small threshold, assume it has failed
-                            # and reset to some known good-ish z position
-                            if (
+                            if res.outcome == cmds.AutofocusOutcome.IN_FOCUS:
+                                autofocus_succeeded = True
+                                break
+
+                            # a failed measurement, or an estimate too far off to trust: the z
+                            # it left is no better than the reference, so image at that
+                            if res.outcome == cmds.AutofocusOutcome.FAILED:
+                                miss = f"autofocus failed ({res.failure})"
+                            elif (
                                 math.fabs(res.uncompensated_offset_mm)
                                 > UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM
                             ):
+                                miss = (
+                                    f"autofocus {res.outcome.value} with "
+                                    f"{res.uncompensated_offset_mm * 1e3:.1f} um left, beyond the "
+                                    f"{UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM * 1e3:.0f} um it may be off by"
+                                )
+                            if miss is not None:
                                 mres = yield cmds.MoveTo(x_mm=None, y_mm=None, z_mm=reference_z_mm)
                                 assert isinstance(mres, cmds.BasicSuccessResponse), f"{type(mres)=}"
-                                logger.debug(
-                                    f"protocol - autofocus done after exceeding uncompensated threshold: {res.uncompensated_offset_mm=:.4f} {UNCOMPENSATED_Z_FAILURE_THRESHOLD_MM=:.4f}"
-                                )
+                                miss += f"; imaged at the reference z {reference_z_mm:.4f} mm"
                                 break
 
-                            # if no moves have been performed to compensate for offset, assume we have reached the target offset
-                            # (may in practice be still offset, but at least we cannot do better than we have so far)
-                            if res.num_compensating_moves == 0 or res.reached_threshold:
-                                autofocus_succeeded = True
-                                logger.debug(f"protocol - autofocus done {res.reached_threshold=}")
-                                break
-
-                        if res is not None:
-                            logger.debug(
-                                f"{total_compensating_moves=} ; {res.uncompensated_offset_mm=:.4f}"
+                            # close, but not in focus: another attempt, from where this one stopped
+                        else:
+                            assert res is not None
+                            miss = (
+                                f"autofocus did not reach focus in {AUTOFOCUS_NUM_ATTEMPTS_MAX} "
+                                f"attempts ({res.outcome.value}, {res.uncompensated_offset_mm * 1e3:.1f} um "
+                                f"left); imaged where the last attempt stopped"
                             )
+
+                        logger.debug(f"protocol - autofocus {total_compensating_moves=}")
 
                         # reference for channel z offsets
                         last_position = yield cmds.GetCurrentPosition()
                         assert isinstance(last_position, McPosition), f"{type(last_position)=}"
                         reference_z_mm = last_position.z_pos_mm
+
+                        if miss is not None:
+                            assert res is not None
+                            logger.warning(
+                                f"protocol - {well.well_name} site ({site.col}, {site.row}): {miss}"
+                            )
+                            self._status_reporter.autofocus_missed(
+                                cmds.AutofocusMiss(
+                                    well_name=well.well_name,
+                                    site_x=site.col,
+                                    site_y=site.row,
+                                    timepoint=timepoint,
+                                    outcome=res.outcome,
+                                    detail=miss,
+                                    imaged_at_z_mm=reference_z_mm,
+                                )
+                            )
 
                         logger.debug("autofocus performed")
                     else:

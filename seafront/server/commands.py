@@ -432,6 +432,19 @@ class AcquisitionStartResponse(BaseModel):
     "name of the device that processed this request"
 
 
+class AutofocusOutcome(str, Enum):
+    "how an autofocus approach ended; only IN_FOCUS means the target offset was reached"
+
+    IN_FOCUS = "in_focus"
+    "the remaining offset is under the threshold worth another move"
+    GAVE_UP = "gave_up"
+    "a move went away from focus; z was returned to the better of the last two positions"
+    OUT_OF_MOVES = "out_of_moves"
+    "every allowed move was made and the offset was still above the threshold"
+    FAILED = "failed"
+    "a measurement or move failed; z was returned to where the approach started"
+
+
 class AcquisitionProgressStatus(BaseModel):
     # measureable progress
     current_num_images: int
@@ -452,6 +465,25 @@ class AcquisitionProgressStatus(BaseModel):
     current_timepoint: int | None = None
     total_timepoints: int | None = None
     estimated_timepoint_duration_s: float | None = None
+
+    # sites whose autofocus did not reach focus, and so were imaged at a fallback z
+    num_autofocus_misses: int = 0
+    recent_autofocus_misses: list["AutofocusMiss"] = Field(default_factory=list)
+    "the most recent ones, newest last; num_autofocus_misses counts all of them"
+
+
+class AutofocusMiss(BaseModel):
+    "a site imaged without the autofocus having reached focus"
+
+    well_name: str
+    site_x: int
+    site_y: int
+    timepoint: int
+    outcome: AutofocusOutcome
+    "how the last attempt ended"
+    detail: str
+    "what happened, and at which z the site was imaged instead"
+    imaged_at_z_mm: float
 
 
 class AcquisitionMetaInformation(BaseModel):
@@ -862,6 +894,7 @@ class AutofocusMeasureDisplacement(BaseModel, BaseCommand[AutofocusMeasureDispla
     "config file (file contents, not path)"
     override_num_images: int | None = Field(
         default=None,
+        ge=1,
         title="Override Number of Images",
         description="override the number of images used to measure displacement (internal parameter, use with care)",
     )
@@ -933,11 +966,16 @@ class AutofocusApproachTargetDisplacementResult(BaseModel):
     final distance to target offset is not zero, and may have taken a variable number of moves, up to the limit. return those numbers here.
 
     reached_threshold is set to true if the system has determined that it cannot get close to the target offset
+    (it means "finished trying"; `outcome` says whether that was in focus)
     """
 
     num_compensating_moves: int
     uncompensated_offset_mm: float
+    "last estimate of the remaining offset; meaningless when outcome is FAILED"
     reached_threshold: bool
+    outcome: AutofocusOutcome
+    failure: str | None = None
+    "what failed, when outcome is FAILED"
     microscope_name: str = ""
     "name of the device that processed this request"
 

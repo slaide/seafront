@@ -911,6 +911,7 @@ class MockAPIClient {
                 num_compensating_moves: 1,
                 uncompensated_offset_mm: 0.001,
                 reached_threshold: true,
+                outcome: 'in_focus',
             };
         }
 

@@ -108,6 +108,8 @@ declare global {
         current_timepoint?: number | null;
         total_timepoints?: number | null;
         estimated_timepoint_duration_s?: number | null;
+        num_autofocus_misses?: number;
+        recent_autofocus_misses?: AutofocusMiss[];
     };
 
     type AcquisitionStartRequest = {
@@ -205,11 +207,14 @@ declare global {
      * final distance to target offset is not zero, and may have taken a variable number of moves, up to the limit. return those numbers here.
      * 
      * reached_threshold is set to true if the system has determined that it cannot get close to the target offset
+     * (it means "finished trying"; `outcome` says whether that was in focus)
      */
     type AutofocusApproachTargetDisplacementResult = {
         num_compensating_moves: number;
         uncompensated_offset_mm: number;
         reached_threshold: boolean;
+        outcome: AutofocusOutcome;
+        failure?: string | null;
         microscope_name?: string;
     };
 
@@ -247,6 +252,20 @@ declare global {
         displacement_um: number;
         microscope_name?: string;
     };
+
+    /** a site imaged without the autofocus having reached focus */
+    type AutofocusMiss = {
+        well_name: string;
+        site_x: number;
+        site_y: number;
+        timepoint: number;
+        outcome: AutofocusOutcome;
+        detail: string;
+        imaged_at_z_mm: number;
+    };
+
+    /** how an autofocus approach ended; only IN_FOCUS means the target offset was reached */
+    type AutofocusOutcome = "in_focus" | "gave_up" | "out_of_moves" | "failed";
 
     type AutofocusSnapRequest = {
         exposure_time_ms?: number;
