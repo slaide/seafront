@@ -86,9 +86,35 @@ body.theme-dark #workspaces {
     .well-count { font-variant-numeric: tabular-nums; }
     .panel-heading-note { font-weight: normal; font-size: 0.85em; }
     .experiment-wells > .section { height: 100%; box-sizing: border-box; }
-    .experiment-wells #well-selector { max-width: 40em; margin: 0 auto; gap: 0.65em; }
+    .experiment-wells #well-selector {
+        max-width: none;
+        gap: 0.75em;
+        grid-template: auto auto / minmax(0, 1fr) minmax(210px, 0.65fr);
+    }
+    #plate-type-selector { grid-column: 1 / -1; }
+    .experiment-plate-overview { min-width: 0; align-self: start; }
+    .experiment-plate-overview .well-selection-help { margin-top: 0.65em; }
+    .site-pattern-editor { min-width: 0; border-left: 1px solid var(--group-border); padding-left: 0.75em; }
+    .site-pattern-heading { display: grid; gap: 0.3em; span { font-size: 0.85em; font-variant-numeric: tabular-nums; } }
+    .site-pattern-scope { font-size: 0.8em; color: var(--muted-text-color); margin: 0.5em 0; }
+    .site-pattern-canvas {
+        display: block; width: 100%; aspect-ratio: 1;
+        background: var(--settings-surface); border: 1px solid var(--group-border); box-sizing: border-box;
+        .site-well-boundary { fill: var(--panel-surface); stroke: var(--group-border); stroke-width: 2; }
+        .site-center-guide { fill: none; stroke: var(--group-border); stroke-width: 0.5; stroke-dasharray: 3 4; pointer-events: none; }
+        .site-footprint { fill: var(--settings-surface); stroke: var(--group-border); stroke-width: 1; cursor: pointer; }
+        .site-footprint.is-selected { fill: color-mix(in srgb, var(--accent-color) 35%, transparent); stroke: var(--accent-color); }
+        .site-footprint:hover { stroke-width: 2; }
+        .site-center { cursor: pointer; fill: var(--panel-surface); stroke: var(--group-border); stroke-width: 1.5; }
+        .site-center.is-selected { fill: var(--accent-color); stroke: var(--accent-color); }
+        .site-hit-target { fill: transparent; stroke: none; }
+        .site-center:focus { outline: none; circle:last-child { stroke: var(--text-color); stroke-width: 3; } }
+    }
+    .site-pattern-actions { display: flex; align-items: center; gap: 0.4em; margin: 0.5em 0; span { margin-right: auto; font-size: 0.85em; } }
+    .site-pattern-dimensions { display: grid; grid-template-columns: auto 1fr; gap: 0.3em 0.75em; padding-top: 0.5em; border-top: 1px solid var(--section-band); font-size: 0.85em; dd { text-align: right; font-variant-numeric: tabular-nums; } }
     #plate-type-selector { align-items: center; gap: 0.75em; select { min-width: 0; width: 100%; } }
     #wellcontainer {
+        grid-template-columns: auto repeat(var(--numcols), minmax(0, 1fr));
         border: 1px solid var(--group-border);
         padding: 0.35em;
         gap: 2px;
@@ -556,3 +582,8 @@ body.theme-dark #workspaces {
 .signal-settings-notice { margin-top: 0.5em; padding: 0.4em; border-left: 2px solid var(--accent-color); background: var(--settings-surface); font-size: 0.8em; button { width: 100%; margin-top: 0.3em; } }
 
 .signal-dots { fill: none; stroke: var(--accent-color); stroke-width: 3; stroke-linecap: round; }
+
+@media (max-width: 750px) {
+    #experiment-page .experiment-wells #well-selector { grid-template-columns: minmax(0, 1fr); }
+    #experiment-page .site-pattern-editor { border-left: 0; border-top: 1px solid var(--group-border); padding: 0.75em 0 0; }
+}

@@ -795,6 +795,7 @@
                                                 }
                                             }
                                         </style>
+                                        <div class="experiment-plate-overview">
                                         <div
                                             id="wellcontainer"
                                             x-bind:class="`wellsx${microscope_config.wellplate_type.Num_wells_x}`"
@@ -819,7 +820,7 @@
                                                     }
                                                 }
                                                 .inselection {
-                                                    background: red;
+                                                    background: var(--highlight-color);
                                                 }
                                             </style>
                                             <!-- Column headers (row = -1) -->
@@ -870,6 +871,20 @@
                                             </template>
                                         </div>
                                         <div class="well-selection-help"><span>Click a well or drag a range to toggle selection</span><span class="forbidden-legend"><i></i>Forbidden center</span><span x-text="selectionRangeText"></span></div>
+                                        </div>
+                                        <aside class="site-pattern-editor" aria-label="Sites within a well">
+                                            <div class="site-pattern-heading"><strong>Sites within a well</strong><span x-text="`${microscope_config.grid.mask.filter(s => s.selected).length} / ${microscope_config.grid.mask.length} selected`"></span></div>
+                                            <p class="site-pattern-scope">Shared pattern for all selected wells</p>
+                                            <svg class="site-pattern-canvas" viewBox="0 0 320 320" aria-label="Well boundary and selectable imaging sites"
+                                                x-html="sitePatternMarkup" @click="togglePreviewSite($event)"
+                                                @keydown.enter.prevent="togglePreviewSite($event)" @keydown.space.prevent="togglePreviewSite($event)"></svg>
+                                            <div class="site-pattern-actions"><span>Select sites</span><button type="button" @click="selectAllPreviewSites(true)">All</button><button type="button" @click="selectAllPreviewSites(false)">None</button></div>
+                                            <dl class="site-pattern-dimensions">
+                                                <dt>Well [mm]</dt><dd x-text="`${microscope_config.wellplate_type.Well_size_x_mm} × ${microscope_config.wellplate_type.Well_size_y_mm}`"></dd>
+                                                <dt>FOV [mm]</dt><dd x-text="`${(plateNavigator?.objective.fovx ?? 0.9).toFixed(2)} × ${(plateNavigator?.objective.fovy ?? 0.9).toFixed(2)}`"></dd>
+                                            </dl>
+                                            <p class="site-pattern-scope">Click a field or its center to toggle it.</p>
+                                        </aside>
                                     </div>
                                 </div>
                             </div></div>

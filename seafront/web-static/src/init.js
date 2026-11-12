@@ -22,6 +22,8 @@ import {
 // these colors are used to create a legend in html
 Object.assign(window, { matWellColor, matSiteColor, matFovColor, matForbiddenAreaColor });
 
+import { sitePatternGeometry, sitePatternSvg } from "./site-pattern.js";
+
 import { wellForbiddenArea } from "./well-safety.js";
 
 import { registerNumberInput } from "numberinput";
@@ -391,6 +393,42 @@ const generate_alpine_object=() => ({
     /** @param {{row: number, col: number}} well */
     wellForbiddenArea(well) {
         return wellForbiddenArea(this.microscope_config.wellplate_type, well, this.forbiddenAreas);
+    },
+
+    get sitePatternMarkup() {
+        return sitePatternSvg(sitePatternGeometry(this.microscope_config.wellplate_type,
+            this.microscope_config.grid, this.plateNavigator?.objective ?? { fovx: 0.9, fovy: 0.9 }));
+    },
+
+    /** @param {Event} event */
+    togglePreviewSite(event) {
+        if (!(event.target instanceof Element)) return;
+        const target = event.target.closest('[data-site]');
+        if (!target) return;
+        const site = this.microscope_config.grid.mask[Number(target.getAttribute('data-site'))];
+        if (!site) return;
+        site.selected = !site.selected;
+        this.sitePatternChanged();
+        if (event instanceof KeyboardEvent) {
+            const svg = target.closest('svg');
+            const index = target.getAttribute('data-site');
+            // Alpine replaces the SVG contents after a toggle; retain keyboard focus.
+            requestAnimationFrame(() => {
+                const control = svg?.querySelector(`g[data-site="${index}"]`);
+                if (control instanceof SVGElement) control.focus();
+            });
+        }
+    },
+
+    /** @param {boolean} selected */
+    selectAllPreviewSites(selected) {
+        for (const site of this.microscope_config.grid.mask) site.selected = selected;
+        this.sitePatternChanged();
+    },
+
+    sitePatternChanged() {
+        this.plateNavigator?.refreshWellColors(this.microscope_config);
+        this.saveCurrentConfig();
     },
 
     pruneForbiddenWellSelections() {
@@ -2218,9 +2256,9 @@ const generate_alpine_object=() => ({
 
                 this.overlayelement.style.setProperty(
                     "background-color",
-                    "red",
+                    "var(--accent-color)",
                 );
-                this.overlayelement.style.setProperty("opacity", "0.5");
+                this.overlayelement.style.setProperty("opacity", "0.3");
                 this.overlayelement.style.setProperty("z-index", "1");
                 this.overlayelement.style.setProperty(
                     "pointer-events",
@@ -3864,12 +3902,15 @@ const generate_alpine_object=() => ({
             }
         }
 
+        // Keep exclusions when spacing/timing changes or the grid is resized.
+        const previousSites = new Map(this.microscope_config.grid.mask.map(site =>
+            [`${site.col},${site.row}`, site.selected]));
         /** @type {AcquisitionWellSiteConfigurationSiteSelectionItem[]} */
         const new_masks = [];
         for (let x = 0; x < this.microscope_config.grid.num_x; x++) {
             for (let y = 0; y < this.microscope_config.grid.num_y; y++) {
                 /** @type {AcquisitionWellSiteConfigurationSiteSelectionItem} */
-                const new_mask = { col: x, row: y, selected: true };
+                const new_mask = { col: x, row: y, selected: previousSites.get(`${x},${y}`) ?? true };
                 new_masks.push(new_mask);
             }
         }
