@@ -48,29 +48,126 @@ body.theme-dark #workspaces {
         overflow: auto;
     }
 }
-#experiment-page {
-    .workspace-note { margin: 0.75em; color: var(--muted-text-color); }
-    #protocol-container {
-        grid-template-columns: 4em 9em 9em 16em 7em 12em 12em 12em;
-    }
-}
-.experiment-layout {
-    display: grid;
-    gap: 0.75em;
-    padding: 0.5em;
-    grid-template-columns: minmax(420px, 0.9fr) minmax(0, 1.3fr);
-    align-items: start;
-}
+.experiment-layout { display: grid; align-items: start; }
+.experiment-configuration { display: grid; align-content: start; min-width: 0; }
 .experiment-metadata, .experiment-protocols, .experiment-wells { min-width: 0; }
-.experiment-configuration { display: grid; gap: 0.75em; align-content: start; min-width: 0; }
-.experiment-configuration > .section, .experiment-wells > .section { margin: 0; }
+.experiment-configuration > .section, .experiment-wells > .section,
+.experiment-metadata > .section, .experiment-protocols { margin: 0; }
 .experiment-protocols { grid-column: 1 / -1; }
-.experiment-wells #well-selector { max-width: 48em; }
 .protocol-browser { min-width: 0; }
-.protocol-table-scroll { overflow: auto; max-height: 65vh; }
+.protocol-table-scroll { overflow: auto; }
 .experiment-metadata #names {
     input, textarea { min-width: 0; width: 100%; box-sizing: border-box; }
 }
+/* Experiment keeps setup, the acquisition plan, and the plate in one visual frame. */
+#experiment-page {
+    background: var(--workspace-gutter);
+    .experiment-layout {
+        grid-template-columns: minmax(390px, 0.8fr) minmax(0, 1.4fr);
+        gap: 0.65em;
+        padding: 0.65em;
+    }
+    .experiment-configuration { gap: 0.65em; }
+    .section {
+        background: var(--panel-surface);
+        border: 1px solid var(--group-border);
+        > :first-child {
+            padding: 0.45em 0.65em;
+            background: var(--section-band);
+            color: var(--section-ink);
+            border-bottom: 1px solid var(--group-border);
+        }
+        > :not(:first-child) { padding: 0.65em; }
+    }
+    #names { gap: 0.5em 0.75em; align-items: center; }
+    #names textarea { min-height: 3.5em; resize: vertical; }
+    #grid-config { gap: 0.5em 0.4em; align-items: center; }
+    .experiment-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 1em; }
+    .well-count { font-variant-numeric: tabular-nums; }
+    .panel-heading-note { font-weight: normal; font-size: 0.85em; }
+    .experiment-wells > .section { height: 100%; box-sizing: border-box; }
+    .experiment-wells #well-selector { max-width: 40em; margin: 0 auto; gap: 0.65em; }
+    #plate-type-selector { align-items: center; gap: 0.75em; select { min-width: 0; width: 100%; } }
+    #wellcontainer {
+        border: 1px solid var(--group-border);
+        padding: 0.35em;
+        gap: 2px;
+        background: var(--settings-surface);
+        .wellheader { color: var(--section-ink); font-size: 0.75rem; }
+        .well:not(.wellheader) {
+            border: 1px solid var(--group-border);
+            background: var(--panel-surface);
+            box-sizing: border-box;
+            border-radius: 2px;
+        }
+        .well.selected {
+            background: var(--accent-color);
+            border-color: var(--accent-color);
+            box-shadow: inset 0 0 0 2px var(--panel-surface);
+        }
+        .well.inselection { background: var(--highlight-color); border-color: var(--accent-color); }
+        .well:hover:not(.wellheader) { background: var(--highlight-color); outline: 1px solid var(--accent-color); }
+    }
+    #wellcontainer .well.forbidden,
+    #wellcontainer .well.forbidden:hover {
+        background: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--text-color) 20%, transparent) 3px 5px), var(--settings-surface);
+        border-color: var(--group-border);
+        box-shadow: none;
+        opacity: 0.55;
+        cursor: not-allowed;
+        outline: none;
+    }
+    .forbidden-legend { display: inline-flex; align-items: center; gap: 0.35em; }
+    .forbidden-legend i { width: 1em; height: 1em; border: 1px solid var(--group-border); background: repeating-linear-gradient(135deg, transparent 0 3px, var(--group-border) 3px 4px); }
+    .well-selection-help { flex-wrap: wrap; display: flex; justify-content: space-between; gap: 0.5em; font-size: 0.8em; color: var(--muted-text-color); }
+    .experiment-plan > :first-child { background: var(--focus-band); color: var(--focus-ink); }
+    .plan-totals {
+        display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+        background: var(--settings-surface); border: 1px solid var(--group-border);
+        > div { display: grid; gap: 0.2em; padding: 0.5em 0.65em; }
+        > div + div { border-left: 1px solid var(--group-border); }
+        strong { font-size: 1.3em; font-variant-numeric: tabular-nums; }
+        span { font-size: 0.8em; color: var(--muted-text-color); }
+    }
+    .plan-channel-heading, .plan-channel { display: flex; justify-content: space-between; gap: 1em; padding: 0.35em 0.2em; border-bottom: 1px solid var(--section-band); }
+    .plan-channel-heading { margin-top: 0.5em; font-size: 0.8em; color: var(--muted-text-color); }
+    .plan-channel { font-variant-numeric: tabular-nums; }
+    .plan-empty { padding: 0.6em 0.2em; font-size: 0.85em; color: var(--muted-text-color); }
+    .protocol-save-toolbar {
+        display: flex; align-items: center; gap: 0.5em;
+        padding-bottom: 0.65em; margin-bottom: 0.65em;
+        border-bottom: 1px solid var(--group-border);
+        #protocol-filename { width: 18em; min-width: 6em; }
+        .protocol-refresh { margin-left: auto; }
+    }
+    #protocol-container {
+        display: table;
+        width: 100%;
+        min-width: 72em;
+        border-collapse: collapse;
+        font-size: 0.9em;
+        th, td { padding: 0.5em 0.65em; text-align: left; vertical-align: top; border-bottom: 1px solid var(--group-border); }
+        th { background: var(--section-band); color: var(--section-ink); white-space: nowrap; }
+        .protocol-filters { background: var(--settings-surface); color: var(--muted-text-color); }
+        .protocol-filters td { padding: 0.4em; vertical-align: middle; }
+        input { min-width: 4em; width: 100%; box-sizing: border-box; }
+        tbody tr:nth-of-type(even) { background: var(--settings-surface); }
+        tbody tr:hover { background: color-mix(in srgb, var(--panel-surface) 85%, var(--accent-color)); }
+        td { min-width: 7em; overflow-wrap: anywhere; }
+        th:first-child, td:first-child { min-width: 4.5em; width: 4.5em; }
+        button { white-space: nowrap; }
+        .protocol-comment { min-width: 16em; max-width: 24em; }
+        .protocol-filename { min-width: 10em; }
+        .protocol-empty { padding: 1.5em; text-align: center; color: var(--muted-text-color); }
+    }
+    .protocol-table-scroll { max-height: 28em; margin-bottom: 0.5em; }
+}
+@media (max-width: 1000px) {
+    #experiment-page .experiment-layout { grid-template-columns: minmax(0, 1fr); }
+    #experiment-page .panel-heading-note { display: none; }
+    #experiment-page .protocol-save-toolbar { flex-wrap: wrap; }
+}
+
 /* The shared image layer is clipped to the channel viewport; dialogs remain above it. */
 #channel-renderer {
     position: fixed;
@@ -388,8 +485,6 @@ body.theme-dark #workspaces {
     border-left: 2px solid var(--accent-color);
     background: color-mix(in srgb, var(--strong-bg-color) 90%, var(--accent-color));
 }
-.experiment-metadata > .section, .experiment-protocols { margin: 0; }
-
 .channel-card-header {
     background: var(--section-band);
     border-bottom: 2px solid var(--group-border);

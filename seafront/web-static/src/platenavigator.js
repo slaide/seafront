@@ -1303,7 +1303,9 @@ export class PlateNavigator {
                 showError: false
             });
 
-            return capabilities.forbidden_areas ?? [];
+            this.alpineComponent.forbiddenAreas = capabilities.forbidden_areas ?? [];
+            this.alpineComponent.pruneForbiddenWellSelections();
+            return this.alpineComponent.forbiddenAreas;
 
         } catch (error) {
             console.warn('Error fetching forbidden areas:', error);

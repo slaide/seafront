@@ -22,6 +22,8 @@ import {
 // these colors are used to create a legend in html
 Object.assign(window, { matWellColor, matSiteColor, matFovColor, matForbiddenAreaColor });
 
+import { wellForbiddenArea } from "./well-safety.js";
+
 import { registerNumberInput } from "numberinput";
 Object.assign(window, { registerNumberInput });
 
@@ -382,6 +384,20 @@ const generate_alpine_object=() => ({
 
     /** @type {HardwareLimits|null} */
     limits: null,
+
+    /** @type {ForbiddenArea[]} */
+    forbiddenAreas: [],
+
+    /** @param {{row: number, col: number}} well */
+    wellForbiddenArea(well) {
+        return wellForbiddenArea(this.microscope_config.wellplate_type, well, this.forbiddenAreas);
+    },
+
+    pruneForbiddenWellSelections() {
+        for (const well of this.microscope_config.plate_wells) {
+            if (well.selected && this.wellForbiddenArea(well)) well.selected = false;
+        }
+    },
 
     themes: ["light", "dark"],
 
@@ -1253,7 +1269,7 @@ const generate_alpine_object=() => ({
             
             const wellName = makeWellName(well.col, well.row);
             if (wellNamesSet.has(wellName)) {
-                const newState = mode === 'select' ? true : false;
+                const newState = mode === 'select' && !this.wellForbiddenArea(well);
                 if (well.selected !== newState) {
                     well.selected = newState;
                     changedCount++;
@@ -1277,6 +1293,7 @@ const generate_alpine_object=() => ({
      * @param {Wellplate} plate
      */
     async setPlate(microscope_config, plate) {
+        this.pruneForbiddenWellSelections();
         if (!this.plateNavigator) return;
         await this.plateNavigator.loadPlate(microscope_config, plate);
     },
@@ -1772,6 +1789,7 @@ const generate_alpine_object=() => ({
 
         // Load channels and hardware limits from hardware capabilities
         const hardwareCapabilities = await this.getHardwareCapabilities();
+        this.forbiddenAreas = hardwareCapabilities.forbidden_areas ?? [];
         if (hardwareCapabilities.main_camera_imaging_channels) {
             // Start from server hardware channels, then preserve protocol-level per-channel settings
             // (e.g. filter_handle, enabled, exposure, gains) by matching on handle.
@@ -2124,6 +2142,7 @@ const generate_alpine_object=() => ({
      * @param {AcquisitionWellSiteConfigurationSiteSelectionItem} well
      */
     setStartSelectedWell(event, well) {
+        if (this.wellForbiddenArea(well) && !well.selected) return;
         this.start_selected_well = well;
 
         // set center of element as start of selection overlay
@@ -2306,7 +2325,7 @@ const generate_alpine_object=() => ({
 
             if (well.row >= lower_row && well.row <= higher_row) {
                 if (well.col >= lower_col && well.col <= higher_col) {
-                    well.selected = target_status;
+                    well.selected = target_status && !this.wellForbiddenArea(well);
                 }
             }
         });
@@ -2906,6 +2925,7 @@ const generate_alpine_object=() => ({
      * @returns {Promise<void>}
      */
     async buttons_wellcontainer_dblclick(well) {
+        if (this.wellForbiddenArea(well)) return;
         if (well.col >= 0 && well.row >= 0) {
             await this.Actions.moveToWell({
                 plate_type: this.microscope_config.wellplate_type,

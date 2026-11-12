@@ -516,10 +516,10 @@
                                     </div>
                                 </div>
                             </div>
-   <p class="workspace-note">Saved protocols include channels, selected wells, sites, and timing.</p>
+
   </div>
 <div class="section">
-                                <div>Site Configuration</div>
+                                <div>Sites &amp; timing</div>
                                 <div>
                                     <div id="grid-config" class="scrolly">
                                         <style>
@@ -655,9 +655,24 @@
                                     </div>
                                 </div>
                             </div>
+<section class="section experiment-plan">
+   <div>Acquisition plan</div>
+   <div>
+    <div class="plan-totals">
+     <div><strong x-text="microscope_config.grid.mask.filter(s => s.selected).length"></strong><span>sites / well</span></div>
+     <div><strong x-text="microscope_config.grid.num_t"></strong><span>timepoints</span></div>
+     <div><strong x-text="num_images.toLocaleString()"></strong><span>total images</span></div>
+    </div>
+    <div class="plan-channel-heading"><span>Enabled channels</span><span>Z planes</span></div>
+    <template x-for="channel in microscope_config.channels.filter(c => c.enabled)" :key="channel.handle">
+     <div class="plan-channel"><span x-text="channel.name"></span><span x-text="channel.num_z_planes"></span></div>
+    </template>
+    <p class="plan-empty" x-show="!microscope_config.channels.some(c => c.enabled)">No channels enabled. Configure imaging in Explore.</p>
+   </div>
+  </section>
   </div>
   <div class="experiment-wells"><div class="section">
-                                <div>Wellplate Configuration</div>
+                                <div class="experiment-panel-heading"><span>Acquisition wells</span><span class="well-count" x-text="`${microscope_config.plate_wells.filter(w => w.selected &amp;&amp; w.row >= 0 &amp;&amp; w.col >= 0).length} selected`"></span></div>
                                 <div>
                                     <div id="well-selector" class="scrolly">
                                         <style>
@@ -694,7 +709,7 @@
                                                     gap: 0.3em;
                                                 }
                                             </style>
-                                            <label>Well plate Type</label>
+                                            <label>Plate type</label>
                                             <select
                                                 id="platetype"
                                                 @change="await updatePlate($el.value)"
@@ -840,9 +855,10 @@
                                             >
                                                 <div
                                                     x-init="enabletooltip($el)"
-                                                    x-bind:tooltip="`Well ${wellName(well)}`"
+                                                    x-bind:tooltip="wellForbiddenArea(well) ? `Well ${wellName(well)} · Forbidden: ${wellForbiddenArea(well).name}${wellForbiddenArea(well).reason ? ' · ' + wellForbiddenArea(well).reason : ''}` : `Well ${wellName(well)}`"
                                                     class="well noselect clickable"
-                                                    x-bind:class="well.selected ? 'selected' : ''"
+                                                    x-bind:class="{selected: well.selected, forbidden: !!wellForbiddenArea(well)}"
+                                                    :aria-disabled="!!wellForbiddenArea(well)"
                                                     x-bind:style="`grid-column: ${well.col + 2}; grid-row: ${well.row + 2};`"
                                                     @mousedown="setStartSelectedWell(event,well)"
                                                     @mouseenter="selectionContinue(event,well)"
@@ -853,142 +869,57 @@
                                                 </div>
                                             </template>
                                         </div>
-                                        <div x-text="selectionRangeText"></div>
+                                        <div class="well-selection-help"><span>Click a well or drag a range to toggle selection</span><span class="forbidden-legend"><i></i>Forbidden center</span><span x-text="selectionRangeText"></span></div>
                                     </div>
                                 </div>
                             </div></div>
 <section class="section experiment-protocols">
-   <div>Saved protocols · Load / Save</div>
+   <div class="experiment-panel-heading"><span>Saved protocols</span><span class="panel-heading-note">Experiment details, wells, channels, sites &amp; timing</span></div>
    <div class="protocol-browser">
-                            <div style="padding: 0.3em">
-                                <label>Save current config as (Filename)</label>
+                            <div class="protocol-save-toolbar">
+                                <label for="protocol-filename">Save current setup</label>
                                 <input
+                                    id="protocol-filename"
                                     x-model="configStore_filename"
                                     type="text"
-                                    placeholder="filename"
+                                    placeholder="Protocol filename"
                                 />
-                                <button @click="storeConfig">Save</button>
+                                <button @click="storeConfig">Save protocol</button>
                                 <label
                                     x-init="enabletooltip($el)"
                                     tooltip="overwrite if file with this name already exists?"
-                                    >overwrite?</label
+                                    for="protocol-overwrite"
+                                    >Overwrite existing</label
                                 >
                                 <input
                                     type="checkbox"
+                                    id="protocol-overwrite"
                                     x-model.boolean="configStore_overwrite_on_conflict"
                                 />
+                                <button class="protocol-refresh" @click="await refreshConfigList()">Refresh list</button>
                             </div>
                             <div class="protocol-table-scroll">
-                                <div id="protocol-container">
-                                    <style>
-                                        #protocol-container {
-                                            display: grid;
-                                            grid-template-columns:
-                                                5em /* load button */
-                                                10em /* project */
-                                                10em /* plate */
-                                                30em /* comment */
-                                                6em /* cell line */
-                                                14em /* plate type */
-                                                14em /* timestamp */
-                                                15em /* filename */;
-                                            gap: 0.5em 0.3em;
-                                        }
-                                    </style>
-
-                                    <div style="display: contents">
-                                        <div
-                                            x-init="enabletooltip($el)"
-                                            tooltip="case insensitive filter"
-                                        >
-                                            Filter By
-                                        </div>
-                                        <input
-                                            type="text"
-                                            x-model="protol_list_filters.project_name"
-                                            placeholder="project"
-                                        />
-                                        <input
-                                            type="text"
-                                            x-model="protol_list_filters.plate_name"
-                                            placeholder="plate"
-                                        />
-                                        <input
-                                            type="text"
-                                            x-model="protol_list_filters.comment"
-                                            placeholder="comment"
-                                        />
-                                        <input
-                                            type="text"
-                                            x-model="protol_list_filters.cell_line"
-                                            placeholder="cell line"
-                                        />
-                                        <input
-                                            type="text"
-                                            x-model="protol_list_filters.plate_type"
-                                            placeholder="plate type"
-                                        />
-                                        <div><!--timestamp--></div>
-                                        <input
-                                            type="text"
-                                            x-model="protol_list_filters.filename"
-                                            placeholder="filename"
-                                        />
-                                    </div>
-
-                                    <div></div>
-                                    <div><b>Project Name</b></div>
-                                    <div><b>Plate Name</b></div>
-                                    <div><b>Comment</b></div>
-                                    <div><b>Cell Line[s</b>]</div>
-                                    <div><b>Plate Type</b></div>
-                                    <div><b>Timestamp</b></div>
-                                    <div><b>Filename</b></div>
-
-                                    <template
-                                        x-for="protocol in filtered_protocol_list"
-                                        :key="protocol.filename"
-                                    >
-                                        <div style="display: contents">
-                                            <div>
-                                                <button
-                                                    @click="await loadConfig(protocol);$nextTick(()=>{configIsStored=true;});"
-                                                >
-                                                    Load
-                                                </button>
-                                            </div>
-                                            <div
-                                                x-text="protocol.project_name"
-                                            ></div>
-                                            <div
-                                                x-text="protocol.plate_name"
-                                            ></div>
-                                            <div
-                                                x-text="protocol.comment"
-                                            ></div>
-                                            <div
-                                                x-text="protocol.cell_line"
-                                            ></div>
-
-                                            <div
-                                                x-init="enabletooltip($el)"
-                                                x-bind:tooltip="`
-												Manufacturer: ${protocol.plate_type.Manufacturer}
-												Model Name: ${protocol.plate_type.Model_name}
-												Model ID: ${protocol.plate_type.Model_id}
-											`"
-                                                x-text="protocol.plate_type.Model_id"
-                                            ></div>
-
-                                            <div
-                                                x-text="protocol.timestamp"
-                                            ></div>
-                                            <div
-                                                x-text="protocol.filename"
-                                            ></div>
-                                        </div>
-                                    </template>
-                                </div>
+                                <table id="protocol-container" aria-label="Saved protocols">
+                                    <thead>
+                                        <tr><th scope="col">Load</th><th scope="col">Project</th><th scope="col">Plate</th><th scope="col">Comment</th><th scope="col">Cell line(s)</th><th scope="col">Plate type</th><th scope="col">Saved</th><th scope="col">Filename</th></tr>
+                                        <tr class="protocol-filters"><td>Filter</td><td><input type="search" aria-label="Filter by project" placeholder="Project" x-model="protol_list_filters.project_name" /></td><td><input type="search" aria-label="Filter by plate" placeholder="Plate" x-model="protol_list_filters.plate_name" /></td><td><input type="search" aria-label="Filter by comment" placeholder="Comment" x-model="protol_list_filters.comment" /></td><td><input type="search" aria-label="Filter by cell line(s)" placeholder="Cell line(s)" x-model="protol_list_filters.cell_line" /></td><td><input type="search" aria-label="Filter by plate type" placeholder="Plate type" x-model="protol_list_filters.plate_type" /></td><td></td><td><input type="search" aria-label="Filter by filename" placeholder="Filename" x-model="protol_list_filters.filename" /></td></tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="protocol in filtered_protocol_list" :key="protocol.filename">
+                                            <tr>
+                                                <td><button @click="await loadConfig(protocol);$nextTick(()=>{configIsStored=true;});">Load</button></td>
+                                                <td x-text="protocol.project_name"></td>
+                                                <td x-text="protocol.plate_name"></td>
+                                                <td class="protocol-comment" x-text="protocol.comment"></td>
+                                                <td x-text="protocol.cell_line"></td>
+                                                <td x-init="enabletooltip($el)" :tooltip="`${protocol.plate_type.Manufacturer} · ${protocol.plate_type.Model_name}`" x-text="protocol.plate_type.Model_id"></td>
+                                                <td x-text="protocol.timestamp"></td>
+                                                <td class="protocol-filename" x-text="protocol.filename"></td>
+                                            </tr>
+                                        </template>
+                                        <tr x-show="filtered_protocol_list.length === 0"><td colspan="8" class="protocol-empty">No saved protocols match these filters.</td></tr>
+                                    </tbody>
+                                </table>
                             </div>
 
                             <div
@@ -1009,11 +940,7 @@
                                 </template>
                             </div>
 
-                            <div>
-                                <button @click="await refreshConfigList()">
-                                    refresh list
-                                </button>
-                            </div>
+
                         </div>
   </section>
  </div>

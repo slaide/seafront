@@ -139,6 +139,9 @@ export async function loadConfig(protocol) {
         // Restore the complete plate_wells grid with updated selections
         this.microscope_config.plate_wells = currentPlateWells;
 
+        // Apply current hardware restrictions to selections saved on other setups.
+        this.pruneForbiddenWellSelections();
+
         // Save config after well selections are loaded
         this.saveCurrentConfig();
     }

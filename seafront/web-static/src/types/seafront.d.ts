@@ -170,6 +170,8 @@ declare global {
      * meant neither field could be checked.
      */
     type PlateNavigatorHost = {
+        forbiddenAreas: ForbiddenArea[];
+        pruneForbiddenWellSelections: () => void;
         plateCursorPosition: Pos2 | null;
         api: {
             post: (endpoint: string, body?: unknown, options?: ApiRequestOptions) => Promise<any>;
