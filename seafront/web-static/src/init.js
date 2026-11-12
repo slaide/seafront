@@ -24,6 +24,8 @@ Object.assign(window, { matWellColor, matSiteColor, matFovColor, matForbiddenAre
 
 import { sitePatternGeometry, sitePatternSvg } from "./site-pattern.js";
 
+import { wellGridHit } from "./well-selection.js";
+
 import { wellForbiddenArea } from "./well-safety.js";
 
 import { registerNumberInput } from "numberinput";
@@ -2165,8 +2167,8 @@ const generate_alpine_object=() => ({
      * @type {AcquisitionWellSiteConfigurationSiteSelectionItem?}
      */
     start_selected_well: null,
-    start_pos: { x: 0, y: 0 },
-    end_pos: { x: 0, y: 0 },
+    /** @type {number|null} */
+    selectionPointerId: null,
     /**
      * to keep track of interactive well selection with the mouse cursor
      * @type {AcquisitionWellSiteConfigurationSiteSelectionItem?}
@@ -2175,167 +2177,74 @@ const generate_alpine_object=() => ({
 
     _backupTooltipConfigEnabled: false,
     /**
-     * start selection range at current well.
      * @param {MouseEvent} event
-     * @param {AcquisitionWellSiteConfigurationSiteSelectionItem} well
+     * @param {boolean} [clamp]
      */
-    setStartSelectedWell(event, well) {
-        if (this.wellForbiddenArea(well) && !well.selected) return;
+    wellAtPointer(event, clamp = false) {
+        const grid = document.getElementById('wellcontainer');
+        const first = grid?.querySelector('.well[data-well-row="0"][data-well-col="0"]');
+        const plate = this.microscope_config.wellplate_type;
+        const last = grid?.querySelector(`.well[data-well-row="${plate.Num_wells_y - 1}"][data-well-col="${plate.Num_wells_x - 1}"]`);
+        if (!first || !last) return null;
+        const hit = wellGridHit(event.clientX, event.clientY, first.getBoundingClientRect(),
+            last.getBoundingClientRect(), plate.Num_wells_x, plate.Num_wells_y, clamp);
+        return hit ? this.microscope_config.plate_wells.find(w => w.row === hit.row && w.col === hit.col) ?? null : null;
+    },
+
+    /** @param {PointerEvent} event */
+    startWellSelection(event) {
+        if (event.button !== 0 || this.start_selected_well) return;
+        const well = this.wellAtPointer(event);
+        if (!well || this.wellForbiddenArea(well)) return;
+        if (!(event.currentTarget instanceof HTMLElement)) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        this.selectionPointerId = event.pointerId;
         this.start_selected_well = well;
-
-        // set center of element as start of selection overlay
-        const el = event.currentTarget;
-        if (!(el instanceof HTMLElement)) return;
-        let ebb = el.getBoundingClientRect();
-        this.start_pos.x = ebb.left + ebb.width / 2;
-        this.start_pos.y = ebb.top + ebb.height / 2;
-
-        // this is only triggered through dom if something was already selected on enter
-        // -> manually trigger on same well on mousedown
-        this.selectionContinue(event, well);
-
-        // disable tooltips while in selection mode
         this._backupTooltipConfigEnabled = tooltipConfig.enabled;
         tooltipConfig.enabled = false;
+        this.continueWellSelection(event);
     },
-    /**
-     * flushed selection range. if well is valid, toggles range.
-     * if well is null, disables selection mode.
-     * @param {AcquisitionWellSiteConfigurationSiteSelectionItem?} well
-     */
+
+    /** @param {PointerEvent} event */
+    continueWellSelection(event) {
+        if (!this.start_selected_well || event.pointerId !== this.selectionPointerId) return;
+        const well = this.wellAtPointer(event, true);
+        if (!well) return;
+        this.current_hovered_well = well;
+        const from = { row: Math.min(this.start_selected_well.row, well.row), col: Math.min(this.start_selected_well.col, well.col) };
+        const to = { row: Math.max(this.start_selected_well.row, well.row), col: Math.max(this.start_selected_well.col, well.col) };
+        this.selectionRangeText = `${this.start_selected_well.selected ? 'Deselect' : 'Select'} ${this.wellName(from)} – ${this.wellName(to)}`;
+    },
+
+    /** @param {PointerEvent} event */
+    finishWellSelection(event) {
+        if (event.pointerId !== this.selectionPointerId) return;
+        this.continueWellSelection(event);
+        return this.endSelectionRange(this.current_hovered_well);
+    },
+
+    /** @param {AcquisitionWellSiteConfigurationSiteSelectionItem|null} well */
     async endSelectionRange(well) {
-        if (!this.start_selected_well) return;
-
-        // flush selection
-        await this.toggleWellSelectionRange(this.start_selected_well, well);
-        
-        // save config after well selection changes
-        this.saveCurrentConfig();
-
-        // remove selection overlay
-        if (this.overlayelement) {
-            this.overlayelement.remove();
-            this.overlayelement = null;
-        }
-        // clear descriptive text
-        this.selectionRangeText = "";
-
-        // clear selection elements
+        const from = this.start_selected_well;
+        if (!from) return;
+        // Clear immediately: pointerup is followed by lostpointercapture.
         this.start_selected_well = null;
         this.current_hovered_well = null;
-
-        // restore tooltip status
+        this.selectionRangeText = '';
+        const pointerId = this.selectionPointerId;
+        this.selectionPointerId = null;
         tooltipConfig.enabled = this._backupTooltipConfigEnabled;
-    },
-    /** @type {HTMLElement?} */
-    overlayelement: null,
-    /** descriptive text for the current selection */
-    selectionRangeText: "",
-    /**
-     *
-     * @param {MouseEvent} event
-     * @param {AcquisitionWellSiteConfigurationSiteSelectionItem} well
-     */
-    selectionContinue(event, well) {
-        if (this.start_selected_well) {
-            this.current_hovered_well = well;
-
-            // set center of element as end of selection overlay
-            const el = event.currentTarget;
-            if (!(el instanceof HTMLElement)) return;
-            let ebb = el.getBoundingClientRect();
-            this.end_pos.x = ebb.left + ebb.width / 2;
-            this.end_pos.y = ebb.top + ebb.height / 2;
-
-            if (!this.overlayelement) {
-                this.overlayelement = document.createElement("div");
-                this.overlayelement.style.setProperty(
-                    "position",
-                    "absolute",
-                );
-
-                this.overlayelement.style.setProperty(
-                    "background-color",
-                    "var(--accent-color)",
-                );
-                this.overlayelement.style.setProperty("opacity", "0.3");
-                this.overlayelement.style.setProperty("z-index", "1");
-                this.overlayelement.style.setProperty(
-                    "pointer-events",
-                    "none",
-                );
-
-                document.body.appendChild(this.overlayelement);
-            }
-
-            const top = Math.min(this.start_pos.y, this.end_pos.y);
-            const bottom = Math.max(this.start_pos.y, this.end_pos.y);
-            const right = Math.max(this.end_pos.x, this.start_pos.x);
-            const left = Math.min(this.end_pos.x, this.start_pos.x);
-
-            // start and end position on screen is at center of well.
-            // use element size (which is identical for all wells)
-            // to extend the overlay to cover all wells in range completely.
-            const element_width = ebb.width;
-            const element_height = ebb.height;
-
-            // update position (and size)
-            this.overlayelement.style.setProperty(
-                "top",
-                `${top - element_height / 2}px`,
-            );
-            this.overlayelement.style.setProperty(
-                "left",
-                `${left - element_width / 2}px`,
-            );
-            this.overlayelement.style.setProperty(
-                "width",
-                `${right - left + element_height}px`,
-            );
-            this.overlayelement.style.setProperty(
-                "height",
-                `${bottom - top + element_width}px`,
-            );
-
-            // update descriptive text
-            const state_change_text = this.start_selected_well.selected
-                ? "deselect"
-                : "select";
-
-            const start_well_name = this.wellName(this.start_selected_well);
-            const end_well_name = this.wellName(this.current_hovered_well);
-            if (start_well_name == null || end_well_name == null)
-                throw new Error(`wellname is null in overlay text generation`);
-
-            // in the text, the well that is more to the top left should be first,
-            // regardless of manual selection order (hence synthesize corners for
-            // text generation).
-            const start_well = {
-                row: Math.min(
-                    this.start_selected_well.row,
-                    this.current_hovered_well.row,
-                ),
-                col: Math.min(
-                    this.start_selected_well.col,
-                    this.current_hovered_well.col,
-                ),
-                selected: true,
-            };
-            const end_well = {
-                row: Math.max(
-                    this.start_selected_well.row,
-                    this.current_hovered_well.row,
-                ),
-                col: Math.max(
-                    this.start_selected_well.col,
-                    this.current_hovered_well.col,
-                ),
-                selected: true,
-            };
-
-            this.selectionRangeText = `will ${state_change_text} ${this.wellName(start_well)} - ${this.wellName(end_well)}`;
+        const grid = document.getElementById('wellcontainer');
+        if (pointerId !== null && grid?.hasPointerCapture(pointerId)) grid.releasePointerCapture(pointerId);
+        if (well) {
+            await this.toggleWellSelectionRange(from, well);
+            this.saveCurrentConfig();
         }
     },
+
+    /** descriptive text for the current selection */
+    selectionRangeText: "",
 
     /**
      * set status of all wells in selection to inverse of current status of first selected element
@@ -3808,7 +3717,7 @@ const generate_alpine_object=() => ({
      * well name, i.e. location on the plate (e.g. A01).
      *
      * headers (e.g. row headers) have no name.
-     * @param {PlateWellConfig} well
+     * @param {{row: number, col: number}} well
      * @returns {string|null}
      */
     wellName(well) {

@@ -803,7 +803,13 @@
 									--numcols:${microscope_config.wellplate_type.Num_wells_x};
 									--well-aspect-ratio:${microscope_config.wellplate_type.Well_size_x_mm/microscope_config.wellplate_type.Well_size_y_mm}
 									`"
-                                            @mouseleave="endSelectionRange(null)"
+                                            @pointerdown="startWellSelection($event)"
+                                            @pointermove="continueWellSelection($event)"
+                                            @pointerup="finishWellSelection($event)"
+                                            @pointercancel="endSelectionRange(null)"
+                                            @lostpointercapture="endSelectionRange(null)"
+                                            @keydown.escape.window="endSelectionRange(null)"
+                                            @dblclick="const well = wellAtPointer($event); if (well) await buttons_wellcontainer_dblclick(well)"
                                         >
                                             <style>
                                                 .well {
@@ -818,9 +824,6 @@
                                                             -50%
                                                         );
                                                     }
-                                                }
-                                                .inselection {
-                                                    background: var(--highlight-color);
                                                 }
                                             </style>
                                             <!-- Column headers (row = -1) -->
@@ -858,13 +861,11 @@
                                                     x-init="enabletooltip($el)"
                                                     x-bind:tooltip="wellForbiddenArea(well) ? `Well ${wellName(well)} · Forbidden: ${wellForbiddenArea(well).name}${wellForbiddenArea(well).reason ? ' · ' + wellForbiddenArea(well).reason : ''}` : `Well ${wellName(well)}`"
                                                     class="well noselect clickable"
-                                                    x-bind:class="{selected: well.selected, forbidden: !!wellForbiddenArea(well)}"
+                                                    x-bind:class="{selected: well.selected, forbidden: !!wellForbiddenArea(well), 'range-add': wellInRange(well) &amp;&amp; !wellForbiddenArea(well) &amp;&amp; !start_selected_well?.selected, 'range-remove': wellInRange(well) &amp;&amp; !wellForbiddenArea(well) &amp;&amp; start_selected_well?.selected}"
+                                                    :data-well-row="well.row"
+                                                    :data-well-col="well.col"
                                                     :aria-disabled="!!wellForbiddenArea(well)"
                                                     x-bind:style="`grid-column: ${well.col + 2}; grid-row: ${well.row + 2};`"
-                                                    @mousedown="setStartSelectedWell(event,well)"
-                                                    @mouseenter="selectionContinue(event,well)"
-                                                    @mouseup="endSelectionRange(well)"
-                                                    @dblclick="await buttons_wellcontainer_dblclick(well)"
                                                 >
                                                     <span></span>
                                                 </div>
