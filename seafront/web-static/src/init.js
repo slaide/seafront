@@ -1970,11 +1970,10 @@ const generate_alpine_object=() => ({
      * @returns {void}
      */
     initChannelView(el) {
-        this.view = new ChannelImageView(el, this.cached_channel_image);
+        this.view = new ChannelImageView(el, this.cached_channel_image, document.getElementById("channel-list"));
     },
     /** @type {ChannelImageView|null} */
     view: null,
-    channelViewNumCols: 3,
 
     /**
      * call this to update the display for a channel
@@ -2794,6 +2793,28 @@ const generate_alpine_object=() => ({
     },
 
     /**
+     * Move to a typed well on the current plate, accepting H1, H01, and lowercase names.
+     * @param {HTMLInputElement} input
+     * @returns {Promise<void>}
+     */
+    async exploreMoveToWell(input) {
+        if (this.state.is_busy) return;
+        const requested = input.value.trim().toUpperCase().replace(/^([A-Z]+)0+([1-9]\d*)$/, "$1$2");
+        const well = this.microscope_config.plate_wells.find(w =>
+            w.col >= 0 && w.row >= 0 &&
+            this.wellName(w)?.replace(/^([A-Z]+)0+([1-9]\d*)$/, "$1$2") === requested
+        );
+        if (!well) {
+            input.setCustomValidity("This well is not on the current plate.");
+            input.reportValidity();
+            return;
+        }
+        input.setCustomValidity("");
+        input.value = this.wellName(well) ?? requested;
+        await this.buttons_wellcontainer_dblclick(well);
+    },
+
+    /**
      *
      * @param {PlateWellConfig} well
      * @returns {Promise<void>}
@@ -3067,6 +3088,26 @@ const generate_alpine_object=() => ({
     /** @type {Set<string>} Channel handles with offsets confirmed using current reference */
     focusConfirmedChannels: new Set(),
 
+    /** @type {boolean} */
+    focusCalibrationInProgress: false,
+
+    /** @param {AcquisitionChannelConfig} channel */
+    focusSelectReference(channel) {
+        if (!channel.enabled || this.focusCalibrationInProgress ||
+                channel.handle === this.focusReferenceChannelHandle) return;
+        this.focusReferenceChannelHandle = channel.handle;
+        this.focusReferenceZ = null;
+        this.focusReferenceXY = null;
+        this.focusConfirmedChannels = new Set();
+        this.focusMeasuredOffsetUM = null;
+        this.laserAutofocusMeasuredOffset = null;
+    },
+
+    get focusReferenceReady() {
+        return !!this.focusReferenceChannel?.enabled && this.focusReferenceZ != null &&
+            this.laserAutofocusIsCalibrated;
+    },
+
     /** Get the reference channel object */
     get focusReferenceChannel() {
         if (!this.focusReferenceChannelHandle) return null;
@@ -3115,21 +3156,33 @@ const generate_alpine_object=() => ({
 
     /** Calibrate LAF at current position (uses reference channel focus) */
     async focusCalibrateLAFHere() {
-        // Store current position as the reference for channel offsets
-        const x_mm = this.state.adapter_state?.stage_position?.x_pos_mm;
-        const y_mm = this.state.adapter_state?.stage_position?.y_pos_mm;
-        const z_mm = this.state.adapter_state?.stage_position?.z_pos_mm;
-        if (x_mm == null || y_mm == null || z_mm == null) {
-            throw new Error("No position available");
+        if (!this.focusReferenceChannel?.enabled || this.focusCalibrationInProgress) return;
+        if (this.isStreaming || this.lafImageLiveMode) {
+            throw new Error("Stop live imaging before setting the focus reference");
         }
-        this.focusReferenceZ = z_mm;
-        this.focusReferenceXY = { x: x_mm, y: y_mm };
+        const position = currentStagePosition(this.state);
+        this.focusCalibrationInProgress = true;
+        try {
+            // Commit the UI reference only after the instrument successfully calibrates.
+            await this.buttons_calibrateLaserAutofocusHere();
+            this.focusReferenceZ = position.z_pos_mm;
+            this.focusReferenceXY = { x: position.x_pos_mm, y: position.y_pos_mm };
+            this.focusConfirmedChannels = new Set();
+            this.focusMeasuredOffsetUM = null;
+            this.laserAutofocusMeasuredOffset = null;
+        } finally {
+            this.focusCalibrationInProgress = false;
+        }
+    },
 
-        // Clear confirmed channels since reference changed
-        this.focusConfirmedChannels = new Set();
-
-        // Calibrate LAF
-        await this.buttons_calibrateLaserAutofocusHere();
+    /** @param {AcquisitionChannelConfig} channel */
+    async focusAutofocusChannel(channel) {
+        if (!channel.enabled || !this.focusReferenceReady) return;
+        await this.Actions.laserAutofocusMoveToTargetOffset({
+            config_file: this.microscope_config_copy,
+            target_offset_um: channel.z_offset_um,
+        });
+        await this.button_laserAutofocusMeasureOffset();
     },
 
     /**
@@ -3312,14 +3365,10 @@ const generate_alpine_object=() => ({
         this.laserAutofocusDebug_measurements = measurements;
     },
 
-    /** @type {HTMLImageElement|null} */
-    lafImageElement: null,
-    /** @type {string|null} Previous blob URL to revoke */
-    _lafImageBlobUrl: null,
+    /** @type {string|null} Laser camera preview in the technician diagnostics tab. */
+    lafImageSrc: null,
 
     async button_laserAutofocusGetLatestImage() {
-        if (!this.lafImageElement) return;
-
         const lafSnapRes = await this.Actions.laserAutofocusSnap({
             // @ts-ignore
             exposure_time_ms: this.getMachineConfigItem(
@@ -3365,9 +3414,10 @@ const generate_alpine_object=() => ({
 
         // Create ImageData from raw grayscale data
         const imgdata = new ImageData(img.width, img.height);
-        const rawimgdata = new Uint8ClampedArray(img.data);
+        const rawimgdata = img.bit_depth === 16 ? new Uint16Array(img.data) : new Uint8Array(img.data);
+        const shift = img.bit_depth === 16 ? 8 : 0;
         for (let i = 0; i < img.width * img.height; i++) {
-            const px = rawimgdata[i];
+            const px = rawimgdata[i] >> shift;
             imgdata.data[i * 4 + 0] = px;
             imgdata.data[i * 4 + 1] = px;
             imgdata.data[i * 4 + 2] = px;
@@ -3383,15 +3433,14 @@ const generate_alpine_object=() => ({
         ctx.putImageData(imgdata, 0, 0);
 
         // Revoke previous blob URL to prevent memory leak
-        if (this._lafImageBlobUrl) {
-            URL.revokeObjectURL(this._lafImageBlobUrl);
+        if (this.lafImageSrc) {
+            URL.revokeObjectURL(this.lafImageSrc);
         }
 
         // Convert canvas to blob and set as img src
         const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png'));
         if (!blob) return;
-        this._lafImageBlobUrl = URL.createObjectURL(blob);
-        this.lafImageElement.src = this._lafImageBlobUrl;
+        this.lafImageSrc = URL.createObjectURL(blob);
     },
 
     /** Whether LAF image live mode is active */

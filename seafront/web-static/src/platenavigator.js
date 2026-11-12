@@ -475,22 +475,6 @@ export class PlateNavigator {
             }
         });
 
-        containerel.addEventListener("wheel", event => {
-            event.preventDefault();
-
-            const scroll_speed = 2e-3;
-
-            // calculate zoom factor using current container dimensions (not captured frame)
-            let delta_zoom = event.deltaY * scroll_speed;
-            let xratio = event.offsetX / this.containerEl.clientWidth;
-            let yratio = event.offsetY / this.containerEl.clientHeight;
-
-            this.cameraApplyDeltaZoom(delta_zoom, {
-                x: xratio,
-                y: yratio,
-            });
-        }, { capture: true, passive: false });
-
         this.display_time = false;
         el.addEventListener("keydown", event => {
             if (event.key == "f") {
@@ -677,29 +661,22 @@ export class PlateNavigator {
      * @param {AABB} aabb 
      */
     cameraFit(aabb) {
-        let extentx = aabb.bx - aabb.ax;
-        let centerx = aabb.ax + extentx / 2;
-        let extenty = aabb.by - aabb.ay;
-        let centery = aabb.ay + extenty / 2;
+        const width = this.containerEl.clientWidth;
+        const height = this.containerEl.clientHeight;
+        if (width <= 0 || height <= 0) return;
 
-        this.cameraSetCenter({
-            x: centerx,
-            y: centery,
-        });
-
-        const cameraWidth = this.camera.right - this.camera.left;
-        const cameraHeight = this.camera.top - this.camera.bottom;
-
-        // Avoid division by zero if camera has degenerate dimensions
-        if (cameraWidth <= 0 || cameraHeight <= 0) return;
-
-        let targetzoomx = extentx / cameraWidth;
-        let targetzoomy = extenty / cameraHeight;
-
-        let targetzoom = Math.max(targetzoomx, targetzoomy);
-        this.cameraApplyDeltaZoom(this.cameraZoomAbsoluteToRelative(targetzoom));
+        const centerX = (aabb.ax + aabb.bx) / 2;
+        const centerY = (aabb.ay + aabb.by) / 2;
+        // Set an absolute frame so repeated fits do not compound the previous zoom or pan.
+        const zoom = Math.max((aabb.bx - aabb.ax) / width, (aabb.by - aabb.ay) / height);
+        if (zoom <= 0) return;
+        this.cam.zoom = zoom;
+        this.camera.left = centerX - width * zoom / 2;
+        this.camera.right = centerX + width * zoom / 2;
+        this.camera.top = centerY + height * zoom / 2;
+        this.camera.bottom = centerY - height * zoom / 2;
+        this.camera.updateProjectionMatrix();
     }
-
     /**
      * 
      * @param {AcquisitionConfig} microscope_config

@@ -38,9 +38,11 @@ export class ChannelImageView {
      * 
      * @param {HTMLCanvasElement} canvas 
      * @param {Map<string,CachedChannelImage>} cached_channel_image
+     * @param {HTMLElement|null} viewportElement
      */
-    constructor(canvas, cached_channel_image) {
+    constructor(canvas, cached_channel_image, viewportElement) {
         this.canvas = canvas
+        this.viewportElement = viewportElement;
         this.cached_channel_image = cached_channel_image
 
         const renderer = new THREE.WebGLRenderer({ antialias: false, canvas, alpha: true, powerPreference: "high-performance" })
@@ -69,7 +71,7 @@ export class ChannelImageView {
         window.addEventListener("mouseup", this._deactivateDrag);
         window.addEventListener("blur", this._deactivateDrag);
 
-        const dragContainer = this.canvas.parentElement;
+        const dragContainer = this.viewportElement;
         if (dragContainer) {
             dragContainer.addEventListener("mouseleave", this._deactivateDrag);
         }
@@ -119,7 +121,7 @@ export class ChannelImageView {
     setClearColorFromBody() {
         const computedStyle = getComputedStyle(document.body);
         const themeBgColor = computedStyle.getPropertyValue("--strong-bg-color").trim();
-        this.renderer.setClearColor(new THREE.Color(themeBgColor || 'rgb(255,255,255)'), 1);
+        this.renderer.setClearColor(new THREE.Color(themeBgColor || 'rgb(255,255,255)'), 0);
     }
 
     /** Update theme colors - call this when theme changes */
@@ -132,10 +134,15 @@ export class ChannelImageView {
      * @returns {DOMRect}
      */
     getRect() {
-        const parent = this.renderer.domElement.parentElement
+        const parent = this.viewportElement
         if (!parent) throw new Error(`parent is undefined`);
-        let parentRect = parent.getBoundingClientRect()
-        return parentRect
+        const parentRect = parent.getBoundingClientRect();
+        const workspaceRect = parent.closest(".tab")?.getBoundingClientRect() ?? parentRect;
+        const left = Math.max(parentRect.left, workspaceRect.left);
+        const top = Math.max(parentRect.top, workspaceRect.top);
+        const right = Math.min(parentRect.right, workspaceRect.right);
+        const bottom = Math.min(parentRect.bottom, workspaceRect.bottom);
+        return new DOMRect(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
     }
 
     /**
@@ -245,6 +252,8 @@ export class ChannelImageView {
         }
 
         const wheelHandler = /** @type {(event: WheelEvent) => void} */((event) => {
+            // Ordinary wheel movement belongs to the page, even over an image.
+            if (!event.altKey) return;
             event.preventDefault();
 
             // calculate zoom factor
@@ -543,11 +552,14 @@ export class ChannelImageView {
         const { left, right, top, bottom, width, height } =
             elem.getBoundingClientRect();
 
-        const isOffscreen =
-            bottom < 0 ||
-            top > this.getRect().height ||
-            right < 0 ||
-            left > this.getRect().width;
+        if (width <= 0 || height <= 0) return;
+
+        const canvasRect = this.getRect();
+        const clipLeft = Math.max(left, canvasRect.left);
+        const clipRight = Math.min(right, canvasRect.right);
+        const clipTop = Math.max(top, canvasRect.top);
+        const clipBottom = Math.min(bottom, canvasRect.bottom);
+        const isOffscreen = clipRight <= clipLeft || clipBottom <= clipTop;
 
         if (isOffscreen) {
             return;
@@ -568,10 +580,13 @@ export class ChannelImageView {
         }
         camera.updateProjectionMatrix();
 
-        const canvasRect = this.getRect()
-        const positiveYUpBottom = canvasRect.y + canvasRect.height - bottom;
-        this.renderer.setScissor(left, positiveYUpBottom, width, height);
-        this.renderer.setViewport(left, positiveYUpBottom, width, height);
+        // Clip to the scrolling viewport while retaining the full image's camera framing.
+        const positiveYUpBottom = canvasRect.bottom - bottom;
+        this.renderer.setScissor(
+            clipLeft - canvasRect.left, canvasRect.bottom - clipBottom,
+            clipRight - clipLeft, clipBottom - clipTop,
+        );
+        this.renderer.setViewport(left - canvasRect.left, positiveYUpBottom, width, height);
 
         this.renderer.render(scene, camera);
     }
@@ -580,6 +595,13 @@ export class ChannelImageView {
      * @param {number} time deltatime
      */
     _render(time) {
+        const rect = this.getRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+            this.canvas.style.visibility = "hidden";
+            return;
+        }
+        this.canvas.style.visibility = "visible";
+
         if (this.resizeRendererToDisplaySize(this.renderer)) {
             // (resizing happens inside resizeRendererToDisplaySize, and just returns
             // true to indicate if resizing has taken place. code path here may be used

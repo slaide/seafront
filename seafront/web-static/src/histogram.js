@@ -13,11 +13,12 @@ export const histogramLayout = {
         orientation: "h",
         xanchor: "center",
         x: 0.5,
-        y: -0.2,
+        y: -0.5,
+        font: { size: 10 },
     },
 
     yaxis: {
-        title: {text:"relative frequency ( Log )",standoff:0,},
+        title: {text:"Pixel count (log)",standoff:0,},
         type: 'log',
         autorange: true,
         autorangeoptions:{
@@ -27,8 +28,8 @@ export const histogramLayout = {
         showticklabels: false,
     },
     xaxis: {
-        title: {text:"relative intensity",},
-        autorange: true,
+        title: {text:"Intensity (8-bit bins)",},
+        autorange: false,
         fixedrange: true,
         range:[0,256],
         tickvals: [0, 50, 100, 150, 200, 255],
@@ -36,10 +37,10 @@ export const histogramLayout = {
     },
 
     margin: {
-        t: 20, // top margin for pan/zoom buttons
-        l: 20, // reduced y axis margin
-        r: 20, // reduced x axis margin
-        b: 90, // bottom margin for x-axis title
+        t: 8,
+        l: 30,
+        r: 10,
+        b: 58,
     },
     plot_bgcolor: "lightgrey",
     paper_bgcolor: "lightgrey"
@@ -58,19 +59,24 @@ export const histogramConfig = {
     displaylogo: false,
 }
 
+/** @returns {PlotlyLayout} */
+function themedHistogramLayout() {
+    const style = getComputedStyle(document.body);
+    const background = style.getPropertyValue("--strong-bg-color").trim();
+    return {
+        ...histogramLayout,
+        font: { color: style.getPropertyValue("--text-color").trim(), size: 10 },
+        plot_bgcolor: background,
+        paper_bgcolor: background,
+    };
+}
+
 /**
  * 
  * @param {HTMLElement} el 
  */
 export function makeHistogram(el){
-    Plotly.newPlot(el,[
-        {
-            type:"scatter",
-            x:[0, 1,  2,  3,  4, 255],
-            y:[0, 10, 4, 13, -2, 5],
-            mode:"lines+markers"
-        }
-    ],histogramLayout,histogramConfig);
+    Plotly.newPlot(el, [], themedHistogramLayout(), histogramConfig);
 
     new ResizeObserver(function () {
         // @ts-ignore
@@ -133,5 +139,5 @@ export function updateHistogram(el) {
             y,
         });
     }
-    Plotly.react(el, data, histogramLayout, histogramConfig);
+    Plotly.react(el, data, themedHistogramLayout(), histogramConfig);
 }

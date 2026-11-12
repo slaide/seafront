@@ -305,8 +305,8 @@
         </div>
 
         <!-- Central Error Modal -->
-        <div 
-            x-show="centralError.show" 
+        <div
+            x-show="centralError.show"
             x-transition.opacity.duration.300ms
             id="error-modal-overlay"
             @click="if($event.target === $el) centralError.show = false"
@@ -469,239 +469,397 @@
                     🔒 Microscope is busy, please wait...
                 </div>
 
-                <style>
-                    #content {
-                        width: 100vw;
-                        height: 100vh;
-                        overflow: hidden hidden;
-
-                        display: grid;
-                        grid-template:
-                            "banner banner" auto
-                            "a b" minmax(0, 1fr)
-                            "f f" auto
-                            / minmax(0, 2fr) minmax(0, 1fr);
-
-                        #leftcol,
-                        #rightcol {
-                            width: auto;
-                            min-width: 0;
-                            min-height: 0;
-                            overflow-x: hidden;
-
-                            height: 100%;
-                            overflow-y: hidden;
-                        }
-                    }
-                </style>
-                <div id="leftcol" style="grid-area: a">
-                    <div x-init="initTabs($el)" id="image-views">
-                        <style>
-                            #image-views {
-                                height: 100%;
-                                display: grid;
-                                grid-template-rows: min-content 1fr;
-
-                                .tab {
-                                    overflow: auto;
-                                    height: auto;
-                                }
-                            }
-                        </style>
-
-                        <div tabname="Plate View">
-                            <div
-                                id="plate"
-                                style="width: 100%; aspect-ratio: 3/2"
-                                x-init="initPlateNavigator($el, this)"
-                            ></div>
-                            
-                            
-                            <!-- Row 1: Legend -->
-                            <div style="margin-top: 10px; margin-bottom: 10px;">
-                                <span>Legend:</span>
-                                <span
-                                    x-bind:style="`background:#${matWellColor.toString(16).padStart(6,'0')}A0; padding: 0.25em 0.375em; font-weight: bold;`"
-                                    >Well</span
-                                >
-                                <span
-                                    x-bind:style="`background:#${matSiteColor.toString(16).padStart(6,'0')}A0; padding: 0.25em 0.375em; font-weight: bold;`"
-                                    >Site</span
-                                >
-                                <span
-                                    @click="pulseObjectiveFov()"
-                                    x-bind:style="`background:#${matFovColor.toString(16).padStart(6,'0')}D0; padding: 0.25em 0.375em; font-weight: bold; cursor: pointer;`"
-                                    title="Click to pulse the objective marker"
-                                    >Objective</span
-                                >
-                                <span
-                                    x-bind:style="`background:#${matForbiddenAreaColor.toString(16).padStart(6,'0')}D0; padding: 0.25em 0.375em; font-weight: bold;`"
-                                    >Forbidden Area</span
-                                >
-                            </div>
-
-                            <!-- Row 2: Mouse position -->
-                            <div style="margin-bottom: 10px;">
-                                <span
-                                    style="cursor: help;"
-                                    x-init="enabletooltip($el)"
-                                    x-bind:tooltip="'Mouse position in physical space on the plate (shown when mouse is over the plate panel above)'"
-                                >Mouse position:</span>
-                                <span
-                                    style="display: inline-block; margin-left: 10px; padding: 2px 6px; border-radius: 3px; font-size: 0.85em; font-family: monospace; background: var(--weak-bg-color); color: var(--text-color);"
-                                    x-text="plateCursorPosition ? `${plateCursorPosition.x.toFixed(1)}, ${plateCursorPosition.y.toFixed(1)} mm` : '–'"
-                                >
-                                </span>
-                            </div>
-
-                            <!-- Row 3: Mouse controls -->
-                            <div style="margin-bottom: 10px;" x-data="{ controlsExpanded: false }">
-                                <button
-                                    @click="controlsExpanded = !controlsExpanded"
-                                    :aria-expanded="controlsExpanded"
-                                    style="padding: 2px 8px; border-radius: 3px; font-size: 0.85em; background: var(--weak-bg-color); color: var(--text-color); border: 1px solid var(--text-color); cursor: pointer; margin-bottom: 8px;"
-                                >
-                                    <span x-text="controlsExpanded ? '▼' : '▶'"></span> Mouse controls
-                                </button>
-                                <div x-show="controlsExpanded" style="padding: 8px; background: var(--weak-bg-color); border-radius: 3px; font-size: 0.85em;">
-                                    <div x-show="plateSelectionMode === 'wells'">
-                                        <div>• Drag = pan view</div>
-                                        <div>• Double-click = move objective</div>
-                                        <div>• Shift+left-click = select single well</div>
-                                        <div>• Shift+left-drag = select wells in area</div>
-                                        <div>• Shift+right-click = deselect single well</div>
-                                        <div>• Shift+right-drag = deselect wells in area</div>
-                                    </div>
-                                    <div x-show="plateSelectionMode === 'sites'">
-                                        <div>• Drag = pan view</div>
-                                        <div>• Double-click = move objective</div>
-                                        <div>• Shift+left-click = select single site</div>
-                                        <div>• Shift+left-drag = select sites in area</div>
-                                        <div>• Shift+right-click = deselect single site</div>
-                                        <div>• Shift+right-drag = deselect sites in area</div>
+<link rel="stylesheet" href="/css/workspace.css" />
+<div id="channel-renderer"><canvas id="c" x-init="initChannelView($el);$watch('theme',()=>view?.updateTheme())"></canvas></div>
+<main id="workspaces" x-init="initTabs($el)">
+ <div tabname="Experiment" id="experiment-page">
+ <div class="experiment-layout">
+  <div class="experiment-configuration">
+<div class="experiment-metadata"><div class="section">
+                                <div>Experiment details</div>
+                                <div>
+                                    <div id="names" class="scrolly">
+                                        <style>
+                                            #names {
+                                                display: grid;
+                                                grid-template:
+                                                    " l-proj  v-proj" auto
+                                                    " l-plate v-plate" auto
+                                                    " l-cell  v-cell" auto
+                                                    / auto 1fr;
+                                                gap: 0.3em 1em;
+                                            }
+                                        </style>
+                                        <label> Project Name</label
+                                        ><input
+                                            type="text"
+                                            placeholder="Name of the project"
+                                            x-model="microscope_config.project_name"
+                                        />
+                                        <label> Plate Name</label
+                                        ><input
+                                            type="text"
+                                            placeholder="Name/Identifier of the plate"
+                                            x-model="microscope_config.plate_name"
+                                        />
+                                        <label> Cell Line[s]</label
+                                        ><input
+                                            type="text"
+                                            placeholder="Cell lines[s] used on the plate"
+                                            x-model="microscope_config.cell_line"
+                                        />
+                                        <label> Comment</label
+                                        ><textarea
+                                            placeholder="description of the plate to understand its purpose."
+                                            x-model="microscope_config.comment"
+                                        ></textarea>
                                     </div>
                                 </div>
                             </div>
+   <p class="workspace-note">Saved protocols include channels, selected wells, sites, and timing.</p>
+  </div>
+<div class="section">
+                                <div>Site Configuration</div>
+                                <div>
+                                    <div id="grid-config" class="scrolly">
+                                        <style>
+                                            #grid-config {
+                                                display: grid;
+                                                grid-template:
+                                                    " l-n-x       v-n-x l-d-x       v-d-x   v-d-x   v-d-x   v-d-x   v-d-x   v-d-x" auto
+                                                    " l-n-y       v-n-y l-d-y       v-d-y   v-d-y   v-d-y   v-d-y   v-d-y   v-d-y" auto
+                                                    " l-n-t       v-n-t l-d-t       l-d-t-h v-d-t-h l-d-t-m v-d-t-m l-d-t-s v-d-t-s" auto
+                                                    / auto 3.5em auto auto minmax(2.5em, 1fr) auto minmax(2.5em, 1fr) auto minmax(2.5em, 1fr);
+                                                gap: 0.3em 0.4em;
 
-                            <!-- Row 4: Selection mode -->
-                            <div style="margin-bottom: 10px;">
-                                <span
-                                    style="margin-right: 10px; cursor: help;"
-                                    x-init="enabletooltip($el)"
-                                    x-bind:tooltip="'Determines what can be selected above. Wells are independent; sites are shared across wells (deselecting a site disables it in all wells)'"
-                                >Selection mode:</span>
-                                <label style="margin-right: 15px;">
-                                    <input type="radio" name="selectionMode" value="wells" x-model="plateSelectionMode" />
-                                    Wells
-                                </label>
-                                <label>
-                                    <input type="radio" name="selectionMode" value="sites" x-model="plateSelectionMode" />
-                                    Sites
-                                </label>
-                            </div>
-                        </div>
-                        <div tabname="Channel View" style="position: relative">
-                            <div>
-                                <label>Columns</label>
-                                <input
-                                    type="number"
-                                    is="number-input"
-                                    min="1"
-                                    max="4"
-                                    step="1"
-                                    x-model.number="channelViewNumCols"
-                                    x-init="registerNumberInput($el)"
-                                />
-                                <button
-                                    @click="if(channelViewNumCols<4)channelViewNumCols++"
-                                >
-                                    +
-                                </button>
-                                <button
-                                    @click="if(channelViewNumCols>1)channelViewNumCols--"
-                                >
-                                    -
-                                </button>
-                            </div>
-                            <div class="channel-empty-state"
-                                x-show="!microscope_config.channels.some(c => c.enabled)">
-                                <strong>No channels enabled</strong>
-                                <p>Enable channels in Lighting and Focus, then use Snap All Channels or start live imaging.</p>
-                            </div>
-                            <canvas
-                                id="c"
-                                x-init="initChannelView($el);$watch('theme',()=>view?.updateTheme())"
-                            ></canvas>
-                            <style>
-                                #c {
-                                    position: fixed;
+                                                input {
+                                                    min-width: 0;
+                                                    width: 100%;
+                                                    box-sizing: border-box;
+                                                }
+                                                label {
+                                                    height: min-content;
+                                                    width: max-content;
+                                                }
+                                            }
+                                        </style>
+                                        <label style="grid-area: l-n-x"
+                                            >Sites X</label
+                                        >
+                                        <input
+                                            style="grid-area: v-n-x"
+                                            type="number"
+                                            min="1"
+                                            max="999"
+                                            step="1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.num_x"
+                                        />
 
-                                    /*position and size will be changed later*/
-                                    left: 0;
-                                    top: 0;
-                                    width: 100%;
-                                    height: 100%;
+                                        <label style="grid-area: l-d-x"
+                                            >Δx [mm]</label
+                                        >
+                                        <input
+                                            style="grid-area: v-d-x"
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_x==1)"
+                                            type="number"
+                                            min="0.1"
+                                            max="999"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.delta_x_mm"
+                                        />
 
-                                    display: block;
-                                    z-index: -1;
-                                }
+                                        <label style="grid-area: l-n-y"
+                                            >Sites Y</label
+                                        >
+                                        <input
+                                            style="grid-area: v-n-y"
+                                            type="number"
+                                            min="1"
+                                            max="999"
+                                            step="1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.num_y"
+                                        />
 
-                                #grid-container {
-                                    display: grid;
-                                    --num-cols: 3;
-                                    grid-template-columns: repeat(
-                                        var(--num-cols),
-                                        1fr
-                                    );
+                                        <label style="grid-area: l-d-y"
+                                            >Δy [mm]</label
+                                        >
+                                        <input
+                                            style="grid-area: v-d-y"
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_y==1)"
+                                            type="number"
+                                            min="0.1"
+                                            max="999"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.delta_y_mm"
+                                        />
 
-                                    .channel-box-image {
-                                        aspect-ratio: 1;
-                                        border: 1px solid var(--highlight-color);
-                                    }
-                                }
-                                .channel-box-fetch-error {
-                                    color: #ff4444;
-                                    font-size: 0.9em;
-                                }
-                                .channel-display-channelname {
-                                    text-align: center;
-                                    font-weight: bold;
-                                }
-                            </style>
-                            <div
-                                id="grid-container"
-                                x-bind:style="`--num-cols:${channelViewNumCols};`"
-                            >
-                                <!--div x-html="cached_channel_image.get('fluo405').info.timestamp"></div-->
-                                <template
-                                    x-for="channel in microscope_config.channels.filter(c=>c.enabled)"
-                                    :key="channel.handle"
-                                >
-                                    <div
-                                        class="channel-box"
-                                        x-bind:channelhandle="channel.handle"
-                                    >
-                                        <div
-                                            class="channel-display-channelname"
-                                            x-bind:id="`channel-display-${channel.handle}`"
-                                            x-text="channel.name"
-                                        ></div>
-                                        <div
-                                            x-effect="updateChannelCache($el)"
-                                            class="channel-box-image"
-                                            x-bind:id="`channelview-item-${channel.handle}`"
-                                        ><span class="channel-image-placeholder"
-                                            x-show="!cached_channel_image.has(channel.handle)">No image yet — use snap or live imaging in Lighting and Focus.</span></div>
-                                        <div
-                                            class="channel-box-fetch-error"
-                                            x-show="image_fetch_errors[channel.handle]"
-                                            x-text="`latest image could not be loaded: ${image_fetch_errors[channel.handle]?.message ?? ''}`"
-                                        ></div>
+                                        <label style="grid-area: l-n-t"
+                                            >Timepoints</label
+                                        >
+                                        <input
+                                            style="grid-area: v-n-t"
+                                            type="number"
+                                            min="1"
+                                            max="9999"
+                                            step="1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.num_t"
+                                        />
+
+                                        <label style="grid-area: l-d-t"
+                                            >Interval</label
+                                        >
+                                        <label style="grid-area: l-d-t-h"
+                                            >h</label
+                                        >
+                                        <input
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
+                                            style="grid-area: v-d-t-h"
+                                            type.number="number"
+                                            min="0"
+                                            max="999"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model="microscope_config.grid.delta_t.h"
+                                        />
+                                        <label style="grid-area: l-d-t-m"
+                                            >m</label
+                                        >
+                                        <input
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
+                                            style="grid-area: v-d-t-m"
+                                            type.number="number"
+                                            min="0"
+                                            max="59.9"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model="microscope_config.grid.delta_t.m"
+                                        />
+                                        <label style="grid-area: l-d-t-s"
+                                            >s</label
+                                        >
+                                        <input
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
+                                            style="grid-area: v-d-t-s"
+                                            type.number="number"
+                                            min="0"
+                                            max="59.9"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model="microscope_config.grid.delta_t.s"
+                                        />
                                     </div>
-                                </template>
+                                </div>
                             </div>
-                        </div>
-                        <div tabname="Protocols">
+  </div>
+  <div class="experiment-wells"><div class="section">
+                                <div>Wellplate Configuration</div>
+                                <div>
+                                    <div id="well-selector" class="scrolly">
+                                        <style>
+                                            #well-selector {
+                                                display: grid;
+                                                grid-template: "p" auto "w" auto / auto;
+                                                gap: 0.3em;
+                                            }
+                                        </style>
+                                        <script>
+                                            function checkDefaultPlateType(
+                                                el,
+                                                plate,
+                                                microscope_config,
+                                            ) {
+                                                if (
+                                                    plate.Model_id ==
+                                                    microscope_config
+                                                        .wellplate_type.Model_id
+                                                ) {
+                                                    el.setAttribute(
+                                                        "selected",
+                                                        "",
+                                                    );
+                                                }
+                                            }
+                                        </script>
+
+                                        <div id="plate-type-selector">
+                                            <style>
+                                                #plate-type-selector {
+                                                    display: grid;
+                                                    grid-template: "l s" auto / auto 1fr;
+                                                    gap: 0.3em;
+                                                }
+                                            </style>
+                                            <label>Well plate Type</label>
+                                            <select
+                                                id="platetype"
+                                                @change="await updatePlate($el.value)"
+                                                x-init="$nextTick(() => updatePlate(microscope_config.wellplate_type.Model_id, false))"
+                                            >
+                                                <template
+                                                    x-for="plategroup in plateinfo.plategroups"
+                                                    :key="plategroup.label"
+                                                >
+                                                    <optgroup
+                                                        x-bind:label="plategroup.label"
+                                                    >
+                                                        <template
+                                                            x-for="plate in plategroup.plates"
+                                                            :key="plate.Model_id"
+                                                        >
+                                                            <option
+                                                                x-init="checkDefaultPlateType($el,plate,microscope_config)"
+                                                                x-bind:value="plate.Model_id"
+                                                                x-text="`${plate.Manufacturer} ${plate.Model_id_manufacturer} ( ${plate.Model_name} )`"
+                                                            ></option>
+                                                        </template>
+                                                    </optgroup>
+                                                </template>
+                                            </select>
+                                        </div>
+
+                                        <style>
+                                            /* 1 slide holder */
+                                            #wellcontainer.wellsx1,
+                                        /* 4 slide holder */
+                                        #wellcontainer.wellsx4 {
+                                                .well {
+                                                    font-size: 2em;
+                                                }
+                                            }
+                                            /* 96 well plate */
+                                            #wellcontainer.wellsx12 {
+                                                .well {
+                                                    font-size: 1.5em;
+                                                }
+                                            }
+                                            /* 384 well plate */
+                                            #wellcontainer.wellsx24 {
+                                                .well {
+                                                    font-size: 1.2em;
+                                                }
+                                            }
+                                            #wellcontainer.wellsx48 {
+                                                .well {
+                                                    font-size: 0.56em;
+                                                }
+                                            }
+                                            #wellcontainer {
+                                                display: grid;
+                                                border: 1px solid
+                                                    var(--text-color);
+
+                                                /*first column is well header which can have any size, all other wells must have equal size*/
+                                                grid-template-columns: auto repeat(
+                                                        var(--numcols),
+                                                        1fr
+                                                    );
+
+                                                .well {
+                                                    font-family: monospace;
+                                                }
+
+                                                .well:not(.wellheader) {
+                                                    aspect-ratio: var(
+                                                        --well-aspect-ratio
+                                                    );
+                                                }
+
+                                                .well.selected {
+                                                    background: var(
+                                                        --highlight-color
+                                                    );
+                                                }
+
+                                                .well:hover:not(.wellheader) {
+                                                    background: lightgrey;
+                                                }
+                                            }
+                                        </style>
+                                        <div
+                                            id="wellcontainer"
+                                            x-bind:class="`wellsx${microscope_config.wellplate_type.Num_wells_x}`"
+                                            x-bind:style="`
+									--numcols:${microscope_config.wellplate_type.Num_wells_x};
+									--well-aspect-ratio:${microscope_config.wellplate_type.Well_size_x_mm/microscope_config.wellplate_type.Well_size_y_mm}
+									`"
+                                            @mouseleave="endSelectionRange(null)"
+                                        >
+                                            <style>
+                                                .well {
+                                                    display: grid;
+                                                    justify-items: center;
+                                                    span {
+                                                        height: min-content;
+                                                        display: inline-block;
+                                                        position: relative;
+                                                        top: 50%;
+                                                        transform: translateY(
+                                                            -50%
+                                                        );
+                                                    }
+                                                }
+                                                .inselection {
+                                                    background: red;
+                                                }
+                                            </style>
+                                            <!-- Column headers (row = -1) -->
+                                            <template
+                                                x-for="well in createHeaderWells(microscope_config.wellplate_type).filter(w => w.row === -1)"
+                                                :key="`header-c${well.col}r${well.row}`"
+                                            >
+                                                <div
+                                                    class="well noselect wellheader"
+                                                    x-bind:style="`grid-column: ${well.col + 2}; grid-row: 1;`"
+                                                >
+                                                    <span x-text="wellText(well)"></span>
+                                                </div>
+                                            </template>
+
+                                            <!-- Row headers (col = -1) -->
+                                            <template
+                                                x-for="well in createHeaderWells(microscope_config.wellplate_type).filter(w => w.col === -1)"
+                                                :key="`header-c${well.col}r${well.row}`"
+                                            >
+                                                <div
+                                                    class="well noselect wellheader"
+                                                    x-bind:style="`grid-column: 1; grid-row: ${well.row + 2};`"
+                                                >
+                                                    <span x-text="wellText(well)"></span>
+                                                </div>
+                                            </template>
+
+                                            <!-- Real wells (col >= 0 and row >= 0) -->
+                                            <template
+                                                x-for="well in microscope_config.plate_wells.filter(w => w.col >= 0 && w.row >= 0)"
+                                                :key="`well-c${well.col}r${well.row}`"
+                                            >
+                                                <div
+                                                    x-init="enabletooltip($el)"
+                                                    x-bind:tooltip="`Well ${wellName(well)}`"
+                                                    class="well noselect clickable"
+                                                    x-bind:class="well.selected ? 'selected' : ''"
+                                                    x-bind:style="`grid-column: ${well.col + 2}; grid-row: ${well.row + 2};`"
+                                                    @mousedown="setStartSelectedWell(event,well)"
+                                                    @mouseenter="selectionContinue(event,well)"
+                                                    @mouseup="endSelectionRange(well)"
+                                                    @dblclick="await buttons_wellcontainer_dblclick(well)"
+                                                >
+                                                    <span></span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                        <div x-text="selectionRangeText"></div>
+                                    </div>
+                                </div>
+                            </div></div>
+<section class="section experiment-protocols">
+   <div>Saved protocols · Load / Save</div>
+   <div class="protocol-browser">
                             <div style="padding: 0.3em">
                                 <label>Save current config as (Filename)</label>
                                 <input
@@ -720,7 +878,7 @@
                                     x-model.boolean="configStore_overwrite_on_conflict"
                                 />
                             </div>
-                            <div>
+                            <div class="protocol-table-scroll">
                                 <div id="protocol-container">
                                     <style>
                                         #protocol-container {
@@ -857,7 +1015,389 @@
                                 </button>
                             </div>
                         </div>
-                        <div id="machineconfigtab" tabname="Machine Config">
+  </section>
+ </div>
+</div>
+
+<div tabname="Explore" id="explore-page">
+ <aside class="explore-navigation" aria-label="Plate navigation and shared controls">
+<div class="explore-navigation-body">
+
+  <div class="plate-locator">
+   <div
+                                id="plate"
+
+                                x-init="initPlateNavigator($el, this)"
+                            ></div>
+   <div class="plate-zoom-controls" aria-label="Plate zoom">
+    <button @click="plateNavigator?.cameraApplyDeltaZoom(-0.2)" title="Zoom into plate">+</button>
+    <button @click="plateNavigator?.cameraApplyDeltaZoom(0.25)" title="Zoom out of plate">−</button>
+    <button @click="plateNavigator?.cameraFit({ax:0, ay:0, bx:microscope_config.wellplate_type.Length_mm, by:microscope_config.wellplate_type.Width_mm})">Fit plate</button>
+   </div>
+  </div>
+  <div class="explore-stage">
+   <div class="explore-heading">Navigate & focus</div>
+   <div class="stage-readout">
+    <span>X <b x-html="formatStageCoordXY(state.adapter_state?.stage_position.x_pos_mm)"></b> mm</span>
+    <span>Y <b x-html="formatStageCoordXY(state.adapter_state?.stage_position.y_pos_mm)"></b> mm</span>
+    <span>Z <b x-html="formatStageCoordZ(state.adapter_state?.stage_position.z_pos_mm)"></b> µm</span>
+   </div>
+   <form class="well-jump" @submit.prevent="await exploreMoveToWell($refs.exploreWell)">
+    <label for="explore-well">Well</label>
+    <input id="explore-well" x-ref="exploreWell" type="text" required
+     placeholder="H12" autocomplete="off" autocapitalize="characters" spellcheck="false"
+     title="Enter a well name and press Enter to move" @input="$el.setCustomValidity('')" />
+    <button type="submit" :disabled="state.is_busy">Go to well</button>
+   </form>
+   <div class="stage-step-controls">
+    <label for="explore-axis">Axis</label>
+    <select id="explore-axis" x-model="moveByAxis"><option value="x">X [mm]</option><option value="y">Y [mm]</option><option value="z">Z [µm]</option></select>
+    <label for="explore-step">Step</label>
+    <input id="explore-step" type="number" min="0" step="0.001" x-model.number="moveByDistance" />
+    <button @click="stageMoveBy('-')" :disabled="state.is_busy" aria-label="Move stage in negative direction">−</button>
+    <button @click="stageMoveBy('+')" :disabled="state.is_busy" aria-label="Move stage in positive direction">+</button>
+   </div>
+   <div class="explore-help">Double-click the plate to move, or type a well name and press Enter.</div>
+  </div>
+  <div class="explore-capture">
+   <div class="section">
+                                <div>Quick Capture</div>
+                                <div style="display: flex; align-items: center; gap: 0.5em;">
+                                    <button
+                                        @click="Actions.snapAllChannels()"
+                                        x-init="enabletooltip($el)"
+                                        x-bind:tooltip="`
+                                            Snap all enabled channels with their configured settings.
+
+                                            This will:
+                                            • Run laser autofocus if AF is checked
+                                            • Move to each channel's Z-offset
+                                            • Capture images with the configured exposure and gain
+                                            • Return to focused Z position
+                                            • Display captured images
+                                        `"
+                                    >
+                                        Snap All Channels
+                                    </button>
+                                    <label style="display: inline-flex; align-items: center;"
+                                           x-init="enabletooltip($el)"
+                                           x-bind:tooltip="`
+                                            Reflects 'Use autofocus during acquisition' setting from Laser Autofocus controls.
+
+                                            When checked, Snap All will:
+                                            • Run laser autofocus before imaging
+                                            • Apply per-channel Z-offsets relative to focused position
+                                           `">
+                                        <input type="checkbox"
+                                               disabled
+                                               x-bind:checked="microscope_config.autofocus_enabled">
+                                        AF
+                                    </label>
+                                </div>
+                            </div>
+   <div class="focus-summary">
+    <strong>Focus reference</strong>
+    <span x-text="focusReferenceChannel?.name ?? 'Choose a reference in a channel column'"></span>
+    <span x-text="focusReferenceReady ? 'Reference ready' : 'Setup is below the selected channel'"></span>
+    <button x-show="focusReferenceChannel" @click="document.getElementById(`focus-setup-${focusReferenceChannelHandle}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })">Show focus setup</button>
+   </div>
+  </div>
+
+<details class="explore-details"><summary>Plate selection & mouse controls</summary>
+
+
+                            <!-- Row 1: Legend -->
+                            <div style="margin-top: 10px; margin-bottom: 10px;">
+                                <span>Legend:</span>
+                                <span
+                                    x-bind:style="`background:#${matWellColor.toString(16).padStart(6,'0')}A0; padding: 0.25em 0.375em; font-weight: bold;`"
+                                    >Well</span
+                                >
+                                <span
+                                    x-bind:style="`background:#${matSiteColor.toString(16).padStart(6,'0')}A0; padding: 0.25em 0.375em; font-weight: bold;`"
+                                    >Site</span
+                                >
+                                <span
+                                    @click="pulseObjectiveFov()"
+                                    x-bind:style="`background:#${matFovColor.toString(16).padStart(6,'0')}D0; padding: 0.25em 0.375em; font-weight: bold; cursor: pointer;`"
+                                    title="Click to pulse the objective marker"
+                                    >Objective</span
+                                >
+                                <span
+                                    x-bind:style="`background:#${matForbiddenAreaColor.toString(16).padStart(6,'0')}D0; padding: 0.25em 0.375em; font-weight: bold;`"
+                                    >Forbidden Area</span
+                                >
+                            </div>
+
+                            <!-- Row 2: Mouse position -->
+                            <div style="margin-bottom: 10px;">
+                                <span
+                                    style="cursor: help;"
+                                    x-init="enabletooltip($el)"
+                                    x-bind:tooltip="'Mouse position in physical space on the plate (shown when mouse is over the plate panel above)'"
+                                >Mouse position:</span>
+                                <span
+                                    style="display: inline-block; margin-left: 10px; padding: 2px 6px; border-radius: 3px; font-size: 0.85em; font-family: monospace; background: var(--weak-bg-color); color: var(--text-color);"
+                                    x-text="plateCursorPosition ? `${plateCursorPosition.x.toFixed(1)}, ${plateCursorPosition.y.toFixed(1)} mm` : '–'"
+                                >
+                                </span>
+                            </div>
+
+                            <!-- Row 3: Mouse controls -->
+                            <div style="margin-bottom: 10px;" x-data="{ controlsExpanded: false }">
+                                <button
+                                    @click="controlsExpanded = !controlsExpanded"
+                                    :aria-expanded="controlsExpanded"
+                                    style="padding: 2px 8px; border-radius: 3px; font-size: 0.85em; background: var(--weak-bg-color); color: var(--text-color); border: 1px solid var(--text-color); cursor: pointer; margin-bottom: 8px;"
+                                >
+                                    <span x-text="controlsExpanded ? '▼' : '▶'"></span> Mouse controls
+                                </button>
+                                <div x-show="controlsExpanded" style="padding: 8px; background: var(--weak-bg-color); border-radius: 3px; font-size: 0.85em;">
+                                    <div x-show="plateSelectionMode === 'wells'">
+                                        <div>• Drag = pan view</div>
+                                        <div>• Double-click = move objective</div>
+                                        <div>• Shift+left-click = select single well</div>
+                                        <div>• Shift+left-drag = select wells in area</div>
+                                        <div>• Shift+right-click = deselect single well</div>
+                                        <div>• Shift+right-drag = deselect wells in area</div>
+                                    </div>
+                                    <div x-show="plateSelectionMode === 'sites'">
+                                        <div>• Drag = pan view</div>
+                                        <div>• Double-click = move objective</div>
+                                        <div>• Shift+left-click = select single site</div>
+                                        <div>• Shift+left-drag = select sites in area</div>
+                                        <div>• Shift+right-click = deselect single site</div>
+                                        <div>• Shift+right-drag = deselect sites in area</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Row 4: Selection mode -->
+                            <div style="margin-bottom: 10px;">
+                                <span
+                                    style="margin-right: 10px; cursor: help;"
+                                    x-init="enabletooltip($el)"
+                                    x-bind:tooltip="'Determines what can be selected above. Wells are independent; sites are shared across wells (deselecting a site disables it in all wells)'"
+                                >Selection mode:</span>
+                                <label style="margin-right: 15px;">
+                                    <input type="radio" name="selectionMode" value="wells" x-model="plateSelectionMode" />
+                                    Wells
+                                </label>
+                                <label>
+                                    <input type="radio" name="selectionMode" value="sites" x-model="plateSelectionMode" />
+                                    Sites
+                                </label>
+                            </div>
+                        </details>
+
+
+
+</div>
+<section class="histogram-panel" aria-label="Histogram for enabled channels">
+ <div class="histogram-heading">Intensity histogram <span>Enabled channels · log count</span></div>
+ <div id="explore-histogram" x-init="makeHistogram($el); $watch('theme',()=>updateHistogram($el))" x-effect="updateHistogram($el)"></div>
+ <p class="histogram-empty" x-show="!microscope_config.channels.some(c => c.enabled && cached_channel_image.has(c.handle))">Enable a channel and capture an image.</p>
+</section>
+ </aside>
+ <section id="channel-list" tabindex="0" aria-label="Channel previews and settings, scroll horizontally"
+  @wheel="if (!$event.altKey && !$event.ctrlKey && !$event.defaultPrevented && !$event.deltaX && $el.scrollHeight <= $el.clientHeight) { $event.preventDefault(); $el.scrollLeft += $event.deltaY; }">
+
+ <template x-for="(channel, index) in microscope_config.channels" :key="channel.handle">
+  <article class="channel-card channel-config-row-container"
+ @dragover="handleChannelDragOver($event)" @drop="handleChannelDrop($event, index)"
+ @dragenter="handleChannelDragEnter($event)" @dragleave="handleChannelDragLeave($event)" :class="{ 'channel-inactive': !channel.enabled }">
+   <header class="channel-card-header" :id="`channel-display-${channel.handle}`">
+    <div
+                                                    class="drag-handle"
+                                                    draggable="true"
+                                                    @dragstart="startChannelDrag($event, index)"
+                                                    @dragend="endChannelDrag($event)"
+                                                    x-init="enabletooltip($el)"
+                                                    x-bind:tooltip="`Drag to reorder this channel`"
+                                                >
+                                                    ↕
+                                                </div>
+    <label class="channel-enable"><input :id="`${channel.handle}-enabled`" type="checkbox" x-model.boolean="channel.enabled" />
+     <strong x-text="channel.name"></strong>
+    </label>
+    <span class="channel-state" x-text="focusIsChannelStreaming(channel) ? 'Live' : (channel.enabled ? 'Enabled' : 'Excluded from acquisition')"></span>
+    <button @click="Actions.snapChannel({channel})" :disabled="!channel.enabled">Snap</button>
+    <button @click="focusToggleLive(channel)" :disabled="!channel.enabled" :class="{ 'live-active': focusIsChannelStreaming(channel) }"
+     x-text="focusIsChannelStreaming(channel) ? 'Stop live' : 'Live'"></button>
+   </header>
+   <div class="channel-card-body">
+    <div class="channel-preview" :channelhandle="channel.handle">
+     <div class="channel-box-image" :id="`channelview-item-${channel.handle}`" x-effect="updateChannelCache($el)">
+      <span class="channel-image-placeholder" x-show="!cached_channel_image.has(channel.handle)">No image yet. Enable this channel, then Snap or Live.</span>
+     </div>
+     <div class="channel-image-caption">Shift + wheel: channels · Alt + wheel: zoom</div>
+     <div class="channel-box-fetch-error" x-show="image_fetch_errors[channel.handle]" x-text="image_fetch_errors[channel.handle]?.message ?? ''"></div>
+    </div>
+    <div class="channel-settings">
+     <div class="imaging-settings">
+      <div class="channel-group-heading">Imaging</div>
+<label class="channel-setting"><span>Exposure [ms]</span><input
+                                                    type="number"
+                                                    x-bind:min="limits.imaging_exposure_time_ms.min"
+                                                    x-bind:step="limits.imaging_exposure_time_ms.step"
+                                                    x-bind:max="limits.imaging_exposure_time_ms.max"
+                                                    placeholder="5"
+                                                    x-model.number="channel.exposure_time_ms"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Exposure time: ${limits.imaging_exposure_time_ms?.min ?? 'N/A'}ms - ${limits.imaging_exposure_time_ms?.max ?? 'N/A'}ms (step: ${limits.imaging_exposure_time_ms?.step ?? 'N/A'}ms)`"
+                                                    is="number-input"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                /></label>
+<label class="channel-setting"><span>Gain [dB]</span><input
+                                                    type="number"
+                                                    x-bind:min="limits.imaging_analog_gain_db.min"
+                                                    x-bind:step="limits.imaging_analog_gain_db.step"
+                                                    x-bind:max="limits.imaging_analog_gain_db.max"
+                                                    placeholder="0"
+                                                    x-model.number="channel.analog_gain"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Analog gain: ${limits.imaging_analog_gain_db?.min ?? 'N/A'}dB - ${limits.imaging_analog_gain_db?.max ?? 'N/A'}dB (step: ${limits.imaging_analog_gain_db?.step ?? 'N/A'}dB)`"
+                                                    is="number-input"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                /></label>
+<label class="channel-setting"><span>Illumination [%]</span><input
+                                                    type="number"
+                                                    x-bind:min="channel.handle.startsWith('bfled') ? (limits.imaging_illum_perc_brightfield?.min || limits.imaging_illum_perc?.min) : (limits.imaging_illum_perc_fluorescence?.min || limits.imaging_illum_perc?.min)"
+                                                    x-bind:step="channel.handle.startsWith('bfled') ? (limits.imaging_illum_perc_brightfield?.step || limits.imaging_illum_perc?.step) : (limits.imaging_illum_perc_fluorescence?.step || limits.imaging_illum_perc?.step)"
+                                                    x-bind:max="channel.handle.startsWith('bfled') ? (limits.imaging_illum_perc_brightfield?.max || limits.imaging_illum_perc?.max) : (limits.imaging_illum_perc_fluorescence?.max || limits.imaging_illum_perc?.max)"
+                                                    placeholder="100"
+                                                    x-model.number="channel.illum_perc"
+                                                    is="number-input"
+                                                    x-init="registerNumberInput($el),$nextTick(()=>$dispatch('blur')),enabletooltip($el)"
+                                                    x-bind:tooltip="channel.handle.startsWith('bfled') ? `Brightfield LED power: ${limits.imaging_illum_perc_brightfield?.min ?? limits.imaging_illum_perc?.min ?? 'N/A'}% - ${limits.imaging_illum_perc_brightfield?.max ?? limits.imaging_illum_perc?.max ?? 'N/A'}% (step: ${limits.imaging_illum_perc_brightfield?.step ?? limits.imaging_illum_perc?.step ?? 'N/A'}%)` : `Fluorescence LED power: ${limits.imaging_illum_perc_fluorescence?.min ?? limits.imaging_illum_perc?.min ?? 'N/A'}% - ${limits.imaging_illum_perc_fluorescence?.max ?? limits.imaging_illum_perc?.max ?? 'N/A'}% (step: ${limits.imaging_illum_perc_fluorescence?.step ?? limits.imaging_illum_perc?.step ?? 'N/A'}%)`"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                /></label>
+     </div>
+     <div class="stack-settings">
+      <div class="channel-group-heading">Z stack & filter</div>
+<label class="channel-setting"><span>Z offset [µm]</span><input
+                                                    type="number"
+                                                    x-bind:min="limits.imaging_focus_offset_um.min"
+                                                    x-bind:step="limits.imaging_focus_offset_um.step"
+                                                    x-bind:max="limits.imaging_focus_offset_um.max"
+                                                    placeholder="0"
+                                                    x-model.number="channel.z_offset_um"
+                                                    @input="focusConfirmedChannels.delete(channel.handle)"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Z offset: ${limits.imaging_focus_offset_um?.min ?? 'N/A'}μm - ${limits.imaging_focus_offset_um?.max ?? 'N/A'}μm (step: ${limits.imaging_focus_offset_um?.step ?? 'N/A'}μm)`"
+                                                    is="number-input"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                /></label>
+<label class="channel-setting"><span>Z planes</span><input
+                                                    type="number"
+                                                    x-bind:min="limits.imaging_number_z_planes.min"
+                                                    x-bind:step="limits.imaging_number_z_planes.step"
+                                                    x-bind:max="limits.imaging_number_z_planes.max"
+                                                    placeholder="1"
+                                                    x-model.number="channel.num_z_planes"
+                                                    is="number-input"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Number of Z planes: ${limits.imaging_number_z_planes?.min ?? 'N/A'} - ${limits.imaging_number_z_planes?.max ?? 'N/A'} (step: ${limits.imaging_number_z_planes?.step ?? 'N/A'})`"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                /></label>
+<label class="channel-setting"><span>Z spacing [µm]</span><input
+                                                    type="number"
+                                                    x-bind:min="limits.imaging_delta_z_um.min"
+                                                    x-bind:step="limits.imaging_delta_z_um.step"
+                                                    x-bind:max="limits.imaging_delta_z_um.max"
+                                                    placeholder="3"
+                                                    x-model.number="channel.delta_z_um"
+                                                    is="number-input"
+                                                    x-init="registerNumberInput($el),enabletooltip($el)"
+                                                    x-bind:tooltip="`Delta Z spacing: ${limits.imaging_delta_z_um?.min ?? 'N/A'}μm - ${limits.imaging_delta_z_um?.max ?? 'N/A'}μm (step: ${limits.imaging_delta_z_um?.step ?? 'N/A'}μm)`"
+                                                    x-effect="disableElement($el,()=>!channel.enabled)"
+                                                /></label>
+<label class="channel-setting"><span>Filter</span><select
+                                                    @change="channel.filter_handle = ($event.target.value === '__UI_NONE__' ? null : $event.target.value)"
+                                                    x-effect="disableElement($el,()=>!channel.enabled || !isFilterWheelAvailable); setupFilterValidation($el, channel, isFilterWheelAvailable)"
+                                                    x-init="enabletooltip($el)"
+                                                    x-bind:tooltip="!isFilterWheelAvailable ? 'This microscope does not support custom channel filters.' : ''"
+                                                >
+                                                    <template
+                                                        x-for="filterOption in filterOptions.filter(f => !f.isGroup)"
+                                                        :key="filterOption.handle"
+                                                    >
+                                                        <option
+                                                            x-bind:value="filterOption.handle"
+                                                            x-bind:selected="filterOption.handle === (channel.filter_handle ?? '__UI_NONE__')"
+                                                            x-text="filterOption.name"
+                                                        ></option>
+                                                    </template>
+                                                    <template
+                                                        x-for="filterOption in filterOptions.filter(f => f.isGroup)"
+                                                        :key="filterOption.handle"
+                                                    >
+                                                        <optgroup x-bind:label="filterOption.groupLabel">
+                                                            <option
+                                                                x-bind:value="filterOption.handle"
+                                                                x-bind:selected="filterOption.handle === (channel.filter_handle ?? '__UI_NONE__')"
+                                                                x-text="filterOption.name"
+                                                            ></option>
+                                                        </optgroup>
+                                                    </template>
+                                                </select></label>
+     </div>
+<section class="channel-focus-actions" :class="{ 'is-focus-reference': focusReferenceChannelHandle === channel.handle }" :id="`focus-setup-${channel.handle}`" aria-label="Channel focus setup and offsets">
+      <strong x-text="focusReferenceChannelHandle === channel.handle ? 'Focus reference setup' : 'Focus & offset'"></strong>
+      <button @click="focusSelectReference(channel)" :disabled="!channel.enabled || focusCalibrationInProgress || state.is_busy"
+       :class="{ 'reference-active': focusReferenceChannelHandle === channel.handle }"
+       x-text="focusReferenceChannelHandle === channel.handle ? 'Focus reference' : 'Use as focus reference'"></button>
+      <template x-if="focusReferenceChannelHandle === channel.handle">
+       <div class="reference-focus-setup">
+        <div class="focus-calibration-group">
+        <p class="focus-instruction">Focus the specimen with Live and Z, stop Live, then set the laser reference here.</p>
+        <strong class="focus-calibration-status" x-text="focusCalibrationInProgress ? 'Calibrating…' : (!channel.enabled ? 'Reference channel disabled' : (focusReferenceReady ? 'Reference ready' : 'Reference needs setup'))"></strong>
+        <button @click="focusCalibrateLAFHere" :disabled="!channel.enabled || state.is_busy || isStreaming || lafImageLiveMode || focusCalibrationInProgress">Set reference here</button>
+        <p class="focus-instruction" x-show="isStreaming">Stop specimen live imaging before setting the reference.</p>
+        <p class="focus-instruction" x-show="lafImageLiveMode">Stop laser live imaging in LAF Debug before setting the reference.</p>
+        <dl class="focus-readout">
+         <dt>Reference Z</dt><dd x-text="focusReferenceZ == null ? 'Not set' : `${(focusReferenceZ * 1000).toFixed(1)} µm`"></dd>
+         <dt>Current offset</dt><dd x-text="focusLiveOffsetText"></dd>
+        </dl>
+        <button @click="button_laserAutofocusFocus" :disabled="!focusReferenceReady || state.is_busy || isStreaming || lafImageLiveMode">Check reference with autofocus</button>
+        <label class="focus-acquisition-toggle"><input type="checkbox" x-model.boolean="microscope_config.autofocus_enabled" :disabled="!laserAutofocusIsCalibrated" />Use LAF during acquisition</label>
+        </div>
+
+        <details class="focus-measurements">
+         <summary>Offset measurements</summary>
+         <dl class="focus-readout">
+          <dt>Stage measured</dt><dd x-text="focusMeasuredOffsetText"></dd>
+          <dt>Laser estimate</dt><dd x-text="laserAutofocusOffsetText"></dd>
+         </dl>
+         <button @click="focusMeasureOffsetAccurate" :disabled="!focusReferenceReady || state.is_busy || isStreaming || lafImageLiveMode" title="Move to the reference, measure the Z difference, then return">Measure with stage</button>
+         <button @click="button_laserAutofocusMeasureOffset" :disabled="!focusReferenceReady || state.is_busy || isStreaming || lafImageLiveMode">Estimate with laser</button>
+        </details>
+       </div>
+      </template>
+      <template x-if="focusReferenceChannelHandle !== channel.handle">
+       <div class="channel-offset-setup">
+        <dl class="focus-readout">
+         <dt>Reference</dt><dd x-text="focusReferenceChannel?.name ?? 'Not selected'"></dd>
+         <dt>Saved offset</dt><dd x-text="focusFormatOffset(channel.z_offset_um)"></dd>
+         <dt>Current offset</dt><dd x-text="focusLiveOffsetText"></dd>
+        </dl>
+        <span class="channel-focus-status" x-text="!focusReferenceChannel ? 'Choose a focus reference channel' : (!focusReferenceChannel.enabled ? 'Enable the reference channel or choose another' : (focusReferenceZ == null ? 'Set the reference Z in the reference channel' : (!focusIsAtReferenceXY ? 'Return to reference XY to apply an offset' : (focusIsOffsetConfirmed(channel) ? 'Offset confirmed at this reference' : 'Offset needs confirmation at this reference'))))"></span>
+        <button @click="focusConfirmOffset(channel)" :disabled="!channel.enabled || !focusReferenceReady || focusLiveOffsetUM == null"
+         title="Save the current Z displacement from the reference as this channel’s acquisition offset">Apply current Z offset</button>
+        <button @click="focusAutofocusChannel(channel)" :disabled="!channel.enabled || !focusReferenceReady || state.is_busy || isStreaming || lafImageLiveMode">Autofocus to saved offset</button>
+       </div>
+      </template>
+     </section>
+</div>
+   </div>
+  </article>
+ </template>
+
+ </section>
+</div>
+
+
+<div id="machineconfigtab" tabname="Machine Config">
                             <div class="machine-config-controls">
                                 <div>
                                     <label>
@@ -899,7 +1439,7 @@
                             <div x-show="machineConfigUseNamespaces" class="namespace-tree">
                                 <template x-for="namespace in machineConfigNamespaces" :key="namespace.path">
                                     <div class="namespace-section">
-                                        <div 
+                                        <div
                                             class="namespace-header clickable"
                                             @click="toggleNamespaceExpansion(namespace)"
                                         >
@@ -907,11 +1447,11 @@
                                             <strong x-text="namespace.name"></strong>
                                             <span class="item-count" x-text="`(${namespace.items.length} items)`"></span>
                                         </div>
-                                        
+
                                         <!-- Items in this namespace -->
                                         <div x-show="namespace.isExpanded" class="namespace-content">
                                             <template x-for="config in namespace.items" :key="`${config.handle}:${machineConfigRenderEpoch}`">
-                                                <div 
+                                                <div
                                                     class="config-item"
                                                     x-show="!machineConfigHandleFilter || config.handle.toLowerCase().includes(machineConfigHandleFilter.toLowerCase())"
                                                 >
@@ -985,11 +1525,11 @@
                                                     </div>
                                                 </div>
                                             </template>
-                                            
+
                                             <!-- Child namespaces -->
                                             <template x-for="childNamespace in namespace.children" :key="childNamespace.path">
                                                 <div class="namespace-child">
-                                                    <div 
+                                                    <div
                                                         class="namespace-header clickable"
                                                         @click="toggleNamespaceExpansion(childNamespace)"
                                                     >
@@ -997,10 +1537,10 @@
                                                         <strong x-text="childNamespace.name"></strong>
                                                         <span class="item-count" x-text="`(${childNamespace.items.length} items)`"></span>
                                                     </div>
-                                                    
+
                                                     <div x-show="childNamespace.isExpanded" class="namespace-content">
                                                         <template x-for="config in childNamespace.items" :key="`${config.handle}:${machineConfigRenderEpoch}`">
-                                                            <div 
+                                                            <div
                                                                 class="config-item"
                                                                 x-show="!machineConfigHandleFilter || config.handle.toLowerCase().includes(machineConfigHandleFilter.toLowerCase())"
                                                             >
@@ -1165,7 +1705,7 @@
                                 </template>
                             </table>
                         </div>
-                        <div tabname="LAF Debug" style="overflow-x: hidden;">
+<div tabname="LAF Debug" style="overflow-x: hidden;">
                             <div style="display: flex; flex-direction: column; gap: 1em;">
                                 <!-- Camera Settings & Image Controls -->
                                 <div class="section">
@@ -1200,7 +1740,7 @@
                                     </div>
                                     <img
                                         style="width: 100%; max-height: 70vh; object-fit: contain; margin-top: 0.5em;"
-                                        x-init="lafImageElement=$el"
+                                        :src="lafImageSrc"
                                     />
                                 </div>
 
@@ -1244,7 +1784,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div tabname="Settings">
+<div tabname="Settings">
                             <div class="section">
                                 <div>Interface Settings</div>
                                 <div style="display: grid; grid-template-columns: auto 1fr; gap: 1em; align-items: center;">
@@ -1255,8 +1795,8 @@
                                         x-model.boolean="tooltipConfig.enabled"
                                         @change="saveInterfaceSettings()"
                                     />
-                                    
-                                    <label 
+
+                                    <label
                                         for="tooltip-delay-input"
                                         x-bind:class="!tooltipConfig.enabled ? 'disabled' : ''"
                                     >
@@ -1362,1123 +1902,7 @@
                                 </template>
                             </div>
                         </div>
-                    </div>
-                </div>
-
-                <style>
-                    #acquisitioncontroltab,
-                    #machineconfigtab {
-                        height: 100%;
-                        overflow-y: auto;
-                    }
-                </style>
-                <div id="rightcol" style="grid-area: b">
-                    <div x-init="initTabs($el)">
-                        <div
-                            id="acquisitioncontroltab"
-                            tabname="Acquisition Control"
-                        >
-                            <div class="section">
-                                <div>Acquisition Basics</div>
-                                <div>
-                                    <div id="names" class="scrolly">
-                                        <style>
-                                            #names {
-                                                display: grid;
-                                                grid-template:
-                                                    " l-proj  v-proj" auto
-                                                    " l-plate v-plate" auto
-                                                    " l-cell  v-cell" auto
-                                                    / auto 1fr;
-                                                gap: 0.3em 1em;
-                                            }
-                                        </style>
-                                        <label> Project Name</label
-                                        ><input
-                                            type="text"
-                                            placeholder="Name of the project"
-                                            x-model="microscope_config.project_name"
-                                        />
-                                        <label> Plate Name</label
-                                        ><input
-                                            type="text"
-                                            placeholder="Name/Identifier of the plate"
-                                            x-model="microscope_config.plate_name"
-                                        />
-                                        <label> Cell Line[s]</label
-                                        ><input
-                                            type="text"
-                                            placeholder="Cell lines[s] used on the plate"
-                                            x-model="microscope_config.cell_line"
-                                        />
-                                        <label> Comment</label
-                                        ><textarea
-                                            placeholder="description of the plate to understand its purpose."
-                                            x-model="microscope_config.comment"
-                                        ></textarea>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="section">
-                                <div>Site Configuration</div>
-                                <div>
-                                    <div id="grid-config" class="scrolly">
-                                        <style>
-                                            #grid-config {
-                                                display: grid;
-                                                grid-template:
-                                                    " l-n-x       v-n-x l-d-x       v-d-x   v-d-x   v-d-x   v-d-x   v-d-x   v-d-x" auto
-                                                    " l-n-y       v-n-y l-d-y       v-d-y   v-d-y   v-d-y   v-d-y   v-d-y   v-d-y" auto
-                                                    " l-n-t       v-n-t l-d-t       l-d-t-h v-d-t-h l-d-t-m v-d-t-m l-d-t-s v-d-t-s" auto
-                                                    / auto 3.5em auto auto minmax(2.5em, 1fr) auto minmax(2.5em, 1fr) auto minmax(2.5em, 1fr);
-                                                gap: 0.3em 0.4em;
-
-                                                input {
-                                                    min-width: 0;
-                                                    width: 100%;
-                                                    box-sizing: border-box;
-                                                }
-                                                label {
-                                                    height: min-content;
-                                                    width: max-content;
-                                                }
-                                            }
-                                        </style>
-                                        <label style="grid-area: l-n-x"
-                                            >Sites X</label
-                                        >
-                                        <input
-                                            style="grid-area: v-n-x"
-                                            type="number"
-                                            min="1"
-                                            max="999"
-                                            step="1"
-                                            @change="updatePlate"
-                                            x-model.number="microscope_config.grid.num_x"
-                                        />
-
-                                        <label style="grid-area: l-d-x"
-                                            >Δx [mm]</label
-                                        >
-                                        <input
-                                            style="grid-area: v-d-x"
-                                            x-effect="disableElement($el,()=>microscope_config.grid.num_x==1)"
-                                            type="number"
-                                            min="0.1"
-                                            max="999"
-                                            step="0.1"
-                                            @change="updatePlate"
-                                            x-model.number="microscope_config.grid.delta_x_mm"
-                                        />
-
-                                        <label style="grid-area: l-n-y"
-                                            >Sites Y</label
-                                        >
-                                        <input
-                                            style="grid-area: v-n-y"
-                                            type="number"
-                                            min="1"
-                                            max="999"
-                                            step="1"
-                                            @change="updatePlate"
-                                            x-model.number="microscope_config.grid.num_y"
-                                        />
-
-                                        <label style="grid-area: l-d-y"
-                                            >Δy [mm]</label
-                                        >
-                                        <input
-                                            style="grid-area: v-d-y"
-                                            x-effect="disableElement($el,()=>microscope_config.grid.num_y==1)"
-                                            type="number"
-                                            min="0.1"
-                                            max="999"
-                                            step="0.1"
-                                            @change="updatePlate"
-                                            x-model.number="microscope_config.grid.delta_y_mm"
-                                        />
-
-                                        <label style="grid-area: l-n-t"
-                                            >Timepoints</label
-                                        >
-                                        <input
-                                            style="grid-area: v-n-t"
-                                            type="number"
-                                            min="1"
-                                            max="9999"
-                                            step="1"
-                                            @change="updatePlate"
-                                            x-model.number="microscope_config.grid.num_t"
-                                        />
-
-                                        <label style="grid-area: l-d-t"
-                                            >Interval</label
-                                        >
-                                        <label style="grid-area: l-d-t-h"
-                                            >h</label
-                                        >
-                                        <input
-                                            x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
-                                            style="grid-area: v-d-t-h"
-                                            type.number="number"
-                                            min="0"
-                                            max="999"
-                                            step="0.1"
-                                            @change="updatePlate"
-                                            x-model="microscope_config.grid.delta_t.h"
-                                        />
-                                        <label style="grid-area: l-d-t-m"
-                                            >m</label
-                                        >
-                                        <input
-                                            x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
-                                            style="grid-area: v-d-t-m"
-                                            type.number="number"
-                                            min="0"
-                                            max="59.9"
-                                            step="0.1"
-                                            @change="updatePlate"
-                                            x-model="microscope_config.grid.delta_t.m"
-                                        />
-                                        <label style="grid-area: l-d-t-s"
-                                            >s</label
-                                        >
-                                        <input
-                                            x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
-                                            style="grid-area: v-d-t-s"
-                                            type.number="number"
-                                            min="0"
-                                            max="59.9"
-                                            step="0.1"
-                                            @change="updatePlate"
-                                            x-model="microscope_config.grid.delta_t.s"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="section">
-                                <div>Wellplate Configuration</div>
-                                <div>
-                                    <div id="well-selector" class="scrolly">
-                                        <style>
-                                            #well-selector {
-                                                display: grid;
-                                                grid-template: "p" auto "w" auto / auto;
-                                                gap: 0.3em;
-                                            }
-                                        </style>
-                                        <script>
-                                            function checkDefaultPlateType(
-                                                el,
-                                                plate,
-                                                microscope_config,
-                                            ) {
-                                                if (
-                                                    plate.Model_id ==
-                                                    microscope_config
-                                                        .wellplate_type.Model_id
-                                                ) {
-                                                    el.setAttribute(
-                                                        "selected",
-                                                        "",
-                                                    );
-                                                }
-                                            }
-                                        </script>
-
-                                        <div id="plate-type-selector">
-                                            <style>
-                                                #plate-type-selector {
-                                                    display: grid;
-                                                    grid-template: "l s" auto / auto 1fr;
-                                                    gap: 0.3em;
-                                                }
-                                            </style>
-                                            <label>Well plate Type</label>
-                                            <select
-                                                id="platetype"
-                                                @change="await updatePlate($el.value)"
-                                                x-init="await updatePlate(microscope_config.wellplate_type.Model_id,false)"
-                                            >
-                                                <template
-                                                    x-for="plategroup in plateinfo.plategroups"
-                                                    :key="plategroup.label"
-                                                >
-                                                    <optgroup
-                                                        x-bind:label="plategroup.label"
-                                                    >
-                                                        <template
-                                                            x-for="plate in plategroup.plates"
-                                                            :key="plate.Model_id"
-                                                        >
-                                                            <option
-                                                                x-init="checkDefaultPlateType($el,plate,microscope_config)"
-                                                                x-bind:value="plate.Model_id"
-                                                                x-text="`${plate.Manufacturer} ${plate.Model_id_manufacturer} ( ${plate.Model_name} )`"
-                                                            ></option>
-                                                        </template>
-                                                    </optgroup>
-                                                </template>
-                                            </select>
-                                        </div>
-
-                                        <style>
-                                            /* 1 slide holder */
-                                            #wellcontainer.wellsx1,
-    									/* 4 slide holder */
-    									#wellcontainer.wellsx4 {
-                                                .well {
-                                                    font-size: 2em;
-                                                }
-                                            }
-                                            /* 96 well plate */
-                                            #wellcontainer.wellsx12 {
-                                                .well {
-                                                    font-size: 1.5em;
-                                                }
-                                            }
-                                            /* 384 well plate */
-                                            #wellcontainer.wellsx24 {
-                                                .well {
-                                                    font-size: 1.2em;
-                                                }
-                                            }
-                                            #wellcontainer.wellsx48 {
-                                                .well {
-                                                    font-size: 0.56em;
-                                                }
-                                            }
-                                            #wellcontainer {
-                                                display: grid;
-                                                border: 1px solid
-                                                    var(--text-color);
-
-                                                /*first column is well header which can have any size, all other wells must have equal size*/
-                                                grid-template-columns: auto repeat(
-                                                        var(--numcols),
-                                                        1fr
-                                                    );
-
-                                                .well {
-                                                    font-family: monospace;
-                                                }
-
-                                                .well:not(.wellheader) {
-                                                    aspect-ratio: var(
-                                                        --well-aspect-ratio
-                                                    );
-                                                }
-
-                                                .well.selected {
-                                                    background: var(
-                                                        --highlight-color
-                                                    );
-                                                }
-
-                                                .well:hover:not(.wellheader) {
-                                                    background: lightgrey;
-                                                }
-                                            }
-                                        </style>
-                                        <div
-                                            id="wellcontainer"
-                                            x-bind:class="`wellsx${microscope_config.wellplate_type.Num_wells_x}`"
-                                            x-bind:style="`
-									--numcols:${microscope_config.wellplate_type.Num_wells_x};
-									--well-aspect-ratio:${microscope_config.wellplate_type.Well_size_x_mm/microscope_config.wellplate_type.Well_size_y_mm}
-									`"
-                                            @mouseleave="endSelectionRange(null)"
-                                        >
-                                            <style>
-                                                .well {
-                                                    display: grid;
-                                                    justify-items: center;
-                                                    span {
-                                                        height: min-content;
-                                                        display: inline-block;
-                                                        position: relative;
-                                                        top: 50%;
-                                                        transform: translateY(
-                                                            -50%
-                                                        );
-                                                    }
-                                                }
-                                                .inselection {
-                                                    background: red;
-                                                }
-                                            </style>
-                                            <!-- Column headers (row = -1) -->
-                                            <template
-                                                x-for="well in createHeaderWells(microscope_config.wellplate_type).filter(w => w.row === -1)"
-                                                :key="`header-c${well.col}r${well.row}`"
-                                            >
-                                                <div
-                                                    class="well noselect wellheader"
-                                                    x-bind:style="`grid-column: ${well.col + 2}; grid-row: 1;`"
-                                                >
-                                                    <span x-text="wellText(well)"></span>
-                                                </div>
-                                            </template>
-                                            
-                                            <!-- Row headers (col = -1) -->
-                                            <template
-                                                x-for="well in createHeaderWells(microscope_config.wellplate_type).filter(w => w.col === -1)"
-                                                :key="`header-c${well.col}r${well.row}`"
-                                            >
-                                                <div
-                                                    class="well noselect wellheader"
-                                                    x-bind:style="`grid-column: 1; grid-row: ${well.row + 2};`"
-                                                >
-                                                    <span x-text="wellText(well)"></span>
-                                                </div>
-                                            </template>
-                                            
-                                            <!-- Real wells (col >= 0 and row >= 0) -->
-                                            <template
-                                                x-for="well in microscope_config.plate_wells.filter(w => w.col >= 0 && w.row >= 0)"
-                                                :key="`well-c${well.col}r${well.row}`"
-                                            >
-                                                <div
-                                                    x-init="enabletooltip($el)"
-                                                    x-bind:tooltip="`Well ${wellName(well)}`"
-                                                    class="well noselect clickable"
-                                                    x-bind:class="well.selected ? 'selected' : ''"
-                                                    x-bind:style="`grid-column: ${well.col + 2}; grid-row: ${well.row + 2};`"
-                                                    @mousedown="setStartSelectedWell(event,well)"
-                                                    @mouseenter="selectionContinue(event,well)"
-                                                    @mouseup="endSelectionRange(well)"
-                                                    @dblclick="await buttons_wellcontainer_dblclick(well)"
-                                                >
-                                                    <span></span>
-                                                </div>
-                                            </template>
-                                        </div>
-                                        <div x-text="selectionRangeText"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div tabname="Lighting and Focus">
-                            <div class="section">
-                                <div>Channel Configuration</div>
-                                <div>
-                                    <div class="table-scroll-hint">Channel settings · scroll horizontally for more →</div>
-                                    <div id="channelgrid" class="scrolly" tabindex="0" role="region" aria-label="Channel settings, scroll horizontally for more columns">
-                                        <style>
-                                            #channelgrid {
-                                                display: grid;
-                                                overflow-x: scroll;
-                                                width: 100%;
-                                                box-sizing: border-box;
-                                                scrollbar-width: auto;
-                                                grid-template-columns:
-                                                    2em /* drag handle */
-                                                    repeat(3, max-content)
-                                                    5em 5em 5em 5em 4em 7em 8em;
-
-                                                .channel-config-header {
-                                                    text-align: center;
-                                                }
-
-                                                /* x padding here is present inside the row container, but y padding
-                                                is NOT, so y padding is added inside the row container instead*/
-                                                gap: 0 0.4em;
-
-                                                .channel-config-row-name {
-                                                    font-weight: bold;
-                                                    display: grid;
-                                                    align-items: center;
-
-                                                    background: var(
-                                                        --weak-bg-color
-                                                    );
-                                                    padding-right: 0.5em;
-                                                    border-right: 1px solid
-                                                        var(--text-color);
-                                                }
-                                            }
-                                            .drag-handle {
-                                                cursor: grab;
-                                                display: flex;
-                                                align-items: center;
-                                                justify-content: center;
-                                                font-size: 1.2em;
-                                                user-select: none;
-                                                color: var(--text-color);
-                                                opacity: 0.6;
-                                                transition: opacity 0.2s ease;
-                                                padding: 0.2em;
-                                                border-radius: 3px;
-                                            }
-                                            .drag-handle:hover {
-                                                opacity: 1;
-                                                background-color: var(--weak-bg-color);
-                                            }
-                                            .drag-handle:active {
-                                                cursor: grabbing;
-                                                background-color: var(--highlight-color);
-                                            }
-                                            .channel-config-row-container.dragging {
-                                                opacity: 0.5;
-                                            }
-                                            .channel-config-row-container.drag-over {
-                                                border-top: 3px solid var(--highlight-color);
-                                            }
-                                        </style>
-
-                                        <p
-                                            class="channel-config-header"
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Drag to reorder channels (changes protocol_order)`"
-                                        >
-                                            ↕
-                                        </p>
-                                        <p
-                                            class="channel-config-header"
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`
-    										Indicates if the channel should be imaged during acqusition.
-
-    										When checked, this channel will be imaged.
-    									`"
-                                        >
-                                            On
-                                        </p>
-                                        <p
-                                            class="channel-config-header channel-config-row-name"
-                                        >
-                                            Channel
-                                        </p>
-                                        <p class="channel-config-header"></p>
-                                        <p
-                                            class="channel-config-header"
-                                            x-init="enabletooltip($el)"
-                                            tooltip="Exposure time in milliseconds. Hover over individual inputs for specific ranges."
-                                        >
-                                            Exp. [ms]
-                                        </p>
-                                        <p
-                                            class="channel-config-header"
-                                            x-init="enabletooltip($el)"
-                                            tooltip="Analog gain in decibels. Hover over individual inputs for specific ranges."
-                                        >
-                                            Gain [dB]
-                                        </p>
-                                        <p
-                                            class="channel-config-header"
-                                            x-init="enabletooltip($el)"
-                                            tooltip="Z offset from focus reference in micrometers. Hover over individual inputs for specific ranges."
-                                        >
-                                            Z offset [µm]
-                                        </p>
-                                        <p
-                                            class="channel-config-header"
-                                            x-init="enabletooltip($el)"
-                                            tooltip="Illumination strength as percent of maximum. Limits vary by channel type - hover over individual inputs for specific ranges."
-                                        >
-                                            Power [%]
-                                        </p>
-                                        <p
-                                            class="channel-config-header"
-                                            x-init="enabletooltip($el)"
-                                            tooltip="Number of Z planes. Hover over individual inputs for specific ranges."
-                                        >
-                                            Z planes
-                                        </p>
-                                        <p
-                                            class="channel-config-header"
-                                            x-init="enabletooltip($el)"
-                                            tooltip="Distance between Z planes in micrometers. Hover over individual inputs for specific ranges."
-                                        >
-                                            Δz [µm]
-                                        </p>
-                                        <p
-                                            class="channel-config-header"
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`
-    										Filter wheel selection for this channel.
-
-    										Select 'None' for no filter movement, or choose a specific filter to position the filter wheel before imaging.
-    										`"
-                                        >
-                                            Filter
-                                        </p>
-
-                                        <style>
-                                            .channel-config-row-container {
-                                                background: var(
-                                                    --strong-bg-color
-                                                );
-
-                                                display: grid;
-                                                grid-column: 1 / -1; /* span full width of parent grid */
-                                                grid-template-columns: subgrid; /* inherit columns from .parent */
-                                                grid-template-rows: subgrid; /* inherit rows from .parent */
-                                                gap: inherit;
-                                                /* see #channelgrid for comment on padding */
-                                                padding: 0.2em 0;
-
-                                                * {
-                                                    box-sizing: content-box;
-                                                }
-                                            }
-                                            .channel-config-row-container:hover {
-                                                background: var(--weak-bg-color);
-                                            }
-                                            .channel-config-row-name {
-                                                /* stretch label to full row height*/
-                                                display: block;
-                                                height: 100%;
-
-                                                /* make it stick to the left edge while scrolling, to always be visible */
-                                                position: sticky;
-                                                left: 0;
-                                                z-index: 1;
-
-                                                /* inherit background color from parent (would otherwise be transparent and mess with position:sticky; display */
-                                                background: inherit;
-                                            }
-                                        </style>
-
-                                        <template
-                                            x-for="(channel, index) in microscope_config.channels"
-                                            :key="channel.handle"
-                                        >
-                                            <div
-                                                class="channel-config-row-container"
-                                                @dragover="handleChannelDragOver($event)"
-                                                @drop="handleChannelDrop($event, index)"
-                                                @dragenter="handleChannelDragEnter($event)"
-                                                @dragleave="handleChannelDragLeave($event)"
-                                            >
-                                                <div
-                                                    class="drag-handle"
-                                                    draggable="true"
-                                                    @dragstart="startChannelDrag($event, index)"
-                                                    @dragend="endChannelDrag($event)"
-                                                    x-init="enabletooltip($el)"
-                                                    x-bind:tooltip="`Drag to reorder this channel`"
-                                                >
-                                                    ↕
-                                                </div>
-                                                <input
-                                                    x-bind:id="`${channel.handle}-enabled`"
-                                                    type="checkbox"
-                                                    x-model.boolean="channel.enabled"
-                                                />
-                                                <div
-                                                    class="channel-config-row-name"
-                                                >
-                                                    <label
-                                                        x-bind:for="`${channel.handle}-enabled`"
-                                                        x-text="channel.name"
-                                                        x-effect="disableElement($el,()=>!channel.enabled)"
-                                                    ></label>
-                                                </div>
-                                                <button
-                                                    @click="Actions.snapChannel({channel})"
-                                                    @mouseenter="channel_makeVisible(channel.handle);"
-                                                    x-effect="disableElement($el,()=>!channel.enabled)"
-                                                >
-                                                    snap
-                                                </button>
-
-                                                <input
-                                                    type="number"
-                                                    x-bind:min="limits.imaging_exposure_time_ms.min"
-                                                    x-bind:step="limits.imaging_exposure_time_ms.step"
-                                                    x-bind:max="limits.imaging_exposure_time_ms.max"
-                                                    placeholder="5"
-                                                    x-model.number="channel.exposure_time_ms"
-                                                    x-init="registerNumberInput($el),enabletooltip($el)"
-                                                    x-bind:tooltip="`Exposure time: ${limits.imaging_exposure_time_ms?.min ?? 'N/A'}ms - ${limits.imaging_exposure_time_ms?.max ?? 'N/A'}ms (step: ${limits.imaging_exposure_time_ms?.step ?? 'N/A'}ms)`"
-                                                    is="number-input"
-                                                    x-effect="disableElement($el,()=>!channel.enabled)"
-                                                />
-
-                                                <input
-                                                    type="number"
-                                                    x-bind:min="limits.imaging_analog_gain_db.min"
-                                                    x-bind:step="limits.imaging_analog_gain_db.step"
-                                                    x-bind:max="limits.imaging_analog_gain_db.max"
-                                                    placeholder="0"
-                                                    x-model.number="channel.analog_gain"
-                                                    x-init="registerNumberInput($el),enabletooltip($el)"
-                                                    x-bind:tooltip="`Analog gain: ${limits.imaging_analog_gain_db?.min ?? 'N/A'}dB - ${limits.imaging_analog_gain_db?.max ?? 'N/A'}dB (step: ${limits.imaging_analog_gain_db?.step ?? 'N/A'}dB)`"
-                                                    is="number-input"
-                                                    x-effect="disableElement($el,()=>!channel.enabled)"
-                                                />
-
-                                                <input
-                                                    type="number"
-                                                    x-bind:min="limits.imaging_focus_offset_um.min"
-                                                    x-bind:step="limits.imaging_focus_offset_um.step"
-                                                    x-bind:max="limits.imaging_focus_offset_um.max"
-                                                    placeholder="0"
-                                                    x-model.number="channel.z_offset_um"
-                                                    x-init="registerNumberInput($el),enabletooltip($el)"
-                                                    x-bind:tooltip="`Z offset: ${limits.imaging_focus_offset_um?.min ?? 'N/A'}μm - ${limits.imaging_focus_offset_um?.max ?? 'N/A'}μm (step: ${limits.imaging_focus_offset_um?.step ?? 'N/A'}μm)`"
-                                                    is="number-input"
-                                                    x-effect="disableElement($el,()=>!channel.enabled)"
-                                                />
-
-                                                <input
-                                                    type="number"
-                                                    x-bind:min="channel.handle.startsWith('bfled') ? (limits.imaging_illum_perc_brightfield?.min || limits.imaging_illum_perc?.min) : (limits.imaging_illum_perc_fluorescence?.min || limits.imaging_illum_perc?.min)"
-                                                    x-bind:step="channel.handle.startsWith('bfled') ? (limits.imaging_illum_perc_brightfield?.step || limits.imaging_illum_perc?.step) : (limits.imaging_illum_perc_fluorescence?.step || limits.imaging_illum_perc?.step)"
-                                                    x-bind:max="channel.handle.startsWith('bfled') ? (limits.imaging_illum_perc_brightfield?.max || limits.imaging_illum_perc?.max) : (limits.imaging_illum_perc_fluorescence?.max || limits.imaging_illum_perc?.max)"
-                                                    placeholder="100"
-                                                    x-model.number="channel.illum_perc"
-                                                    is="number-input"
-                                                    x-init="registerNumberInput($el),$nextTick(()=>$dispatch('blur')),enabletooltip($el)"
-                                                    x-bind:tooltip="channel.handle.startsWith('bfled') ? `Brightfield LED power: ${limits.imaging_illum_perc_brightfield?.min ?? limits.imaging_illum_perc?.min ?? 'N/A'}% - ${limits.imaging_illum_perc_brightfield?.max ?? limits.imaging_illum_perc?.max ?? 'N/A'}% (step: ${limits.imaging_illum_perc_brightfield?.step ?? limits.imaging_illum_perc?.step ?? 'N/A'}%)` : `Fluorescence LED power: ${limits.imaging_illum_perc_fluorescence?.min ?? limits.imaging_illum_perc?.min ?? 'N/A'}% - ${limits.imaging_illum_perc_fluorescence?.max ?? limits.imaging_illum_perc?.max ?? 'N/A'}% (step: ${limits.imaging_illum_perc_fluorescence?.step ?? limits.imaging_illum_perc?.step ?? 'N/A'}%)`"
-                                                    x-effect="disableElement($el,()=>!channel.enabled)"
-                                                />
-
-                                                <input
-                                                    type="number"
-                                                    x-bind:min="limits.imaging_number_z_planes.min"
-                                                    x-bind:step="limits.imaging_number_z_planes.step"
-                                                    x-bind:max="limits.imaging_number_z_planes.max"
-                                                    placeholder="1"
-                                                    x-model.number="channel.num_z_planes"
-                                                    is="number-input"
-                                                    x-init="registerNumberInput($el),enabletooltip($el)"
-                                                    x-bind:tooltip="`Number of Z planes: ${limits.imaging_number_z_planes?.min ?? 'N/A'} - ${limits.imaging_number_z_planes?.max ?? 'N/A'} (step: ${limits.imaging_number_z_planes?.step ?? 'N/A'})`"
-                                                    x-effect="disableElement($el,()=>!channel.enabled)"
-                                                />
-
-                                                <input
-                                                    type="number"
-                                                    x-bind:min="limits.imaging_delta_z_um.min"
-                                                    x-bind:step="limits.imaging_delta_z_um.step"
-                                                    x-bind:max="limits.imaging_delta_z_um.max"
-                                                    placeholder="3"
-                                                    x-model.number="channel.delta_z_um"
-                                                    is="number-input"
-                                                    x-init="registerNumberInput($el),enabletooltip($el)"
-                                                    x-bind:tooltip="`Delta Z spacing: ${limits.imaging_delta_z_um?.min ?? 'N/A'}μm - ${limits.imaging_delta_z_um?.max ?? 'N/A'}μm (step: ${limits.imaging_delta_z_um?.step ?? 'N/A'}μm)`"
-                                                    x-effect="disableElement($el,()=>!channel.enabled)"
-                                                />
-
-                                                <select
-                                                    @change="channel.filter_handle = ($event.target.value === '__UI_NONE__' ? null : $event.target.value)"
-                                                    x-effect="disableElement($el,()=>!channel.enabled || !isFilterWheelAvailable); setupFilterValidation($el, channel, isFilterWheelAvailable)"
-                                                    x-init="enabletooltip($el)"
-                                                    x-bind:tooltip="!isFilterWheelAvailable ? 'This microscope does not support custom channel filters.' : ''"
-                                                >
-                                                    <template
-                                                        x-for="filterOption in filterOptions.filter(f => !f.isGroup)"
-                                                        :key="filterOption.handle"
-                                                    >
-                                                        <option
-                                                            x-bind:value="filterOption.handle"
-                                                            x-bind:selected="filterOption.handle === (channel.filter_handle ?? '__UI_NONE__')"
-                                                            x-text="filterOption.name"
-                                                        ></option>
-                                                    </template>
-                                                    <template
-                                                        x-for="filterOption in filterOptions.filter(f => f.isGroup)"
-                                                        :key="filterOption.handle"
-                                                    >
-                                                        <optgroup x-bind:label="filterOption.groupLabel">
-                                                            <option
-                                                                x-bind:value="filterOption.handle"
-                                                                x-bind:selected="filterOption.handle === (channel.filter_handle ?? '__UI_NONE__')"
-                                                                x-text="filterOption.name"
-                                                            ></option>
-                                                        </optgroup>
-                                                    </template>
-                                                </select>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="section">
-                                <div>Quick Capture</div>
-                                <div style="display: flex; align-items: center; gap: 0.5em;">
-                                    <button
-                                        @click="Actions.snapAllChannels()"
-                                        x-init="enabletooltip($el)"
-                                        x-bind:tooltip="`
-                                            Snap all enabled channels with their configured settings.
-
-                                            This will:
-                                            • Run laser autofocus if AF is checked
-                                            • Move to each channel's Z-offset
-                                            • Capture images with the configured exposure and gain
-                                            • Return to focused Z position
-                                            • Display captured images
-                                        `"
-                                    >
-                                        Snap All Channels
-                                    </button>
-                                    <label style="display: inline-flex; align-items: center;"
-                                           x-init="enabletooltip($el)"
-                                           x-bind:tooltip="`
-                                            Reflects 'Use autofocus during acquisition' setting from Laser Autofocus controls.
-
-                                            When checked, Snap All will:
-                                            • Run laser autofocus before imaging
-                                            • Apply per-channel Z-offsets relative to focused position
-                                           `">
-                                        <input type="checkbox"
-                                               disabled
-                                               x-bind:checked="microscope_config.autofocus_enabled">
-                                        AF
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div class="section">
-                                <div>
-                                    Live Acquisition
-                                    <span 
-                                        x-show="isStreaming" 
-                                        class="streaming-indicator"
-                                        x-transition.opacity.duration.300ms
-                                    >
-                                        ● STREAMING
-                                    </span>
-                                </div>
-                                <div>
-                                    <div
-                                        id="live-acquisition-controls"
-                                        class="scrolly"
-                                    >
-                                        <style>
-                                            #live-acquisition-controls {
-                                                display: grid;
-                                                grid-template-columns: repeat(
-                                                    4,
-                                                    auto
-                                                );
-                                                gap: 0 0.6em;
-                                            }
-                                            
-                                            .streaming-indicator {
-                                                color: #ff4444;
-                                                font-weight: bold;
-                                                font-size: 0.9em;
-                                                margin-left: 10px;
-                                                animation: pulse 1.5s infinite;
-                                                text-shadow: 0 0 4px rgba(255, 68, 68, 0.6);
-                                            }
-                                            
-                                            @keyframes pulse {
-                                                0%, 100% { opacity: 1; }
-                                                50% { opacity: 0.6; }
-                                            }
-                                        </style>
-
-                                        <label
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`
-										Live Acquisition controls.
-
-										Live Acquisition is the process where a number of acquisition are performed each second until stopped.
-
-										Note that this may quickly bleach your sample!
-									`"
-                                            >Live Acq.</label
-                                        >
-                                        <button 
-                                            @click="buttons_startStreaming"
-                                            :disabled="isStreaming"
-                                        >
-                                            start
-                                        </button>
-                                        <button 
-                                            @click="buttons_endStreaming"
-                                            :disabled="!isStreaming"
-                                        >
-                                            stop
-                                        </button>
-                                        <select
-                                            id="live-channel-selection"
-                                            x-model="actionInput.live_acquisition_channelhandle"
-                                        >
-                                            <optgroup label="Fluorescence">
-                                                <template
-                                                    x-for="channel in microscope_config.channels"
-                                                    :key="channel.handle"
-                                                >
-                                                    <template
-                                                        x-if="channel.enabled && channel.handle[0]=='f'"
-                                                    >
-                                                        <option
-                                                            x-bind:value="channel.handle"
-                                                            x-text="channel.name"
-                                                            x-bind:selected="channel.handle === actionInput.live_acquisition_channelhandle"
-                                                        ></option>
-                                                    </template>
-                                                </template>
-                                            </optgroup>
-                                            <optgroup label="Brightfield">
-                                                <template
-                                                    x-for="channel in microscope_config.channels"
-                                                    :key="channel.handle"
-                                                >
-                                                    <template
-                                                        x-if="channel.enabled && channel.handle[0]=='b'"
-                                                    >
-                                                        <option
-                                                            x-bind:value="channel.handle"
-                                                            x-text="channel.name"
-                                                            x-bind:selected="channel.handle === actionInput.live_acquisition_channelhandle"
-                                                        ></option>
-                                                    </template>
-                                                </template>
-                                            </optgroup>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="section">
-                                <div>Focus & Channel Offsets</div>
-                                <div>
-                                    <div id="focus-channel-offsets">
-                                        <style>
-                                            #focus-channel-offsets {
-                                                display: grid;
-                                                grid-template-columns: auto auto auto;
-                                                gap: 0.4em 0.6em;
-                                                align-items: center;
-                                            }
-                                            #focus-channel-offsets .section-divider {
-                                                grid-column: span 3;
-                                                border-top: 1px solid var(--text-color);
-                                                margin: 0.3em 0;
-                                                opacity: 0.3;
-                                            }
-                                            #focus-channel-offsets .channel-table {
-                                                grid-column: span 3;
-                                                display: grid;
-                                                grid-template-columns: 1fr auto auto auto auto;
-                                                gap: 0.2em 0.5em;
-                                                align-items: center;
-                                            }
-                                            #focus-channel-offsets .offset-value {
-                                                font-family: monospace;
-                                                text-align: right;
-                                                min-width: 5em;
-                                            }
-                                            #focus-channel-offsets .live-indicator {
-                                                display: inline-block;
-                                                width: 0.7em;
-                                                height: 0.7em;
-                                                border-radius: 50%;
-                                                margin-left: 0.3em;
-                                            }
-                                            #focus-channel-offsets .live-indicator.on {
-                                                background-color: #2ecc40;
-                                                box-shadow: 0 0 4px #2ecc40;
-                                            }
-                                            #focus-channel-offsets .live-indicator.off {
-                                                background-color: #aaa;
-                                            }
-                                            #focus-channel-offsets .confirmed-indicator {
-                                                color: #2ecc40;
-                                            }
-                                            #focus-channel-offsets .unconfirmed-indicator {
-                                                color: #aaa;
-                                            }
-                                            #focus-channel-offsets .action-buttons {
-                                                display: flex;
-                                                gap: 0.5em;
-                                                flex-wrap: wrap;
-                                            }
-                                        </style>
-
-                                        <!-- Row 1: Reference channel dropdown -->
-                                        <label
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Select which channel to use for focusing and LAF calibration.`"
-                                        >Reference channel</label>
-                                        <span class="action-buttons" style="grid-column: span 2;">
-                                            <select
-                                                x-bind:value="focusReferenceChannelHandle ?? ''"
-                                                @change="focusReferenceChannelHandle = $event.target.value || null"
-                                            >
-                                                <option value="">Select channel...</option>
-                                                <template x-for="channel in microscope_config.channels.filter(c => c.enabled)" :key="channel.handle">
-                                                    <option
-                                                        x-bind:value="channel.handle"
-                                                        x-text="channel.name"
-                                                    ></option>
-                                                </template>
-                                            </select>
-                                            <button
-                                                @click="focusReferenceChannel && focusToggleLive(focusReferenceChannel)"
-                                                x-bind:disabled="!focusReferenceChannelHandle"
-                                                x-init="enabletooltip($el)"
-                                                x-bind:tooltip="`Toggle live streaming for reference channel to check focus.`"
-                                            >Live<span
-                                                class="live-indicator"
-                                                x-bind:class="focusReferenceChannel && focusIsChannelStreaming(focusReferenceChannel) ? 'on' : 'off'"
-                                            ></span></button>
-                                            <button
-                                                @click="focusCalibrateLAFHere"
-                                                x-bind:disabled="!focusReferenceChannelHandle"
-                                                x-init="enabletooltip($el)"
-                                                x-bind:tooltip="`Calibrate laser autofocus at current Z position and set as reference for channel offsets.`"
-                                            >Calibrate LAF here</button>
-                                        </span>
-
-                                        <!-- Divider -->
-                                        <div class="section-divider"></div>
-
-                                        <!-- Row 2: LAF Reference status -->
-                                        <label
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Laser autofocus reference plane (i.e. z position).`"
-                                        >LAF Reference z pos.</label>
-                                        <span x-text="laserAutofocusReferenceText" style="grid-column: span 2;"></span>
-
-                                        <!-- Divider -->
-                                        <div class="section-divider"></div>
-
-                                        <!-- Channel offset table -->
-                                        <div class="channel-table">
-                                            <!-- Current offset row -->
-                                            <span style="font-style: italic; opacity: 0.7;"
-                                                x-init="enabletooltip($el)"
-                                                x-bind:tooltip="`Current Z offset relative to reference. Updates live as you jog Z. Only accurate if you have not moved in XY since the last focus.`"
-                                            >Current offset from reference</span>
-                                            <span class="offset-value" style="font-style: italic; opacity: 0.7;" x-text="focusLiveOffsetText"></span>
-                                            <span></span>
-                                            <span></span>
-                                            <span></span>
-
-                                            <!-- Per-channel rows (excluding reference channel) -->
-                                            <template x-for="channel in microscope_config.channels.filter(c => c.enabled && c.handle !== focusReferenceChannelHandle)" :key="channel.handle">
-                                                <div style="display: contents;" @mouseenter="channel_makeVisible(channel.handle)">
-                                                    <span x-text="channel.name"></span>
-                                                    <span class="offset-value" x-text="focusFormatOffset(channel.z_offset_um)"></span>
-                                                    <span
-                                                        x-bind:class="focusIsOffsetConfirmed(channel) ? 'confirmed-indicator' : 'unconfirmed-indicator'"
-                                                        x-init="enabletooltip($el)"
-                                                        x-bind:tooltip="focusIsOffsetConfirmed(channel) ? 'Offset confirmed with current reference' : 'Offset not yet confirmed with current reference'"
-                                                    >●</span>
-                                                    <button
-                                                        @click="focusToggleLive(channel)"
-                                                        x-init="enabletooltip($el)"
-                                                        x-bind:tooltip="`Toggle live streaming for ${channel.name}.`"
-                                                    >Live<span
-                                                        class="live-indicator"
-                                                        x-bind:class="focusIsChannelStreaming(channel) ? 'on' : 'off'"
-                                                    ></span></button>
-                                                    <button
-                                                        @click="focusConfirmOffset(channel)"
-                                                        x-bind:disabled="focusReferenceZ == null"
-                                                        x-init="enabletooltip($el)"
-                                                        x-bind:tooltip="`Set ${channel.name} offset to current stage offset (${focusLiveOffsetText}).`"
-                                                    >Apply offset</button>
-                                                </div>
-                                            </template>
-                                        </div>
-
-                                        <!-- Divider -->
-                                        <div class="section-divider"></div>
-
-                                        <!-- Use during acquisition checkbox -->
-                                        <label
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`When enabled, the microscope will use laser autofocus to maintain focus during acquisition.
-
-The autofocus will run before each well/position to ensure the sample stays in focus throughout the experiment.`"
-                                        >Use LAF during acquisition</label>
-                                        <span style="grid-column: span 2;">
-                                            <input
-                                                type="checkbox"
-                                                x-model="microscope_config.autofocus_enabled"
-                                                x-bind:disabled="laserAutofocusReferenceValue == 0"
-                                                x-init="enabletooltip($el)"
-                                                x-bind:tooltip="`Enable/disable laser autofocus during acquisition.`"
-                                            />
-                                            <span
-                                                x-show="laserAutofocusReferenceValue == 0"
-                                                style="color: #888; font-size: 0.9em;"
-                                            >Set LAF reference first</span>
-                                            <span
-                                                x-show="laserAutofocusReferenceValue != 0"
-                                                x-text="microscope_config.autofocus_enabled ? 'Enabled' : 'Disabled'"
-                                            ></span>
-                                        </span>
-
-                                        <!-- Measure offset (accurate, stage-based) -->
-                                        <label
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Accurate offset measurement using actual stage position.
-
-How it works:
-1. Stores current Z position
-2. Moves to LAF reference (offset 0)
-3. Compares actual Z positions
-4. Returns to original position
-
-This is more accurate than the sensor estimate but takes a moment to complete.`"
-                                        >Measure offset</label>
-                                        <span class="offset-value" x-text="focusMeasuredOffsetText" style="font-family: monospace;"></span>
-                                        <button
-                                            @click="focusMeasureOffsetAccurate"
-                                            x-bind:disabled="!laserAutofocusIsCalibrated"
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Accurately measure current offset by moving to reference and back.
-
-This temporarily moves to the LAF reference plane, measures the actual Z difference, then returns to your current position. Takes a few seconds but gives precise results.`"
-                                        >Measure</button>
-
-                                        <!-- Estimate offset (quick, sensor-based) -->
-                                        <label
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Quick offset estimate using the laser autofocus sensor.
-
-Reads the current displacement from the LAF sensor without moving the stage. Fast but may be less accurate than the stage-based measurement.`"
-                                        >Estimate offset</label>
-                                        <span class="offset-value" x-text="laserAutofocusOffsetText" style="font-family: monospace;"></span>
-                                        <button
-                                            @click="button_laserAutofocusMeasureOffset"
-                                            x-bind:disabled="!laserAutofocusIsCalibrated"
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Quickly estimate current offset using the LAF sensor.
-
-This reads the laser reflection position without moving the stage. Instant result but may drift from the true offset over time.`"
-                                        >Estimate</button>
-
-                                        <!-- Focus via laser autofocus row -->
-                                        <label
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Use laser autofocus to find the reference plane and focus the microscope.`"
-                                        >Focus via laser autofocus</label>
-                                        <span></span>
-                                        <button
-                                            @click="button_laserAutofocusFocus"
-                                            x-bind:disabled="!laserAutofocusIsCalibrated"
-                                            x-init="enabletooltip($el)"
-                                            x-bind:tooltip="`Run laser autofocus to focus the microscope at the reference plane.`"
-                                        >Run</button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="section">
-                                <div>Histogram</div>
-                                <div
-                                    style="width: 100%"
-                                    x-init="makeHistogram($el)"
-                                    x-effect="updateHistogram($el)"
-                                ></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
+</main>
                 <div id="bottom-bar">
                     <style>
                         #bottom-bar {
@@ -2505,7 +1929,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                             margin: 0.1em;
                         }
                     </style>
-                    
+
                     <!-- Server Connection Status -->
                     <div class="bottom-section" style="grid-area: server; display: flex; align-items: center;" x-init="registerContainedPopup($el)">
                         <style>
@@ -2563,7 +1987,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                             x-bind:class="{ 'hardware-problem': hardwareProblems.length > 0 }"
                         ></span>
                         <span class="lights-indicator" x-show="lightsOnText" x-text="lightsOnText"></span>
-                        
+
                         <!-- Server Details Popup -->
                         <div class="popup">
                             <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5em; align-items: center;">
@@ -2636,7 +2060,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                             <div class="stage-coords">Y: <span x-html="formatStageCoordXY(state.adapter_state?.stage_position.y_pos_mm)"></span>mm</div>
                             <div class="stage-coords">Z: <span x-html="formatStageCoordZ(state.adapter_state?.stage_position.z_pos_mm)"></span>μm</div>
                         </div>
-                        
+
                         <!-- Stage Control Popup -->
                         <div class="popup">
                             <div style="display: grid; grid-template:
@@ -2645,14 +2069,14 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 'lz vz mm mm lpl' auto
                                 / 1fr 1fr 1fr 1fr auto;
                                 gap: 0 1em;">
-                                
+
                                 <span style="grid-area: lx">X [mm]</span>
                                 <span style="grid-area: vx; font-family: monospace;" x-html="formatStageCoordXY(state.adapter_state?.stage_position.x_pos_mm)"></span>
                                 <span style="grid-area: ly">Y [mm]</span>
                                 <span style="grid-area: vy; font-family: monospace;" x-html="formatStageCoordXY(state.adapter_state?.stage_position.y_pos_mm)"></span>
                                 <span style="grid-area: lz">Z [μm]</span>
                                 <span style="grid-area: vz; font-family: monospace;" x-html="formatStageCoordZ(state.adapter_state?.stage_position.z_pos_mm)"></span>
-                                
+
                                 <input
                                     style="grid-area: mv"
                                     type="number"
@@ -2712,7 +2136,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 align-items: center !important;
                                 justify-content: center !important;
                             }
-                            
+
                             /* Central Error Modal Styles */
                             #error-modal-overlay {
                                 position: fixed;
@@ -2726,7 +2150,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 align-items: center;
                                 z-index: 10000;
                             }
-                            
+
                             #error-modal {
                                 background: var(--strong-bg-color);
                                 border: 2px solid #ff4444;
@@ -2735,7 +2159,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 max-width: 600px;
                                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
                             }
-                            
+
                             #error-modal-header {
                                 background: #ff4444;
                                 color: white;
@@ -2746,7 +2170,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 font-weight: bold;
                                 font-size: 1.1em;
                             }
-                            
+
                             #error-modal-close {
                                 background: none;
                                 border: none;
@@ -2760,24 +2184,24 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 justify-content: center;
                                 align-items: center;
                             }
-                            
+
                             #error-modal-close:hover {
                                 background: rgba(255, 255, 255, 0.2);
                                 border-radius: 4px;
                             }
-                            
+
                             #error-modal-body {
                                 padding: 20px;
                                 display: grid;
                                 gap: 12px;
                             }
-                            
+
                             #error-modal-title {
                                 font-weight: bold;
                                 font-size: 1.1em;
                                 color: var(--text-color);
                             }
-                            
+
                             #error-modal-message {
                                 background: var(--weak-bg-color);
                                 padding: 12px;
@@ -2789,20 +2213,20 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 color: var(--text-color);
                                 border-left: 4px solid #ff4444;
                             }
-                            
+
                             #error-modal-timestamp {
                                 font-size: 0.8em;
                                 color: var(--text-color);
                                 opacity: 0.7;
                             }
-                            
+
                             #error-modal-footer {
                                 padding: 12px 20px;
                                 display: flex;
                                 justify-content: flex-end;
                                 border-top: 1px solid var(--highlight-color);
                             }
-                            
+
                             #error-modal-ok {
                                 background: var(--highlight-color);
                                 color: white;
@@ -2812,7 +2236,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 cursor: pointer;
                                 font-weight: bold;
                             }
-                            
+
                             #error-modal-ok:hover {
                                 opacity: 0.8;
                             }
@@ -3083,25 +2507,25 @@ This reads the laser reflection position without moving the stage. Instant resul
                             }
                             function makeVisible(el) {
                                 const parentRect = el.parentElement.getBoundingClientRect();
-                                
+
                                 // Show popup temporarily to measure it
                                 el.style.setProperty("display", "block");
                                 el.style.setProperty("left", "0px");
                                 const popupWidth = el.offsetWidth;
-                                
+
                                 // Calculate centered position on parent
                                 let leftPos = parentRect.left + parentRect.width / 2 - popupWidth / 2;
-                                
+
                                 // Check right boundary
                                 if (leftPos + popupWidth > window.innerWidth - 10) {
                                     leftPos = window.innerWidth - popupWidth - 10;
                                 }
-                                
-                                // Check left boundary  
+
+                                // Check left boundary
                                 if (leftPos < 10) {
                                     leftPos = 10;
                                 }
-                                
+
                                 // Set final position
                                 el.style.setProperty("top", `${parentRect.top}px`);
                                 el.style.setProperty("left", `${leftPos}px`);
@@ -3110,7 +2534,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                                 el.style.setProperty("display", "none");
                             }
                         </script>
-                        
+
                         <div style="font-size: 1.6em" class="center-content">
                             <span>Acquisition</span>
                         </div>
@@ -3133,7 +2557,7 @@ This reads the laser reflection position without moving the stage. Instant resul
                                     </span>
                                 </template>
                             </span>
-                            
+
                             <div class="popup">
                                 <div style="white-space: normal; font-family: monospace; font-size: 0.9em; line-height: 1.4;">
                                     <div style="font-weight: bold; margin-bottom: 0.5em; font-size: 1.1em;">Acquisition Progress</div>
