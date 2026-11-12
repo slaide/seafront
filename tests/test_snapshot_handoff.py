@@ -300,3 +300,23 @@ class TestOmeXmlHandoff:
 
         assert transferred_xml == response["ome_xml"]
         assert embedded_xml == response["ome_xml"]
+
+
+class TestExplicitLatestFrame:
+    def test_latest_returns_the_replacement_and_its_capture_facts(self, channels, token):
+        channel = {**channels[0], "exposure_time_ms": 1.0}
+        replaced = snap(channel, token)
+        current = snap({**channel, "exposure_time_ms": 2.0}, token)
+        metadata, image = fetch(channel["handle"], "latest")
+        assert image is not None
+        assert metadata["image_id"] == current["image_id"]
+        assert metadata["capture"]["image_id"] == current["image_id"]
+        assert metadata["capture"]["channel"]["exposure_time_ms"] == 2.0
+        assert metadata["image_id"] != replaced["image_id"]
+        _, pinned = fetch(channel["handle"], current["image_id"])
+        assert np.array_equal(image, pinned)
+
+    def test_latest_on_an_empty_channel_still_reports_no_image(self):
+        metadata, image = fetch("never-acquired-channel", "latest")
+        assert metadata == {}
+        assert image is None

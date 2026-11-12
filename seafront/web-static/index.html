@@ -1233,6 +1233,37 @@
      <div class="channel-image-caption">Shift + wheel: channels · Alt + wheel: zoom</div>
      <div class="channel-box-fetch-error" x-show="image_fetch_errors[channel.handle]" x-text="image_fetch_errors[channel.handle]?.message ?? ''"></div>
     </div>
+    <section class="z-signal-panel" x-data="{ metric: 'p999', fine: 1, coarse: 10, span: 100 }" aria-label="Shared Z movement and channel signal">
+     <div class="channel-group-heading">Z & signal <span>Shared stage</span></div>
+     <div class="z-position"><strong x-text="signalZUm == null ? 'Z unavailable' : `Z ${signalZUm.toFixed(1)} µm`"></strong><span x-text="focusIsChannelStreaming(channel) ? '● Live' : 'Last frame'"></span></div>
+     <div class="z-travel" x-show="signalZRange" :title="signalZRange ? `Motor travel in calibrated coordinates: ${signalZRange.min.toFixed(1)}–${signalZRange.max.toFixed(1)} µm` : ''">
+      <div class="z-travel-track">
+       <span class="z-reference-mark" x-show="focusReferenceZ != null" :style="`left:${signalRangePercent((focusReferenceZ ?? 0) * 1000)}%`" title="Focus reference">R</span>
+       <span class="z-current-mark" x-show="signalZUm != null" :style="`left:${signalRangePercent(signalZUm ?? 0)}%`"></span>
+      </div>
+      <div class="z-travel-labels"><span x-text="signalZRange?.min.toFixed(0)"></span><span x-text="signalZRange ? `${signalZRange.max.toFixed(0)} µm` : ''"></span></div>
+     </div>
+     <p class="signal-note" x-show="!signalZRange">Z travel unavailable from server</p>
+     <div class="z-jog-row"><label>Fine <input type="number" min="0.1" step="0.1" x-model.number="fine" aria-label="Fine Z step in micrometers" /></label><span>µm</span><button @click="signalJog(-1, fine)" :disabled="!canSignalJog(-1, fine)" :aria-label="`Fine Z minus · ${channel.name}`">Z −</button><button @click="signalJog(1, fine)" :disabled="!canSignalJog(1, fine)" :aria-label="`Fine Z plus · ${channel.name}`">Z +</button></div>
+     <div class="z-jog-row"><label>Coarse <input type="number" min="0.1" step="1" x-model.number="coarse" aria-label="Coarse Z step in micrometers" /></label><span>µm</span><button @click="signalJog(-1, coarse)" :disabled="!canSignalJog(-1, coarse)" :aria-label="`Coarse Z minus · ${channel.name}`">Z −</button><button @click="signalJog(1, coarse)" :disabled="!canSignalJog(1, coarse)" :aria-label="`Coarse Z plus · ${channel.name}`">Z +</button></div>
+     <div class="signal-metric-row"><select x-model="metric" aria-label="Signal percentile"><option value="p99">P99</option><option value="p999">P99.9</option><option value="p9999">P99.99</option><option value="max">Maximum</option></select><strong x-text="zSignals[channel.handle]?.samples.at(-1)?.stats[metric]?.toLocaleString() ?? '—'"></strong><span>ADU</span></div>
+     <div class="signal-metric-row signal-secondary"><span>Saturated preview pixels</span><span x-text="zSignals[channel.handle]?.samples.length ? `${(zSignals[channel.handle].samples.at(-1).stats.saturated * 100).toPrecision(2)}%` : '—'"></span></div>
+     <svg class="signal-trace" viewBox="0 0 230 105" role="img" aria-label="Preview intensity versus captured Z; current settings and XY only">
+      <title>Signal versus captured Z. Median of up to 5 preview readings per 0.1 µm bin; local vertical scale.</title>
+      <path class="signal-grid" d="M10 13H220 M10 48H220 M10 83H220" />
+      <line class="signal-current-z" x1="115" x2="115" y1="13" y2="83" />
+      <line class="signal-reference-z" x-show="focusReferenceZ != null && focusReferenceZ * 1000 >= signalPlot(channel.handle,metric,span).start && focusReferenceZ * 1000 <= signalPlot(channel.handle,metric,span).end" :x1="10 + (focusReferenceZ * 1000 - signalPlot(channel.handle,metric,span).start) / span * 210" :x2="10 + (focusReferenceZ * 1000 - signalPlot(channel.handle,metric,span).start) / span * 210" y1="13" y2="83" />
+      <path class="signal-line" :d="signalPlot(channel.handle,metric,span).path" />
+      <path class="signal-dots" :d="signalPlot(channel.handle,metric,span).dotsPath" />
+      <text x="10" y="101" x-text="signalPlot(channel.handle,metric,span).start.toFixed(1)"></text>
+      <text x="220" y="101" text-anchor="end" x-text="`${signalPlot(channel.handle,metric,span).end.toFixed(1)} µm`"></text>
+      <text x="220" y="10" text-anchor="end" x-text="signalPlot(channel.handle,metric,span).high.toFixed(0)"></text>
+     </svg>
+     <div class="signal-window"><label>Window <select x-model.number="span"><option value="20">20 µm</option><option value="100">100 µm</option><option value="500">500 µm</option><option value="2000">2000 µm</option></select></label><button @click="clearZSignal(channel.handle)">Clear</button></div>
+     <p class="signal-note" x-show="!zSignals[channel.handle]?.samples.length">Start Live or Snap to record signal.</p>
+     <p class="signal-note">Preview pixels · segment <span x-text="(zSignals[channel.handle]?.segment ?? 0) + 1"></span></p>
+     <div class="signal-settings-notice" x-show="!signalSettingsMatch(channel)"><p>Last frame uses earlier imaging settings.</p><button x-show="focusIsChannelStreaming(channel)" @click="signalApplyToLive(channel)" :disabled="signalApplyingLive || signalJogPending || state.is_busy">Apply settings to Live</button></div>
+    </section>
     <div class="channel-settings">
      <div class="imaging-settings">
       <div class="channel-group-heading">Imaging</div>

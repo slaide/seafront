@@ -33,6 +33,7 @@ declare global {
     type ChannelInfo = ImageStoreInfo;
 
     type CachedChannelImage = {
+        capture?: CapturedImageMetadata;
         height: int;
         width: int;
         bit_depth: int;

@@ -35,6 +35,7 @@ from seafront.hardware.firmware_config import (
     get_firmware_config,
 )
 from seafront.hardware.illumination import IlluminationController
+from seafront.hardware.limits import squid_z_travel_limits
 from seafront.hardware.microscope import HardwareLimits, Locked, Microscope
 from seafront.hardware.health import Device, HardwareCloseError
 from seafront.logger import logger
@@ -522,6 +523,7 @@ class MockMicroscope(Microscope):
 
         # Return properly typed HardwareLimits object
         return HardwareLimits(
+            stage_z_travel_mm=squid_z_travel_limits(),
             imaging_exposure_time_ms=exposure_limits,
             imaging_analog_gain_db=gain_limits,
             imaging_focus_offset_um=focus_offset_limits,

@@ -7,7 +7,9 @@ leaf module because both the camera drivers and the API response models need the
 `hardware/microscope.py` already imports `server/commands.py`.
 """
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+from seafront.hardware.firmware_config import get_firmware_config
 
 
 class HardwareLimitValue(BaseModel):
@@ -31,6 +33,12 @@ class HardwareLimits(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    stage_z_travel_mm: HardwareLimitValue | None = Field(
+        default=None,
+        description="Motor Z travel before calibration offsets; add calibration.offset.z_mm "
+        "for stage coordinates. Unknown for adapters that do not report it.",
+    )
+
     imaging_exposure_time_ms: HardwareLimitValue
     imaging_analog_gain_db: HardwareLimitValue
     imaging_focus_offset_um: HardwareLimitValue
@@ -39,3 +47,16 @@ class HardwareLimits(BaseModel):
     imaging_illum_perc_brightfield: HardwareLimitValue
     imaging_number_z_planes: HardwareLimitValue
     imaging_delta_z_um: HardwareLimitValue
+
+
+# The post-homing motor envelope used by SQUID firmware. Coordinates precede calibration.
+SQUID_Z_MIN_MM = 0.0
+SQUID_Z_MAX_MM = 6.7
+
+
+def squid_z_travel_limits() -> HardwareLimitValue:
+    return HardwareLimitValue(
+        min=SQUID_Z_MIN_MM,
+        max=SQUID_Z_MAX_MM,
+        step=get_firmware_config().mm_per_ustep_z,
+    )

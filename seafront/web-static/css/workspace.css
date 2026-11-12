@@ -408,3 +408,56 @@ body.theme-dark #workspaces {
     color: var(--focus-ink);
     span { color: inherit; opacity: 0.85; }
 }
+
+.z-signal-panel {
+    margin: 0.5em;
+    padding: 0.5em;
+    border: 1px solid var(--group-border);
+    background: var(--panel-surface);
+    > .channel-group-heading { display: flex; justify-content: space-between; span { font-weight: normal; font-size: 0.85em; } }
+}
+.z-position, .signal-metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.4em;
+    font-size: 0.85em;
+    padding: 0.2em 0;
+    font-variant-numeric: tabular-nums;
+}
+.z-position > span, .signal-secondary { color: var(--muted-text-color); font-size: 0.8em; }
+.z-travel { margin: 0.5em 0 0.3em; }
+.z-travel-track { position: relative; height: 5px; margin: 0 4px; background: var(--section-band); border: 1px solid var(--group-border); }
+.z-current-mark { position: absolute; top: -3px; height: 11px; width: 3px; background: var(--accent-color); transform: translateX(-50%); }
+.z-reference-mark { position: absolute; top: -12px; font-size: 8px; color: var(--accent-color); transform: translateX(-50%); }
+.z-travel-labels { display: flex; justify-content: space-between; font-size: 0.7em; color: var(--muted-text-color); margin-top: 3px; }
+.z-jog-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    gap: 0.25em;
+    align-items: center;
+    margin: 0.25em 0;
+    font-size: 0.85em;
+    label { display: flex; justify-content: space-between; align-items: center; width: auto; gap: 0.25em; }
+    input { width: 3.5em; min-width: 0; }
+    button { padding: 0.2em 0.35em; }
+}
+.signal-metric-row { select { min-width: 0; } strong { margin-left: auto; } }
+.signal-trace {
+    display: block;
+    width: 100%;
+    height: 105px;
+    margin: 0.3em 0;
+    background: var(--settings-surface);
+    text { font: 8px monospace; fill: var(--muted-text-color); }
+    circle { fill: var(--accent-color); }
+}
+.signal-grid { fill: none; stroke: var(--group-border); opacity: 0.35; }
+.signal-line { fill: none; stroke: var(--accent-color); stroke-width: 1.5; }
+.signal-current-z { stroke: var(--text-color); stroke-dasharray: 2 3; opacity: 0.5; }
+.signal-reference-z { stroke: var(--accent-color); stroke-dasharray: 4 2; }
+.signal-window { display: flex; justify-content: space-between; align-items: center; font-size: 0.8em; label { width: auto; } }
+.signal-note { color: var(--muted-text-color); font-size: 0.75em; margin-top: 0.4em; }
+.signal-settings-notice { margin-top: 0.5em; padding: 0.4em; border-left: 2px solid var(--accent-color); background: var(--settings-surface); font-size: 0.8em; button { width: 100%; margin-top: 0.3em; } }
+
+.signal-dots { fill: none; stroke: var(--accent-color); stroke-width: 3; stroke-linecap: round; }

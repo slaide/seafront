@@ -139,8 +139,12 @@ export async function updateMicroscopeStatus(data) {
             }
 
             try {
-                const img = await this.fetch_image(channel_info, 2);
+                const img = await this.fetch_image(
+                    channel_info, 2,
+                    !!data.is_streaming && data.streaming_channel_handle === channel_handle,
+                );
                 this.cached_channel_image.set(channel_handle, img);
+                this.recordZSignalFrame(img);
                 delete this.image_fetch_errors[channel_handle];
             } catch (err) {
                 // shown on the channel's panel; a connection failure is retried on the next

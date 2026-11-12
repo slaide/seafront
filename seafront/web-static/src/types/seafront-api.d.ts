@@ -536,6 +536,8 @@ declare global {
      * checker rather than failing silently at runtime.
      */
     type HardwareLimits = {
+        /** Motor Z travel before calibration offsets; add calibration.offset.z_mm for stage coordinates. Unknown for adapters that do not report it. */
+        stage_z_travel_mm?: HardwareLimitValue | null;
         imaging_exposure_time_ms: HardwareLimitValue;
         imaging_analog_gain_db: HardwareLimitValue;
         imaging_focus_offset_um: HardwareLimitValue;

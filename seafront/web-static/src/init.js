@@ -29,6 +29,7 @@ import { registerFilterSelect } from "filterselect";
 Object.assign(window, { registerFilterSelect });
 
 import { ChannelImageView } from "channelview";
+import { appendSignalFrame, emptySignalSeries, imagingKey, jogTarget, signalGeometry } from "./z-signal.js";
 
 import {
     parseConfigNamespaces,
@@ -1028,10 +1029,21 @@ const generate_alpine_object=() => ({
                         // the pixels for the metadata that came just before
                         if (awaiting_pixels) {
                             /** @type {CachedChannelImage} */
-                            const img = Object.assign(awaiting_pixels.metadata, {
-                                data: ev.data,
-                                info: awaiting_pixels.request.channel_info,
-                            });
+                            const metadata = awaiting_pixels.metadata;
+                            const requested = awaiting_pixels.request.channel_info;
+                            // A latest-frame request may return a newer capture than the
+                            // status read. Its pixels, settings, position and identity stay together.
+                            const capture = metadata.capture;
+                            const info = capture ? {
+                                ...requested,
+                                channel: capture.channel,
+                                timestamp: capture.timestamp,
+                                image_id: metadata.image_id,
+                                width_px: capture.width_px,
+                                height_px: capture.height_px,
+                                position: { ...requested.position, position: capture.position },
+                            } : requested;
+                            const img = Object.assign(metadata, { data: ev.data, info });
                             awaiting_pixels.request.resolve(img);
                         }
                         awaiting_pixels = null;
@@ -1087,9 +1099,10 @@ const generate_alpine_object=() => ({
      *
      * @param {ChannelInfo} channel_info
      * @param {number} [downsample_factor=1]
+     * @param {boolean} [latest=false] Explicit live-view request, paired with returned capture metadata.
      * @returns {Promise<CachedChannelImage>}
      */
-    async fetch_image(channel_info, downsample_factor = 1) {
+    async fetch_image(channel_info, downsample_factor = 1, latest = false) {
         // Initialize persistent WebSocket if needed
         this.initImageWebSocket();
 
@@ -1132,7 +1145,7 @@ const generate_alpine_object=() => ({
             });
 
             const sent = this.wsManager.send('image', channel_handle)
-                && this.wsManager.send('image', image_id)
+                && this.wsManager.send('image', latest ? 'latest' : image_id)
                 && this.wsManager.send('image', `${downsample_factor}`);
             if (!sent) {
                 queue.splice(queue.length - 1, 1)[0]?.reject(
@@ -1994,6 +2007,79 @@ const generate_alpine_object=() => ({
         if (!cachedImage) return null;
 
         this.view.updateTextureData(channelView, cachedImage);
+    },
+
+    /** @type {Record<string, import('./z-signal.js').SignalSeries>} */
+    zSignals: {},
+    signalJogPending: false,
+    signalApplyingLive: false,
+
+    /** @param {CachedChannelImage} image */
+    recordZSignalFrame(image) {
+        if (this.isAcquisitionRunning) return;
+        const handle = image.capture?.channel.handle ?? image.info.channel.handle;
+        if (handle === "laser_autofocus") return;
+        this.zSignals[handle] = appendSignalFrame(this.zSignals[handle] ?? emptySignalSeries(), image);
+    },
+    get signalZUm() {
+        try {
+            const z = currentStagePosition(this.state).z_pos_mm * 1000;
+            return Math.abs(z) < 1e-6 ? 0 : z;
+        } catch { return null; }
+    },
+    get signalZRange() {
+        const travel = this.limits?.stage_z_travel_mm;
+        const offset = Number(this.getMachineConfigItem("calibration.offset.z_mm")?.value ?? 0);
+        if (!travel || !Number.isFinite(offset)) return null;
+        return { min: Math.max(0, travel.min + offset) * 1000, max: (travel.max + offset) * 1000 };
+    },
+    /** @param {number} z */
+    signalRangePercent(z) {
+        const range = this.signalZRange;
+        if (!range || range.max <= range.min) return 0;
+        return Math.max(0, Math.min(100, (z - range.min) / (range.max - range.min) * 100));
+    },
+    /** @param {number} direction @param {number} step */
+    canSignalJog(direction, step) {
+        const z = this.signalZUm, range = this.signalZRange;
+        if (z == null || !range || !Number.isFinite(step) || step <= 0 ||
+            this.signalJogPending || this.signalApplyingLive || this.focusCalibrationInProgress || this.state.is_busy ||
+            this.isAcquisitionRunning || this.state.adapter_state?.is_in_loading_position ||
+            (this.lockState.held && !this.lockIsMine)) return false;
+        return jogTarget(range, z, direction, step) != null;
+    },
+    /** @param {number} direction @param {number} step */
+    async signalJog(direction, step) {
+        if (!this.canSignalJog(direction, step)) return;
+        this.signalJogPending = true;
+        try {
+            await this.Actions.moveBy({ axis: "z", distance_mm: direction * step / 1000 });
+            // Update the shared coordinate before permitting another jog at a travel boundary.
+            this.state = await this.api.post('/api/get_info/current_state', {}, { context: 'Read stage after Z jog' });
+        } finally { this.signalJogPending = false; }
+    },
+    /** @param {string} handle @param {import('./z-signal.js').SignalMetric} metric @param {number} span */
+    signalPlot(handle, metric, span) {
+        const series = this.zSignals[handle];
+        const center = this.signalZUm ?? series?.samples.at(-1)?.z ?? 0;
+        return signalGeometry(series, metric, center, span);
+    },
+    /** @param {string} handle */
+    clearZSignal(handle) { this.zSignals[handle] = emptySignalSeries(); },
+    /** @param {AcquisitionChannelConfig} channel */
+    signalSettingsMatch(channel) {
+        const frame = this.cached_channel_image.get(channel.handle);
+        return !frame || imagingKey(frame.capture?.channel ?? frame.info.channel) === imagingKey(channel);
+    },
+    /** @param {AcquisitionChannelConfig} channel */
+    async signalApplyToLive(channel) {
+        if (this.signalApplyingLive || this.signalJogPending || !this.focusIsChannelStreaming(channel) || this.state.is_busy) return;
+        this.signalApplyingLive = true;
+        try {
+            await this.buttons_endStreaming();
+            this.actionInput.live_acquisition_channelhandle = channel.handle;
+            await this.buttons_startStreaming();
+        } finally { this.signalApplyingLive = false; }
     },
 
     /** get total number of images acquired with current config */

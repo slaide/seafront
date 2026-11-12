@@ -628,6 +628,7 @@ class MockAPIClient {
                     },
                 ],
                 hardware_limits: {
+                    stage_z_travel_mm: { min: 0, max: 6.7, step: 0.0001 },
                     imaging_exposure_time_ms: { min: 0.1, max: 1000.0, step: 0.1 },
                     imaging_analog_gain_db: { min: 0.0, max: 24.0, step: 0.1 },
                     imaging_focus_offset_um: { min: -100.0, max: 100.0, step: 0.1 },
@@ -1222,7 +1223,7 @@ class MockWebSocketManager {
 
                         if (!imageEntry) {
                             onMessage(new MessageEvent('message', { data: JSON.stringify({}) }));
-                        } else if (imageEntry.imageId !== protocolState.expectedImageId) {
+                        } else if (protocolState.expectedImageId !== 'latest' && imageEntry.imageId !== protocolState.expectedImageId) {
                             onMessage(new MessageEvent('message', { data: JSON.stringify({
                                 error: 'image_replaced',
                                 message: `image ${protocolState.expectedImageId} is no longer available for channel ${channelHandle}`,

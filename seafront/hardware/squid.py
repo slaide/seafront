@@ -55,6 +55,7 @@ from seafront.hardware.camera import (
 from seafront.hardware.illumination import IlluminationController
 from seafront.hardware.adapter import DeviceAlreadyInUseError
 from seafront.hardware.health import Device, DeviceHealth, HardwareCloseError, describe
+from seafront.hardware.limits import SQUID_Z_MAX_MM, SQUID_Z_MIN_MM, squid_z_travel_limits
 from seafront.hardware.microscope import DisconnectError, HardwareLimits, Locked, Microscope
 from seafront.logger import logger
 from seafront.server import commands as cmd
@@ -459,8 +460,8 @@ class SquidAdapter(Microscope):
             qmc.home("z")
             qmc.set_zero("z")
             # set z limit to (or below) 6.7mm, because above that, the motor can get stuck
-            qmc.set_limit_mm("z", 0.0, "lower")
-            qmc.set_limit_mm("z", 6.7, "upper")
+            qmc.set_limit_mm("z", SQUID_Z_MIN_MM, "lower")
+            qmc.set_limit_mm("z", SQUID_Z_MAX_MM, "upper")
             # home x to set x reference
             qmc.home("x")
             qmc.set_zero("x")
@@ -1095,6 +1096,7 @@ class SquidAdapter(Microscope):
 
         # Return properly typed HardwareLimits object
         return HardwareLimits(
+            stage_z_travel_mm=squid_z_travel_limits(),
             imaging_exposure_time_ms=exposure_limits,
             imaging_analog_gain_db=gain_limits,
             imaging_focus_offset_um=focus_offset_limits,

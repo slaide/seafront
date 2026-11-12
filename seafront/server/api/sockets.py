@@ -107,7 +107,7 @@ async def ws_current_state(ws: WebSocket, core: Core, opening: SocketHandshake):
         Frame("channel_handle", "which channel to read, as a text frame", schema={"type": "string"}),
         Frame(
             "image_id",
-            "the exact image returned by the request that produced this identifier",
+            "an exact image identifier, or latest to pin the newest frame for live viewing",
             schema={"type": "string"},
         ),
         Frame(
@@ -135,7 +135,7 @@ async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake)
 
     after the handshake the exchange repeats in three steps:
      - the client sends a channel handle as a text frame
-     - the client sends the expected image identifier as a text frame
+     - the client sends the expected image identifier, or "latest" for live viewing
      - the client sends a downsampling factor as a text frame
      - the server replies with AcquiredImageInfo followed by the pixels as one binary frame,
        or an empty object if that channel has nothing yet
@@ -173,7 +173,7 @@ async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake)
                 break
             continue
 
-        if img.info.image_id != image_id:
+        if image_id != "latest" and img.info.image_id != image_id:
             if not await send(
                 ws,
                 SocketFailure(
@@ -193,7 +193,7 @@ async def ws_acquired_image(ws: WebSocket, core: Core, opening: SocketHandshake)
         assert img.capture is not None
         info = AcquiredImageInfo(
             channel_handle=channel_handle,
-            image_id=image_id,
+            image_id=img.capture.image_id,
             width=img_data.shape[1],
             height=img_data.shape[0],
             camera_bit_depth=img.bit_depth,
