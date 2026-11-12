@@ -88,8 +88,7 @@
                 overflow-y: auto;
             }
             label[disabled] {
-                text-decoration: line-through;
-                text-decoration-thickness: 2px;
+                color: var(--muted-text-color);
             }
 
             /* Machine Config Namespace Styles */
@@ -278,11 +277,21 @@
         <link rel="stylesheet" href="/css/theme.css" />
 
         <style>
+            .section {
+                min-width: 0;
+                margin: 0.3em;
+                border: 1px solid var(--border-color);
+            }
             .section > :first-child {
-                background: var(--highlight-color);
-                text-align: center;
+                padding: 0.2em 0.4em;
+                background: var(--weak-bg-color);
+                border-bottom: 1px solid var(--border-color);
+                border-left: 3px solid var(--accent-color);
+                font-weight: bold;
+                text-align: left;
             }
             .section > :not(:first-child) {
+                min-width: 0;
                 padding: 0.3em;
             }
         </style>
@@ -469,13 +478,15 @@
                         display: grid;
                         grid-template:
                             "banner banner" auto
-                            "a b" 1fr
+                            "a b" minmax(0, 1fr)
                             "f f" auto
-                            / 2fr 1fr;
+                            / minmax(0, 2fr) minmax(0, 1fr);
 
                         #leftcol,
                         #rightcol {
                             width: auto;
+                            min-width: 0;
+                            min-height: 0;
                             overflow-x: hidden;
 
                             height: 100%;
@@ -544,9 +555,10 @@
                             </div>
 
                             <!-- Row 3: Mouse controls -->
-                            <div style="margin-bottom: 10px;" x-data="{ controlsExpanded: true }">
+                            <div style="margin-bottom: 10px;" x-data="{ controlsExpanded: false }">
                                 <button
                                     @click="controlsExpanded = !controlsExpanded"
+                                    :aria-expanded="controlsExpanded"
                                     style="padding: 2px 8px; border-radius: 3px; font-size: 0.85em; background: var(--weak-bg-color); color: var(--text-color); border: 1px solid var(--text-color); cursor: pointer; margin-bottom: 8px;"
                                 >
                                     <span x-text="controlsExpanded ? '▼' : '▶'"></span> Mouse controls
@@ -611,6 +623,11 @@
                                     -
                                 </button>
                             </div>
+                            <div class="channel-empty-state"
+                                x-show="!microscope_config.channels.some(c => c.enabled)">
+                                <strong>No channels enabled</strong>
+                                <p>Enable channels in Lighting and Focus, then use Snap All Channels or start live imaging.</p>
+                            </div>
                             <canvas
                                 id="c"
                                 x-init="initChannelView($el);$watch('theme',()=>view?.updateTheme())"
@@ -673,7 +690,8 @@
                                             x-effect="updateChannelCache($el)"
                                             class="channel-box-image"
                                             x-bind:id="`channelview-item-${channel.handle}`"
-                                        ></div>
+                                        ><span class="channel-image-placeholder"
+                                            x-show="!cached_channel_image.has(channel.handle)">No image yet — use snap or live imaging in Lighting and Focus.</span></div>
                                         <div
                                             class="channel-box-fetch-error"
                                             x-show="image_fetch_errors[channel.handle]"
@@ -1198,7 +1216,7 @@
                                             max="99"
                                             style="width: 5em;"
                                         />
-                                        <label>delta z [um]</label
+                                        <label>Δz [µm]</label
                                         ><input
                                             type="number"
                                             x-model.number="laserAutofocusDebug_totalz_um"
@@ -1413,9 +1431,14 @@
                                                     " l-n-x       v-n-x l-d-x       v-d-x   v-d-x   v-d-x   v-d-x   v-d-x   v-d-x" auto
                                                     " l-n-y       v-n-y l-d-y       v-d-y   v-d-y   v-d-y   v-d-y   v-d-y   v-d-y" auto
                                                     " l-n-t       v-n-t l-d-t       l-d-t-h v-d-t-h l-d-t-m v-d-t-m l-d-t-s v-d-t-s" auto
-                                                    / auto auto auto auto auto auto auto auto auto;
-                                                gap: 0.3em 1em;
+                                                    / auto 3.5em auto auto minmax(2.5em, 1fr) auto minmax(2.5em, 1fr) auto minmax(2.5em, 1fr);
+                                                gap: 0.3em 0.4em;
 
+                                                input {
+                                                    min-width: 0;
+                                                    width: 100%;
+                                                    box-sizing: border-box;
+                                                }
                                                 label {
                                                     height: min-content;
                                                     width: max-content;
@@ -1423,7 +1446,7 @@
                                             }
                                         </style>
                                         <label style="grid-area: l-n-x"
-                                            >num x</label
+                                            >Sites X</label
                                         >
                                         <input
                                             style="grid-area: v-n-x"
@@ -1436,7 +1459,7 @@
                                         />
 
                                         <label style="grid-area: l-d-x"
-                                            >delta x [mm]</label
+                                            >Δx [mm]</label
                                         >
                                         <input
                                             style="grid-area: v-d-x"
@@ -1450,7 +1473,7 @@
                                         />
 
                                         <label style="grid-area: l-n-y"
-                                            >num y</label
+                                            >Sites Y</label
                                         >
                                         <input
                                             style="grid-area: v-n-y"
@@ -1463,7 +1486,7 @@
                                         />
 
                                         <label style="grid-area: l-d-y"
-                                            >delta y [mm]</label
+                                            >Δy [mm]</label
                                         >
                                         <input
                                             style="grid-area: v-d-y"
@@ -1477,7 +1500,7 @@
                                         />
 
                                         <label style="grid-area: l-n-t"
-                                            >num t</label
+                                            >Timepoints</label
                                         >
                                         <input
                                             style="grid-area: v-n-t"
@@ -1490,7 +1513,7 @@
                                         />
 
                                         <label style="grid-area: l-d-t"
-                                            >delta t</label
+                                            >Interval</label
                                         >
                                         <label style="grid-area: l-d-t-h"
                                             >h</label
@@ -1741,10 +1764,15 @@
                             <div class="section">
                                 <div>Channel Configuration</div>
                                 <div>
-                                    <div id="channelgrid" class="scrolly">
+                                    <div class="table-scroll-hint">Channel settings · scroll horizontally for more →</div>
+                                    <div id="channelgrid" class="scrolly" tabindex="0" role="region" aria-label="Channel settings, scroll horizontally for more columns">
                                         <style>
                                             #channelgrid {
                                                 display: grid;
+                                                overflow-x: scroll;
+                                                width: 100%;
+                                                box-sizing: border-box;
+                                                scrollbar-width: auto;
                                                 grid-template-columns:
                                                     2em /* drag handle */
                                                     repeat(3, max-content)
@@ -1816,7 +1844,7 @@
     										When checked, this channel will be imaged.
     									`"
                                         >
-                                            ?
+                                            On
                                         </p>
                                         <p
                                             class="channel-config-header channel-config-row-name"
@@ -1843,28 +1871,28 @@
                                             x-init="enabletooltip($el)"
                                             tooltip="Z offset from focus reference in micrometers. Hover over individual inputs for specific ranges."
                                         >
-                                            Off. [um]
+                                            Z offset [µm]
                                         </p>
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
                                             tooltip="Illumination strength as percent of maximum. Limits vary by channel type - hover over individual inputs for specific ranges."
                                         >
-                                            Pow. [%]
+                                            Power [%]
                                         </p>
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
                                             tooltip="Number of Z planes. Hover over individual inputs for specific ranges."
                                         >
-                                            num z
+                                            Z planes
                                         </p>
                                         <p
                                             class="channel-config-header"
                                             x-init="enabletooltip($el)"
                                             tooltip="Distance between Z planes in micrometers. Hover over individual inputs for specific ranges."
                                         >
-                                            delta z [um]
+                                            Δz [µm]
                                         </p>
                                         <p
                                             class="channel-config-header"
@@ -1897,7 +1925,7 @@
                                                 }
                                             }
                                             .channel-config-row-container:hover {
-                                                background: lightcoral;
+                                                background: var(--weak-bg-color);
                                             }
                                             .channel-config-row-name {
                                                 /* stretch label to full row height*/
@@ -1907,6 +1935,7 @@
                                                 /* make it stick to the left edge while scrolling, to always be visible */
                                                 position: sticky;
                                                 left: 0;
+                                                z-index: 1;
 
                                                 /* inherit background color from parent (would otherwise be transparent and mess with position:sticky; display */
                                                 background: inherit;
@@ -3091,12 +3120,12 @@ This reads the laser reflection position without moving the stage. Instant resul
                             x-bind:style="`--progress:${current_acquisition_progress_percent}%;`"
                         >
                             <span>
-                                <span x-text="`${latest_acquisition_status?.acquisition_status??'not running'}`"></span>
-                                <span>|</span>
-                                <span>Progress</span>
-                                <span x-text="`${current_acquisition_progress_percent.toFixed(2)}%`"></span>
-                                <span>|</span>
-                                <span x-text="`Done in ${acquisitionTimeLeftString}`"></span>
+                                <strong x-text="latest_acquisition_status?.acquisition_status ?? (isAcquisitionRunning ? 'Running' : 'Idle')"></strong>
+                                <span x-show="!isAcquisitionRunning" x-text="` · Wells ${microscope_config.plate_wells.filter(w => w.selected && w.row >= 0 && w.col >= 0).length} · Channels ${microscope_config.channels.filter(c => c.enabled).length} · Images ${num_images}`"></span>
+                                <span x-show="isAcquisitionRunning">
+                                    · <span x-text="`${current_acquisition_progress_percent.toFixed(2)}%`"></span>
+                                    · <span x-text="`Remaining ${acquisitionTimeLeftString}`"></span>
+                                </span>
                                 <template x-if="latest_acquisition_status?.acquisition_progress?.num_autofocus_misses">
                                     <span>
                                         <span>|</span>

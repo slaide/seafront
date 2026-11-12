@@ -1,7 +1,7 @@
 .tabs {
     display: grid;
 
-    grid-template-rows: min-content auto;
+    grid-template-rows: min-content minmax(0, 1fr);
     grid-template-areas:
         "tabheader"
         "tabbodies";
@@ -20,7 +20,7 @@
 
         grid-auto-flow: column;
         justify-content: start;
-        gap: 0 1em;
+        gap: 0 0.3em;
 
         overflow-x: auto;
         overflow-y: hidden;
@@ -28,20 +28,25 @@
         --border-size: 1px;
 
         .tabheader.active {
-            border: var(--border-size) solid var(--tabs-header-border-color);
+            border: var(--border-size) solid var(--accent-color);
+            border-bottom-color: var(--strong-bg-color);
+            background: var(--strong-bg-color);
+            box-shadow: inset 0 2px var(--accent-color);
+            font-weight: bold;
         }
 
         .tabheader {
             display: inline-block;
             cursor: pointer;
 
-            padding: 0.1em 0.6em;
+            padding: 0.25em 0.6em;
+            white-space: nowrap;
             background: var(--tabs-header-bg-color);
 
-            border-radius: 0.5em 0.5em 0 0;
+            border-radius: 2px 2px 0 0;
 
             /*keep element size consistent with .active*/
-            border: var(--border-size) solid transparent;
+            border: var(--border-size) solid var(--border-color);
         }
 
         border-bottom: 1px solid var(--tabs-header-border-color);
