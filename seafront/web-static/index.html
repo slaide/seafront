@@ -882,9 +882,9 @@
                                             <div class="site-pattern-actions"><span>Select sites</span><button type="button" @click="selectAllPreviewSites(true)">All</button><button type="button" @click="selectAllPreviewSites(false)">None</button></div>
                                             <dl class="site-pattern-dimensions">
                                                 <dt>Well [mm]</dt><dd x-text="`${microscope_config.wellplate_type.Well_size_x_mm} × ${microscope_config.wellplate_type.Well_size_y_mm}`"></dd>
-                                                <dt>FOV [mm]</dt><dd x-text="`${(plateNavigator?.objective.fovx ?? 0.9).toFixed(2)} × ${(plateNavigator?.objective.fovy ?? 0.9).toFixed(2)}`"></dd>
+                                                <dt>FOV [mm]</dt><dd x-text="cameraFieldOfView ? `${cameraFieldOfView.fovx.toFixed(2)} × ${cameraFieldOfView.fovy.toFixed(2)}` : 'Unavailable'"></dd>
                                             </dl>
-                                            <p class="site-pattern-scope">Click a field or its center to toggle it.</p>
+                                            <p class="site-pattern-scope" x-text="cameraFieldOfView ? 'Click a field or its center to toggle it.' : 'Select a known objective and valid image dimensions in Machine Config.'"></p>
                                         </aside>
                                     </div>
                                 </div>
@@ -971,6 +971,7 @@
                                 id="plate"
 
                                 x-init="initPlateNavigator($el, this)"
+                                x-effect="syncFieldOfView()"
                             ></div>
    <div class="plate-zoom-controls" aria-label="Plate zoom">
     <button @click="plateNavigator?.cameraApplyDeltaZoom(-0.2)" title="Zoom into plate">+</button>

@@ -24,6 +24,8 @@ Object.assign(window, { matWellColor, matSiteColor, matFovColor, matForbiddenAre
 
 import { sitePatternGeometry, sitePatternSvg } from "./site-pattern.js";
 
+import { configuredFieldOfView } from "./field-of-view.js";
+
 import { wellGridHit } from "./well-selection.js";
 
 import { wellForbiddenArea } from "./well-safety.js";
@@ -397,9 +399,21 @@ const generate_alpine_object=() => ({
         return wellForbiddenArea(this.microscope_config.wellplate_type, well, this.forbiddenAreas);
     },
 
+    get cameraFieldOfView() {
+        return configuredFieldOfView(this._microscope_config?.machine_config);
+    },
+
+    syncFieldOfView() {
+        const fov = this.cameraFieldOfView;
+        // Keep Three.js objects outside Alpine's deep proxies and dependency tracking.
+        const navigator = Alpine.raw(this.plateNavigator);
+        if (navigator?.setFieldOfView(fov)) navigator.refreshWellColors(this.microscope_config);
+    },
+
     get sitePatternMarkup() {
-        return sitePatternSvg(sitePatternGeometry(this.microscope_config.wellplate_type,
-            this.microscope_config.grid, this.plateNavigator?.objective ?? { fovx: 0.9, fovy: 0.9 }));
+        const fov = this.cameraFieldOfView;
+        return fov ? sitePatternSvg(sitePatternGeometry(this.microscope_config.wellplate_type,
+            this.microscope_config.grid, fov)) : '';
     },
 
     /** @param {Event} event */

@@ -556,9 +556,8 @@ export class PlateNavigator {
 
         /** @type {{fovx:number,fovy:number}} */
         this.objective = {
-            // valid for 20x objective on original squid
-            fovx: 0.9,
-            fovy: 0.9,
+            fovx: 0,
+            fovy: 0,
         };
 
         // Create group to wrap FOV mesh for centered scaling during pulse animation
@@ -567,13 +566,8 @@ export class PlateNavigator {
         this.scene.add(this.objectiveFovGroup);
 
         /** @type {THREE.Mesh} */
-        this.objectiveFov = makeQuad({
-            ax: 0, ay: 0,
-            bx: this.objective.fovx, by: this.objective.fovy,
-        }, this.matFov);
-        // Position mesh within group so it's centered around group origin
-        this.objectiveFov.position.x = -this.objective.fovx / 2;
-        this.objectiveFov.position.y = -this.objective.fovy / 2;
+        this.objectiveFov = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.matFov);
+        this.objectiveFov.visible = false;
         this.objectiveFovGroup.add(this.objectiveFov);
 
         // Animation state for objective FOV pulse
@@ -1379,6 +1373,20 @@ export class PlateNavigator {
             selection.box.material.dispose();
             selection.box = null;
         }
+    }
+
+    /**
+     * Resize the centered objective marker; callers refresh site meshes when this changes.
+     * @param {{fovx: number, fovy: number}|null} fov
+     * @returns {boolean} Whether the dimensions changed
+     */
+    setFieldOfView(fov) {
+        const next = fov ?? { fovx: 0, fovy: 0 };
+        if (next.fovx === this.objective.fovx && next.fovy === this.objective.fovy) return false;
+        this.objective = next;
+        this.objectiveFov.visible = fov !== null;
+        this.objectiveFov.scale.set(next.fovx, next.fovy, 1);
+        return true;
     }
 
     /**
