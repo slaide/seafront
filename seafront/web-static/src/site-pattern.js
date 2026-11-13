@@ -26,14 +26,48 @@ export function sitePatternGeometry(plate, grid, fov) {
     };
 }
 
-/** @param {ReturnType<typeof sitePatternGeometry>} geometry */
-export function sitePatternSvg(geometry) {
+/**
+ * Find the closest site center, including gaps between footprints.
+ * @param {ReturnType<typeof sitePatternGeometry>} geometry
+ * @param {number} x SVG view-box coordinate
+ * @param {number} y SVG view-box coordinate
+ * @param {boolean} [clamp] Continue a captured drag beyond the pattern bounds.
+ */
+export function sitePatternHit(geometry, x, y, clamp = false) {
+    if (!geometry?.sites.length) return null;
+    const sites = geometry.sites;
+    if (!clamp && (x < Math.min(...sites.map(s => s.x)) ||
+        y < Math.min(...sites.map(s => s.y)) ||
+        x > Math.max(...sites.map(s => s.x + s.width)) ||
+        y > Math.max(...sites.map(s => s.y + s.height)))) return null;
+    return sites.reduce((nearest, site) =>
+        Math.hypot(site.cx - x, site.cy - y) < Math.hypot(nearest.cx - x, nearest.cy - y) ? site : nearest);
+}
+
+/**
+ * @param {{row: number, col: number}} site
+ * @param {{from: {row: number, col: number}, to: {row: number, col: number}}} range
+ */
+export function siteRangeContains(site, range) {
+    return site.row >= Math.min(range.from.row, range.to.row) &&
+        site.row <= Math.max(range.from.row, range.to.row) &&
+        site.col >= Math.min(range.from.col, range.to.col) &&
+        site.col <= Math.max(range.from.col, range.to.col);
+}
+
+/**
+ * @param {ReturnType<typeof sitePatternGeometry>} geometry
+ * @param {{from: {row: number, col: number}, to: {row: number, col: number}, selected: boolean}|null} [selection]
+ */
+export function sitePatternSvg(geometry, selection = null) {
     if (!geometry) return '';
     const { well, sites } = geometry;
     const label = (/** @type {typeof sites[number]} */ site) => `Site ${site.col + 1}, ${site.row + 1}`;
+    const preview = (/** @type {typeof sites[number]} */ site) =>
+        selection && siteRangeContains(site, selection) ? selection.selected ? 'range-add' : 'range-remove' : '';
     return `<rect class="site-well-boundary" x="${well.x}" y="${well.y}" width="${well.width}" height="${well.height}" rx="${well.radius}" />
         <path class="site-center-guide" d="M160 16V304 M16 160H304" />` +
-        sites.map(site => `<rect data-site="${site.index}" class="site-footprint ${site.selected ? 'is-selected' : ''}" x="${site.x}" y="${site.y}" width="${site.width}" height="${site.height}"><title>${label(site)} · ${site.selected ? 'selected' : 'excluded'}</title></rect>`).join('') +
+        sites.map(site => `<rect data-site="${site.index}" class="site-footprint ${site.selected ? 'is-selected' : ''} ${preview(site)}" x="${site.x}" y="${site.y}" width="${site.width}" height="${site.height}"><title>${label(site)} · ${site.selected ? 'selected' : 'excluded'}</title></rect>`).join('') +
         // Draw all center targets after the footprints so overlapping tiles remain selectable.
-        sites.map(site => `<g data-site="${site.index}" class="site-center ${site.selected ? 'is-selected' : ''}" tabindex="0" role="button" aria-label="${label(site)}" aria-pressed="${site.selected}"><title>${label(site)} · click to ${site.selected ? 'exclude' : 'select'}</title><circle class="site-hit-target" cx="${site.cx}" cy="${site.cy}" r="10" /><circle cx="${site.cx}" cy="${site.cy}" r="4" /></g>`).join('');
+        sites.map(site => `<g data-site="${site.index}" class="site-center ${site.selected ? 'is-selected' : ''} ${preview(site)}" tabindex="0" role="button" aria-label="${label(site)}" aria-pressed="${site.selected}"><title>${label(site)} · click or drag to ${site.selected ? 'exclude' : 'select'}</title><circle class="site-hit-target" cx="${site.cx}" cy="${site.cy}" r="10" /><circle cx="${site.cx}" cy="${site.cy}" r="4" />${preview(site) === 'range-remove' ? `<path class="site-removal-mark" d="M${site.cx - 3} ${site.cy}h6" />` : ''}</g>`).join('');
 }

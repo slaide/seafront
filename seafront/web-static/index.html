@@ -518,90 +518,13 @@
                             </div>
 
   </div>
-<div class="section">
-                                <div>Sites &amp; timing</div>
-                                <div>
-                                    <div id="grid-config" class="scrolly">
-                                        <style>
-                                            #grid-config {
-                                                display: grid;
-                                                grid-template:
-                                                    " l-n-x       v-n-x l-d-x       v-d-x   v-d-x   v-d-x   v-d-x   v-d-x   v-d-x" auto
-                                                    " l-n-y       v-n-y l-d-y       v-d-y   v-d-y   v-d-y   v-d-y   v-d-y   v-d-y" auto
-                                                    " l-n-t       v-n-t l-d-t       l-d-t-h v-d-t-h l-d-t-m v-d-t-m l-d-t-s v-d-t-s" auto
-                                                    / auto 3.5em auto auto minmax(2.5em, 1fr) auto minmax(2.5em, 1fr) auto minmax(2.5em, 1fr);
-                                                gap: 0.3em 0.4em;
-
-                                                input {
-                                                    min-width: 0;
-                                                    width: 100%;
-                                                    box-sizing: border-box;
-                                                }
-                                                label {
-                                                    height: min-content;
-                                                    width: max-content;
-                                                }
-                                            }
-                                        </style>
-                                        <label style="grid-area: l-n-x"
-                                            >Sites X</label
-                                        >
-                                        <input
-                                            style="grid-area: v-n-x"
-                                            type="number"
-                                            min="1"
-                                            max="999"
-                                            step="1"
-                                            @change="updatePlate"
-                                            x-model.number="microscope_config.grid.num_x"
-                                        />
-
-                                        <label style="grid-area: l-d-x"
-                                            >Δx [mm]</label
-                                        >
-                                        <input
-                                            style="grid-area: v-d-x"
-                                            x-effect="disableElement($el,()=>microscope_config.grid.num_x==1)"
-                                            type="number"
-                                            min="0.1"
-                                            max="999"
-                                            step="0.1"
-                                            @change="updatePlate"
-                                            x-model.number="microscope_config.grid.delta_x_mm"
-                                        />
-
-                                        <label style="grid-area: l-n-y"
-                                            >Sites Y</label
-                                        >
-                                        <input
-                                            style="grid-area: v-n-y"
-                                            type="number"
-                                            min="1"
-                                            max="999"
-                                            step="1"
-                                            @change="updatePlate"
-                                            x-model.number="microscope_config.grid.num_y"
-                                        />
-
-                                        <label style="grid-area: l-d-y"
-                                            >Δy [mm]</label
-                                        >
-                                        <input
-                                            style="grid-area: v-d-y"
-                                            x-effect="disableElement($el,()=>microscope_config.grid.num_y==1)"
-                                            type="number"
-                                            min="0.1"
-                                            max="999"
-                                            step="0.1"
-                                            @change="updatePlate"
-                                            x-model.number="microscope_config.grid.delta_y_mm"
-                                        />
-
-                                        <label style="grid-area: l-n-t"
+<section class="section experiment-timing">
+    <div>Timing</div>
+    <div id="timing-config">
+                                        <label
                                             >Timepoints</label
                                         >
                                         <input
-                                            style="grid-area: v-n-t"
                                             type="number"
                                             min="1"
                                             max="9999"
@@ -610,15 +533,15 @@
                                             x-model.number="microscope_config.grid.num_t"
                                         />
 
-                                        <label style="grid-area: l-d-t"
+                                        <label
                                             >Interval</label
                                         >
-                                        <label style="grid-area: l-d-t-h"
+                                        <div class="timing-interval">
+                                        <label
                                             >h</label
                                         >
                                         <input
                                             x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
-                                            style="grid-area: v-d-t-h"
                                             type.number="number"
                                             min="0"
                                             max="999"
@@ -626,12 +549,11 @@
                                             @change="updatePlate"
                                             x-model="microscope_config.grid.delta_t.h"
                                         />
-                                        <label style="grid-area: l-d-t-m"
+                                        <label
                                             >m</label
                                         >
                                         <input
                                             x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
-                                            style="grid-area: v-d-t-m"
                                             type.number="number"
                                             min="0"
                                             max="59.9"
@@ -639,12 +561,11 @@
                                             @change="updatePlate"
                                             x-model="microscope_config.grid.delta_t.m"
                                         />
-                                        <label style="grid-area: l-d-t-s"
+                                        <label
                                             >s</label
                                         >
                                         <input
                                             x-effect="disableElement($el,()=>microscope_config.grid.num_t==1)"
-                                            style="grid-area: v-d-t-s"
                                             type.number="number"
                                             min="0"
                                             max="59.9"
@@ -652,9 +573,9 @@
                                             @change="updatePlate"
                                             x-model="microscope_config.grid.delta_t.s"
                                         />
-                                    </div>
-                                </div>
-                            </div>
+                                        </div>
+    </div>
+</section>
 <section class="section experiment-plan">
    <div>Acquisition plan</div>
    <div>
@@ -877,14 +798,72 @@
                                             <div class="site-pattern-heading"><strong>Sites within a well</strong><span x-text="`${microscope_config.grid.mask.filter(s => s.selected).length} / ${microscope_config.grid.mask.length} selected`"></span></div>
                                             <p class="site-pattern-scope">Shared pattern for all selected wells</p>
                                             <svg class="site-pattern-canvas" viewBox="0 0 320 320" aria-label="Well boundary and selectable imaging sites"
-                                                x-html="sitePatternMarkup" @click="togglePreviewSite($event)"
+                                                x-html="sitePatternMarkup"
+                                                @pointerdown="startSiteSelection($event)" @pointermove="continueSiteSelection($event)"
+                                                @pointerup="finishSiteSelection($event)" @pointercancel="cancelSiteSelection()"
+                                                @lostpointercapture="cancelSiteSelection()" @keydown.escape.window="cancelSiteSelection()"
                                                 @keydown.enter.prevent="togglePreviewSite($event)" @keydown.space.prevent="togglePreviewSite($event)"></svg>
                                             <div class="site-pattern-actions"><span>Select sites</span><button type="button" @click="selectAllPreviewSites(true)">All</button><button type="button" @click="selectAllPreviewSites(false)">None</button></div>
                                             <dl class="site-pattern-dimensions">
                                                 <dt>Well [mm]</dt><dd x-text="`${microscope_config.wellplate_type.Well_size_x_mm} × ${microscope_config.wellplate_type.Well_size_y_mm}`"></dd>
                                                 <dt>FOV [mm]</dt><dd x-text="cameraFieldOfView ? `${cameraFieldOfView.fovx.toFixed(2)} × ${cameraFieldOfView.fovy.toFixed(2)}` : 'Unavailable'"></dd>
                                             </dl>
-                                            <p class="site-pattern-scope" x-text="cameraFieldOfView ? 'Click a field or its center to toggle it.' : 'Select a known objective and valid image dimensions in Machine Config.'"></p>
+                                            <p class="site-pattern-scope" x-text="siteSelectionText || (cameraFieldOfView ? 'Click or drag fields to select or exclude sites.' : 'Select a known objective and valid image dimensions in Machine Config.')"></p>
+                                            <div class="site-pattern-config">
+                                                <strong>Site configuration</strong>
+                                                <div id="grid-config">
+                                        <label
+                                            >Sites X</label
+                                        >
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="999"
+                                            step="1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.num_x"
+                                        />
+
+                                        <label
+                                            >Δx [mm]</label
+                                        >
+                                        <input
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_x==1)"
+                                            type="number"
+                                            min="0.1"
+                                            max="999"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.delta_x_mm"
+                                        />
+
+                                        <label
+                                            >Sites Y</label
+                                        >
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="999"
+                                            step="1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.num_y"
+                                        />
+
+                                        <label
+                                            >Δy [mm]</label
+                                        >
+                                        <input
+                                            x-effect="disableElement($el,()=>microscope_config.grid.num_y==1)"
+                                            type="number"
+                                            min="0.1"
+                                            max="999"
+                                            step="0.1"
+                                            @change="updatePlate"
+                                            x-model.number="microscope_config.grid.delta_y_mm"
+                                        />
+
+                                                </div>
+                                            </div>
                                         </aside>
                                     </div>
                                 </div>

@@ -22,7 +22,7 @@ import {
 // these colors are used to create a legend in html
 Object.assign(window, { matWellColor, matSiteColor, matFovColor, matForbiddenAreaColor });
 
-import { sitePatternGeometry, sitePatternSvg } from "./site-pattern.js";
+import { sitePatternGeometry, sitePatternSvg, sitePatternHit, siteRangeContains } from "./site-pattern.js";
 
 import { configuredFieldOfView } from "./field-of-view.js";
 
@@ -410,10 +410,77 @@ const generate_alpine_object=() => ({
         if (navigator?.setFieldOfView(fov)) navigator.refreshWellColors(this.microscope_config);
     },
 
-    get sitePatternMarkup() {
+    get sitePatternGeometry() {
         const fov = this.cameraFieldOfView;
-        return fov ? sitePatternSvg(sitePatternGeometry(this.microscope_config.wellplate_type,
-            this.microscope_config.grid, fov)) : '';
+        return fov ? sitePatternGeometry(this.microscope_config.wellplate_type,
+            this.microscope_config.grid, fov) : null;
+    },
+
+    get sitePatternMarkup() {
+        return sitePatternSvg(this.sitePatternGeometry, this.siteSelection);
+    },
+
+    /** @type {{pointerId: number, from: {row: number, col: number}, to: {row: number, col: number}, selected: boolean}|null} */
+    siteSelection: null,
+
+    get siteSelectionText() {
+        const range = this.siteSelection;
+        if (!range) return '';
+        return `${range.selected ? 'Select' : 'Deselect'} sites ${Math.min(range.from.col, range.to.col) + 1}, ${Math.min(range.from.row, range.to.row) + 1} – ${Math.max(range.from.col, range.to.col) + 1}, ${Math.max(range.from.row, range.to.row) + 1}`;
+    },
+
+    /**
+     * @param {PointerEvent} event
+     * @param {boolean} [clamp]
+     */
+    siteAtPointer(event, clamp = false) {
+        const svg = event.currentTarget;
+        if (!(svg instanceof SVGSVGElement)) return null;
+        const matrix = svg.getScreenCTM();
+        if (!matrix) return null;
+        const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+        return sitePatternHit(this.sitePatternGeometry, point.x, point.y, clamp);
+    },
+
+    /** @param {PointerEvent} event */
+    startSiteSelection(event) {
+        if (event.button !== 0 || this.siteSelection || !(event.currentTarget instanceof SVGSVGElement)) return;
+        const site = this.siteAtPointer(event);
+        if (!site) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        this.siteSelection = { pointerId: event.pointerId, from: { row: site.row, col: site.col },
+            to: { row: site.row, col: site.col }, selected: !site.selected };
+    },
+
+    /** @param {PointerEvent} event */
+    continueSiteSelection(event) {
+        const range = this.siteSelection;
+        if (!range || event.pointerId !== range.pointerId) return;
+        const site = this.siteAtPointer(event, true);
+        if (site && (range.to.row !== site.row || range.to.col !== site.col)) {
+            range.to = { row: site.row, col: site.col };
+        }
+    },
+
+    /** @param {PointerEvent} event */
+    finishSiteSelection(event) {
+        if (event.pointerId !== this.siteSelection?.pointerId) return;
+        this.continueSiteSelection(event);
+        const range = this.siteSelection;
+        this.cancelSiteSelection();
+        if (!range) return;
+        for (const site of this.microscope_config.grid.mask) {
+            if (siteRangeContains(site, range)) site.selected = range.selected;
+        }
+        this.sitePatternChanged();
+    },
+
+    cancelSiteSelection() {
+        const range = this.siteSelection;
+        this.siteSelection = null;
+        const svg = document.querySelector('.site-pattern-canvas');
+        if (range && svg?.hasPointerCapture(range.pointerId)) svg.releasePointerCapture(range.pointerId);
     },
 
     /** @param {Event} event */
