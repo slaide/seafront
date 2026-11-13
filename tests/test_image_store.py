@@ -12,7 +12,7 @@ import pytest
 import tifffile
 
 from seafront.storage import DiskSink, ImageStore, S3Sink, encode_ome_tiff
-from seafront.storage.base import CODEC_THREADS, STRIP_ROWS
+from seafront.storage.base import CODEC_THREADS, STRIP_ROWS, StorageFailedError
 
 
 def _img(seed: int = 0) -> np.ndarray:
@@ -113,6 +113,75 @@ class FakeS3:
 
 
 class TestS3Store:
+    @pytest.mark.parametrize("spill_threshold", [0, 16])
+    @pytest.mark.parametrize("upload_threads", [1, 3])
+    def test_client_initialization_failure_keeps_every_image_and_reports_it(
+        self, tmp_path, spill_threshold, upload_threads
+    ):
+        def fail_client():
+            raise RuntimeError("client initialization failed")
+
+        sink = S3Sink(
+            "bucket", spill_dir=tmp_path, spill_threshold=spill_threshold,
+            upload_threads=upload_threads, client_factory=fail_client,
+        )
+        store = ImageStore(sink)
+        payloads = {f"project/img{i}.tiff": f"image {i}".encode() for i in range(5)}
+        for relpath, data in payloads.items():
+            store.put_bytes(relpath, data)
+        report = store.close()
+
+        assert report.stored == 0 and report.bytes_written == 0
+        assert len(report.failed) == len(payloads)
+        for relpath, data in payloads.items():
+            assert (tmp_path / relpath).read_bytes() == data
+            assert any(
+                failure.startswith(f"{relpath}: client initialization failed")
+                for failure in report.failed
+            )
+        assert sink.queued == 0
+
+    def test_client_initialization_is_retried_after_failure(self, tmp_path):
+        fake = FakeS3()
+        attempts = 0
+
+        def make_client():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("temporary initialization failure")
+            return fake
+
+        sink = S3Sink("bucket", spill_dir=tmp_path, client_factory=make_client)
+        store = ImageStore(sink)
+        store.put_bytes("first.tiff", b"first")
+        store.put_bytes("second.tiff", b"second")
+        report = store.close()
+
+        assert attempts == 2
+        assert report.stored == 1 and len(report.failed) == 1
+        assert (tmp_path / "first.tiff").read_bytes() == b"first"
+        assert fake.puts == [("second.tiff", len(b"second"))]
+
+    def test_client_initialization_and_spill_failure_reports_every_lost_image(self, tmp_path):
+        def fail_client():
+            raise RuntimeError("client initialization failed")
+
+        spill = tmp_path / "not-a-directory"
+        spill.write_bytes(b"")
+        sink = S3Sink("bucket", spill_dir=spill, client_factory=fail_client)
+        store = ImageStore(sink)
+        for i in range(3):
+            store.put_bytes(f"img{i}.tiff", b"image")
+        report = store.close()
+
+        assert report.stored == 0 and len(report.failed) == 3
+        with pytest.raises(StorageFailedError) as exc:
+            store.raise_if_failed()
+        assert len(exc.value.lost) == 3
+        assert all("client initialization failed" in failure for failure in exc.value.lost)
+        assert sink.queued == 0
+
     def test_uploads_in_order_with_prefix_and_describe(self, tmp_path):
         fake = FakeS3()
         sink = S3Sink("bucket", spill_dir=tmp_path, prefix="/lab/scope1/", client_factory=lambda: fake)

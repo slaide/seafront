@@ -106,13 +106,18 @@ class S3Sink:
     # -- consumer side (upload threads) -------------------------------------------------------
 
     def _uploader(self) -> None:
-        client = self._client_factory()
+        client = None
         while True:
             item = self._queue.get()
             if item is None:
                 return
             relpath, payload = item
             try:
+                # Client creation can fail too (credentials, endpoint configuration, ...).
+                # Keep draining and preserving images through the same failure path as
+                # uploads; retry initialization on the next item if it failed.
+                if client is None:
+                    client = self._client_factory()
                 data = payload if isinstance(payload, bytes) else payload.read_bytes()
                 client.put_object(Bucket=self.bucket, Key=self.key(relpath), Body=data)
                 with self._lock:
