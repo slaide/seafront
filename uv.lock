@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.13.*"
 resolution-markers = [
     "sys_platform == 'darwin'",
@@ -974,7 +974,7 @@ wheels = [
 [[package]]
 name = "seaconfig"
 version = "7.0.0"
-source = { git = "https://github.com/slaide/seafront-config?rev=v7.0.0#01bc0c3cdf157ab724a6fd8f6e4af691fbdb5367" }
+source = { git = "https://github.com/slaide/seafront-config?rev=v7.0.1#d0a16a7db72c99ab6cb21f3466ca54c37604f290" }
 dependencies = [
     { name = "pydantic" },
 ]
@@ -1042,7 +1042,7 @@ requires-dist = [
     { name = "pyserial", specifier = "==3.5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
     { name = "scipy", specifier = ">=1.15,<1.16" },
-    { name = "seaconfig", git = "https://github.com/slaide/seafront-config?rev=v7.0.0" },
+    { name = "seaconfig", git = "https://github.com/slaide/seafront-config?rev=v7.0.1" },
     { name = "tifffile", specifier = "==2025.1.10" },
     { name = "torch", marker = "extra == 'dev'", specifier = ">=2.10.0" },
     { name = "toupcam", git = "https://github.com/slaide/toupcam-sdk?rev=v1.0.3" },
