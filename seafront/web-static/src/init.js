@@ -29,6 +29,7 @@ import { configuredFieldOfView } from "./field-of-view.js";
 import { wellGridHit } from "./well-selection.js";
 
 import { wellForbiddenArea } from "./well-safety.js";
+import { commitFocusReference } from "./focus-reference.js";
 
 import { registerNumberInput } from "numberinput";
 Object.assign(window, { registerNumberInput });
@@ -3290,7 +3291,8 @@ const generate_alpine_object=() => ({
 
     /** Calibrate LAF at current position (uses reference channel focus) */
     async focusCalibrateLAFHere() {
-        if (!this.focusReferenceChannel?.enabled || this.focusCalibrationInProgress) return;
+        const referenceChannel = this.focusReferenceChannel;
+        if (!referenceChannel?.enabled || this.focusCalibrationInProgress) return;
         if (this.isStreaming || this.lafImageLiveMode) {
             throw new Error("Stop live imaging before setting the focus reference");
         }
@@ -3299,11 +3301,7 @@ const generate_alpine_object=() => ({
         try {
             // Commit the UI reference only after the instrument successfully calibrates.
             await this.buttons_calibrateLaserAutofocusHere();
-            this.focusReferenceZ = position.z_pos_mm;
-            this.focusReferenceXY = { x: position.x_pos_mm, y: position.y_pos_mm };
-            this.focusConfirmedChannels = new Set();
-            this.focusMeasuredOffsetUM = null;
-            this.laserAutofocusMeasuredOffset = null;
+            Object.assign(this, commitFocusReference(referenceChannel, position));
         } finally {
             this.focusCalibrationInProgress = false;
         }
