@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { wellGridHit } from '../../seafront/web-static/src/well-selection.js';
+import { wellGridHit, wellCornerRadius } from '../../seafront/web-static/src/well-selection.js';
 
 const first = { left: 20, top: 30, width: 10, height: 20 };
 const last = { left: 44, top: 74, width: 10, height: 20 };
@@ -28,4 +28,26 @@ test('captured drags clamp outside the plate so release still completes a range'
 test('a single well and non-square cells map to valid indices', () => {
     assert.deepEqual(wellGridHit(25, 40, first, first, 1, 1), { col: 0, row: 0 });
     assert.deepEqual(wellGridHit(-1, 100, first, first, 1, 1, true), { col: 0, row: 0 });
+});
+
+const plate = (x, y, r) => ({ Well_size_x_mm: x, Well_size_y_mm: y, Well_edge_radius_mm: r });
+
+test('wells whose corner radius is half their size draw as circles', () => {
+    assert.equal(wellCornerRadius(plate(6.4, 6.4, 3.2)), '50% / 50%');      // revvity 96
+    assert.equal(wellCornerRadius(plate(6.35, 6.35, 3.175)), '50% / 50%');  // corning 96
+    assert.equal(wellCornerRadius(plate(34, 34, 17)), '50% / 50%');         // ibidi 6
+});
+
+test('small corner radii scale with the well, square wells keep square corners', () => {
+    assert.equal(wellCornerRadius(plate(3.26, 3.26, 0.2)), '6.135% / 6.135%');
+    assert.equal(wellCornerRadius(plate(75, 26, 0)), '0% / 0%');
+});
+
+test('non-square wells get round corners, not stretched ones', () => {
+    // CSS takes horizontal percentages of the width and vertical ones of the height
+    assert.equal(wellCornerRadius(plate(4, 2, 0.5)), '12.5% / 25%');
+});
+
+test('a radius beyond half the well is clamped to the half', () => {
+    assert.equal(wellCornerRadius(plate(4, 2, 1.5)), '37.5% / 50%');
 });

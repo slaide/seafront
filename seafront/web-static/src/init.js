@@ -26,7 +26,7 @@ import { sitePatternGeometry, sitePatternSvg, sitePatternHit, siteRangeContains 
 
 import { configuredFieldOfView } from "./field-of-view.js";
 
-import { wellGridHit } from "./well-selection.js";
+import { wellGridHit, wellCornerRadius } from "./well-selection.js";
 
 import { wellForbiddenArea } from "./well-safety.js";
 import { commitFocusReference } from "./focus-reference.js";
@@ -398,6 +398,11 @@ const generate_alpine_object=() => ({
     /** @param {{row: number, col: number}} well */
     wellForbiddenArea(well) {
         return wellForbiddenArea(this.microscope_config.wellplate_type, well, this.forbiddenAreas);
+    },
+
+    /** @param {Wellplate} plate */
+    wellCornerRadius(plate) {
+        return wellCornerRadius(plate);
     },
 
     get cameraFieldOfView() {

@@ -722,7 +722,8 @@
                                             x-bind:class="`wellsx${microscope_config.wellplate_type.Num_wells_x}`"
                                             x-bind:style="`
 									--numcols:${microscope_config.wellplate_type.Num_wells_x};
-									--well-aspect-ratio:${microscope_config.wellplate_type.Well_size_x_mm/microscope_config.wellplate_type.Well_size_y_mm}
+									--well-aspect-ratio:${microscope_config.wellplate_type.Well_size_x_mm/microscope_config.wellplate_type.Well_size_y_mm};
+									--well-corner-radius:${wellCornerRadius(microscope_config.wellplate_type)}
 									`"
                                             @pointerdown="startWellSelection($event)"
                                             @pointermove="continueWellSelection($event)"

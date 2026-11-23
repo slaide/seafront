@@ -141,7 +141,7 @@ body.theme-dark #workspaces {
             border: 1px solid var(--group-border);
             background: var(--panel-surface);
             box-sizing: border-box;
-            border-radius: 2px;
+            border-radius: var(--well-corner-radius, 2px);
         }
         .well.selected {
             background: var(--accent-color);
