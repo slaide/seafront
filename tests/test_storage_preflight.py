@@ -10,6 +10,7 @@ Room for the images, before and during a run.
 
 import asyncio
 import collections
+import os
 import sys
 import time
 from pathlib import Path
@@ -68,6 +69,56 @@ def test_a_missing_output_directory_is_refused(mock_core, mock_microscope_env):
     (mock_microscope_env / "images").rmdir()
     with pytest.raises(InsufficientStorageError, match="does not exist"):
         check_capacity(1)
+
+
+def unreachable(monkeypatch, directory: Path) -> None:
+    """
+    `directory` answers like a network share that is linked but not mounted, or whose server is
+    gone: stat fails with errno 521, which the kernel's NFS code lets out to userspace and
+    which pathlib's is_dir() does not swallow (only ENOENT, ENOTDIR, EBADF and ELOOP).
+    """
+    real_stat, real_statvfs = os.stat, os.statvfs
+
+    def check(path) -> None:
+        if Path(path) == directory or directory in Path(path).parents:
+            raise OSError(521, os.strerror(521), str(path))
+
+    def stat(path, *args, **kwargs):
+        check(path)
+        return real_stat(path, *args, **kwargs)
+
+    def statvfs(path):
+        check(path)
+        return real_statvfs(path)
+
+    monkeypatch.setattr(os, "stat", stat)
+    monkeypatch.setattr(os, "statvfs", statvfs)
+
+
+def test_an_unreachable_output_directory_is_refused_with_where_and_why(
+    mock_core, mock_microscope_env, monkeypatch
+):
+    images = mock_microscope_env / "images"
+    unreachable(monkeypatch, images)
+    with pytest.raises(InsufficientStorageError) as caught:
+        check_capacity(1)
+    message = str(caught.value)
+    assert str(images) in message
+    assert "storage.base_image_output_dir" in message
+    assert "errno 521" in message
+    assert "mounted" in message
+
+
+def test_an_unreachable_output_directory_refuses_the_run_as_an_http_error(
+    mock_core, mock_microscope_env, monkeypatch
+):
+    "an HTTPException is what the API turns into a JSON answer the dashboard can show"
+    unreachable(monkeypatch, mock_microscope_env / "images")
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(mock_core.start_acquisition(config_file=protocol()))
+    assert "cannot start the acquisition" in str(caught.value.detail)
+    assert "errno 521" in str(caught.value.detail)
+    assert mock_core.acquisitions._statuses == {}
 
 
 # --- the front door ------------------------------------------------------------------------

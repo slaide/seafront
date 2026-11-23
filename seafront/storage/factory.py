@@ -61,18 +61,29 @@ def check_capacity(required_bytes: int) -> None:
           and the spill directory holds only what the uploader has not caught up with, so
           neither is checked against the run's size; a failed upload stops the run instead
           (see ImageStore.raise_if_failed).
+
+    A directory that cannot even be looked at is refused too. A network share that is linked
+    but not mounted, or whose server is gone, fails stat with errors pathlib does not treat as
+    "missing" (errno 521 from NFS, for one), and those would otherwise leave here as an OSError
+    that names nothing but the path.
     """
     base_dir = Path(ConfigRegistry.get(StorageConfig.BASE_IMAGE_OUTPUT_DIR).strvalue)
     backend = ConfigRegistry.get(StorageConfig.BACKEND).strvalue
     role = "image output directory" if backend == "disk" else "s3 spill directory"
-    if not base_dir.is_dir():
+    where = f"the {role} {base_dir} ({StorageConfig.BASE_IMAGE_OUTPUT_DIR.value})"
+    try:
+        if not base_dir.is_dir():
+            raise InsufficientStorageError(f"{where} does not exist")
+        if backend != "disk":
+            return
+        free = shutil.disk_usage(base_dir).free
+    except OSError as e:
+        reason = f"{e.strerror} (errno {e.errno})" if e.strerror else str(e)
         raise InsufficientStorageError(
-            f"the {role} {base_dir} ({StorageConfig.BASE_IMAGE_OUTPUT_DIR.value}) does not exist"
-        )
-    if backend != "disk":
-        return
+            f"{where} cannot be reached: {reason}. If it is on a network share, check that the "
+            f"share is mounted and its server is reachable"
+        ) from e
 
-    free = shutil.disk_usage(base_dir).free
     if free - STORAGE_RESERVE_BYTES < required_bytes:
         raise InsufficientStorageError(
             f"not enough space in {base_dir}: the run needs up to {_gb(required_bytes)} "
