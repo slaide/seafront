@@ -1151,8 +1151,10 @@ class Core:
 
         # Room for the images. Checked here with everything else: a run that fills the disk
         # partway has already cost the sample the time and light of the part it did take.
+        # Off the event loop: a hung network share takes the check up to its timeout to notice.
+        protocol_size_bytes = int(protocol.max_storage_size_images_GB * 1024**3)
         try:
-            check_capacity(int(protocol.max_storage_size_images_GB * 1024**3))
+            await asyncio.to_thread(check_capacity, protocol_size_bytes)
         except InsufficientStorageError as e:
             error_internal(detail=f"cannot start the acquisition: {e}")
 

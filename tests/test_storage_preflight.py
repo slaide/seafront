@@ -12,6 +12,7 @@ import asyncio
 import collections
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -118,6 +119,91 @@ def test_an_unreachable_output_directory_refuses_the_run_as_an_http_error(
         asyncio.run(mock_core.start_acquisition(config_file=protocol()))
     assert "cannot start the acquisition" in str(caught.value.detail)
     assert "errno 521" in str(caught.value.detail)
+    assert mock_core.acquisitions._statuses == {}
+
+
+class HangingDirectory:
+    """
+    A directory on a hard-mounted network share whose server is gone: stat does not fail, it
+    blocks until the server is back. `release()` brings it back.
+    """
+
+    def __init__(self, monkeypatch, directory: Path) -> None:
+        self.directory = directory
+        self.back = threading.Event()
+        self.stats = 0
+        real_stat = os.stat
+
+        def stat(path, *args, **kwargs):
+            if Path(path) == directory:
+                self.stats += 1
+                self.back.wait()
+            return real_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "stat", stat)
+
+    def release(self) -> None:
+        self.back.set()
+
+
+@pytest.fixture
+def hanging(mock_core, mock_microscope_env, monkeypatch):
+    monkeypatch.setattr(factory, "STORAGE_PROBE_TIMEOUT_S", 0.3)
+    directory = HangingDirectory(monkeypatch, mock_microscope_env / "images")
+    yield directory
+    directory.release()
+
+
+def test_a_hanging_output_directory_is_refused_after_the_timeout(hanging):
+    began = time.monotonic()
+    with pytest.raises(InsufficientStorageError) as caught:
+        check_capacity(1)
+    assert time.monotonic() - began < 2
+    message = str(caught.value)
+    assert str(hanging.directory) in message
+    assert "did not answer within 0.3 s" in message
+    assert "mounted" in message
+
+
+def test_checking_again_while_the_directory_hangs_does_not_start_another_probe(hanging):
+    "each probe left stuck in the kernel is a thread for good, so retries must not add more"
+    for _ in range(3):
+        with pytest.raises(InsufficientStorageError, match="did not answer"):
+            check_capacity(1)
+    assert hanging.stats == 1
+
+    hanging.release()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            check_capacity(1)
+            break
+        except InsufficientStorageError:
+            time.sleep(0.05)
+    else:
+        pytest.fail("the directory answered again, but the check still refuses")
+
+
+def test_a_hanging_output_directory_does_not_stall_the_server(mock_core, hanging):
+    "the server's event loop keeps serving everyone else while the start request waits"
+
+    async def start_while_ticking() -> int:
+        ticks = 0
+
+        async def tick() -> None:
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        ticker = asyncio.create_task(tick())
+        with pytest.raises(HTTPException, match="did not answer"):
+            await mock_core.start_acquisition(config_file=protocol())
+        ticker.cancel()
+        return ticks
+
+    # 0.3 s of waiting is ~30 ticks; a blocked loop gets none in
+    assert asyncio.run(start_while_ticking()) >= 10
     assert mock_core.acquisitions._statuses == {}
 
 
