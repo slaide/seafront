@@ -86,13 +86,25 @@ class APIClient {
     async handleResponse(response, context = 'API request', showError = true) {
         if (!response.ok) {
             if (response.status === 500) {
-                // Handle internal server errors
-                const errorBody = await response.json();
-                const error = `${context} failed with ${response.statusText} ${response.status} because: ${JSON.stringify(errorBody)}`;
+                // Our handlers answer {detail}, but a 500 from anything else (an older server
+                // with no JSON error handler, a proxy) is plain text. Its message is that text.
+                const text = await response.text();
+                /** @type {unknown} */
+                let errorBody = null;
+                try {
+                    errorBody = JSON.parse(text);
+                } catch {
+                    // plain text
+                }
+                const detail = (errorBody && typeof errorBody === 'object' && 'detail' in errorBody)
+                    ? errorBody.detail
+                    : (text || response.statusText);
+                const message = typeof detail === 'string' ? detail : JSON.stringify(detail);
+                const error = `${context} failed with ${response.statusText} ${response.status} because: ${message}`;
                 console.error(error);
 
                 if (showError) {
-                    this.onError(context + ' Error', errorBody.detail);
+                    this.onError(context + ' Error', message);
                 }
                 throw new Error(error);
             } else if (response.status === 409) {
