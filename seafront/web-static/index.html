@@ -804,7 +804,7 @@
                                                 @pointerup="finishSiteSelection($event)" @pointercancel="cancelSiteSelection()"
                                                 @lostpointercapture="cancelSiteSelection()" @keydown.escape.window="cancelSiteSelection()"
                                                 @keydown.enter.prevent="togglePreviewSite($event)" @keydown.space.prevent="togglePreviewSite($event)"></svg>
-                                            <div class="site-pattern-actions"><span>Select sites</span><button type="button" @click="selectAllPreviewSites(true)">All</button><button type="button" @click="selectAllPreviewSites(false)">None</button></div>
+                                            <div class="site-pattern-actions"><span>Select sites</span><button type="button" @click="selectAllPreviewSites(true)">All</button><button type="button" title="Select the sites whose center lies inside the well" @click="selectPreviewSitesInWell()">In well</button><button type="button" @click="selectAllPreviewSites(false)">None</button></div>
                                             <dl class="site-pattern-dimensions">
                                                 <dt>Well [mm]</dt><dd x-text="`${microscope_config.wellplate_type.Well_size_x_mm} × ${microscope_config.wellplate_type.Well_size_y_mm}`"></dd>
                                                 <dt>FOV [mm]</dt><dd x-text="cameraFieldOfView ? `${cameraFieldOfView.fovx.toFixed(2)} × ${cameraFieldOfView.fovy.toFixed(2)}` : 'Unavailable'"></dd>

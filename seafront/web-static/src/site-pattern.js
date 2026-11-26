@@ -27,6 +27,56 @@ export function sitePatternGeometry(plate, grid, fov) {
 }
 
 /**
+ * @typedef {{Well_size_x_mm: number, Well_size_y_mm: number, Well_edge_radius_mm: number}} WellShape
+ * @typedef {{num_x: number, num_y: number, delta_x_mm: number, delta_y_mm: number}} SiteLayout
+ */
+
+/**
+ * Whether a site's center lies on or inside the well outline: a rectangle with corners rounded by
+ * Well_edge_radius_mm, so a well whose radius is half its size is round. Without well dimensions
+ * every site counts as inside.
+ * @param {WellShape} plate
+ * @param {SiteLayout} grid
+ * @param {{row: number, col: number}} site
+ */
+export function siteCenterInWell(plate, grid, site) {
+    const halfX = plate.Well_size_x_mm / 2, halfY = plate.Well_size_y_mm / 2;
+    if (!(halfX > 0 && halfY > 0)) return true;
+    const radius = Math.min(Math.max(0, plate.Well_edge_radius_mm || 0), halfX, halfY);
+    // a tolerance keeps sites placed exactly on the outline (e.g. delta = well radius) inside
+    const tolerance = 1e-9;
+    const dx = Math.abs((site.col - (grid.num_x - 1) / 2) * grid.delta_x_mm);
+    const dy = Math.abs((site.row - (grid.num_y - 1) / 2) * grid.delta_y_mm);
+    if (dx > halfX + tolerance || dy > halfY + tolerance) return false;
+    const cornerX = dx - (halfX - radius), cornerY = dy - (halfY - radius);
+    return cornerX <= 0 || cornerY <= 0 || Math.hypot(cornerX, cornerY) <= radius + tolerance;
+}
+
+/**
+ * The site mask for `grid`, whose `mask` holds the selection made for an earlier layout.
+ * A site starts selected when its center lies inside the well. It keeps the user's choice after
+ * that, unless it is new or moved across the well outline since `previous`, the layout the
+ * selection was made for. When that layout is unknown (null), e.g. for a loaded protocol, every
+ * existing site keeps its selection.
+ * @param {WellShape} plate
+ * @param {SiteLayout & {mask: {row: number, col: number, selected: boolean}[]}} grid
+ * @param {{plate: WellShape, grid: SiteLayout}|null} previous
+ */
+export function siteMask(plate, grid, previous) {
+    const before = new Map(grid.mask.map(site => [`${site.col},${site.row}`, site]));
+    const mask = [];
+    for (let col = 0; col < grid.num_x; col++) {
+        for (let row = 0; row < grid.num_y; row++) {
+            const inside = siteCenterInWell(plate, grid, { col, row });
+            const old = before.get(`${col},${row}`);
+            const keep = old && (!previous || siteCenterInWell(previous.plate, previous.grid, old) === inside);
+            mask.push({ col, row, selected: keep ? old.selected : inside });
+        }
+    }
+    return mask;
+}
+
+/**
  * Find the closest site center, including gaps between footprints.
  * @param {ReturnType<typeof sitePatternGeometry>} geometry
  * @param {number} x SVG view-box coordinate

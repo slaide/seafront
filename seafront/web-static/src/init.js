@@ -22,7 +22,17 @@ import {
 // these colors are used to create a legend in html
 Object.assign(window, { matWellColor, matSiteColor, matFovColor, matForbiddenAreaColor });
 
-import { sitePatternGeometry, sitePatternSvg, sitePatternHit, siteRangeContains } from "./site-pattern.js";
+import { sitePatternGeometry, sitePatternSvg, sitePatternHit, siteRangeContains, siteCenterInWell, siteMask } from "./site-pattern.js";
+
+/** The plate and grid layout each generated site mask was made for, keyed by the (raw) mask array. */
+const siteMaskLayouts = new WeakMap();
+/** @param {AcquisitionConfig} config */
+function siteMaskLayout(config) {
+    const { Well_size_x_mm, Well_size_y_mm, Well_edge_radius_mm } = config.wellplate_type;
+    const { num_x, num_y, delta_x_mm, delta_y_mm } = config.grid;
+    return { plate: { Well_size_x_mm, Well_size_y_mm, Well_edge_radius_mm },
+        grid: { num_x, num_y, delta_x_mm, delta_y_mm } };
+}
 
 import { configuredFieldOfView } from "./field-of-view.js";
 
@@ -512,6 +522,13 @@ const generate_alpine_object=() => ({
     /** @param {boolean} selected */
     selectAllPreviewSites(selected) {
         for (const site of this.microscope_config.grid.mask) site.selected = selected;
+        this.sitePatternChanged();
+    },
+
+    /** Reset the site selection to its default: the sites whose center lies inside the well. */
+    selectPreviewSitesInWell() {
+        const { wellplate_type: plate, grid } = this.microscope_config;
+        for (const site of grid.mask) site.selected = siteCenterInWell(plate, grid, site);
         this.sitePatternChanged();
     },
 
@@ -3930,20 +3947,15 @@ const generate_alpine_object=() => ({
             }
         }
 
-        // Keep exclusions when spacing/timing changes or the grid is resized.
-        const previousSites = new Map(this.microscope_config.grid.mask.map(site =>
-            [`${site.col},${site.row}`, site.selected]));
+        // Sites outside the well start excluded; the user's choices survive spacing/timing edits
+        // and grid resizes (see siteMask). A mask this page did not generate, e.g. from a loaded
+        // protocol, has no recorded layout and is kept as it is.
+        const grid = this.microscope_config.grid;
         /** @type {AcquisitionWellSiteConfigurationSiteSelectionItem[]} */
-        const new_masks = [];
-        for (let x = 0; x < this.microscope_config.grid.num_x; x++) {
-            for (let y = 0; y < this.microscope_config.grid.num_y; y++) {
-                /** @type {AcquisitionWellSiteConfigurationSiteSelectionItem} */
-                const new_mask = { col: x, row: y, selected: previousSites.get(`${x},${y}`) ?? true };
-                new_masks.push(new_mask);
-            }
-        }
-        // insert new elements
-        this.microscope_config.grid.mask = new_masks;
+        const new_masks = siteMask(this.microscope_config.wellplate_type, grid,
+            siteMaskLayouts.get(Alpine.raw(grid.mask)) ?? null);
+        grid.mask = new_masks;
+        siteMaskLayouts.set(new_masks, siteMaskLayout(this.microscope_config));
 
         // await plate navigator update
         await this.setPlate(this.microscope_config, selectedplate);
