@@ -1892,7 +1892,7 @@
                     </style>
 
                     <!-- Server Connection Status -->
-                    <div class="bottom-section" style="grid-area: server; display: flex; align-items: center;" x-init="registerContainedPopup($el)">
+                    <div class="bottom-section server-status" style="grid-area: server;" x-init="registerContainedPopup($el)">
                         <style>
                             .connection-indicator {
                                 display: inline-block;
@@ -1926,10 +1926,30 @@
                                 color: #e74c3c;
                                 font-weight: bold;
                             }
+                            /* Two lines whatever is lit. This column is min-content wide, so the
+                               lights text used to wrap at every word, up to four lines, and every
+                               light switched on or off resized the bar and the page above it. */
+                            .server-status {
+                                display: flex;
+                                flex-direction: column;
+                                justify-content: center;
+                            }
+                            .server-status-line {
+                                display: flex;
+                                align-items: center;
+                            }
+                            .lock-indicator, .hardware-indicator {
+                                white-space: nowrap;
+                            }
                             .lights-indicator {
-                                margin-left: 0.75em;
+                                /* as wide as the line above, never wider: the full text is in the tooltip */
+                                contain: inline-size;
+                                white-space: nowrap;
+                                overflow: hidden;
+                                text-overflow: ellipsis;
                             }
                         </style>
+                        <div class="server-status-line">
                         <span x-text="connectionText"></span>
                         <span
                             x-bind:class="`connection-indicator ${isFullyConnected?'connected':(isConnectedToServer?'partial':'')}`"
@@ -1947,7 +1967,8 @@
                             x-text="hardwareText"
                             x-bind:class="{ 'hardware-problem': hardwareProblems.length > 0 }"
                         ></span>
-                        <span class="lights-indicator" x-show="lightsOnText" x-text="lightsOnText"></span>
+                        </div>
+                        <span class="lights-indicator" x-text="lightsOnText || '\u00a0'" x-bind:title="lightsOnText"></span>
 
                         <!-- Server Details Popup -->
                         <div class="popup">
