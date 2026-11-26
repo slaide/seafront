@@ -26,12 +26,15 @@ import { sitePatternGeometry, sitePatternSvg, sitePatternHit, siteRangeContains,
 
 /** The plate and grid layout each generated site mask was made for, keyed by the (raw) mask array. */
 const siteMaskLayouts = new WeakMap();
-/** @param {AcquisitionConfig} config */
-function siteMaskLayout(config) {
+/**
+ * @param {AcquisitionConfig} config
+ * @param {number} margin_mm
+ */
+function siteMaskLayout(config, margin_mm) {
     const { Well_size_x_mm, Well_size_y_mm, Well_edge_radius_mm } = config.wellplate_type;
     const { num_x, num_y, delta_x_mm, delta_y_mm } = config.grid;
     return { plate: { Well_size_x_mm, Well_size_y_mm, Well_edge_radius_mm },
-        grid: { num_x, num_y, delta_x_mm, delta_y_mm } };
+        grid: { num_x, num_y, delta_x_mm, delta_y_mm }, margin_mm };
 }
 
 import { configuredFieldOfView } from "./field-of-view.js";
@@ -429,7 +432,24 @@ const generate_alpine_object=() => ({
     get sitePatternGeometry() {
         const fov = this.cameraFieldOfView;
         return fov ? sitePatternGeometry(this.microscope_config.wellplate_type,
-            this.microscope_config.grid, fov) : null;
+            this.microscope_config.grid, fov, this.siteEdgeMargin) : null;
+    },
+
+    /**
+     * Edge margin [mm] per plate Model_id: sites whose center lies closer than this to the well
+     * edge count as outside the well. Kept with the interface settings, not in the protocol.
+     * @type {Record<string, number>}
+     */
+    siteEdgeMarginMm: {},
+    get siteEdgeMargin() {
+        return this.siteEdgeMarginMm[this.microscope_config.wellplate_type.Model_id] ?? 0;
+    },
+    set siteEdgeMargin(value) {
+        this.siteEdgeMarginMm[this.microscope_config.wellplate_type.Model_id] = Math.max(0, Number(value) || 0);
+    },
+    siteEdgeMarginChanged() {
+        this.saveInterfaceSettings();
+        this.updatePlate();
     },
 
     get sitePatternMarkup() {
@@ -528,7 +548,7 @@ const generate_alpine_object=() => ({
     /** Reset the site selection to its default: the sites whose center lies inside the well. */
     selectPreviewSitesInWell() {
         const { wellplate_type: plate, grid } = this.microscope_config;
-        for (const site of grid.mask) site.selected = siteCenterInWell(plate, grid, site);
+        for (const site of grid.mask) site.selected = siteCenterInWell(plate, grid, site, this.siteEdgeMargin);
         this.sitePatternChanged();
     },
 
@@ -707,6 +727,7 @@ const generate_alpine_object=() => ({
                 if (saved.tooltip) Object.assign(interfaceSettings.tooltip, saved.tooltip);
                 if (saved.popupHideDelayMs !== undefined) interfaceSettings.popupHideDelayMs = saved.popupHideDelayMs;
                 if (saved.busyLingerMs !== undefined) this.busyLingerMs = saved.busyLingerMs;
+                if (saved.siteEdgeMarginMm) this.siteEdgeMarginMm = { ...saved.siteEdgeMarginMm };
 
                 // Apply to tooltipConfig
                 Object.assign(tooltipConfig, interfaceSettings.tooltip);
@@ -737,6 +758,7 @@ const generate_alpine_object=() => ({
             const toSave = {
                 ...interfaceSettings,
                 busyLingerMs: this.busyLingerMs,
+                siteEdgeMarginMm: this.siteEdgeMarginMm,
                 theme: this.theme,
                 savedAt: new Date().toISOString()
             };
@@ -3953,9 +3975,9 @@ const generate_alpine_object=() => ({
         const grid = this.microscope_config.grid;
         /** @type {AcquisitionWellSiteConfigurationSiteSelectionItem[]} */
         const new_masks = siteMask(this.microscope_config.wellplate_type, grid,
-            siteMaskLayouts.get(Alpine.raw(grid.mask)) ?? null);
+            siteMaskLayouts.get(Alpine.raw(grid.mask)) ?? null, this.siteEdgeMargin);
         grid.mask = new_masks;
-        siteMaskLayouts.set(new_masks, siteMaskLayout(this.microscope_config));
+        siteMaskLayouts.set(new_masks, siteMaskLayout(this.microscope_config, this.siteEdgeMargin));
 
         // await plate navigator update
         await this.setPlate(this.microscope_config, selectedplate);

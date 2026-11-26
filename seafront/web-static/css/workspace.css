@@ -111,6 +111,7 @@ body.theme-dark #workspaces {
         display: block; width: 100%; max-width: 260px; margin: 0 auto; aspect-ratio: 1;
         background: var(--settings-surface); border: 1px solid var(--group-border); box-sizing: border-box;
         .site-well-boundary { fill: var(--panel-surface); stroke: var(--group-border); stroke-width: 2; }
+        .site-well-margin { fill: none; stroke: var(--group-border); stroke-width: 1.5; stroke-dasharray: 5 4; pointer-events: none; }
         .site-center-guide { fill: none; stroke: var(--group-border); stroke-width: 0.5; stroke-dasharray: 3 4; pointer-events: none; }
         /* footprint fills are see-through so the well outline and overlapping fields show under them */
         .site-footprint { fill: color-mix(in srgb, var(--group-border) 15%, transparent); stroke: var(--group-border); stroke-width: 1; cursor: pointer; }
@@ -126,6 +127,7 @@ body.theme-dark #workspaces {
         .site-hit-target { fill: transparent; stroke: none; }
         .site-center:focus { outline: none; circle:last-child { stroke: var(--text-color); stroke-width: 3; } }
     }
+    .site-edge-margin { display: flex; align-items: center; gap: 0.4em; margin: 0.5em 0; font-size: 0.85em; input { width: 5em; margin-left: auto; } }
     .site-pattern-actions { display: flex; align-items: center; gap: 0.4em; margin: 0.5em 0; span { margin-right: auto; font-size: 0.85em; } }
     .site-pattern-dimensions { display: grid; grid-template-columns: auto 1fr; gap: 0.3em 0.75em; padding-top: 0.5em; border-top: 1px solid var(--section-band); font-size: 0.85em; dd { text-align: right; font-variant-numeric: tabular-nums; } }
     #plate-type-selector { align-items: center; gap: 0.75em; select { min-width: 0; width: 100%; } }

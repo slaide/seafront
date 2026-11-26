@@ -94,6 +94,7 @@ declare global {
         };
         popupHideDelayMs: number;
         busyLingerMs: number;
+        siteEdgeMarginMm?: Record<string, number>;
         theme: string;
         savedAt: string;
     };

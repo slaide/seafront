@@ -14,6 +14,8 @@ import math
 import subprocess
 from pathlib import Path
 
+import pytest
+
 SITE_PATTERN = Path(__file__).resolve().parent.parent / "seafront" / "web-static" / "src" / "site-pattern.js"
 
 PROBE = r"""
@@ -128,3 +130,56 @@ def test_a_plate_without_well_dimensions_excludes_nothing(tmp_path):
     grid = _grid(3, 3, 8.0, 8.0)
     plate = {"Well_size_x_mm": None, "Well_size_y_mm": None, "Well_edge_radius_mm": None}
     assert _selected(_call(tmp_path, "siteMask", plate, grid, None)) == _all_sites(3, 3)
+
+
+# An edge margin shrinks the outline inward: half-sizes shrink by the margin and the corner
+# radius by the margin too, down to a sharp corner once the margin exceeds it.
+
+def test_an_edge_margin_excludes_sites_near_the_well_edge(tmp_path):
+    grid = _grid(5, 5, 8.0, 8.0)
+    mask = _call(tmp_path, "siteMask", IBIDI_6, grid, None, 2.0)  # 17 mm -> 15 mm radius
+    inside = {(c, r) for c, r in _all_sites(5, 5) if math.hypot((c - 2) * 8, (r - 2) * 8) <= 15}
+    assert _selected(mask) == inside
+    assert len(inside) == 9  # the +-16 mm axis sites fall into the margin
+
+
+def test_a_margin_narrower_than_the_corner_radius_keeps_a_smaller_rounding(tmp_path):
+    well = {"Well_size_x_mm": 10.0, "Well_size_y_mm": 10.0, "Well_edge_radius_mm": 2.0}
+    # margin 1: half-size 4, corner radius 1; corners at (3.9, 3.9) are 1.27 mm from the arc center
+    mask = _call(tmp_path, "siteMask", well, _grid(3, 3, 3.9, 3.9), None, 1.0)
+    assert _selected(mask) == {(1, 0), (0, 1), (1, 1), (2, 1), (1, 2)}
+
+
+def test_a_margin_wider_than_the_corner_radius_leaves_a_sharp_corner(tmp_path):
+    well = {"Well_size_x_mm": 10.0, "Well_size_y_mm": 10.0, "Well_edge_radius_mm": 2.0}
+    # margin 3: half-size 2, no rounding left, so (1.9, 1.9) is inside; the outer ring at 3.8 is not
+    mask = _call(tmp_path, "siteMask", well, _grid(5, 5, 1.9, 1.9), None, 3.0)
+    assert _selected(mask) == {(c, r) for c in range(1, 4) for r in range(1, 4)}
+
+
+def test_a_margin_of_half_the_well_or_more_leaves_no_site_inside(tmp_path):
+    mask = _call(tmp_path, "siteMask", IBIDI_6, _grid(3, 3, 8.0, 8.0), None, 17.5)
+    assert _selected(mask) == set()
+
+
+def test_changing_the_margin_re_defaults_only_the_sites_it_moves_across_the_outline(tmp_path):
+    grid = _grid(5, 5, 8.0, 8.0)
+    mask = _call(tmp_path, "siteMask", IBIDI_6, grid, None, 0.0)
+    for site in mask:
+        if (site["col"], site["row"]) == (2, 2):
+            site["selected"] = False
+    before = {"plate": IBIDI_6, "grid": _grid(5, 5, 8.0, 8.0), "margin_mm": 0.0}
+    mask = _call(tmp_path, "siteMask", IBIDI_6, {**grid, "mask": mask}, before, 2.0)
+    assert _selected(mask) == {(1, 1), (2, 1), (3, 1), (1, 2), (3, 2), (1, 3), (2, 3), (3, 3)}
+
+
+def test_the_preview_draws_the_margin_outline_only_when_there_is_a_margin(tmp_path):
+    fov = {"fovx": 0.75, "fovy": 0.75}
+    grid = _grid(1, 1, 8.0, 8.0, [{"col": 0, "row": 0, "selected": True}])
+    none = _call(tmp_path, "sitePatternGeometry", IBIDI_6, grid, fov, 0.0)
+    assert none["margin"] is None
+    geometry = _call(tmp_path, "sitePatternGeometry", IBIDI_6, grid, fov, 2.0)
+    scale = geometry["well"]["width"] / 34.0
+    assert geometry["margin"]["width"] == pytest.approx(30.0 * scale)
+    assert geometry["margin"]["radius"] == pytest.approx(15.0 * scale)
+    assert geometry["margin"]["x"] == pytest.approx(geometry["well"]["x"] + 2.0 * scale)
