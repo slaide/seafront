@@ -266,13 +266,7 @@
     <body
         x-data="microscope_state"
         x-bind:class="{ 'microscope-busy': state && state.is_busy }"
-        x-init="await manualInit();
-                // Set up watcher after init is complete
-                if(_microscope_config) {
-                    $watch('_microscope_config', () => {
-                        saveCurrentConfig();
-                    }, { deep: true });
-                }"
+        x-init="await manualInit(() => $watch('_microscope_config', () => saveCurrentConfig(), { deep: true }))"
     >
         <link rel="stylesheet" href="/css/theme.css" />
 

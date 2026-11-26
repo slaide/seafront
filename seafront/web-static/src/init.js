@@ -1014,7 +1014,12 @@ const generate_alpine_object=() => ({
 
     // keep track of global initialization state
     initDone: false,
-    async manualInit() {
+    /**
+     * @param {() => void} saveChanges starts saving every protocol change to localStorage. It
+     * runs once the protocol is loaded (earlier, the cache would be overwritten before it is
+     * read) and before the page shows, as init goes on after that.
+     */
+    async manualInit(saveChanges) {
         await this.initSelf();
         // the laser autofocus calibration came back with the machine config; so does its reference
         const focusReference = restoreFocusReference(
@@ -1054,7 +1059,8 @@ const generate_alpine_object=() => ({
                 this.saveCurrentConfig();
             }
         }
-        
+
+        saveChanges();
         this.initDone = true;
 
         // Set up beforeunload warning for unsaved changes
@@ -2049,9 +2055,9 @@ const generate_alpine_object=() => ({
             // Cached config overwrites server defaults, then we restore hardware-specific fields
             const mergedConfig = { ...this._microscope_config, ...savedConfig };
 
-            // ALWAYS restore server-provided fields (never use cached versions)
-            // machine_config contains microscope identity and must always match the server
-            mergedConfig.machine_config = serverProvidedMachineConfig;
+            // Privileged machine config (identity, calibration) stays the server's. The rest is
+            // the protocol's: the server holds it in memory only, and forgets it on a restart.
+            mergedConfig.machine_config = mergeMachineConfig(serverProvidedMachineConfig, savedConfig.machine_config);
 
             // ALWAYS restore channels from server (hardware capabilities), but preserve user settings
             // Start with server's channel list (ensures it matches current hardware)
