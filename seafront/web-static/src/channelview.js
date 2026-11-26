@@ -379,13 +379,12 @@ export class ChannelImageView {
      * @returns {ChannelImageData}
      */
     _makeImage(imageinfo) {
-        const WIDTH_DOWNSAMPLE_FACTOR = 2
-        const HEIGHT_DOWNSAMPLE_FACTOR = 2
-
         let { imgdata, datatype } = this._imageInfoToImage(imageinfo)
 
-        const width = imageinfo.width / WIDTH_DOWNSAMPLE_FACTOR
-        const height = imageinfo.height / HEIGHT_DOWNSAMPLE_FACTOR
+        // the image socket reports the dimensions of the pixels it sent, i.e. after its
+        // downsampling; halving them again turns each row into two half-rows (stripes)
+        const width = imageinfo.width
+        const height = imageinfo.height
         const data = imgdata
 
         const texture = new THREE.DataTexture(
@@ -444,8 +443,8 @@ export class ChannelImageView {
 
         /** @type {ChannelImageData} */
         const img = {
-            width: imageinfo.width / WIDTH_DOWNSAMPLE_FACTOR,
-            height: imageinfo.height / HEIGHT_DOWNSAMPLE_FACTOR,
+            width,
+            height,
             data: imgdata,
             texture,
             mesh,
