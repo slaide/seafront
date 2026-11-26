@@ -177,6 +177,9 @@ class TestLaserAutofocusCalibrationIsServerOwned:
             LaserAutofocusConfig.CALIBRATION_X_PEAK_POS,
             LaserAutofocusConfig.CALIBRATION_UM_PER_PX,
             LaserAutofocusConfig.CALIBRATION_REF_Z_MM,
+            LaserAutofocusConfig.CALIBRATION_REF_X_MM,
+            LaserAutofocusConfig.CALIBRATION_REF_Y_MM,
+            LaserAutofocusConfig.CALIBRATION_REF_CHANNEL,
             LaserAutofocusConfig.OFFSET_UM,
         ):
             assert ConfigRegistry.is_privileged(handle), handle
@@ -201,3 +204,24 @@ class TestLaserAutofocusCalibrationIsServerOwned:
         saved = json5.load(config_file.open())["microscopes"][0]
         assert saved[LaserAutofocusConfig.CALIBRATION_IS_CALIBRATED.value] == "yes"
         assert saved[LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value] == pytest.approx(2.5)
+
+    def test_calibrate_records_the_reference_channel_and_position(self, laser_af_mock_env):
+        """
+        a reloaded page shows the focus reference again from these; nothing else keeps which
+        channel was in focus, or where, when the laser autofocus was calibrated
+        """
+        from seafront.hardware.mock_microscope import MockMicroscope
+
+        config_file = laser_af_mock_env
+        mc = MockMicroscope.make()
+        asyncio.run(mc.execute(cmd.MoveTo(x_mm=10.0, y_mm=12.0, z_mm=2.5)))
+        asyncio.run(mc.execute(cmd.LaserAutofocusCalibrate(reference_channel="fluo488")))
+
+        assert ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_REF_CHANNEL).strvalue == "fluo488"
+        assert ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_REF_X_MM).floatvalue == pytest.approx(10.0)
+        assert ConfigRegistry.get(LaserAutofocusConfig.CALIBRATION_REF_Y_MM).floatvalue == pytest.approx(12.0)
+
+        saved = json5.load(config_file.open())["microscopes"][0]
+        assert saved[LaserAutofocusConfig.CALIBRATION_REF_CHANNEL.value] == "fluo488"
+        assert saved[LaserAutofocusConfig.CALIBRATION_REF_X_MM.value] == pytest.approx(10.0)
+        assert saved[LaserAutofocusConfig.CALIBRATION_REF_Y_MM.value] == pytest.approx(12.0)

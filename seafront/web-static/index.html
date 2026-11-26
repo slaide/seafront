@@ -1007,15 +1007,17 @@
                                     <label style="display: inline-flex; align-items: center;"
                                            x-init="enabletooltip($el)"
                                            x-bind:tooltip="`
-                                            Reflects 'Use autofocus during acquisition' setting from Laser Autofocus controls.
+                                            Use laser autofocus during acquisition, the same setting as in the focus reference setup.
 
-                                            When checked, Snap All will:
+                                            When checked, Snap All and the acquisition will:
                                             • Run laser autofocus before imaging
                                             • Apply per-channel Z-offsets relative to focused position
+
+                                            Turning it on needs a laser autofocus calibration; turning it off does not.
                                            `">
                                         <input type="checkbox"
-                                               disabled
-                                               x-bind:checked="microscope_config.autofocus_enabled">
+                                               x-model.boolean="microscope_config.autofocus_enabled"
+                                               :disabled="!laserAutofocusIsCalibrated && !microscope_config.autofocus_enabled">
                                         AF
                                     </label>
                                 </div>
@@ -1319,7 +1321,7 @@
          <dt>Current offset</dt><dd x-text="focusLiveOffsetText"></dd>
         </dl>
         <button @click="button_laserAutofocusFocus" :disabled="!focusReferenceReady || state.is_busy || isStreaming || lafImageLiveMode">Check reference with autofocus</button>
-        <label class="focus-acquisition-toggle"><input type="checkbox" x-model.boolean="microscope_config.autofocus_enabled" :disabled="!laserAutofocusIsCalibrated" />Use LAF during acquisition</label>
+        <label class="focus-acquisition-toggle"><input type="checkbox" x-model.boolean="microscope_config.autofocus_enabled" :disabled="!laserAutofocusIsCalibrated && !microscope_config.autofocus_enabled" />Use LAF during acquisition</label>
         </div>
 
         <details class="focus-measurements">

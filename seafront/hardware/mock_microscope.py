@@ -1122,7 +1122,7 @@ class MockMicroscope(Microscope):
                 offset_um=0.0,
                 calibration_position=current_state.stage_position
             )
-            self.record_laser_autofocus_calibration(calibration_data)
+            self.record_laser_autofocus_calibration(calibration_data, command.reference_channel)
             return cmd.LaserAutofocusCalibrationResponse(calibration_data=calibration_data)  # type: ignore
 
         elif isinstance(command, cmd.AutofocusApproachTargetDisplacement):

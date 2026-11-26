@@ -603,6 +603,32 @@ def register_laser_autofocus_config() -> None:
             privileged=True,
             persistent=True,
         ),
+        # Where, and with which imaging channel in focus, the calibration was made. Only the
+        # web UI reads these, to show the focus reference again after a reload.
+        config_item(
+            handle=LaserAutofocusConfig.CALIBRATION_REF_X_MM.value,
+            name="laser autofocus calibration: ref x in mm",
+            value_kind="float",
+            default=0.0,
+            privileged=True,
+            persistent=True,
+        ),
+        config_item(
+            handle=LaserAutofocusConfig.CALIBRATION_REF_Y_MM.value,
+            name="laser autofocus calibration: ref y in mm",
+            value_kind="float",
+            default=0.0,
+            privileged=True,
+            persistent=True,
+        ),
+        config_item(
+            handle=LaserAutofocusConfig.CALIBRATION_REF_CHANNEL.value,
+            name="laser autofocus calibration: reference channel",
+            value_kind="text",
+            default="",
+            privileged=True,
+            persistent=True,
+        ),
     )
 
 

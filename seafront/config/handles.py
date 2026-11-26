@@ -83,6 +83,9 @@ class LaserAutofocusConfig(ConfigHandle):
     CALIBRATION_X_PEAK_POS = "laser.autofocus.calibration.x_peak_pos"
     CALIBRATION_UM_PER_PX = "laser.autofocus.calibration.um_per_px"
     CALIBRATION_REF_Z_MM = "laser.autofocus.calibration.ref_z_mm"
+    CALIBRATION_REF_X_MM = "laser.autofocus.calibration.ref_x_mm"
+    CALIBRATION_REF_Y_MM = "laser.autofocus.calibration.ref_y_mm"
+    CALIBRATION_REF_CHANNEL = "laser.autofocus.calibration.ref_channel"
 
 
 class CalibrationConfig(ConfigHandle):

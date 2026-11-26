@@ -42,7 +42,7 @@ import { configuredFieldOfView } from "./field-of-view.js";
 import { wellGridHit, wellCornerRadius } from "./well-selection.js";
 
 import { wellForbiddenArea } from "./well-safety.js";
-import { commitFocusReference } from "./focus-reference.js";
+import { commitFocusReference, restoreFocusReference } from "./focus-reference.js";
 
 import { registerNumberInput } from "numberinput";
 Object.assign(window, { registerNumberInput });
@@ -1016,6 +1016,10 @@ const generate_alpine_object=() => ({
     initDone: false,
     async manualInit() {
         await this.initSelf();
+        // the laser autofocus calibration came back with the machine config; so does its reference
+        const focusReference = restoreFocusReference(
+            this.microscope_config.machine_config ?? [], this.microscope_config.channels);
+        if (focusReference) Object.assign(this, focusReference);
         
         // Only recreate well grid if we don't have a complete one (i.e., from server default)
         // If we loaded from localStorage, we should already have a complete grid with selections
@@ -3268,10 +3272,11 @@ const generate_alpine_object=() => ({
      * this calibrates the system and sets the current z as reference
      * -> store for later retrieval
      */
-    async buttons_calibrateLaserAutofocusHere() {
+    /** @param {string} [referenceChannel] handle of the channel in focus, stored with the calibration */
+    async buttons_calibrateLaserAutofocusHere(referenceChannel = "") {
         // the server computes the calibration and writes it into the (privileged) machine
         // config itself; we only need to pick up the new values.
-        await this.Actions.laserAutofocusCalibrate({});
+        await this.Actions.laserAutofocusCalibrate({ reference_channel: referenceChannel });
         await this.refreshPrivilegedMachineConfig();
     },
     get laserAutofocusOffsetText() {
@@ -3379,7 +3384,7 @@ const generate_alpine_object=() => ({
         this.focusCalibrationInProgress = true;
         try {
             // Commit the UI reference only after the instrument successfully calibrates.
-            await this.buttons_calibrateLaserAutofocusHere();
+            await this.buttons_calibrateLaserAutofocusHere(referenceChannel.handle);
             Object.assign(this, commitFocusReference(referenceChannel, position));
         } finally {
             this.focusCalibrationInProgress = false;

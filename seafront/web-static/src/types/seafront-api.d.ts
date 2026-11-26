@@ -617,6 +617,7 @@ declare global {
     };
 
     type LaserAutofocusCalibrateRequest = {
+        reference_channel?: string;
         /** Target device name for request routing */
         target_device: string;
         /** Device lease token from /api/lock/acquire; required while another client holds the lease */

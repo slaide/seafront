@@ -392,11 +392,14 @@ class Microscope(BaseModel, abc.ABC):
         """
         pass
 
-    def record_laser_autofocus_calibration(self, data: cmd.LaserAutofocusCalibrationData) -> None:
+    def record_laser_autofocus_calibration(
+        self, data: cmd.LaserAutofocusCalibrationData, reference_channel: str
+    ) -> None:
         """
         Write a fresh laser autofocus calibration into the privileged machine config and
         persist it. The server computed these numbers, so it owns them; a client only
-        needs to re-read the machine config afterwards.
+        needs to re-read the machine config afterwards. `reference_channel` is the imaging
+        channel the client had in focus.
         """
         GlobalConfigHandler.override(
             [
@@ -415,6 +418,18 @@ class Microscope(BaseModel, abc.ABC):
                 ConfigItem(
                     name="", handle=LaserAutofocusConfig.CALIBRATION_REF_Z_MM.value,
                     value_kind="float", value=data.calibration_position.z_pos_mm,
+                ),
+                ConfigItem(
+                    name="", handle=LaserAutofocusConfig.CALIBRATION_REF_X_MM.value,
+                    value_kind="float", value=data.calibration_position.x_pos_mm,
+                ),
+                ConfigItem(
+                    name="", handle=LaserAutofocusConfig.CALIBRATION_REF_Y_MM.value,
+                    value_kind="float", value=data.calibration_position.y_pos_mm,
+                ),
+                ConfigItem(
+                    name="", handle=LaserAutofocusConfig.CALIBRATION_REF_CHANNEL.value,
+                    value_kind="text", value=reference_channel,
                 ),
                 ConfigItem(
                     name="", handle=LaserAutofocusConfig.OFFSET_UM.value,

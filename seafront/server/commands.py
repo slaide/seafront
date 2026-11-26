@@ -426,6 +426,9 @@ class LaserAutofocusCalibrate(BaseModel, BaseCommand[LaserAutofocusCalibrationRe
     that is known to be always visible to calculate the approximate z offset, based on the reference measurements.
     """
 
+    reference_channel: str = ""
+    "handle of the imaging channel in focus at the calibration position, stored with the calibration"
+
     _ReturnValue: type = PrivateAttr(default=LaserAutofocusCalibrationResponse)
 
 
