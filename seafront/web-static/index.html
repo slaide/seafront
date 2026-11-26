@@ -1123,8 +1123,8 @@
  <p class="histogram-empty" x-show="!microscope_config.channels.some(c => c.enabled && cached_channel_image.has(c.handle))">Enable a channel and capture an image.</p>
 </section>
  </aside>
- <section id="channel-list" tabindex="0" aria-label="Channel previews and settings, scroll horizontally"
-  @wheel="if (!$event.altKey && !$event.ctrlKey && !$event.defaultPrevented && !$event.deltaX && $el.scrollHeight <= $el.clientHeight) { $event.preventDefault(); $el.scrollLeft += $event.deltaY; }">
+ <section id="channel-list" tabindex="0" aria-label="Channel previews and settings, scroll horizontally" :class="{ 'channel-previews-large': channelPreviewsLarge }"
+  @wheel="if (channelPreviewsLarge && !$event.altKey && !$event.ctrlKey && !$event.defaultPrevented && ($event.shiftKey || $event.deltaX)) { stepLargeChannelPreviews($event, $el); } else if (!$event.altKey && !$event.ctrlKey && !$event.defaultPrevented && !$event.deltaX && $el.scrollHeight <= $el.clientHeight) { $event.preventDefault(); $el.scrollLeft += $event.deltaY; }">
 
  <template x-for="(channel, index) in microscope_config.channels" :key="channel.handle">
   <article class="channel-card channel-config-row-container"
@@ -1144,6 +1144,9 @@
     <label class="channel-enable"><input :id="`${channel.handle}-enabled`" type="checkbox" x-model.boolean="channel.enabled" />
      <strong x-text="channel.name"></strong>
     </label>
+    <button class="channel-enlarge" @click="toggleLargeChannelPreviews($el.closest('.channel-card'))" :aria-pressed="channelPreviewsLarge"
+     :title="channelPreviewsLarge ? 'Back to small previews' : 'Show every channel at full size (Shift + wheel steps through them)'"
+     x-text="channelPreviewsLarge ? 'Small' : 'Large'"></button>
     <span class="channel-state" x-text="focusIsChannelStreaming(channel) ? 'Live' : (channel.enabled ? 'Enabled' : 'Excluded from acquisition')"></span>
     <button @click="Actions.snapChannel({channel})" :disabled="!channel.enabled">Snap</button>
     <button @click="focusToggleLive(channel)" :disabled="!channel.enabled" :class="{ 'live-active': focusIsChannelStreaming(channel) }"

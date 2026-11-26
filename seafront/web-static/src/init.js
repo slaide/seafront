@@ -1127,6 +1127,41 @@ const generate_alpine_object=() => ({
      */
     image_fetch_errors: {},
 
+    /** Channel cards span the whole channel list, each image as tall as the list's view. */
+    channelPreviewsLarge: false,
+    /**
+     * Switch all channel previews between the card size and the full channel list size,
+     * keeping the card whose button was pressed in view.
+     * @param {HTMLElement|null} card
+     */
+    toggleLargeChannelPreviews(card) {
+        this.channelPreviewsLarge = !this.channelPreviewsLarge;
+        requestAnimationFrame(() => card?.scrollIntoView({ block: "start", inline: "start" }));
+    },
+    /** When a wheel last stepped the large previews: one step per flick, not per wheel event. */
+    largeChannelStepAt: 0,
+    /**
+     * Shift + wheel (or a sideways wheel) over the large previews moves one whole channel;
+     * plain scrolling would need a dozen notches per channel.
+     * @param {WheelEvent} event
+     * @param {HTMLElement} list the channel list
+     */
+    stepLargeChannelPreviews(event, list) {
+        event.preventDefault();
+        const now = performance.now();
+        if (now - this.largeChannelStepAt < 250) return;
+        this.largeChannelStepAt = now;
+
+        const delta = event.deltaX || event.deltaY;
+        if (!delta) return;
+        const listRect = list.getBoundingClientRect();
+        const middle = listRect.left + listRect.width / 2;
+        const cards = [...list.querySelectorAll(".channel-card")];
+        const current = cards.findIndex((card) => card.getBoundingClientRect().right > middle);
+        const next = Math.min(cards.length - 1, Math.max(0, current + Math.sign(delta)));
+        cards[next]?.scrollIntoView({ block: "nearest", inline: "start", behavior: "smooth" });
+    },
+
     /**
      * Whether the image socket is open, and if it is not, why. Images arrive only through it,
      * so with the status socket up and this one down the UI is connected but cannot show a
