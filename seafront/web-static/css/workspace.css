@@ -112,13 +112,14 @@ body.theme-dark #workspaces {
         background: var(--settings-surface); border: 1px solid var(--group-border); box-sizing: border-box;
         .site-well-boundary { fill: var(--panel-surface); stroke: var(--group-border); stroke-width: 2; }
         .site-center-guide { fill: none; stroke: var(--group-border); stroke-width: 0.5; stroke-dasharray: 3 4; pointer-events: none; }
-        .site-footprint { fill: var(--settings-surface); stroke: var(--group-border); stroke-width: 1; cursor: pointer; }
-        .site-footprint.is-selected { fill: color-mix(in srgb, var(--accent-color) 35%, transparent); stroke: var(--accent-color); }
+        /* footprint fills are see-through so the well outline and overlapping fields show under them */
+        .site-footprint { fill: color-mix(in srgb, var(--group-border) 15%, transparent); stroke: var(--group-border); stroke-width: 1; cursor: pointer; }
+        .site-footprint.is-selected { fill: color-mix(in srgb, var(--accent-color) 30%, transparent); stroke: var(--accent-color); }
         .site-footprint:hover { stroke-width: 2; }
         .site-center { cursor: pointer; fill: var(--panel-surface); stroke: var(--group-border); stroke-width: 1.5; }
         .site-center.is-selected { fill: var(--accent-color); stroke: var(--accent-color); }
-        .site-footprint.range-add { fill: var(--highlight-color); stroke: var(--accent-color); stroke-width: 2; }
-        .site-footprint.range-remove { fill: var(--panel-surface); stroke: var(--text-color); stroke-dasharray: 3 2; }
+        .site-footprint.range-add { fill: color-mix(in srgb, var(--highlight-color) 50%, transparent); stroke: var(--accent-color); stroke-width: 2; }
+        .site-footprint.range-remove { fill: color-mix(in srgb, var(--panel-surface) 50%, transparent); stroke: var(--text-color); stroke-dasharray: 3 2; }
         .site-center.range-add { fill: var(--accent-color); stroke: var(--accent-color); }
         .site-center.range-remove { fill: var(--panel-surface); stroke: var(--text-color); }
         .site-removal-mark { fill: none; stroke: var(--text-color); stroke-width: 1.5; pointer-events: none; }
